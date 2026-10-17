@@ -1,0 +1,66 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in | CONVOSIS Books</title>
+<link rel="icon" type="image/png" href="{% static 'books/img/convosis-logo.png' %}">
+<script>try{var a=JSON.parse(localStorage.getItem('convosis_appearance_v1')||'null');var m=(a&&a.mode)||'light';if(m==='auto')m=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',m)}catch(e){}</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'books/css/glass.css' %}">
+<link rel="stylesheet" href="{% static 'books/css/app.css' %}">
+</head>
+<body class="login">
+
+
+<div id="wallpaper" class="wallpaper" aria-hidden="true"><div class="wp-image"></div><div class="wp-image"></div><div class="wp-dim"></div></div>
+
+
+<div style="position:fixed; top:18px; right:20px; z-index:10; display:flex; gap:10px;">
+  <button class="theme-toggle-btn" id="themeToggleBtn" type="button" onclick="ThemeEngine.toggleMode()" title="Toggle Dark / Light Theme">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+    <span>Theme</span>
+  </button>
+  <button class="icon-btn" type="button" title="Appearance & Wallpaper" onclick="ThemeEngine.toggleDrawer()">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1.2"/><circle cx="17.5" cy="10.5" r="1.2"/><circle cx="8.5" cy="7.5" r="1.2"/><circle cx="6.5" cy="12.5" r="1.2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.8-1.7 1.7-1.7H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.4-10-8.4z"/></svg>
+  </button>
+</div>
+
+<!-- Floating Glass Login Card -->
+<form method="post" class="lcard" novalidate>{% csrf_token %}
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+    <img src="{% static 'books/img/convosis-logo.png' %}" alt="Convosis" class="llogo" style="margin-bottom:0;">
+    <span class="app" style="font-size:20px;">Books</span>
+  </div>
+
+  <h1>Sign in to Convosis Books</h1>
+  <p class="sub" style="font-size:12.5px; margin:-10px 0 20px;">Enterprise Financial Operating System & GST Automation</p>
+
+  {% if form.errors %}
+  <div class="lerr" role="alert">
+    <strong>Authentication failed:</strong> Incorrect username or password.
+  </div>
+  {% endif %}
+
+  <div class="fg">
+    <label for="id_username">Username</label>
+    <input class="in" type="text" name="username" id="id_username" placeholder="Enter username…" autofocus autocomplete="username" required>
+  </div>
+
+  <div class="fg">
+    <label for="id_password">Password</label>
+    <input class="in" type="password" name="password" id="id_password" placeholder="••••••••" autocomplete="current-password" required>
+  </div>
+
+  <input type="hidden" name="next" value="{{ next|default:'/' }}">
+
+  <button class="btn p" type="submit" style="width:100%; margin-top:14px; height:40px; font-size:14px; justify-content:center;">
+    Sign in to Workspace
+  </button>
+</form>
+
+<script src="{% static 'books/js/theme.js' %}"></script>
+</body>
+</html>

@@ -1270,10 +1270,7 @@ def detect_financial_anomalies():
 
 
 def process_doubt_clearance(query, category=None, history=None, user=None):
-    """
-    ChatGPT-like Doubt Clearance Engine for Accounting, Regional Taxation,
-    Bank Feeds & Gateways, Enterprise Security (MFA, SOC2, GDPR), and SaaS Suite Operations.
-    """
+    """Handles questions about accounting, GST, bank reconciliation, financial reports, and account security."""
     raw_query = (query or '').strip()
     q = raw_query.lower()
     today = timezone.localdate()
@@ -1910,10 +1907,10 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
 
     return {
         'query': raw_query,
-        'doubt_topic': 'Financial Operating System Copilot',
+        'doubt_topic': 'Accounting Assistant',
         'summary': f"Analyzed your query as of {today.strftime('%d %B %Y')}. Here is a comprehensive financial and operational explanation.",
         'answer': (
-            f"### Convosis FinGPT Financial Guidance\n\n"
+            f"### Financial guidance\n\n"
             f"Regarding your query: *\"{raw_query}\"*\n\n"
             f"Convosis Books is a fully-managed multi-tenant financial OS integrating **accounting general ledger, tax compliance engines (GST/VAT), connected banking feeds, payment gateways, and enterprise SOC2/GDPR governance**.\n\n"
             f"**Recommended Topics to Explore:**\n"
@@ -1924,11 +1921,11 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             f"5. **Real-Time Data**: Ask me *'What is our revenue this month?'*, *'Show overdue invoices'*, or *'Forecast cash flow'*."
         ),
         'key_takeaways': [
-            "Ask FinGPT any accounting, tax, banking, security, or platform question.",
+            "Ask Convo Bot any accounting, tax, banking, security, or platform question.",
             "All metrics are calculated live on an accrual accounting basis.",
             "Quick actions below navigate directly to the relevant workspace module."
         ],
-        'rule_formula': "Enterprise Financial OS: Real-Time Ledger + Tax Compliance + Connected Banking + AI Copilot",
+        'rule_formula': "Accounting, reports, banking, and assistant features",
         'type': 'doubt_clearance',
         'quick_actions': [
             {'label': 'Dashboard', 'hash': '#/home/dashboard'},
@@ -1948,7 +1945,7 @@ def process_zia_query(query, user=None):
     """
     Process plain-English natural language financial queries and return
     computed metrics, summaries, tables, and proactive recommendations.
-    Backward-compatible wrapper utilizing the FinGPT Doubt Clearance Engine.
+    Backward-compatible wrapper utilizing the Convo Bot Doubt Clearance Engine.
     """
     res = process_doubt_clearance(query, user=user)
     return res

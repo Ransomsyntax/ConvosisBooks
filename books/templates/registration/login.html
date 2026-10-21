@@ -36,7 +36,18 @@
   </div>
 
   <h1>Sign in to Convosis Books</h1>
-  <p class="sub" style="font-size:12.5px; margin:-10px 0 20px;">Enterprise Financial Operating System & GST Automation</p>
+  <p class="sub" style="font-size:12.5px; margin:-10px 0 16px;">Enterprise Financial Operating System & GST Automation</p>
+
+  <!-- Preloaded Demo Credentials Banner -->
+  <div class="demo-credential-banner" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; margin-bottom:16px; border-radius:10px; background:var(--pastel-mint-bg); border:1px solid var(--pastel-mint-border); font-size:12px; color:var(--tx);">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
+      <span>Preloaded: <strong>admin</strong> / <strong>admin</strong></span>
+    </div>
+    <button type="button" id="fillDemoBtn" title="Refill demo credentials" style="background:var(--surface-glass); border:1px solid var(--bd-glass); border-radius:6px; padding:3px 9px; font-size:11px; font-weight:600; color:var(--pastel-mint-text); cursor:pointer; transition:all 0.15s ease;">
+      Re-fill
+    </button>
+  </div>
 
   {% if form.errors %}
   <div class="lerr" role="alert">
@@ -45,22 +56,74 @@
   {% endif %}
 
   <div class="fg">
-    <label for="id_username">Username</label>
-    <input class="in" type="text" name="username" id="id_username" placeholder="Enter username…" autofocus autocomplete="username" required>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <label for="id_username" style="margin-bottom:0;">Username</label>
+      <span style="font-size:11px; color:var(--tx-muted);">Default: admin</span>
+    </div>
+    <input class="in" type="text" name="username" id="id_username" value="{% if form.is_bound %}{{ form.username.value|default:'' }}{% else %}admin{% endif %}" placeholder="Enter username…" autocomplete="username" required>
   </div>
 
   <div class="fg">
-    <label for="id_password">Password</label>
-    <input class="in" type="password" name="password" id="id_password" placeholder="••••••••" autocomplete="current-password" required>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <label for="id_password" style="margin-bottom:0;">Password</label>
+      <span style="font-size:11px; color:var(--tx-muted);">Default: admin</span>
+    </div>
+    <div style="position:relative; display:flex; align-items:center;">
+      <input class="in" type="password" name="password" id="id_password" value="{% if not form.is_bound %}admin{% endif %}" placeholder="••••••••" autocomplete="current-password" required style="padding-right:38px; width:100%;">
+      <button type="button" id="togglePasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" style="position:absolute; right:10px; background:transparent; border:none; color:var(--tx-muted); cursor:pointer; padding:4px; display:flex; align-items:center; justify-content:center; border-radius:4px; transition:color 0.15s ease;">
+        <svg id="eyeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <input type="hidden" name="next" value="{{ next|default:'/' }}">
 
-  <button class="btn p" type="submit" style="width:100%; margin-top:14px; height:40px; font-size:14px; justify-content:center;">
+  <button class="btn p" id="submitLoginBtn" type="submit" autofocus style="width:100%; margin-top:14px; height:40px; font-size:14px; justify-content:center;">
     Sign in to Workspace
   </button>
 </form>
 
 <script src="{% static 'books/js/theme.js' %}"></script>
+<script>
+  (function() {
+    const userInput = document.getElementById('id_username');
+    const passInput = document.getElementById('id_password');
+    const toggleBtn = document.getElementById('togglePasswordBtn');
+    const fillBtn = document.getElementById('fillDemoBtn');
+
+    // Ensure preloading is applied if fields are empty
+    if (userInput && !userInput.value) {
+      userInput.value = 'admin';
+    }
+    if (passInput && !passInput.value) {
+      passInput.value = 'admin';
+    }
+
+    // Toggle password reveal
+    if (toggleBtn && passInput) {
+      toggleBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        const isPassword = passInput.type === 'password';
+        passInput.type = isPassword ? 'text' : 'password';
+        toggleBtn.innerHTML = isPassword
+          ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
+          : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+      });
+    }
+
+    // Quick re-fill button handler
+    if (fillBtn && userInput && passInput) {
+      fillBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        userInput.value = 'admin';
+        passInput.value = 'admin';
+        userInput.focus();
+      });
+    }
+  })();
+</script>
 </body>
 </html>

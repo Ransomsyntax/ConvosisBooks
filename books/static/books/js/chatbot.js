@@ -798,13 +798,15 @@
     if (!md) return '';
     let out = esc(md);
 
-  
+    // Headers
     out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
     out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
 
+    // Bold & Italics
     out = out.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
     out = out.replace(/\*(.*?)\*/g, '<i>$1</i>');
 
+    // Code blocks & Inline code
     out = out.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
 

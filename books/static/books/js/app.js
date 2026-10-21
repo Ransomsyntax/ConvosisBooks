@@ -187,7 +187,19 @@ document.addEventListener('click', async e => {
   if (a && a.closest('#umm')) {
     closePops();
     if (a.dataset.a === 'org') orgForm();
-    if (a.dataset.a === 'logout') { try { await fetch('/accounts/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() }, credentials: 'same-origin' }); } finally { location.href = '/accounts/login/'; } }
+    if (a.dataset.a === 'logout') {
+      try {
+        if (APP && APP.user && APP.user.username) {
+          try {
+            localStorage.setItem('convosis_last_login_username', APP.user.username);
+            document.cookie = 'convosis_last_user=' + encodeURIComponent(APP.user.username) + '; path=/; max-age=31536000; SameSite=Lax';
+          } catch(e) {}
+        }
+        await fetch('/accounts/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() }, credentials: 'same-origin' });
+      } finally {
+        location.href = '/accounts/login/';
+      }
+    }
     return;
   }
   if (!t.closest('.pop')) closePops();

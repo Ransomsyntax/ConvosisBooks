@@ -42,14 +42,11 @@
   <div id="demoCredentialBanner" class="demo-credential-banner" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; margin-bottom:16px; border-radius:10px; background:var(--pastel-mint-bg); border:1px solid var(--pastel-mint-border); font-size:12px; color:var(--tx);">
     <div style="display:flex; align-items:center; gap:8px;">
       <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
-      <span>Preloaded: <strong id="preloadedUserBadge">admin</strong></span>
+      <span>Preloaded: <strong id="preloadedUserBadge">{% if request.COOKIES.convosis_last_user %}{{ request.COOKIES.convosis_last_user }}{% else %}admin{% endif %}</strong></span>
     </div>
     <div style="display:flex; align-items:center; gap:6px;">
       <button type="button" id="fillDemoBtn" title="Refill saved login credentials" style="background:var(--surface-glass); border:1px solid var(--bd-glass); border-radius:6px; padding:3px 9px; font-size:11px; font-weight:600; color:var(--pastel-mint-text); cursor:pointer; transition:all 0.15s ease;">
         Re-fill
-      </button>
-      <button type="button" id="resetAdminBtn" title="Switch to default admin" style="background:var(--surface-glass); border:1px solid var(--bd-glass); border-radius:6px; padding:3px 9px; font-size:11px; font-weight:500; color:var(--tx-muted); cursor:pointer; transition:all 0.15s ease;">
-        Admin
       </button>
     </div>
   </div>
@@ -65,7 +62,7 @@
       <label for="id_username" style="margin-bottom:0;">Username</label>
       <span id="userHintText" style="font-size:11px; color:var(--tx-muted);">Previous login</span>
     </div>
-    <input class="in" type="text" name="username" id="id_username" value="{% if form.is_bound %}{{ form.username.value|default:'' }}{% endif %}" placeholder="Enter username…" autocomplete="username" required>
+    <input class="in" type="text" name="username" id="id_username" value="{% if form.is_bound %}{{ form.username.value|default:'' }}{% elif request.COOKIES.convosis_last_user %}{{ request.COOKIES.convosis_last_user }}{% endif %}" placeholder="Enter username…" autocomplete="username" required>
   </div>
 
   <div class="fg">
@@ -74,7 +71,7 @@
       <span id="passHintText" style="font-size:11px; color:var(--tx-muted);">Saved credential</span>
     </div>
     <div style="position:relative; display:flex; align-items:center;">
-      <input class="in" type="password" name="password" id="id_password" value="" placeholder="••••••••" autocomplete="current-password" required style="padding-right:38px; width:100%;">
+      <input class="in" type="password" name="password" id="id_password" value="{% if not form.is_bound and request.COOKIES.convosis_last_pass %}{{ request.COOKIES.convosis_last_pass }}{% endif %}" placeholder="••••••••" autocomplete="current-password" required style="padding-right:38px; width:100%;">
       <button type="button" id="togglePasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" style="position:absolute; right:10px; background:transparent; border:none; color:var(--tx-muted); cursor:pointer; padding:4px; display:flex; align-items:center; justify-content:center; border-radius:4px; transition:color 0.15s ease;">
         <svg id="eyeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -102,125 +99,146 @@
 <script src="{% static 'books/js/theme.js' %}"></script>
 <script>
   (function() {
-    const STORAGE_KEY = 'convosis_last_login_creds_v2';
-    const ACCOUNTS_KEY = 'convosis_saved_accounts_v2';
-    const DEFAULT_CREDS = { username: 'admin', password: 'admin' };
+    function getCookie(name) {
+      const match = document.cookie.match(new RegExp('(^|;\\s*)' + name + '=([^;]*)'));
+      return match ? decodeURIComponent(match[2]) : null;
+    }
+    function setCookie(name, val) {
+      document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; max-age=31536000; SameSite=Lax';
+    }
+    function delCookie(name) {
+      document.cookie = name + '=; path=/; max-age=0; SameSite=Lax';
+    }
+
+    const STORAGE_KEY_USER = 'convosis_last_login_username';
+    const STORAGE_KEY_PASS = 'convosis_last_login_password';
+    const ACCOUNTS_KEY = 'convosis_saved_accounts_map';
 
     const userInput = document.getElementById('id_username');
     const passInput = document.getElementById('id_password');
     const badge = document.getElementById('preloadedUserBadge');
-    const toggleBtn = document.getElementById('togglePasswordBtn');
     const fillBtn = document.getElementById('fillDemoBtn');
-    const resetAdminBtn = document.getElementById('resetAdminBtn');
+    const toggleBtn = document.getElementById('togglePasswordBtn');
     const rememberMe = document.getElementById('rememberMe');
     const clearLink = document.getElementById('clearCredsLink');
     const form = document.querySelector('form.lcard');
+    const submitBtn = document.getElementById('submitLoginBtn');
 
-    function getSavedCreds() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && parsed.username) return parsed;
-        }
-      } catch (e) {}
-      return DEFAULT_CREDS;
+    function getStoredUser() {
+      let u = null;
+      try { u = localStorage.getItem(STORAGE_KEY_USER); } catch(e){}
+      if (!u) u = getCookie('convosis_last_user');
+      return u || '';
     }
 
-    function getSavedAccounts() {
+    function getStoredPass() {
+      let p = null;
+      try { p = localStorage.getItem(STORAGE_KEY_PASS); } catch(e){}
+      if (!p) p = getCookie('convosis_last_pass');
+      return p || '';
+    }
+
+    function getStoredAccounts() {
       try {
         const raw = localStorage.getItem(ACCOUNTS_KEY);
         if (raw) return JSON.parse(raw) || {};
-      } catch (e) {}
+      } catch(e){}
       return { 'admin': 'admin' };
     }
 
-    function setCredentials(u, p, saveToRecent) {
+    function refillPreviousLogin() {
+      const u = getStoredUser() || 'admin';
+      const accounts = getStoredAccounts();
+      const p = getStoredPass() || accounts[u] || 'admin';
+
       if (userInput) userInput.value = u;
       if (passInput) passInput.value = p;
       if (badge) badge.textContent = u;
-      if (saveToRecent) {
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ username: u, password: p, ts: Date.now() }));
-        } catch (e) {}
+    }
+
+    function persistCurrentCredentials() {
+      if (!userInput || !passInput) return;
+      const u = userInput.value.trim();
+      const p = passInput.value;
+      if (!rememberMe || rememberMe.checked) {
+        if (u) {
+          try { localStorage.setItem(STORAGE_KEY_USER, u); } catch(e){}
+          setCookie('convosis_last_user', u);
+          if (badge) badge.textContent = u;
+        }
+        if (p) {
+          try { localStorage.setItem(STORAGE_KEY_PASS, p); } catch(e){}
+          setCookie('convosis_last_pass', p);
+        }
+        if (u && p) {
+          try {
+            const accounts = getStoredAccounts();
+            accounts[u] = p;
+            localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+          } catch(e){}
+        }
       }
     }
 
-    // 1. Preload credentials on page load
+    // 1. Initial preload
     {% if not form.is_bound %}
-    const active = getSavedCreds();
-    setCredentials(active.username || 'admin', active.password || 'admin', false);
+    refillPreviousLogin();
     {% else %}
-    const active = getSavedCreds();
-    if (badge) badge.textContent = userInput && userInput.value ? userInput.value : (active.username || 'admin');
+    const remembered = getStoredUser();
+    if (badge) badge.textContent = userInput && userInput.value ? userInput.value : (remembered || 'admin');
     {% endif %}
 
-    // 2. Refill previous login button
+    // 2. Real-time auto-fill when username is typed or selected
+    if (userInput) {
+      userInput.addEventListener('input', function() {
+        const u = userInput.value.trim();
+        if (badge) badge.textContent = u || 'admin';
+        const accounts = getStoredAccounts();
+        if (accounts[u] !== undefined && accounts[u]) {
+          passInput.value = accounts[u];
+        }
+        persistCurrentCredentials();
+      });
+      userInput.addEventListener('change', persistCurrentCredentials);
+    }
+
+    if (passInput) {
+      passInput.addEventListener('input', persistCurrentCredentials);
+      passInput.addEventListener('change', persistCurrentCredentials);
+    }
+
+    // 3. Re-fill button
     if (fillBtn) {
       fillBtn.addEventListener('click', function(e) {
         e.preventDefault();
-        const prev = getSavedCreds();
-        setCredentials(prev.username || 'admin', prev.password || 'admin', false);
+        refillPreviousLogin();
         if (userInput) userInput.focus();
       });
     }
 
-    // 3. Reset to Admin button
-    if (resetAdminBtn) {
-      resetAdminBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        setCredentials(DEFAULT_CREDS.username, DEFAULT_CREDS.password, true);
-        if (userInput) userInput.focus();
-      });
-    }
-
-    // 4. Auto-fill password when user changes or types a known username
-    if (userInput && passInput) {
-      userInput.addEventListener('input', function() {
-        const entered = userInput.value.trim();
-        if (badge) badge.textContent = entered || 'admin';
-        const accounts = getSavedAccounts();
-        if (accounts[entered] !== undefined) {
-          passInput.value = accounts[entered];
-        }
-      });
-    }
-
-    // 5. Clear saved credentials
+    // 4. Clear saved credentials
     if (clearLink) {
       clearLink.addEventListener('click', function(e) {
         e.preventDefault();
         try {
-          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(STORAGE_KEY_USER);
+          localStorage.removeItem(STORAGE_KEY_PASS);
           localStorage.removeItem(ACCOUNTS_KEY);
-        } catch (e) {}
-        setCredentials(DEFAULT_CREDS.username, DEFAULT_CREDS.password, false);
+        } catch(e){}
+        delCookie('convosis_last_user');
+        delCookie('convosis_last_pass');
+        if (userInput) userInput.value = '';
+        if (passInput) passInput.value = '';
+        if (badge) badge.textContent = 'None';
       });
     }
 
-    // 6. Save current credentials on form submission for next login
-    if (form) {
-      form.addEventListener('submit', function() {
-        const u = userInput ? userInput.value.trim() : '';
-        const p = passInput ? passInput.value : '';
-        if (u && p) {
-          if (!rememberMe || rememberMe.checked) {
-            try {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify({ username: u, password: p, ts: Date.now() }));
-              const accounts = getSavedAccounts();
-              accounts[u] = p;
-              localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-            } catch (e) {}
-          } else {
-            try {
-              localStorage.removeItem(STORAGE_KEY);
-            } catch (e) {}
-          }
-        }
-      });
-    }
+    // 5. Save on submit and unload
+    if (form) form.addEventListener('submit', persistCurrentCredentials);
+    if (submitBtn) submitBtn.addEventListener('click', persistCurrentCredentials);
+    window.addEventListener('beforeunload', persistCurrentCredentials);
 
-    // 7. Toggle password visibility
+    // 6. Toggle password visibility
     if (toggleBtn && passInput) {
       toggleBtn.addEventListener('click', function(e) {
         e.preventDefault();

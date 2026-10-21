@@ -1,7 +1,4 @@
-/**
- * Convosis FinGPT — ChatGPT-Like Doubt Clearance Chatbot
- * Handles all financial, accounting, tax, banking, security, and platform doubts.
- */
+
 'use strict';
 
 (function () {
@@ -59,7 +56,7 @@
     ]
   };
 
-  // Inject CSS Styles for ChatGPT Bot
+  
   function injectStyles() {
     if (document.getElementById('fingpt-chat-styles')) return;
     const style = document.createElement('style');
@@ -560,16 +557,15 @@
     document.head.appendChild(style);
   }
 
-  // Create launcher and widget DOM
+
   function createDoubtBotUI() {
     injectStyles();
 
     if (document.getElementById('fingpt-launcher')) return;
 
-    // Launcher button
     const launcher = document.createElement('div');
     launcher.id = 'fingpt-launcher';
-    launcher.title = 'Convosis FinGPT · Instant Accounting & Compliance Doubt Clearance (Ctrl+K)';
+    launcher.title = 'Convo Bot · Instant Accounting & Compliance Doubt Clearance (Ctrl+K)';
     launcher.innerHTML = `
       <div class="fingpt-launcher-icon">
         <div class="fingpt-launcher-pulse"></div>
@@ -578,13 +574,12 @@
         </svg>
       </div>
       <div class="fingpt-launcher-text">
-        <span class="fingpt-launcher-title">FinGPT Copilot <span class="fingpt-launcher-badge">AI 4.0</span></span>
+        <span class="fingpt-launcher-title">Convo Bot</span>
         <span class="fingpt-launcher-sub">Clear Accounting & Tax Doubts</span>
       </div>
     `;
     document.body.appendChild(launcher);
 
-    // Widget container
     const widget = document.createElement('div');
     widget.id = 'fingpt-widget';
     widget.innerHTML = `
@@ -593,10 +588,10 @@
         <div class="fingpt-header-left">
           <div class="fingpt-avatar">G</div>
           <div class="fingpt-title-wrap">
-            <h3>Convosis FinGPT <span class="pastel-chip chip-sky" style="font-size:10px;">Enterprise</span></h3>
+            <h3>Convo Bot <span class="pastel-chip chip-sky" style="font-size:10px;">Enterprise</span></h3>
             <div class="fingpt-status-pill">
               <span class="fingpt-status-dot"></span>
-              <span>ChatGPT Doubt Clearance Engine · Online</span>
+              <span>Doubt Clearance Engine · Online</span>
             </div>
           </div>
         </div>
@@ -629,7 +624,7 @@
       <!-- Input Area -->
       <div class="fingpt-input-area">
         <div class="fingpt-input-row">
-          <textarea id="fingpt-textarea" rows="1" placeholder="Ask any doubt about debit/credit, GST, reconciliation, SOC2, or metrics…" autocomplete="off"></textarea>
+          <textarea id="fingpt-textarea" rows="1" placeholder="Ask " autocomplete="off"></textarea>
           <button id="fingpt-send-btn" type="button" title="Send (Enter)">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -645,16 +640,16 @@
     `;
     document.body.appendChild(widget);
 
-    // Initial greeting render
+    
     renderWelcomeGreeting();
 
-    // Event Listeners
+    
     launcher.addEventListener('click', () => toggleDoubtBot());
     $('#fingpt-close-btn').addEventListener('click', () => toggleDoubtBot(false));
     $('#fingpt-max-btn').addEventListener('click', toggleMaximize);
     $('#fingpt-reset-btn').addEventListener('click', resetChat);
 
-    // Categories filter click
+    
     widget.addEventListener('click', (e) => {
       const catBtn = e.target.closest('.fingpt-cat-btn');
       if (catBtn) {
@@ -664,21 +659,18 @@
         renderCategoryPrompts(activeCategory);
       }
 
-      // Prompt chip click
       const promptBtn = e.target.closest('.fingpt-prompt-btn');
       if (promptBtn) {
         const text = promptBtn.dataset.query || promptBtn.textContent.trim();
         handleSend(text);
       }
 
-      // Action link click
       const actionLink = e.target.closest('.fingpt-action-chip');
       if (actionLink && actionLink.dataset.hash) {
         location.hash = actionLink.dataset.hash;
         if (!isMaximized) toggleDoubtBot(false);
       }
 
-      // Copy answer button
       const copyBtn = e.target.closest('.fingpt-copy-btn');
       if (copyBtn) {
         const bubble = copyBtn.closest('.fingpt-msg-bubble');
@@ -693,7 +685,6 @@
         }
       }
 
-      // Feedback button
       const fbBtn = e.target.closest('.fingpt-fb-btn');
       if (fbBtn) {
         fbBtn.style.color = '#10a37f';
@@ -718,7 +709,6 @@
 
     sendBtn.addEventListener('click', () => handleSend());
 
-    // Global keyboard shortcut Ctrl+K or Alt+C
     window.addEventListener('keydown', (e) => {
       if ((e.ctrlKey && e.key === 'k') || (e.altKey && e.key === 'c')) {
         e.preventDefault();
@@ -804,20 +794,17 @@
     container.innerHTML = renderPromptButtons(prompts);
   }
 
-  // Parse simple markdown to HTML safely
   function parseMarkdown(md) {
     if (!md) return '';
     let out = esc(md);
 
-    // Headers
+  
     out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
     out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
 
-    // Bold & Italics
     out = out.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
     out = out.replace(/\*(.*?)\*/g, '<i>$1</i>');
 
-    // Code blocks & Inline code
     out = out.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
 

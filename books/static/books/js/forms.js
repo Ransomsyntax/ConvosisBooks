@@ -204,7 +204,7 @@ async function itemForm(id) {
   }).join('');
   const extraUnitOpt = (!unitFound && curUnit) ? `<option value="${esc(curUnit)}" selected>${esc(curUnit)}</option>` : '';
 
-  // Comprehensive Sales Accounts hierarchy as specified
+
   const SALES_ACCOUNT_GROUPS = [
     {
       group: 'Income',

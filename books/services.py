@@ -1288,9 +1288,7 @@ def detect_financial_anomalies():
     return FinancialAnomaly.objects.filter(status='detected')
 
 
-# ==============================================================================
-# Convosis FinGPT & Zia AI: ChatGPT-Like Doubt Clearance & Financial Copilot
-# ==============================================================================
+
 
 def process_doubt_clearance(query, category=None, history=None, user=None):
     """

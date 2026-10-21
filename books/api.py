@@ -2040,9 +2040,7 @@ def health_view(request):
     })
 
 
-# ==============================================================================
-# Comprehensive Financial Reports API
-# ==============================================================================
+
 
 @api_view
 def reports_view(request, name):

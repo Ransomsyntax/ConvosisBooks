@@ -438,8 +438,6 @@
         </div>
 
         <div class="ap-sec wide">
-          <div class="ap-h">macOS Wallpaper</div>
-          <div class="ap-desc">Translucent glass shines through this backdrop. Choose a built-in wallpaper or upload your own.</div>
           <div class="wp-grid">
             ${tiles}
             ${customTile}

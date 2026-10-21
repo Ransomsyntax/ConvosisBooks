@@ -1845,7 +1845,7 @@ async function transactionLockingPage(root) {
   } catch (e) { $('#lock-container', root).innerHTML = errBox(e.message, true); }
 }
 
-function paymentOverviewPage(root) {
+async function paymentOverviewPage(root) {
   root.innerHTML = `
     <div class="bc">Home / Convosis Payments</div>
     <div class="hd">
@@ -1854,30 +1854,97 @@ function paymentOverviewPage(root) {
         <div class="sub" style="margin-top:2px;">Integrated payment collection gateway powered by Razorpay, Stripe & UPI</div>
       </div>
       <div class="act">
+        <button class="btn" onclick="location.hash='#/pay/payment-settings'" type="button">Configure Gateway</button>
         <button class="btn p" onclick="location.hash='#/pay/payment-transactions'" type="button">View All Transactions</button>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
-      <div class="card" style="padding:16px;"><div class="sub">Total Volume Collected</div><div style="font-size:22px;font-weight:700;margin:6px 0;">₹4,28,500.00</div><div class="sub" style="font-size:11px;">Via UPI & Cards</div></div>
-      <div class="card" style="padding:16px;"><div class="sub">Active Gateway</div><div style="font-size:22px;font-weight:700;color:var(--accent);margin:6px 0;">Razorpay + UPI</div><div class="sub" style="font-size:11px;">Instant Settlement</div></div>
-      <div class="card" style="padding:16px;"><div class="sub">Payment Success Rate</div><div style="font-size:22px;font-weight:700;color:var(--up);margin:6px 0;">99.4%</div><div class="sub" style="font-size:11px;">Low chargeback ratio</div></div>
-    </div>
+    <div id="pay-overview-metrics">${spinner}</div>
   `;
+
+  try {
+    const res = await api('payment-transactions/');
+    const txns = (res && res.results) || [];
+    const totalCollected = txns.filter(t => t.status === 'captured').reduce((s, t) => s + Number(t.amount || 0), 0);
+    const successCount = txns.filter(t => t.status === 'captured').length;
+    const rate = txns.length ? Math.round((successCount / txns.length) * 100) : 0;
+
+    if (!root.isConnected) return;
+    $('#pay-overview-metrics', root).innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
+        <div class="card" style="padding:16px;">
+          <div class="sub">Total Volume Collected</div>
+          <div style="font-size:22px;font-weight:700;margin:6px 0;">${inr(totalCollected)}</div>
+          <div class="sub" style="font-size:11px;">${txns.length} total transaction${txns.length === 1 ? '' : 's'}</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div class="sub">Active Gateway</div>
+          <div style="font-size:20px;font-weight:700;color:var(--accent);margin:6px 0;">Razorpay + UPI</div>
+          <div class="sub" style="font-size:11px;">Direct Bank Settlement</div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div class="sub">Payment Success Rate</div>
+          <div style="font-size:22px;font-weight:700;color:var(--up);margin:6px 0;">${txns.length ? rate + '%' : '—'}</div>
+          <div class="sub" style="font-size:11px;">${successCount} settled</div>
+        </div>
+      </div>
+      ${txns.length === 0 ? `
+        <div class="card" style="margin-top:16px;padding:32px;text-align:center;">
+          <div style="font-size:36px;margin-bottom:8px;">💳</div>
+          <h3 style="margin:0 0 6px;">No Online Transactions Yet</h3>
+          <p class="sub" style="max-width:440px;margin:0 auto 16px;">Payment links generated on your invoices will automatically appear here once paid by your clients.</p>
+          <button class="btn p" onclick="location.hash='#/sales/invoices'" type="button">Go to Invoices</button>
+        </div>
+      ` : ''}
+    `;
+  } catch (e) {
+    if (root.isConnected) $('#pay-overview-metrics', root).innerHTML = errBox(e.message, true);
+  }
 }
 
 function paymentSettingsPage(root) {
+  const savedCfg = pref.get('convosis_payment_cfg', { key_id: '', key_secret: '', webhook_url: location.origin + '/api/webhooks/razorpay/' });
+
   root.innerHTML = `
     <div class="bc">Home / Convosis Payments / Settings</div>
-    <div class="hd"><h1>Payment Gateway Configuration</h1></div>
-    <div class="card" style="margin-top:14px;padding:24px;">
-      <h3 style="font-size:15px;margin-bottom:12px;">Razorpay & UPI Credentials</h3>
-      <div class="g">
-        <div class="fg s6"><label>Key ID</label><input class="in" value="rzp_live_kottayam_books98" disabled></div>
-        <div class="fg s6"><label>Key Secret</label><input class="in" type="password" value="••••••••••••••••" disabled></div>
-        <div class="fg s12"><label>Webhook Endpoint URL</label><input class="in" value="https://books-d8i1.onrender.com/api/webhooks/razorpay/" disabled></div>
+    <div class="hd">
+      <div>
+        <h1>Payment Gateway Configuration</h1>
+        <div class="sub" style="margin-top:2px;">Connect Razorpay, Stripe, or UPI for automated client invoice payment links</div>
+      </div>
+      <div class="act">
+        <button class="btn p" id="btn-save-pay-cfg" type="button">Save Settings</button>
       </div>
     </div>
+    <div class="card" style="margin-top:14px;padding:24px;">
+      <h3 style="font-size:15px;margin-bottom:6px;">Razorpay & UPI Gateway Credentials</h3>
+      <div class="sub" style="font-size:12px;margin-bottom:16px;">Obtain your API keys from the Razorpay Dashboard under Settings &gt; API Keys.</div>
+      <form id="pay-cfg-form">
+        <div class="g">
+          <div class="fg s6">
+            <label>Key ID</label>
+            <input class="in" id="pay_key_id" name="key_id" placeholder="rzp_live_..." value="${esc(savedCfg.key_id || '')}">
+          </div>
+          <div class="fg s6">
+            <label>Key Secret</label>
+            <input class="in" id="pay_key_secret" name="key_secret" type="password" placeholder="Enter Razorpay Key Secret" value="${esc(savedCfg.key_secret || '')}">
+          </div>
+          <div class="fg s12">
+            <label>Webhook Endpoint URL</label>
+            <input class="in" id="pay_webhook_url" name="webhook_url" value="${esc(savedCfg.webhook_url || location.origin + '/api/webhooks/razorpay/')}" readonly>
+            <div class="sub" style="font-size:11px;margin-top:4px;">Configure this webhook in your gateway dashboard to receive instant settlement alerts.</div>
+          </div>
+        </div>
+      </form>
+    </div>
   `;
+
+  $('#btn-save-pay-cfg', root).addEventListener('click', () => {
+    const key_id = $('#pay_key_id', root).value.trim();
+    const key_secret = $('#pay_key_secret', root).value.trim();
+    const webhook_url = $('#pay_webhook_url', root).value.trim();
+    pref.set('convosis_payment_cfg', { key_id, key_secret, webhook_url });
+    toast('Payment gateway configuration saved successfully!');
+  });
 }
 
 async function securityCompliancePage(root) {

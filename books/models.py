@@ -333,6 +333,8 @@ class AuditLog(models.Model):
     summary = models.TextField()
     details = models.JSONField(default=dict, blank=True)
     ip_address = models.CharField(max_length=50, blank=True)
+    record_hash = models.CharField(max_length=64, blank=True, default='')
+    prev_hash = models.CharField(max_length=64, blank=True, default='')
 
     class Meta:
         ordering = ['-timestamp']
@@ -417,6 +419,9 @@ class BankTransaction(models.Model):
     matched_entity_type = models.CharField(max_length=40, blank=True)   # payment_received, payment_made, expense, bill, invoice
     matched_entity_id = models.PositiveIntegerField(null=True, blank=True)
     reconciled_at = models.DateTimeField(null=True, blank=True)
+    transaction_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    batch = models.ForeignKey('BankStatementBatch', null=True, blank=True, on_delete=models.SET_NULL, related_name='transactions')
+    is_live_feed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-date', '-id']
@@ -761,4 +766,190 @@ class FinancialAnomaly(models.Model):
 
     def __str__(self):
         return f'[{self.severity.upper()}] {self.title}'
+
+
+# ==============================================================================
+# Enterprise Banking: Live Feeds, Statement Batches & Auto-Match Rules
+# ==============================================================================
+
+class BankFeedConnection(models.Model):
+    bank_account = models.OneToOneField(BankAccount, on_delete=models.CASCADE, related_name='feed_connection')
+    provider = models.CharField(max_length=50, default='setu_aa')  # setu_aa, icici_corp, hdfc_api, razorpayx, plaid
+    provider_name = models.CharField(max_length=100, default='Open Banking Live Feed')
+    status = models.CharField(max_length=30, default='connected')  # connected, syncing, disconnected, error
+    consent_id = models.CharField(max_length=100, blank=True)
+    consent_expires_at = models.DateTimeField(null=True, blank=True)
+    auto_sync = models.BooleanField(default=True)
+    sync_frequency = models.CharField(max_length=30, default='hourly')  # real_time, hourly, daily
+    account_mask = models.CharField(max_length=30, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.provider} feed for {self.bank_account.name}'
+
+
+class BankStatementBatch(models.Model):
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='statement_batches')
+    batch_number = models.CharField(max_length=50, unique=True)
+    filename = models.CharField(max_length=255)
+    source = models.CharField(max_length=30, default='csv_import')  # csv_import, ofx_import, camt053, live_feed
+    imported_at = models.DateTimeField(auto_now_add=True)
+    total_rows = models.PositiveIntegerField(default=0)
+    imported_count = models.PositiveIntegerField(default=0)
+    duplicate_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=30, default='completed')  # completed, rolled_back, failed
+    reconciled_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-imported_at']
+
+    def __str__(self):
+        return f'{self.batch_number} ({self.source}) - {self.imported_count} imported'
+
+
+class BankRule(models.Model):
+    name = models.CharField(max_length=150)
+    priority = models.PositiveSmallIntegerField(default=10)
+    field = models.CharField(max_length=40, default='description')  # description, reference, amount, withdrawal, deposit
+    operator = models.CharField(max_length=20, default='contains')  # contains, equals, starts_with, greater_than, less_than
+    value = models.CharField(max_length=200)
+    assign_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    assign_party_type = models.CharField(max_length=20, blank=True)  # customer, vendor
+    assign_party_id = models.PositiveIntegerField(null=True, blank=True)
+    auto_reconcile = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['priority', 'name']
+
+    def __str__(self):
+        return f'{self.name} ({self.field} {self.operator} "{self.value}")'
+
+
+# ==============================================================================
+# Statutory Tax Filing: GSTR-1 & GSTR-3B Official GSTN Returns
+# ==============================================================================
+
+class GSTRReturn(models.Model):
+    GSTR1, GSTR3B = 'GSTR1', 'GSTR3B'
+    TYPES = [(GSTR1, 'GSTR-1 (Outward Supplies)'), (GSTR3B, 'GSTR-3B (Summary Return)')]
+
+    return_type = models.CharField(max_length=15, choices=TYPES)
+    financial_year = models.CharField(max_length=15, default='2026-27')
+    tax_period = models.CharField(max_length=10, default='042026')  # MMYYYY
+    status = models.CharField(max_length=30, default='draft')  # draft, validated, ready_for_filing, filed
+    arn = models.CharField(max_length=40, blank=True)  # Application Reference Number
+    filed_at = models.DateTimeField(null=True, blank=True)
+    taxable_value = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    cgst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    sgst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    igst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    total_tax = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    payload_json = models.JSONField(default=dict, blank=True)  # Official Government GSTN format
+    response_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.return_type} ({self.tax_period}) - {self.status}'
+
+
+# ==============================================================================
+# Enterprise Security: RBAC User Profile, Disaster Recovery Backups & Async Jobs
+# ==============================================================================
+
+class UserProfile(models.Model):
+    ADMIN, ACCOUNTANT, AUDITOR, CASHIER, PORTAL = 'admin', 'accountant', 'auditor', 'cashier', 'portal'
+    ROLES = [
+        (ADMIN, 'Administrator (Full Access)'),
+        (ACCOUNTANT, 'Standard Accountant'),
+        (AUDITOR, 'Statutory Auditor (Read-Only)'),
+        (CASHIER, 'Billing Operator & Cashier'),
+        (PORTAL, 'Customer/Vendor Portal User'),
+    ]
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
+    role = models.CharField(max_length=30, choices=ROLES, default=ADMIN)
+    phone = models.CharField(max_length=30, blank=True)
+    mfa_enabled = models.BooleanField(default=True)
+    mfa_secret = models.CharField(max_length=64, blank=True, default='')
+    backup_codes = models.JSONField(default=list, blank=True)
+    last_active_ip = models.CharField(max_length=50, blank=True)
+    is_locked = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.user.username} ({self.role})'
+
+
+class SecurityBackupRecord(models.Model):
+    snapshot_id = models.CharField(max_length=60, unique=True)
+    filename = models.CharField(max_length=255)
+    file_size_bytes = models.PositiveIntegerField(default=0)
+    checksum_sha256 = models.CharField(max_length=64)
+    backup_type = models.CharField(max_length=30, default='snapshot')  # automated, manual, disaster_recovery_test
+    status = models.CharField(max_length=30, default='verified')  # verified, testing, archived, failed
+    record_counts = models.JSONField(default=dict, blank=True)
+    disaster_recovery_test_passed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Backup {self.snapshot_id} ({self.status})'
+
+
+class BackgroundTask(models.Model):
+    task_id = models.CharField(max_length=50, unique=True)
+    task_type = models.CharField(max_length=50)  # bank_sync, statement_import, bulk_invoice_pdf, gstr_filing_export, backup_snapshot
+    status = models.CharField(max_length=30, default='completed')  # pending, running, completed, failed
+    progress = models.PositiveSmallIntegerField(default=100)  # 0-100%
+    summary = models.CharField(max_length=255, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Task {self.task_id} ({self.task_type}: {self.status})'
+
+
+# ==============================================================================
+# Customer & Vendor Portals
+# ==============================================================================
+
+class CustomerPortalAccess(models.Model):
+    token = models.CharField(max_length=64, unique=True)
+    customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='portal_access')
+    portal_username = models.CharField(max_length=100, blank=True)
+    is_active = models.BooleanField(default=True)
+    allow_online_payment = models.BooleanField(default=True)
+    allow_estimate_approval = models.BooleanField(default=True)
+    allow_statement_download = models.BooleanField(default=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'Portal for {self.customer.name}'
+
+
+class VendorPortalAccess(models.Model):
+    token = models.CharField(max_length=64, unique=True)
+    vendor = models.OneToOneField(Vendor, on_delete=models.CASCADE, related_name='portal_access')
+    is_active = models.BooleanField(default=True)
+    allow_bill_upload = models.BooleanField(default=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'Portal for {self.vendor.name}'
+
 

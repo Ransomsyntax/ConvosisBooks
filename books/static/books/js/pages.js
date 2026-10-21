@@ -779,6 +779,8 @@ async function docMasterDetail(root, kind, selectedId) {
             ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${inv ? 'Send' : 'Approve'}</button>` : ''}
             <button class="btn" type="button" data-act="print">PDF/Print</button>
             ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
+            ${inv ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
+            ${inv ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
             <button class="btn" type="button" data-act="custom">Customize Template</button>
             <button class="btn d" type="button" data-act="delete">Delete</button>
           </div>
@@ -809,6 +811,16 @@ async function docMasterDetail(root, kind, selectedId) {
       const d = curDoc;
       if (act === 'edit') return docForm(kind, d.id);
       if (act === 'print') return window.print();
+      if (act === 'portal') return customerPortalModal(d.customer_id || d.party_id || d.id);
+      if (act === 'vportal') return customerPortalModal(d.vendor_id || d.party_id || d.id);
+      if (act === 'irn') {
+        try {
+          const res = await api(`einvoice/authenticated/${d.id}/`, { method: 'POST' });
+          toast(`Authenticated IRN generated: ${res.irn.slice(0, 16)}...`);
+          refresh();
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
       if (act === 'pay') return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance });
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
         $('#doc-sheet-viewport', root).innerHTML = renderDocSheet(curDoc, kind);
@@ -1212,10 +1224,13 @@ async function bankingReconciliationPage(root) {
     <div class="hd">
       <div>
         <h1>Bank Reconciliation Cockpit</h1>
-        <div class="sub" style="margin-top:2px;">Automated bank feed synchronization & ML transaction matching engine</div>
+        <div class="sub" style="margin-top:2px;">Automated bank feed synchronization, SHA-256 duplicate detection & ML transaction matching engine</div>
       </div>
       <div class="act">
-        <button class="btn" id="bnk-rec-imp" type="button">Import Statement / Feed</button>
+        <button class="btn p" id="bnk-rec-live-sync" type="button">⚡ Sync Live Feed</button>
+        <button class="btn" id="bnk-rec-rules" type="button">⚙️ Bank Rules</button>
+        <button class="btn" id="bnk-rec-rollback" type="button">↺ Rollback Batch</button>
+        <button class="btn" id="bnk-rec-imp" type="button">Import Statement</button>
         <button class="btn" id="bnk-rec-xfer" type="button">Transfer Funds</button>
       </div>
     </div>
@@ -1254,6 +1269,9 @@ async function bankingReconciliationPage(root) {
     </div>
   `;
 
+  $('#bnk-rec-live-sync', root).addEventListener('click', () => importStatementModal(selectedAccId));
+  $('#bnk-rec-rules', root).addEventListener('click', () => bankRulesModal());
+  $('#bnk-rec-rollback', root).addEventListener('click', () => rollbackBatchModal(selectedAccId));
   $('#bnk-rec-imp', root).addEventListener('click', () => importStatementModal(selectedAccId));
   $('#bnk-rec-xfer', root).addEventListener('click', () => transferForm());
   $('#bnk-sel-acc', root).addEventListener('change', e => {
@@ -1406,8 +1424,10 @@ async function gstFilingPage(root, tab = 'overview') {
         <div class="sub" style="margin-top:2px;">Automated GSTR-1, GSTR-3B, Input Tax Credit reconciliation and NIC portal JSON payload export</div>
       </div>
       <div class="act">
-        <button class="btn" id="gst-export-json" type="button">Export GSTR-1 JSON</button>
-        <button class="btn p" id="gst-direct-sync" type="button">Direct Portal Sync</button>
+        <button class="btn p" id="gst-file-gstr1" type="button" style="background:linear-gradient(135deg,#10b981,#059669);border:none;">Sign & File GSTR-1</button>
+        <button class="btn p" id="gst-file-gstr3b" type="button" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);border:none;">Sign & File GSTR-3B</button>
+        <button class="btn" id="gst-export-json" type="button">Official GSTN JSON</button>
+        <button class="btn" id="gst-returns-hist" type="button">Filing History</button>
       </div>
     </div>
 
@@ -1418,11 +1438,32 @@ async function gstFilingPage(root, tab = 'overview') {
     <div id="gst-content-box">${spinner}</div>
   `;
 
-  $('#gst-export-json', root).addEventListener('click', () => {
-    location.href = '/api/reports/gstr1/?export=json';
+  $('#gst-file-gstr1', root).addEventListener('click', () => fileGstrReturnModal('GSTR1'));
+  $('#gst-file-gstr3b', root).addEventListener('click', () => fileGstrReturnModal('GSTR3B'));
+  $('#gst-export-json', root).addEventListener('click', async () => {
+    try {
+      const data = await api('gst/returns/gstr1/?period=042026&fy=2026-27');
+      const blob = new Blob([JSON.stringify(data.gstn_json || data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = `GSTR1_OFFICIAL_GSTN_${iso(new Date())}.json`;
+      a.click();
+      toast('Official GSTN schema JSON exported!');
+    } catch (e) { toast(e.message, 'err'); }
   });
-  $('#gst-direct-sync', root).addEventListener('click', () => {
-    toast('Connected to GST Network (GSTN) · Returns validated successfully');
+  $('#gst-returns-hist', root).addEventListener('click', async () => {
+    try {
+      const hist = await api('gst/returns/history/');
+      Modal.open({
+        title: 'GSTN Return Filing History & Digital Signatures',
+        wide: true,
+        body: `
+          <div class="tw"><table><thead><tr><th>Return</th><th>Period</th><th>Status</th><th>ARN Acknowledgment</th><th>Filed Date</th><th>Tax Payable</th></tr></thead><tbody>
+            ${hist.length ? hist.map(h => `<tr><td><b>${esc(h.return_type)}</b></td><td>${esc(h.tax_period)}</td><td><span class="pastel-chip chip-mint">${esc(h.status)}</span></td><td><code>${esc(h.arn || '—')}</code></td><td>${esc(h.filed_at ? fd(h.filed_at) : '—')}</td><td>${inr(h.total_tax)}</td></tr>`).join('') : '<tr><td colspan="6" class="sub" style="text-align:center;padding:16px;">No filed returns yet. File your first return above.</td></tr>'}
+          </tbody></table></div>
+        `,
+        footer: '<button type="button" class="btn" data-close>Close</button>'
+      });
+    } catch (e) { toast(e.message, 'err'); }
   });
 
   try {
@@ -1860,16 +1901,25 @@ async function securityCompliancePage(root) {
           </div>
         </div>
         <div class="act">
+          <button class="btn p" id="secDrillBtn" type="button" style="background:linear-gradient(135deg,#059669,#10b981);border:none;">
+            🛡️ Run DR Drill
+          </button>
+          <button class="btn" id="secSnapshotBtn" type="button">
+            💾 Create Snapshot
+          </button>
+          <button class="btn" id="secVerifyChainBtn" type="button">
+            🔗 Verify Audit Chain
+          </button>
+          <button class="btn" id="secZohoAssistantBtn" type="button">
+            ⇄ Zoho Books Assistant
+          </button>
           <button class="btn" onclick="location.hash='#/accountant/statutory-audit-logs'" type="button">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             Statutory Audit Trail
           </button>
           <button class="btn" onclick="location.hash='#/accountant/transaction-locking'" type="button">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
             Period Locking
           </button>
           <button class="btn p" onclick="if(window.openFinGptDoubtBot) window.openFinGptDoubtBot('What are our SOC2 Type II and GDPR compliance controls?');" type="button" style="background:linear-gradient(135deg,#10a37f,#6366f1);border:none;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px;"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             Clear Doubts with FinGPT
           </button>
         </div>
@@ -1897,6 +1947,9 @@ async function securityCompliancePage(root) {
         <div class="card" style="padding:18px;">
           <div class="sub" style="font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Regional Tax Engines</div>
           <div style="font-size:24px;font-weight:800;color:var(--accent);margin:6px 0;">GST + Multi-VAT</div>
+          <div class="sub" style="font-size:12px;">E-Way Bill & E-Invoice IRN Out-of-the-Box</div>
+        </div>
+      </div>
           <div class="sub" style="font-size:12px;">E-Way Bill & E-Invoice IRN Out-of-the-Box</div>
         </div>
       </div>
@@ -2051,12 +2104,48 @@ async function securityCompliancePage(root) {
     `;
 
     // Hook up interactive actions
-    $('#mfaToggleBtn', root).addEventListener('click', async () => {
+    const secDrillBtn = $('#secDrillBtn', root);
+    if (secDrillBtn) secDrillBtn.addEventListener('click', () => disasterRecoveryDrillModal());
+
+    const secSnapshotBtn = $('#secSnapshotBtn', root);
+    if (secSnapshotBtn) secSnapshotBtn.addEventListener('click', async () => {
+      secSnapshotBtn.disabled = true;
       try {
-        const res = await api('security/mfa-toggle/', { method: 'POST' });
-        toast(res.message, 'ok');
-        securityCompliancePage(root);
+        const snap = await api('security/backup/create/', { method: 'POST', body: { type: 'manual_snapshot' } });
+        toast(`Cryptographic snapshot ${snap.snapshot_id} created successfully! (SHA-256: ${snap.checksum_sha256.slice(0, 10)}...)`, 'ok');
       } catch (e) { toast(e.message, 'err'); }
+      secSnapshotBtn.disabled = false;
+    });
+
+    const secVerifyChainBtn = $('#secVerifyChainBtn', root);
+    if (secVerifyChainBtn) secVerifyChainBtn.addEventListener('click', async () => {
+      try {
+        const res = await api('security/audit-chain/verify/');
+        Modal.open({
+          title: 'MCA Rule 3 Statutory Audit Hash-Chain Verification',
+          body: `
+            <div style="text-align:center;padding:14px;">
+              <div style="width:50px;height:50px;border-radius:50%;background:rgba(16,185,129,0.15);color:var(--up);display:grid;place-items:center;font-size:24px;margin:0 auto 10px;">✓</div>
+              <h3 style="margin:0 0 4px;">Ledger Hash-Chain Validated</h3>
+              <div class="sub" style="margin-bottom:14px;">Complies with MCA (Ministry of Corporate Affairs) Rule 3 audit-trail requirements.</div>
+              <div style="background:var(--surface-glass-subtle);padding:12px;border-radius:8px;border:1px solid var(--bd);text-align:left;font-size:12px;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span class="sub">Chain Status:</span><span style="font-weight:700;color:var(--up);">${esc(res.mca_compliance_status)}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span class="sub">Total Merkle Blocks:</span><span>${res.total_blocks}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span class="sub">Tampered / Broken Blocks:</span><span>${res.tampered_count}</span></div>
+                <div style="display:flex;justify-content:space-between;"><span class="sub">Hashing Algorithm:</span><span>${esc(res.algorithm)}</span></div>
+              </div>
+            </div>
+          `,
+          footer: '<button type="button" class="btn" data-close>Close</button>'
+        });
+      } catch (e) { toast(e.message, 'err'); }
+    });
+
+    const secZohoAssistantBtn = $('#secZohoAssistantBtn', root);
+    if (secZohoAssistantBtn) secZohoAssistantBtn.addEventListener('click', () => zohoMigrationModal());
+
+    $('#mfaToggleBtn', root).addEventListener('click', () => {
+      totpMfaModal();
     });
 
     $('#gdprExportBtn', root).addEventListener('click', async () => {

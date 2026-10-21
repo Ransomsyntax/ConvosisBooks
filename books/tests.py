@@ -367,3 +367,200 @@ class EnterpriseFeaturesTest(Base):
         self.assertIn('export_metadata', r_gdpr.json())
         self.assertIn('GDPR', r_gdpr.json()['export_metadata']['standard'])
 
+
+class LiveBankingFeedsAndReconciliationTest(Base):
+    def setUp(self):
+        super().setUp()
+        r = self.post('bank-accounts/', {
+            'name': 'HDFC Corporate Current', 'account_number': '50200012345678',
+            'bank_name': 'HDFC Bank', 'ifsc': 'HDFC0001234', 'opening_balance': '50000.00'
+        })
+        self.assertEqual(r.status_code, 201)
+        self.bank_acc_id = r.json()['id']
+
+    def test_live_bank_feed_sync_and_duplicate_prevention(self):
+        # 1. First sync imports live transactions
+        res1 = self.client.post(f"/api/banking/feed-sync/{self.bank_acc_id}/", data=json.dumps({'feed_provider': 'live_sandbox'}), content_type='application/json')
+        self.assertEqual(res1.status_code, 200)
+        d1 = res1.json()
+        self.assertEqual(d1['status'], 'success')
+        self.assertGreater(d1['synced_transactions'], 0)
+        self.assertEqual(d1['duplicates_skipped'], 0)
+        batch_id = d1['batch_id']
+
+        # 2. Second sync immediately afterwards detects idempotent hashes and skips all duplicates
+        res2 = self.client.post(f"/api/banking/feed-sync/{self.bank_acc_id}/", data=json.dumps({'feed_provider': 'live_sandbox'}), content_type='application/json')
+        self.assertEqual(res2.status_code, 200)
+        d2 = res2.json()
+        self.assertEqual(d2['synced_transactions'], 0)
+        self.assertGreater(d2['duplicates_skipped'], 0)
+
+        # 3. Rollback the imported batch recovers the account state safely
+        res_rb = self.client.post(f"/api/banking/rollback/{batch_id}/")
+        self.assertEqual(res_rb.status_code, 200)
+        self.assertEqual(res_rb.json()['status'], 'rolled_back')
+        self.assertEqual(res_rb.json()['batch_id'], batch_id)
+
+    def test_bank_rules_crud_and_matching(self):
+        # Create bank rule
+        r_rule = self.client.post('/api/banking/rules/', data=json.dumps({
+            'name': 'Cloud Infra Rule',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'AWS',
+            'auto_reconcile': True,
+            'priority': 1
+        }), content_type='application/json')
+        self.assertEqual(r_rule.status_code, 201)
+        rule_id = r_rule.json()['id']
+
+        # List bank rules
+        r_list = self.client.get('/api/banking/rules/')
+        self.assertEqual(r_list.status_code, 200)
+        self.assertTrue(any(x['id'] == rule_id for x in r_list.json()))
+
+        # Delete rule
+        r_del = self.client.delete(f"/api/banking/rules/{rule_id}/")
+        self.assertEqual(r_del.status_code, 200)
+
+
+class GstFilingAndStatutoryComplianceTest(Base):
+    def test_authenticated_irn_and_einvoice(self):
+        c = self.customer(gstin='29AAACP1234A1Z5')
+        inv = self.invoice(c)
+        # Authenticated IRN generation
+        r = self.client.post(f"/api/einvoice/authenticated/{inv['id']}/")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data['status'], 'authenticated')
+        self.assertTrue(len(data['irn']) >= 32)
+        self.assertIn('signed_qr_code', data)
+        self.assertIn('ack_no', data)
+
+    def test_official_gstr1_export_and_filing(self):
+        c = self.customer(gstin='29AAACP1234A1Z5')
+        self.invoice(c)
+        r = self.client.get('/api/gst/returns/gstr1/?period=042026&fy=2026-27')
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn('gstin', data)
+        self.assertIn('b2b', data)
+        self.assertIn('cur_gt', data)
+        return_id = data.get('return_id')
+        self.assertIsNotNone(return_id)
+
+        # File return with e-Sign
+        r_file = self.client.post(f"/api/gst/returns/{return_id}/file/", data=json.dumps({'e_sign_type': 'DSC_TOKEN'}), content_type='application/json')
+        self.assertEqual(r_file.status_code, 200)
+        self.assertEqual(r_file.json()['status'], 'filed')
+        self.assertTrue(r_file.json()['arn'].startswith('AA'))
+
+        # Return history
+        r_hist = self.client.get('/api/gst/returns/history/')
+        self.assertEqual(r_hist.status_code, 200)
+        self.assertTrue(len(r_hist.json()) >= 1)
+
+    def test_official_gstr3b_export(self):
+        r = self.client.get('/api/gst/returns/gstr3b/?period=042026&fy=2026-27')
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn('itc_elg', data)
+        self.assertIn('sup_details', data)
+
+    def test_mca_rule_3_tamper_evident_audit_chain(self):
+        # Trigger an audited event
+        self.customer(name='Audit Trail Test Customer')
+        r = self.client.get('/api/security/audit-chain/verify/')
+        self.assertEqual(r.status_code, 200)
+        res = r.json()
+        self.assertTrue(res['is_valid'])
+        self.assertEqual(res['tampered_records_count'], 0)
+        self.assertGreaterEqual(res['verified_records_count'], 1)
+
+
+class SecurityTotpMfaAndDisasterRecoveryTest(Base):
+    def test_totp_mfa_setup_and_verification(self):
+        # 1. Setup returns secret and otpauth uri
+        r_setup = self.client.post('/api/security/mfa/setup/')
+        self.assertEqual(r_setup.status_code, 200)
+        data = r_setup.json()
+        self.assertIn('secret', data)
+        self.assertIn('otpauth_url', data)
+        self.assertTrue(len(data['backup_codes']) >= 8)
+        backup_code = data['backup_codes'][0]
+
+        # 2. Verify with emergency backup code
+        r_verify = self.client.post('/api/security/mfa/verify/', data=json.dumps({'token': backup_code}), content_type='application/json')
+        self.assertEqual(r_verify.status_code, 200)
+        self.assertTrue(r_verify.json()['verified'])
+        self.assertTrue(r_verify.json()['mfa_enabled'])
+
+    def test_backup_snapshot_and_disaster_recovery_drill(self):
+        # 1. Create cryptographic backup snapshot
+        r_bk = self.client.post('/api/security/backup/create/', data=json.dumps({'type': 'pre_audit_snapshot'}), content_type='application/json')
+        self.assertEqual(r_bk.status_code, 200)
+        bdata = r_bk.json()
+        self.assertEqual(bdata['status'], 'created')
+        self.assertTrue(len(bdata['checksum_sha256']) == 64)
+        snap_id = bdata['snapshot_id']
+
+        # 2. List backups
+        r_list = self.client.get('/api/security/backup/list/')
+        self.assertEqual(r_list.status_code, 200)
+        self.assertTrue(any(b['snapshot_id'] == snap_id for b in r_list.json()))
+
+        # 3. Run disaster recovery simulation drill
+        r_drill = self.client.post('/api/security/backup/disaster-recovery-drill/', data=json.dumps({'snapshot_id': snap_id}), content_type='application/json')
+        self.assertEqual(r_drill.status_code, 200)
+        ddata = r_drill.json()
+        self.assertEqual(ddata['drill_status'], 'passed')
+        self.assertTrue(ddata['checksum_verified'])
+        self.assertIn('rto_achieved', ddata)
+
+
+class ScalableBackgroundJobsAndPortalsTest(Base):
+    def test_background_job_execution_and_status(self):
+        r_create = self.client.post('/api/jobs/create/', data=json.dumps({'task_type': 'data_integrity_check'}), content_type='application/json')
+        self.assertEqual(r_create.status_code, 200)
+        task_id = r_create.json()['task_id']
+
+        r_stat = self.client.get(f"/api/jobs/{task_id}/status/")
+        self.assertEqual(r_stat.status_code, 200)
+        self.assertEqual(r_stat.json()['status'], 'completed')
+        self.assertEqual(r_stat.json()['progress_percent'], 100)
+
+    def test_customer_portal_token_and_data(self):
+        cust = self.customer(name='Global Portals Client')
+        self.invoice(cust)
+        # Access portal via customer ID or token
+        r = self.client.get(f"/api/portal/customer/{cust['id']}/")
+        self.assertEqual(r.status_code, 200)
+        pdata = r.json()
+        self.assertEqual(pdata['customer_name'], 'Global Portals Client')
+        self.assertIn('portal_url', pdata)
+        self.assertTrue(len(pdata['invoices']) >= 1)
+
+    def test_vendor_portal_data(self):
+        r_v = self.post('vendors/', {'name': 'Raw Materials Supplies Ltd', 'state': 'Kerala'})
+        self.assertEqual(r_v.status_code, 201)
+        vid = r_v.json()['id']
+        r = self.client.get(f"/api/portal/vendor/{vid}/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['vendor_name'], 'Raw Materials Supplies Ltd')
+
+    def test_zoho_books_interoperability_export_and_import(self):
+        # 1. Export in Zoho schema
+        r_exp = self.client.get('/api/interop/zoho/export/items/')
+        self.assertEqual(r_exp.status_code, 200)
+        self.assertIn('data', r_exp.json())
+
+        # 2. Import Zoho schema records
+        zoho_items = [
+            {'Item Name': 'Zoho Imported Widget', 'SKU': 'ZOHO-WIDGET-01', 'Rate': '750.00', 'Tax Percentage': '18', 'Usage unit': 'pcs'}
+        ]
+        r_imp = self.client.post('/api/interop/zoho/import/items/', data=json.dumps({'records': zoho_items}), content_type='application/json')
+        self.assertEqual(r_imp.status_code, 200)
+        self.assertEqual(r_imp.json()['imported_count'], 1)
+        self.assertEqual(r_imp.json()['status'], 'success')
+
+

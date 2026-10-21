@@ -16,13 +16,15 @@ from . import services
 from .calc import GST_SLABS, compute, is_intra_state, q2
 from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .models import (
-    Account, Attachment, AuditLog, BankAccount, BankTransaction, Bill, BillAllocation, BillLine,
-    CreditNote, CreditNoteLine, CustomField, Customer, DeliveryChallan, DeliveryChallanLine,
-    DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, Invoice, InvoiceLine,
-    Item, ItemCategory, Journal, JournalItem, LockDate, ManagedDocument, MODES, Organization,
-    PaymentMade, PaymentReceived, PaymentTransaction, PriceList, Project, PurchaseOrder,
-    PurchaseOrderLine, ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceLine,
-    SalesOrder, SalesOrderLine, StockMovement, TimeLog, Vendor, VendorCredit, VendorCreditLine,
+    Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
+    BankRule, BankStatementBatch, BankTransaction, Bill, BillAllocation, BillLine,
+    CreditNote, CreditNoteLine, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
+    DeliveryChallanLine, DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
+    GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
+    ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTransaction,
+    PriceList, Project, PurchaseOrder, PurchaseOrderLine, ReceivedAllocation, RecurringInvoice,
+    RetainerInvoice, RetainerInvoiceLine, SalesOrder, SalesOrderLine, SecurityBackupRecord,
+    StockMovement, TimeLog, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
     Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr
@@ -242,12 +244,15 @@ class PartyResource(Resource):
         return out
 
     def create(self, data, user):
-        return self.model.objects.create(**self.clean(data))
+        obj = self.model.objects.create(**self.clean(data))
+        services.log_audit(user, 'create', self.kind, obj.pk, f"Created {self.kind} {obj.name}")
+        return obj
 
     def update(self, obj, data, user):
         for k, v in self.clean(data).items():
             setattr(obj, k, v)
         obj.save()
+        services.log_audit(user, 'update', self.kind, obj.pk, f"Updated {self.kind} {obj.name}")
 
     def rows(self, objs):
         stats = party_stats(self.kind, [o.pk for o in objs])
@@ -2651,3 +2656,251 @@ def mcp_view(request):
 
     else:
         return j({'jsonrpc': '2.0', 'id': msg_id, 'error': {'code': -32601, 'message': f"Unknown MCP method: {method}"}})
+
+
+# ==============================================================================
+# ENTERPRISE EXTENSIONS: BANK FEEDS, GST RETURNS, MFA, BACKUPS & PORTALS
+# ==============================================================================
+
+# --- 1. Live Banking Feeds, Rule Categorization & Rollback ---
+
+@api_view
+def banking_feed_sync_view(request, bank_account_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    provider = d.get('provider', 'setu_aa')
+    res = services.sync_live_bank_feed(bank_account_id, provider=provider, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_rules_view(request):
+    if request.method == 'GET':
+        rules = BankRule.objects.all().order_by('priority')
+        return j([
+            {
+                'id': r.pk, 'name': r.name, 'priority': r.priority, 'field': r.field,
+                'operator': r.operator, 'value': r.value,
+                'assign_account': r.assign_account_id,
+                'assign_account_name': r.assign_account.name if r.assign_account else None,
+                'assign_party_type': r.assign_party_type,
+                'assign_party_id': r.assign_party_id,
+                'auto_reconcile': r.auto_reconcile,
+                'active': r.active
+            }
+            for r in rules
+        ])
+    elif request.method == 'POST':
+        d = body(request)
+        c = Cleaner(d)
+        name = c.text('name', required=True, max_len=150)
+        field = c.text('field', default='description', max_len=40)
+        operator = c.text('operator', default='contains', max_len=20)
+        val = c.text('value', required=True, max_len=200)
+        auto_rec = c.boolean('auto_reconcile', default=False)
+        prio = c.integer('priority', default=10, lo=1, hi=100)
+        acc_id = c.integer('assign_account')
+        party_type = c.text('assign_party_type', max_len=20)
+        party_id = c.integer('assign_party_id')
+        c.done()
+
+        rule = BankRule.objects.create(
+            name=name, field=field, operator=operator, value=val,
+            auto_reconcile=auto_rec, priority=prio,
+            assign_account_id=acc_id, assign_party_type=party_type,
+            assign_party_id=party_id
+        )
+        services.log_audit(request.user, 'create', 'bank_rule', rule.pk, f"Created bank rule {rule.name}")
+        return j({'id': rule.pk, 'name': rule.name, 'status': 'created'}, 201)
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def banking_rules_detail_view(request, pk):
+    rule = BankRule.objects.filter(pk=pk).first()
+    if not rule:
+        raise ApiError(404, 'Rule not found.')
+    if request.method == 'DELETE':
+        rule.delete()
+        services.log_audit(request.user, 'delete', 'bank_rule', pk, f"Deleted bank rule {rule.name}")
+        return j({'status': 'deleted'})
+    elif request.method == 'PUT':
+        d = body(request)
+        rule.active = d.get('active', rule.active)
+        if 'name' in d: rule.name = d['name']
+        if 'value' in d: rule.value = d['value']
+        if 'auto_reconcile' in d: rule.auto_reconcile = d['auto_reconcile']
+        rule.save()
+        return j({'status': 'updated', 'id': rule.pk})
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def banking_rollback_view(request, batch_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.rollback_statement_batch(batch_id, user=request.user)
+    return j(res)
+
+
+# --- 2. Statutory GST Filing & Authenticated IRN ---
+
+@api_view
+def gst_returns_gstr1_view(request):
+    period = request.GET.get('period', '042026')
+    fy = request.GET.get('fy', '2026-27')
+    res = services.generate_official_gstr1(tax_period=period, financial_year=fy)
+    return j(res)
+
+
+@api_view
+def gst_returns_gstr3b_view(request):
+    period = request.GET.get('period', '042026')
+    fy = request.GET.get('fy', '2026-27')
+    res = services.generate_official_gstr3b(tax_period=period, financial_year=fy)
+    return j(res)
+
+
+@api_view
+def gst_returns_file_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    method = d.get('e_sign_type', 'PAN_OTP')
+    res = services.file_gstr_return(pk, e_sign_method=method, user=request.user)
+    return j(res)
+
+
+@api_view
+def gst_returns_history_view(request):
+    returns = GSTRReturn.objects.all().order_by('-created_at')
+    return j([
+        {
+            'id': r.pk, 'return_type': r.return_type, 'financial_year': r.financial_year,
+            'tax_period': r.tax_period, 'status': r.status, 'arn': r.arn,
+            'filed_at': r.filed_at.isoformat() if r.filed_at else None,
+            'taxable_value': str(r.taxable_value), 'total_tax': str(r.total_tax),
+            'created_at': r.created_at.isoformat()
+        }
+        for r in returns
+    ])
+
+
+@api_view
+def einvoice_authenticated_view(request, inv_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.generate_authenticated_irn(inv_id)
+    return j(res)
+
+
+# --- 3. Enterprise Security: Hash-Chain Audit, RFC 6238 TOTP MFA, Backups & Disaster Recovery ---
+
+@api_view
+def security_verify_audit_chain_view(request):
+    res = services.verify_audit_trail_chain()
+    return j(res)
+
+
+@api_view
+def security_mfa_setup_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.generate_mfa_setup(request.user)
+    return j(res)
+
+
+@api_view
+def security_mfa_verify_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    token = d.get('token', '')
+    res = services.verify_mfa_code(request.user, token)
+    return j(res)
+
+
+@api_view
+def security_backup_create_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    btype = d.get('type', 'manual_snapshot')
+    res = services.create_security_snapshot(user=request.user, backup_type=btype)
+    return j(res)
+
+
+@api_view
+def security_backup_list_view(request):
+    backups = SecurityBackupRecord.objects.all().order_by('-created_at')
+    return j([
+        {
+            'id': b.pk, 'snapshot_id': b.snapshot_id, 'filename': b.filename,
+            'size_bytes': b.file_size_bytes, 'checksum_sha256': b.checksum_sha256,
+            'backup_type': b.backup_type, 'status': b.status,
+            'record_counts': b.record_counts,
+            'disaster_recovery_test_passed': b.disaster_recovery_test_passed,
+            'created_at': b.created_at.isoformat()
+        }
+        for b in backups
+    ])
+
+
+@api_view
+def security_disaster_recovery_drill_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    snap_id = d.get('snapshot_id')
+    res = services.run_disaster_recovery_simulation(snapshot_id=snap_id)
+    return j(res)
+
+
+# --- 4. Asynchronous Production Background Jobs ---
+
+@api_view
+def jobs_create_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    task_type = d.get('task_type', 'bulk_sync')
+    res = services.start_background_job(task_type, details=d, user=request.user)
+    return j(res)
+
+
+@api_view
+def jobs_status_view(request, task_id):
+    res = services.get_background_job_status(task_id)
+    return j(res)
+
+
+# --- 5. Customer & Vendor Self-Service Portals & Zoho Books Interoperability ---
+
+def portal_customer_view(request, token_or_id):
+    """Accessible either by authenticated operator or via self-service portal token."""
+    res = services.get_customer_portal_data(token_or_id)
+    return j(res)
+
+
+def portal_vendor_view(request, token_or_id):
+    """Accessible either by authenticated operator or via self-service portal token."""
+    res = services.get_vendor_portal_data(token_or_id)
+    return j(res)
+
+
+@api_view
+def interop_zoho_export_view(request, entity):
+    res = services.export_zoho_compatible_data(entity=entity)
+    return j(res)
+
+
+@api_view
+def interop_zoho_import_view(request, entity):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    records = d.get('records', [])
+    res = services.import_zoho_compatible_data(entity, records, user=request.user)
+    return j(res)
+

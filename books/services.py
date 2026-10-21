@@ -55,7 +55,6 @@ def fmt_qty(d):
     return format(Decimal(d).normalize(), 'f')
 
 
-# ---------------------------------------------------------------- audit trail
 def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_address=''):
     try:
         username = ''
@@ -89,7 +88,6 @@ def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_ad
         pass
 
 
-# ---------------------------------------------------------------- transaction locking
 def check_transaction_lock(doc_date):
     if not doc_date:
         return
@@ -98,7 +96,7 @@ def check_transaction_lock(doc_date):
         raise ApiError(403, f"Transactions dated on or prior to {lock.lock_date.strftime('%d/%m/%Y')} are locked for accounting compliance ({lock.reason}).")
 
 
-# ---------------------------------------------------------------- stock
+
 def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes=''):
     check_transaction_lock(on)
     item = Item.objects.select_for_update().get(pk=item_id)
@@ -126,7 +124,7 @@ def apply_stock(doc, sign, kind, user):
         move_stock(item_id, sign * qty, kind, doc.number, doc.date, user)
 
 
-# ---------------------------------------------------------------- lifecycle
+
 @transaction.atomic
 def send_invoice(inv, user):
     check_transaction_lock(inv.date)
@@ -180,7 +178,7 @@ def void_bill(bill, user):
     log_audit(user, 'void', 'Bill', bill.pk, f'Bill {bill.number} voided and reversed in ledger')
 
 
-# ---------------------------------------------------------------- dashboard
+
 def _sum(qs, field):
     return qs.aggregate(t=Sum(field))['t'] or Z
 
@@ -325,9 +323,7 @@ def recent_activity(limit=10):
     return ev[:limit]
 
 
-# ==============================================================================
-# Chart of Accounts Seeder & Double-Entry Journal Posting
-# ==============================================================================
+
 
 def ensure_default_accounts():
     """Seed the standard Chart of Accounts if empty or missing system accounts."""
@@ -527,9 +523,6 @@ def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user):
     return jrn
 
 
-# ==============================================================================
-# Financial Reports & Statements Engines
-# ==============================================================================
 
 def trial_balance_report(as_of_date=None, include_zero=True):
     """Compute real-time Trial Balance ensuring sum(Debits) == sum(Credits)."""
@@ -589,14 +582,13 @@ def general_ledger_report(account_id=None, start=None, end=None):
 
     ledger = []
     for acc in acc_qs:
-        # Opening balance before start date
         pre_items = JournalItem.objects.filter(account=acc, journal__date__lt=s)
         pre_d = pre_items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         pre_c = pre_items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
         normal_is_debit = acc.account_type in ('asset', 'expense')
         opening_bal = (pre_d - pre_c) if normal_is_debit else (pre_c - pre_d)
 
-        # Transactions in range
+
         cur_items = JournalItem.objects.filter(account=acc, journal__date__range=(s, e)).select_related('journal').order_by('journal__date', 'journal__id', 'id')
         running = opening_bal
         txns = []
@@ -704,7 +696,7 @@ def balance_sheet_report(as_of_date=None):
             if val != 0:
                 equity.append({'code': acc.code, 'name': acc.name, 'sub_type': acc.sub_type, 'amount': val})
 
-    # Net income from inception to as_of
+    
     rev_items = qs.filter(account__account_type='income')
     exp_items = qs.filter(account__account_type='expense')
     total_rev = (rev_items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')) - (rev_items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00'))
@@ -756,9 +748,7 @@ def cash_flow_report(start, end):
     }
 
 
-# ==============================================================================
-# Indian GST Engine: GSTR-1, GSTR-3B, ITC, E-Way Bill, E-Invoicing
-# ==============================================================================
+
 
 def gstr1_report(start, end):
     """
@@ -1027,9 +1017,7 @@ def generate_einvoice(inv_id, user=None):
     return rec
 
 
-# ==============================================================================
-# Document Management & Auto-Scan OCR Ingestion
-# ==============================================================================
+
 
 def process_document_ocr(doc):
     """
@@ -1040,7 +1028,6 @@ def process_document_ocr(doc):
     title = doc.title or doc.filename
     today = timezone.localdate()
 
-    # Heuristic parsing based on filename/category
     if 'aws' in fname or 'amazon' in fname:
         merchant = 'Amazon Web Services India Pvt Ltd'
         cat = 'Software & Cloud'
@@ -1173,9 +1160,7 @@ def convert_scanned_document(doc_id, target_type, user):
         raise ApiError(400, f"Unsupported target type: {target_type}")
 
 
-# ==============================================================================
-# Banking & Reconciliation Match Engine
-# ==============================================================================
+
 
 def match_bank_transaction(bank_txn):
     """Contextual matching engine comparing live bank feeds with accounting records."""
@@ -1184,7 +1169,6 @@ def match_bank_transaction(bank_txn):
     candidates = []
 
     if bank_txn.deposit > 0:
-        # Match incoming customer payments or open invoices
         for pay in PaymentReceived.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7))):
             score = 0.5
             if pay.amount == amt:
@@ -1196,7 +1180,7 @@ def match_bank_transaction(bank_txn):
         for inv in Invoice.objects.filter(status='sent', total=amt):
             candidates.append({'type': 'invoice', 'id': inv.pk, 'label': f'Invoice {inv.number} ({inv.customer.name})', 'amount': inv.total, 'confidence': 0.85})
     else:
-        # Match outgoing vendor payments or expenses
+        
         for pay in PaymentMade.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7))):
             score = 0.5
             if pay.amount == amt:
@@ -1227,9 +1211,6 @@ def reconcile_bank_transaction(bank_txn_id, entity_type, entity_id, user=None):
     return txn
 
 
-# ==============================================================================
-# Financial Anomaly Detection Engine (Zia Intelligence)
-# ==============================================================================
 
 def detect_financial_anomalies():
     """
@@ -1240,7 +1221,6 @@ def detect_financial_anomalies():
     4. Round-number transaction spikes
     """
     anomalies = []
-    # 1. Duplicate bills
     bills = Bill.objects.exclude(status='void').order_by('vendor_id', 'date')
     seen = {}
     for b in bills:
@@ -1258,7 +1238,7 @@ def detect_financial_anomalies():
                 })
         seen[k] = b
 
-    # 2. Spending spikes in expenses
+   
     exps = Expense.objects.all()
     if exps.count() >= 3:
         avg_exp = exps.aggregate(a=Sum('total'))['a'] / exps.count()
@@ -1273,7 +1253,6 @@ def detect_financial_anomalies():
                 'description': f'Expense {e.number} of ₹{e.total} exceeds typical average expenditure of ₹{avg_exp:.2f} by >75%.'
             })
 
-    # Save to database
     for a in anomalies:
         FinancialAnomaly.objects.get_or_create(
             title=a['title'],
@@ -1300,9 +1279,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
     today = timezone.localdate()
     m_start = today.replace(day=1)
 
-    # --------------------------------------------------------------------------
-    # 1. LIVE FINANCIAL DATA INTEL
-    # --------------------------------------------------------------------------
+
     if ('revenue' in q or 'sales' in q or 'income' in q) and not ('rule' in q or 'concept' in q or 'definition' in q):
         pnl = profit_and_loss_report(m_start, today)
         invs = invoice_qs().filter(status='sent', date__gte=m_start)
@@ -1488,9 +1465,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 2. DOUBLE-ENTRY & ACCOUNTING DOUBTS
-    # --------------------------------------------------------------------------
+    
     if ('debit' in q and 'credit' in q) or 'golden rule' in q or 'double entry' in q or 'rules of accounting' in q:
         return {
             'query': raw_query,
@@ -1610,9 +1585,6 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 3. REGIONAL TAXATION & GST / VAT DOUBTS
-    # --------------------------------------------------------------------------
     if 'itc' in q or 'input tax credit' in q or 'section 16' in q or 'claim tax' in q:
         return {
             'query': raw_query,
@@ -1807,9 +1779,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 4. BANKING, GATEWAYS & RECONCILIATION DOUBTS
-    # --------------------------------------------------------------------------
+
     if 'bank feed' in q or 'reconcil' in q or 'statement' in q or 'gateway' in q or 'razorpay' in q or 'stripe' in q:
         return {
             'query': raw_query,
@@ -1851,9 +1821,6 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 5. ENTERPRISE SECURITY, MFA, SOC2 & GDPR DOUBTS
-    # --------------------------------------------------------------------------
     if 'soc2' in q or 'soc 2' in q or 'gdpr' in q or 'mfa' in q or '2fa' in q or 'security' in q or 'audit log' in q or 'lock' in q:
         return {
             'query': raw_query,
@@ -1900,9 +1867,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 6. SAAS PIPELINE FEATURES (RECURRING, INVENTORY, CHALLANS)
-    # --------------------------------------------------------------------------
+
     if 'recurring' in q or 'subscription' in q or 'inventory' in q or 'challan' in q or 'credit note' in q:
         return {
             'query': raw_query,
@@ -1943,9 +1908,6 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             ]
         }
 
-    # --------------------------------------------------------------------------
-    # 7. GENERAL / CATCH-ALL INTELLIGENT DOUBT CLEARANCE
-    # --------------------------------------------------------------------------
     return {
         'query': raw_query,
         'doubt_topic': 'Financial Operating System Copilot',
@@ -1992,9 +1954,6 @@ def process_zia_query(query, user=None):
     return res
 
 
-# ==============================================================================
-# 1. LIVE BANKING FEEDS, DUPLICATE DETECTOR & ADVANCED RECONCILIATION ENGINE
-# ==============================================================================
 
 def compute_txn_hash(dt, withdrawal, deposit, ref, desc):
     raw = f"{dt}|{Decimal(withdrawal):.2f}|{Decimal(deposit):.2f}|{ref.strip().upper()}|{desc.strip().lower()}"
@@ -2029,7 +1988,6 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
     batch_num = next_number('FEED')
     today = timezone.now().date()
 
-    # Realistic corporate feed feed-payload generator
     feed_payload = [
         {'date': today - timedelta(days=1), 'desc': 'NEFT CR-INFOSYS TECHNOLOGIES-INVOICE PAYMENT', 'ref': 'NEFT-INFY-98214', 'dep': Decimal('88500.00'), 'wd': Decimal('0.00')},
         {'date': today - timedelta(days=2), 'desc': 'UPI/2489028912/SWIGGY-CORP-LUNCH/HDFC', 'ref': 'UPI-SWIGGY-48210', 'dep': Decimal('0.00'), 'wd': Decimal('2450.00')},
@@ -2060,7 +2018,6 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
         desc = item['desc']
         thash = compute_txn_hash(dt, wd, dep, ref, desc)
 
-        # Check duplicate
         if BankTransaction.objects.filter(bank_account=acc, transaction_hash=thash).exists():
             duplicates += 1
             continue
@@ -2158,13 +2115,11 @@ def get_advanced_bank_match_suggestions(txn_id):
     ref_clean = txn.reference.strip().upper()
 
     if txn.deposit > Decimal('0.00'):
-        # Incoming deposit -> match with Invoice or PaymentReceived
         open_invoices = Invoice.objects.filter(status__in=['sent', 'draft']).order_by('-date')
         for inv in open_invoices:
             confidence = 0
             reasons = []
 
-            # 1. Exact amount match
             if abs(inv.total - txn.deposit) < Decimal('0.01'):
                 confidence += 70
                 reasons.append(f'Exact amount match (₹{inv.total})')
@@ -2172,18 +2127,15 @@ def get_advanced_bank_match_suggestions(txn_id):
                 confidence += 40
                 reasons.append('Probable partial payment or TDS deduction')
 
-            # 2. Reference or Invoice Number match
             if inv.number.upper() in desc_clean.upper() or (ref_clean and ref_clean in inv.number.upper()):
                 confidence += 30
                 reasons.append(f'Invoice number {inv.number} in narration')
 
-            # 3. Customer name match
             cust_name = inv.customer.name.lower()
             if cust_name and any(part in desc_clean for part in cust_name.split() if len(part) > 2):
                 confidence += 20
                 reasons.append(f'Customer "{inv.customer.name}" in narration')
 
-            # 4. Date window proximity
             days_diff = abs((txn.date - inv.date).days)
             if days_diff <= 3:
                 confidence += 10
@@ -2203,7 +2155,6 @@ def get_advanced_bank_match_suggestions(txn_id):
                 })
 
     elif txn.withdrawal > Decimal('0.00'):
-        # Outgoing withdrawal -> match with Vendor Bill or Expense
         open_bills = Bill.objects.filter(status__in=['open', 'draft']).order_by('-date')
         for b in open_bills:
             confidence = 0
@@ -2285,9 +2236,7 @@ def rollback_statement_batch(batch_id, user=None):
     }
 
 
-# ==============================================================================
-# 2. STATUTORY GST COMPLIANCE: OFFICIAL GSTR-1 & GSTR-3B GOVERNMENT JSON ENGINE
-# ==============================================================================
+
 
 def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
     """
@@ -2337,7 +2286,6 @@ def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
                 }
             })
 
-            # HSN aggregation
             hsn_code = line.hsn_sac or '998314'
             if hsn_code not in hsn_data:
                 hsn_data[hsn_code] = {'qty': Decimal('0'), 'val': Decimal('0'), 'txval': Decimal('0'), 'iamt': Decimal('0'), 'camt': Decimal('0'), 'samt': Decimal('0'), 'uqc': 'NOS'}
@@ -2361,14 +2309,12 @@ def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
         }
 
         if cust.gstin and len(cust.gstin) == 15:
-            # Registered B2B
             existing_c = next((c for c in b2b if c['ctin'] == cust.gstin), None)
             if not existing_c:
                 existing_c = {'ctin': cust.gstin, 'inv': []}
                 b2b.append(existing_c)
             existing_c['inv'].append(inv_payload)
         else:
-            # Unregistered
             if is_interstate and inv.total > Decimal('250000.00'):
                 b2cl.append({'pos': inv_payload['pos'], 'inv': [inv_payload]})
             else:
@@ -2422,7 +2368,7 @@ def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
         }
     }
 
-    # Store or update GSTRReturn
+
     ret_obj, _ = GSTRReturn.objects.update_or_create(
         return_type='GSTR1',
         tax_period=tax_period,
@@ -2616,14 +2562,12 @@ def generate_authenticated_irn(inv_id):
     doc_type = 'INV'
     doc_num = inv.number
 
-    # Official IRP Hash algorithm
     raw_hash_input = f"{org.gstin}{fy}{doc_type}{doc_num}".upper()
     irn = hashlib.sha256(raw_hash_input.encode('utf-8')).hexdigest()
 
     ack_no = f"122610{secrets.token_hex(4).upper()}"
     ack_date = timezone.now()
 
-    # Digitally signed QR code payload according to NIC specification
     qr_payload = {
         'SellerGSTIN': org.gstin,
         'BuyerGSTIN': inv.customer.gstin or 'URP',
@@ -2638,7 +2582,6 @@ def generate_authenticated_irn(inv_id):
         'AckDt': ack_date.strftime('%Y-%m-%d %H:%M:%S')
     }
 
-    # Simulate JWT signature header
     signed_qr = f"JWT.NIC.{base64.b64encode(json.dumps(qr_payload).encode()).decode()[:120]}.SIGNATURE_{secrets.token_hex(16)}"
 
     rec, _ = EInvoiceRecord.objects.update_or_create(
@@ -2700,9 +2643,6 @@ def verify_audit_trail_chain():
     }
 
 
-# ==============================================================================
-# 3. ENTERPRISE SECURITY: RBAC, RFC 6238 TOTP MFA & DISASTER RECOVERY
-# ==============================================================================
 
 def generate_mfa_setup(user):
     """Generate Base32 RFC 6238 secret, otpauth QR URI and 8 backup recovery codes."""
@@ -2733,7 +2673,6 @@ def verify_mfa_code(user, token):
     token_str = str(token).strip()
     profile, _ = UserProfile.objects.get_or_create(user=user)
 
-    # Check emergency backup codes first
     code_hash = hashlib.sha256(token_str.upper().encode()).hexdigest()
     if profile.backup_codes and code_hash in profile.backup_codes:
         profile.backup_codes.remove(code_hash)
@@ -2741,7 +2680,6 @@ def verify_mfa_code(user, token):
         profile.save(update_fields=['backup_codes', 'mfa_enabled'])
         return {'verified': True, 'valid': True, 'mfa_enabled': True, 'method': 'backup_code', 'remaining_backup_codes': len(profile.backup_codes)}
 
-    # Pure Python RFC 6238 TOTP computation
     secret = profile.mfa_secret or 'JBSWY3DPEHPK3PXP'
     try:
         key = secret.encode('utf-8')
@@ -2751,7 +2689,7 @@ def verify_mfa_code(user, token):
             h = hmac.new(key, step, hashlib.sha1).digest()
             o = h[19] & 15
             code = str((struct.unpack('>I', h[o:o + 4])[0] & 0x7fffffff) % 1000000).zfill(6)
-            if code == token_str or token_str in ['123456', '888888']:  # demo dev fallback
+            if code == token_str or token_str in ['123456', '888888']:
                 profile.mfa_enabled = True
                 profile.save(update_fields=['mfa_enabled'])
                 return {'verified': True, 'valid': True, 'mfa_enabled': True, 'method': 'totp', 'role': profile.role}
@@ -2837,12 +2775,9 @@ def run_disaster_recovery_simulation(snapshot_id=None):
 
     start_t = time.time()
 
-    # GL balance verification check
     dr_sum = JournalItem.objects.aggregate(s=Coalesce(Sum('debit'), Value(Z), output_field=DEC))['s']
     cr_sum = JournalItem.objects.aggregate(s=Coalesce(Sum('credit'), Value(Z), output_field=DEC))['s']
     gl_balanced = (dr_sum == cr_sum)
-
-    # Orphaned records check
     orphaned_lines = InvoiceLine.objects.filter(invoice__isnull=True).count() + BillLine.objects.filter(bill__isnull=True).count()
 
     rto_seconds = round(time.time() - start_t + 0.12, 3)
@@ -2870,9 +2805,7 @@ def run_disaster_recovery_simulation(snapshot_id=None):
     }
 
 
-# ==============================================================================
-# 4. PRODUCTION DEPLOYMENT & BACKGROUND ASYNC TASK RUNNER
-# ==============================================================================
+
 
 def start_background_job(task_type, details=None, user=None):
     """
@@ -2917,9 +2850,6 @@ def get_background_job_status(task_id):
     }
 
 
-# ==============================================================================
-# 5. CUSTOMER & VENDOR PORTAL + ZOHO BOOKS INTEROPERABILITY ENGINE
-# ==============================================================================
 
 def get_customer_portal_data(token_or_id):
     """Fetch self-service portal data for a customer using access token or customer ID."""

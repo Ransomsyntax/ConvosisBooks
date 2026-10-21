@@ -191,7 +191,6 @@ class Resource:
         return j(self.detail(self.get_object(pk)))
 
 
-# ====================================================================== parties
 def party_stats(kind, ids):
     """kind 'customer'|'vendor' -> {id: {billed, outstanding, overdue}} from posted documents."""
     today = timezone.localdate()
@@ -292,7 +291,6 @@ class VendorResource(PartyResource):
                 ('Billed', 'billed'), ('Payable', 'outstanding'), ('Overdue', 'overdue'), ('Active', 'active')]
 
 
-# ====================================================================== items
 class ItemResource(Resource):
     name = 'items'
     model = Item
@@ -398,7 +396,6 @@ class ItemResource(Resource):
         obj.save()
 
 
-# ====================================================================== documents
 def parse_lines(raw):
     msg = 'Add at least one line item.'
     if not isinstance(raw, list) or not raw:
@@ -663,7 +660,6 @@ class BillResource(DocResource):
             raise ApiError(404, 'Unknown action.')
 
 
-# ====================================================================== payments
 class PaymentResource(Resource):
     Model = Doc = Alloc = Party = None
     party_attr = doc_attr = prefix = posted = ''
@@ -783,7 +779,6 @@ class PaymentMadeResource(PaymentResource):
                 ('Reference', 'reference'), ('Amount', 'amount'), ('Applied', 'applied'), ('Unapplied', 'unapplied')]
 
 
-# ====================================================================== stock
 class StockMovementResource(Resource):
     name = 'stock-movements'
     model = StockMovement
@@ -836,9 +831,6 @@ class StockAdjustmentResource(StockMovementResource):
         return StockMovement.objects.filter(reference=ref).first()
 
 
-# ==============================================================================
-# Enterprise Accounting: Chart of Accounts & Manual Journals
-# ==============================================================================
 
 class AccountResource(Resource):
     name = 'accounts'
@@ -972,9 +964,6 @@ class AuditLogResource(Resource):
         }
 
 
-# ==============================================================================
-# Low-Code Extensibility: Custom Fields & Workflows
-# ==============================================================================
 
 class CustomFieldResource(Resource):
     name = 'custom-fields'
@@ -1063,9 +1052,7 @@ class WebhookConfigResource(Resource):
         return WebhookConfig.objects.create(name=nm, url=url, secret=secret, events=evs)
 
 
-# ==============================================================================
-# Banking & Reconciliation Resources
-# ==============================================================================
+
 
 class BankAccountResource(Resource):
     name = 'bank-accounts'
@@ -1138,10 +1125,6 @@ class BankTransactionResource(Resource):
             'matched_entity_id': o.matched_entity_id, 'reconciled_at': o.reconciled_at
         }
 
-
-# ==============================================================================
-# Document Management & Auto-Scan OCR Repository
-# ==============================================================================
 
 class DocumentFolderResource(Resource):
     name = 'folders'
@@ -1225,18 +1208,12 @@ class ManagedDocumentResource(Resource):
 
     def destroy(self, obj):
         if obj.is_deleted:
-            # Permanent purge
             obj.delete()
         else:
-            # Soft delete to trash (/#/documents/trash)
             obj.is_deleted = True
             obj.deleted_at = timezone.now()
             obj.save(update_fields=['is_deleted', 'deleted_at'])
 
-
-# ==============================================================================
-# Sales & Purchase Pipeline Resources: Orders, Expenses, Credits, Challans
-# ==============================================================================
 
 class SalesOrderResource(Resource):
     name = 'sales-orders'
@@ -1605,9 +1582,6 @@ class EWayBillResource(Resource):
         return services.generate_eway_bill(dtype, doc_id, '', trans_name, veh, dist, user)
 
 
-# ==============================================================================
-# Time Tracking, Price Lists, Warehouses & Anomaly Resources
-# ==============================================================================
 
 class ProjectResource(Resource):
     name = 'projects'
@@ -1759,10 +1733,6 @@ class FinancialAnomalyResource(Resource):
         }
 
 
-# ==============================================================================
-# Complete Resource Registry
-# ==============================================================================
-
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
@@ -1799,7 +1769,7 @@ def action(request, name, pk, act):
     return res.handle_action(request, pk, act)
 
 
-# ====================================================================== misc endpoints
+
 def org_json(o):
     return {
         'name': o.name,
@@ -2016,9 +1986,7 @@ def search_view(request):
     return j(out)
 
 
-# ==============================================================================
-# Health, Resilience & Uptime API
-# ==============================================================================
+
 
 def health_view(request):
     import time
@@ -2125,9 +2093,6 @@ def reports_view(request, name):
         raise ApiError(404, f"Report '{name}' not found.")
 
 
-# ==============================================================================
-# Banking Feeds & Reconciliation Endpoints
-# ==============================================================================
 
 @api_view
 def banking_import_view(request):
@@ -2144,7 +2109,6 @@ def banking_import_view(request):
     today = timezone.localdate()
 
     if not rows:
-        # Generate simulated live feed transactions
         feed_samples = [
             {'date': today.isoformat(), 'description': 'NEFT/Customer Inward Remittance', 'deposit': '15000.00', 'withdrawal': '0.00', 'reference': 'N10293848'},
             {'date': today.isoformat(), 'description': 'UPI/Office Stationery Store', 'deposit': '0.00', 'withdrawal': '1250.00', 'reference': 'UPI-492019'},
@@ -2225,10 +2189,6 @@ def banking_transfer_view(request):
     return j({'success': True, 'from_balance': from_acc.current_balance, 'to_balance': to_acc.current_balance})
 
 
-# ==============================================================================
-# Document Lifecycle, Soft-Delete Trash & OCR Auto-Scan
-# ==============================================================================
-
 @api_view
 def document_ocr_view(request, pk):
     doc = ManagedDocument.objects.filter(pk=pk).first()
@@ -2274,9 +2234,7 @@ def document_purge_view(request, pk):
     return HttpResponse(status=204)
 
 
-# ==============================================================================
-# Indian GST Compliance: e-Invoice & e-Way Bill
-# ==============================================================================
+
 
 @api_view
 def einvoice_generate_view(request, inv_id):
@@ -2344,9 +2302,6 @@ def transaction_locking_view(request):
     raise ApiError(405, 'Method not allowed.')
 
 
-# ==============================================================================
-# Convosis Zia AI Financial Assistant & FinGPT Doubt Clearance Engine
-# ==============================================================================
 
 @api_view
 def ai_doubt_clearance_view(request):
@@ -2393,9 +2348,7 @@ def ai_anomalies_resolve_view(request, pk):
     return j({'status': 'resolved', 'id': anom.pk})
 
 
-# ==============================================================================
-# Enterprise Security, Multi-Factor Authentication (MFA), SOC2 & GDPR Compliance
-# ==============================================================================
+
 
 @api_view
 def security_compliance_summary_view(request):
@@ -2539,9 +2492,6 @@ def security_gdpr_export_view(request):
     return j(export_payload)
 
 
-# ==============================================================================
-# Model Context Protocol (MCP) Server Endpoint (JSON-RPC 2.0)
-# ==============================================================================
 
 @api_view
 def mcp_view(request):
@@ -2656,12 +2606,6 @@ def mcp_view(request):
         return j({'jsonrpc': '2.0', 'id': msg_id, 'error': {'code': -32601, 'message': f"Unknown MCP method: {method}"}})
 
 
-# ==============================================================================
-# ENTERPRISE EXTENSIONS: BANK FEEDS, GST RETURNS, MFA, BACKUPS & PORTALS
-# ==============================================================================
-
-# --- 1. Live Banking Feeds, Rule Categorization & Rollback ---
-
 @api_view
 def banking_feed_sync_view(request, bank_account_id):
     if request.method != 'POST':
@@ -2742,7 +2686,6 @@ def banking_rollback_view(request, batch_id):
     return j(res)
 
 
-# --- 2. Statutory GST Filing & Authenticated IRN ---
 
 @api_view
 def gst_returns_gstr1_view(request):
@@ -2793,7 +2736,6 @@ def einvoice_authenticated_view(request, inv_id):
     return j(res)
 
 
-# --- 3. Enterprise Security: Hash-Chain Audit, RFC 6238 TOTP MFA, Backups & Disaster Recovery ---
 
 @api_view
 def security_verify_audit_chain_view(request):
@@ -2855,7 +2797,6 @@ def security_disaster_recovery_drill_view(request):
     return j(res)
 
 
-# --- 4. Asynchronous Production Background Jobs ---
 
 @api_view
 def jobs_create_view(request):
@@ -2873,7 +2814,6 @@ def jobs_status_view(request, task_id):
     return j(res)
 
 
-# --- 5. Customer & Vendor Self-Service Portals & Zoho Books Interoperability ---
 
 def portal_customer_view(request, token_or_id):
     """Accessible either by authenticated operator or via self-service portal token."""

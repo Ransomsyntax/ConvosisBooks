@@ -673,7 +673,7 @@ async function itemForm(id) {
         }
       });
 
-      // 2. Generic "+ Add New" helper for dropdowns
+      
       const setupAddNew = (selectEl, { promptText, placeholder, onAdd }) => {
         if (!selectEl) return;
         let prevVal = selectEl.value;
@@ -723,7 +723,6 @@ async function itemForm(id) {
         });
       };
 
-      // 3. Unit Dropdown + Direct Enter Input Sync & Add New Unit
       const unitSelect = $('#item_unit_select', form);
       const unitInput = $('#item_unit', form);
       unitSelect.addEventListener('change', () => {
@@ -749,7 +748,6 @@ async function itemForm(id) {
         }
       });
 
-      // 4. GST Rates (Intra-state & Inter-state sync + Add New Tax Rate)
       const intra = $('#item_gst_intra', form);
       const inter = $('#item_gst_inter', form);
       const taxPref = $('#item_tax_pref', form);
@@ -771,7 +769,6 @@ async function itemForm(id) {
         const intraText = `GST${numVal} [${numVal}%]`;
         const interText = `IGST${numVal} [${numVal}%]`;
 
-        // Ensure in Intra
         if (!intra.querySelector(`option[value="${rateStr}"]`)) {
           const opt = document.createElement('option');
           opt.value = rateStr;
@@ -779,7 +776,7 @@ async function itemForm(id) {
           const group = intra.querySelector('optgroup') || intra;
           group.appendChild(opt);
         }
-        // Ensure in Inter
+    
         if (!inter.querySelector(`option[value="${rateStr}"]`)) {
           const opt = document.createElement('option');
           opt.value = rateStr;
@@ -814,7 +811,6 @@ async function itemForm(id) {
       taxPref.addEventListener('change', syncTaxPref);
       syncTaxPref();
 
-      // 5. Sales Account (+ Add New)
       const salesAcctSelect = $('#item_sales_account', form);
       setupAddNew(salesAcctSelect, {
         promptText: 'Enter new sales account name:',
@@ -824,7 +820,6 @@ async function itemForm(id) {
         }
       });
 
-      // 6. Purchase Account (+ Add New)
       const purchAcctSelect = $('#item_purchase_account', form);
       setupAddNew(purchAcctSelect, {
         promptText: 'Enter new purchase account name:',
@@ -834,7 +829,6 @@ async function itemForm(id) {
         }
       });
 
-      // 7. Preferred Vendor (+ Add New Vendor with API creation)
       const vendorSelect = $('#item_preferred_vendor', form);
       setupAddNew(vendorSelect, {
         promptText: 'Enter new vendor name:',
@@ -848,7 +842,6 @@ async function itemForm(id) {
         }
       });
 
-      // 8. Inventory Account (+ Add New)
       const invAcctSelect = $('#item_inventory_account', form);
       setupAddNew(invAcctSelect, {
         promptText: 'Enter new inventory account name:',
@@ -858,7 +851,7 @@ async function itemForm(id) {
         }
       });
 
-      // 9. Type Radio (Goods vs Service)
+
       const invSec = $('#inventorySection', form);
       const trackInvCheck = $('#chkTrackInventory', form);
       const syncType = () => {
@@ -872,7 +865,7 @@ async function itemForm(id) {
 
 
 
-      // 11. Inventory Tracking Sync
+  
       const invBody = $('#inventoryBody', form);
       const syncTrackInv = () => {
         invBody.style.display = trackInvCheck.checked ? 'grid' : 'none';
@@ -973,7 +966,6 @@ async function docForm(kind, id) {
         if (rm) { if ($$('tr.ln', form).length > 1) { rm.closest('tr').remove(); m.markDirty(); calc(); } else toast('At least one line is required.', 'err'); }
       });
 
-      // Render existing attachments if editing
       const attachBox = $('#doc-attach-badges', form);
       const renderAttach = () => {
         let h = '';
@@ -1029,7 +1021,6 @@ async function docForm(kind, id) {
       d.lines = $$('tr.ln', form).map(tr => ({ item: $('.l-item', tr).value || null, description: $('.l-desc', tr).value, hsn_sac: $('.l-hsn', tr).value, quantity: $('.l-qty', tr).value, rate: $('.l-rate', tr).value, discount_percent: $('.l-disc', tr).value || 0, gst_rate: $('.l-gst', tr).value }));
       const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
 
-      // Save pending attachments
       for (const pf of pendingFiles) {
         try {
           await api('attachments/', {
@@ -1224,9 +1215,6 @@ function orgForm() {
   });
 }
 
-// ==============================================================================
-// Enterprise Accounting Forms: Accounts, Journals, Expenses, Banking & AI
-// ==============================================================================
 
 async function accountForm(id) {
   const o = id ? await api(`accounts/${id}/`) : { code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', active: true };
@@ -1664,14 +1652,12 @@ async function ziaAiAssistantModal() {
     if (!q) return;
     input.value = '';
 
-    // Append user message
     const uMsg = document.createElement('div');
     uMsg.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
     uMsg.innerHTML = `<div style="background:var(--accent);color:#fff;padding:10px 14px;border-radius:10px;max-width:85%;line-height:1.5;">${esc(q)}</div>`;
     chat.appendChild(uMsg);
     chat.scrollTop = chat.scrollHeight;
 
-    // Loading indicator
     const lMsg = document.createElement('div');
     lMsg.style.cssText = 'display:flex;gap:10px;align-items:flex-start;';
     lMsg.innerHTML = `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div><div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);">${spinner}</div>`;
@@ -1948,7 +1934,7 @@ async function viewDocumentOcrModal(doc) {
   });
 }
 
-/* ==================== 1. Bank Rules & Rollback Modals ==================== */
+
 async function rollbackBatchModal(baId) {
   const m = Modal.open({
     title: 'Rollback Statement Batch / Feed Recovery',
@@ -2063,7 +2049,7 @@ async function bankRulesModal() {
   });
 }
 
-/* ==================== 2. GST Statutory Filing Modal ==================== */
+
 async function fileGstrReturnModal(returnType = 'GSTR1') {
   const period = '042026';
   const fy = '2026-27';
@@ -2159,7 +2145,6 @@ async function fileGstrReturnModal(returnType = 'GSTR1') {
   });
 }
 
-/* ==================== 3. Security, MFA & Disaster Recovery Modals ==================== */
 async function totpMfaModal() {
   const setup = await api('security/mfa/setup/', { method: 'POST' });
   const m = Modal.open({
@@ -2271,7 +2256,6 @@ async function disasterRecoveryDrillModal() {
   });
 }
 
-/* ==================== 4. Customer & Vendor Portals ==================== */
 async function customerPortalModal(customerId) {
   const data = await api(`portal/customer/${customerId}/`);
   const fullPortalUrl = location.origin + '/' + data.portal_url;
@@ -2332,7 +2316,6 @@ async function customerPortalModal(customerId) {
   });
 }
 
-/* ==================== 5. Zoho Books Interoperability Assistant ==================== */
 function zohoMigrationModal() {
   const m = Modal.open({
     title: 'Zoho Books Interoperability & Migration Assistant',

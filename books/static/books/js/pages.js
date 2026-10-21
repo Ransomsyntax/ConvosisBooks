@@ -1200,7 +1200,6 @@ async function documentsPage(root, mode = 'all') {
   loadDocs();
 }
 
-/* ==================== Banking Reconciliation Cockpit ==================== */
 async function bankingReconciliationPage(root) {
   PAGE.reload = () => bankingReconciliationPage(root);
   const bankAccs = await api('lookup/bank-accounts/');
@@ -1405,7 +1404,6 @@ function bankTransfersPage(root) {
   }).catch(e => { if (root.isConnected) $('#xfer-table', root).innerHTML = errBox(e.message); });
 }
 
-/* ==================== Filing & Compliance (GST Suite) ==================== */
 async function gstFilingPage(root, tab = 'overview') {
   PAGE.reload = () => gstFilingPage(root, tab);
   const tabLinks = [
@@ -1570,7 +1568,6 @@ async function gstFilingPage(root, tab = 'overview') {
   }
 }
 
-/* ==================== Financial Reports Suite ==================== */
 async function trialBalancePage(root) {
   PAGE.reload = () => trialBalancePage(root);
   root.innerHTML = `
@@ -1848,7 +1845,6 @@ async function transactionLockingPage(root) {
   } catch (e) { $('#lock-container', root).innerHTML = errBox(e.message, true); }
 }
 
-/* ==================== Convosis Payments Suite ==================== */
 function paymentOverviewPage(root) {
   root.innerHTML = `
     <div class="bc">Home / Convosis Payments</div>
@@ -1884,7 +1880,6 @@ function paymentSettingsPage(root) {
   `;
 }
 
-/* ==================== Enterprise Security, MFA & Compliance Hub ==================== */
 async function securityCompliancePage(root) {
   root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Security & Compliance Center…</div>`;
   try {
@@ -2103,7 +2098,6 @@ async function securityCompliancePage(root) {
       </div>
     `;
 
-    // Hook up interactive actions
     const secDrillBtn = $('#secDrillBtn', root);
     if (secDrillBtn) secDrillBtn.addEventListener('click', () => disasterRecoveryDrillModal());
 

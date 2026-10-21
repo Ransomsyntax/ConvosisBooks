@@ -1,6 +1,3 @@
-// CONVOSIS — Appearance Engine
-// macOS-style wallpapers, glassmorphism tuning, accent colours and light / dark / auto mode.
-// Everything is applied through CSS variables (see css/glass.css) so changes are live.
 
 (function () {
   'use strict';
@@ -24,7 +21,7 @@
     { id: 'midnight', name: 'Midnight',  css: 'radial-gradient(60% 60% at 75% 15%, #4c1d95 0%, transparent 60%), radial-gradient(70% 70% at 15% 90%, #1e3a8a 0%, transparent 65%), linear-gradient(170deg, #020617, #0f172a)' }
   ];
 
-  // k = how much to darken the accent for text on light glass
+
   const ACCENTS = [
     { id: 'convosis', name: 'Convosis Cyan', base: '#0284c7', k: 0.1 },
     { id: 'blue',     name: 'Classic Blue',  base: '#0a84ff', k: 0.3 },
@@ -45,20 +42,19 @@
   };
 
   const DEFAULTS = {
-    mode: 'light',          // light | dark | auto
+    mode: 'light',
     accent: 'convosis',
-    wallpaper: 'bigsur',    // id | custom | none
-    wpBlur: 0,              // px
-    wpDim: 0,               // %
+    wallpaper: 'bigsur',
+    wpBlur: 0,
+    wpDim: 0,
     animate: true,
-    glassPreset: 'frosted', // preset id | custom
+    glassPreset: 'frosted',
     glassBlur: 28,
     glassOpacity: 62,
     glassSat: 180,
     sidebarHidden: false
   };
 
-  /* --------------------------------------------------------------- helpers */
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
   const rgbToHex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
@@ -68,16 +64,14 @@
     else if (window.ConvosisApp && ConvosisApp.showToast) ConvosisApp.showToast(m);
   };
 
-  /* ---------------------------------------------------------------- engine */
   const ThemeEngine = {
     state: Object.assign({}, DEFAULTS),
-    custom: null,          // { src, name }
+    custom: null,
     _ready: false,
     _wpKey: null,
     _wpIdx: 0,
     _saveTimer: null,
 
-    /* ---- lifecycle ---- */
     init() {
       if (this._ready) return;
       this._ready = true;
@@ -105,7 +99,6 @@
       if (saved) {
         this.state = Object.assign({}, DEFAULTS, saved);
       } else {
-        // First run: check stored dark theme preference
         const legacy = window.convosisStore && window.convosisStore.state && window.convosisStore.state.themeMode;
         this.state = Object.assign({}, DEFAULTS, legacy === 'dark' ? { mode: 'dark' } : {});
       }
@@ -147,7 +140,6 @@
       }
     },
 
-    /* ---- state helpers ---- */
     resolvedMode() {
       const m = this.state.mode;
       if (m === 'auto') return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -159,7 +151,6 @@
       this.setMode(cur === 'dark' ? 'light' : 'dark');
     },
 
-    /* ---- apply everything ---- */
     apply(initial) {
       const s = this.state;
       const root = document.documentElement;
@@ -174,7 +165,6 @@
       const app = document.getElementById('app');
       if (app) app.classList.toggle('sidebar-collapsed', !!s.sidebarHidden && window.innerWidth > 768);
 
-      // Update theme toggle buttons if any exist in DOM
       const themeBtn = document.getElementById('themeToggleBtn');
       if (themeBtn) {
         const isDark = mode === 'dark';
@@ -189,7 +179,6 @@
         }
       }
 
-      // Keep legacy store in sync if present
       const store = window.convosisStore;
       if (store && store.state && store.state.themeMode !== mode) {
         store.state.themeMode = mode;
@@ -215,7 +204,6 @@
       set('--accent-to', to);
       set('--accent-on', a.on || '#ffffff');
 
-      // Global themed variables used across modules and styles
       set('--convosis-cyan', a.base);
       set('--convosis-blue', to);
       set('--convosis-blue-dark', mix(to, '#000000', 0.15));
@@ -286,7 +274,6 @@
       window.dispatchEvent(new CustomEvent('convosis:appearance', { detail: { mode: this.resolvedMode(), accent: this.state.accent } }));
     },
 
-    /* ---- setters used by the UI ---- */
     setMode(m) { this.state.mode = m; this.save(); this.apply(); this.emit(); },
     setAccent(id) { this.state.accent = id; this.save(); this.apply(); this.emit(); },
     setWallpaper(id) { this.state.wallpaper = id; this.save(); this.apply(); },
@@ -302,7 +289,6 @@
       if (app) app.classList.toggle('sidebar-collapsed', !!v);
     },
 
-    // slider changes — no re-render so dragging stays ultra-smooth
     live(key, value) {
       this.state[key] = Number(value);
       if (key.indexOf('glass') === 0) this.state.glassPreset = 'custom';
@@ -326,7 +312,7 @@
       document.querySelectorAll('.ap-root [data-preset]').forEach(b => b.classList.toggle('on', b.dataset.preset === this.state.glassPreset));
     },
 
-    /* ---- custom wallpaper ---- */
+    /*custom wallpaper*/
     pickFile() {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/*';
@@ -388,7 +374,6 @@
       toast('Appearance reset to defaults');
     },
 
-    /* ---- drawer ---- */
     openDrawer() { this.ensureDom(); this.refreshPanels(); document.getElementById('appearanceDrawer').classList.add('open'); },
     closeDrawer() { const d = document.getElementById('appearanceDrawer'); if (d) d.classList.remove('open'); },
     toggleDrawer() { const d = document.getElementById('appearanceDrawer'); (d && d.classList.contains('open')) ? this.closeDrawer() : this.openDrawer(); },
@@ -398,7 +383,6 @@
       this.syncControls();
     },
 
-    /* ---- panel markup (used by the drawer and the Settings page) ---- */
     panelHTML() {
       const s = this.state;
       const modeBtn = (m, label) => `<button class="${s.mode === m ? 'on' : ''}" onclick="ThemeEngine.setMode('${m}')">${label}</button>`;
@@ -484,7 +468,6 @@
 
   window.ThemeEngine = ThemeEngine;
 
-  // Auto initialize on DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => ThemeEngine.init());
   } else {

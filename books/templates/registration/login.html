@@ -38,7 +38,6 @@
   <h1>Sign in to Convosis Books</h1>
   <p class="sub" style="font-size:12.5px; margin:-10px 0 16px;">Enterprise Financial Operating System & GST Automation</p>
 
-  <!-- Preloaded Previous Login Banner -->
   <div id="demoCredentialBanner" class="demo-credential-banner" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; margin-bottom:16px; border-radius:10px; background:var(--pastel-mint-bg); border:1px solid var(--pastel-mint-border); font-size:12px; color:var(--tx);">
     <div style="display:flex; align-items:center; gap:8px;">
       <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
@@ -180,7 +179,6 @@
       }
     }
 
-    // 1. Initial preload
     {% if not form.is_bound %}
     refillPreviousLogin();
     {% else %}
@@ -188,7 +186,6 @@
     if (badge) badge.textContent = userInput && userInput.value ? userInput.value : (remembered || 'admin');
     {% endif %}
 
-    // 2. Real-time auto-fill when username is typed or selected
     if (userInput) {
       userInput.addEventListener('input', function() {
         const u = userInput.value.trim();
@@ -207,7 +204,6 @@
       passInput.addEventListener('change', persistCurrentCredentials);
     }
 
-    // 3. Re-fill button
     if (fillBtn) {
       fillBtn.addEventListener('click', function(e) {
         e.preventDefault();
@@ -216,7 +212,6 @@
       });
     }
 
-    // 4. Clear saved credentials
     if (clearLink) {
       clearLink.addEventListener('click', function(e) {
         e.preventDefault();
@@ -233,12 +228,9 @@
       });
     }
 
-    // 5. Save on submit and unload
     if (form) form.addEventListener('submit', persistCurrentCredentials);
     if (submitBtn) submitBtn.addEventListener('click', persistCurrentCredentials);
     window.addEventListener('beforeunload', persistCurrentCredentials);
-
-    // 6. Toggle password visibility
     if (toggleBtn && passInput) {
       toggleBtn.addEventListener('click', function(e) {
         e.preventDefault();

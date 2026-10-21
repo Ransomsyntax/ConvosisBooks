@@ -1,8 +1,5 @@
 @import './glass.css';
 
-/* ==========================================================================
-   CONVOSIS BOOKS — Application Styles (Glassmorphism Harmonization)
-   ========================================================================== */
 
 :root {
   --navy: #0f172a;
@@ -53,7 +50,7 @@ a:hover {
 .rel { position: relative; }
 .sp  { flex: 1; }
 
-/* Grid Layouts */
+
 .g {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -65,7 +62,6 @@ a:hover {
 .s4  { grid-column: span 4; }
 .s3  { grid-column: span 3; }
 
-/* Typography */
 h1 {
   font-size: 22px;
   margin: 0;
@@ -103,7 +99,7 @@ h2 {
   align-items: center;
 }
 
-/* Indicators and Bars */
+
 .up { color: var(--ok); font-weight: 600; }
 .dn { color: var(--bad); font-weight: 600; }
 .nu { color: var(--tx-muted); }
@@ -140,7 +136,7 @@ h2 {
   color: var(--tx);
 }
 
-/* Chart Canvas Container */
+
 .cv {
   position: relative;
   height: 270px;
@@ -174,7 +170,6 @@ h2 {
   color: var(--tx);
 }
 
-/* Data Table Helpers */
 .r { text-align: right; }
 .tw {
   overflow-x: auto;
@@ -283,7 +278,6 @@ h2 {
   text-decoration: underline;
 }
 
-/* Form Grid */
 .fgrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -336,7 +330,6 @@ body.modal-open {
   overflow: hidden;
 }
 
-/* Invoice/Bill Line Items Table */
 .ln td {
   padding: 8px 6px;
   vertical-align: top;
@@ -427,7 +420,7 @@ body.modal-open {
   color: #fff;
 }
 
-/* ==================== Split Master-Detail & Document Template ==================== */
+
 .split-view-container {
   display: flex;
   height: calc(100vh - 58px);
@@ -540,7 +533,7 @@ body.modal-open {
   letter-spacing: 0.3px;
 }
 
-/* Detail Column */
+
 .detail-col {
   flex: 1;
   min-width: 0;
@@ -586,7 +579,6 @@ body.modal-open {
   gap: 6px;
 }
 
-/* The Document Sheet Canvas */
 .doc-canvas-scroll {
   flex: 1;
   overflow-y: auto;
@@ -611,7 +603,7 @@ body.modal-open {
   box-sizing: border-box;
 }
 
-/* Diagonal Ribbon */
+
 .doc-ribbon {
   position: absolute;
   top: 0;
@@ -643,7 +635,7 @@ body.modal-open {
 .doc-ribbon.sent span, .doc-ribbon.open span { background: #3b82f6; }
 .doc-ribbon.draft span { background: #64748b; }
 
-/* Document Sheet Internal Layout */
+
 .doc-sheet-header {
   display: flex;
   justify-content: space-between;
@@ -706,7 +698,7 @@ body.modal-open {
   text-align: left;
 }
 
-/* Details Box Table */
+
 .doc-meta-box-table {
   width: 100%;
   border-collapse: collapse;
@@ -728,7 +720,7 @@ body.modal-open {
   color: #0f172a;
 }
 
-/* Bill To / Bill From */
+
 .doc-party-sec {
   margin-bottom: 22px;
   padding-bottom: 14px;
@@ -754,7 +746,6 @@ body.modal-open {
   line-height: 1.45;
 }
 
-/* Items Table */
 .doc-items-tbl {
   width: 100%;
   border-collapse: collapse;
@@ -788,7 +779,6 @@ body.modal-open {
   text-align: right;
 }
 
-/* Bottom Split: Words & Notes on Left, Totals on Right */
 .doc-bottom-split {
   display: flex;
   justify-content: space-between;
@@ -835,7 +825,6 @@ body.modal-open {
   margin-bottom: 2px;
 }
 
-/* Totals Box */
 .doc-totals-box {
   width: 100%;
   font-size: 12px;
@@ -862,7 +851,6 @@ body.modal-open {
   padding: 4px 0;
 }
 
-/* Signature */
 .doc-signature-sec {
   margin-top: 48px;
   display: flex;
@@ -884,7 +872,6 @@ body.modal-open {
   letter-spacing: 0.4px;
 }
 
-/* Attachments UI */
 .dropzone {
   border: 2px dashed var(--bd-glass);
   border-radius: 8px;
@@ -926,7 +913,6 @@ body.modal-open {
   color: var(--dn);
 }
 
-/* Responsive Overrides */
 @media (max-width: 1100px) {
   .s8, .s6, .s4 { grid-column: span 12; }
   .s3 { grid-column: span 6; }

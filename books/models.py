@@ -115,7 +115,7 @@ class Document(models.Model):
     due_date = models.DateField()
     place_of_supply = models.CharField(max_length=60)
     status = models.CharField(max_length=10, default=DRAFT)
-    subtotal = models.DecimalField(default=Decimal('0.00'), **MONEY)  # taxable value
+    subtotal = models.DecimalField(default=Decimal('0.00'), **MONEY)  
     cgst = models.DecimalField(default=Decimal('0.00'), **MONEY)
     sgst = models.DecimalField(default=Decimal('0.00'), **MONEY)
     igst = models.DecimalField(default=Decimal('0.00'), **MONEY)
@@ -236,7 +236,7 @@ class StockMovement(models.Model):
 
 
 class Attachment(models.Model):
-    entity_type = models.CharField(max_length=40, db_index=True)  # 'invoice', 'bill', 'customer', 'vendor', 'item'
+    entity_type = models.CharField(max_length=40, db_index=True)   
     entity_id = models.PositiveIntegerField(db_index=True)
     file = models.FileField(upload_to='attachments/%Y/%m/', blank=True, null=True)
     file_data = models.TextField(blank=True, default='')
@@ -253,9 +253,6 @@ class Attachment(models.Model):
         return f'{self.filename} ({self.entity_type} #{self.entity_id})'
 
 
-# ==============================================================================
-# Enterprise Accounting: Double-Entry General Ledger & Chart of Accounts
-# ==============================================================================
 
 class Account(models.Model):
     ASSET, LIABILITY, EQUITY, INCOME, EXPENSE = 'asset', 'liability', 'equity', 'income', 'expense'
@@ -270,7 +267,7 @@ class Account(models.Model):
     code = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=150)
     account_type = models.CharField(max_length=20, choices=TYPES)
-    sub_type = models.CharField(max_length=60, blank=True, default='')  # e.g., 'current_asset', 'bank', 'accounts_receivable'
+    sub_type = models.CharField(max_length=60, blank=True, default='') 
     description = models.TextField(blank=True)
     is_system = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
@@ -286,7 +283,7 @@ class Account(models.Model):
 class Journal(models.Model):
     number = models.CharField(max_length=40, unique=True)
     date = models.DateField()
-    entry_type = models.CharField(max_length=40, default='manual')  # manual, invoice, bill, payment_in, payment_out, expense, transfer, adjustment
+    entry_type = models.CharField(max_length=40, default='manual') 
     reference = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -327,7 +324,7 @@ class AuditLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     username = models.CharField(max_length=150, blank=True)
-    action = models.CharField(max_length=50)  # create, update, delete, send, approve, void, reconcile, login, export
+    action = models.CharField(max_length=50)  
     entity_type = models.CharField(max_length=60)
     entity_id = models.CharField(max_length=60, blank=True)
     summary = models.TextField()
@@ -343,15 +340,11 @@ class AuditLog(models.Model):
         return f'[{self.timestamp:%Y-%m-%d %H:%M}] {self.action} {self.entity_type} #{self.entity_id}'
 
 
-# ==============================================================================
-# Low-Code Extensibility: Custom Fields & Workflows
-# ==============================================================================
-
 class CustomField(models.Model):
-    module = models.CharField(max_length=40)  # invoice, bill, customer, vendor, item, project
+    module = models.CharField(max_length=40) 
     name = models.CharField(max_length=60)
     label = models.CharField(max_length=100)
-    field_type = models.CharField(max_length=20, default='text')  # text, number, date, select, boolean
+    field_type = models.CharField(max_length=20, default='text') 
     options = models.TextField(blank=True, help_text='Comma separated choices for select')
     required = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
@@ -362,11 +355,11 @@ class CustomField(models.Model):
 
 class WorkflowRule(models.Model):
     name = models.CharField(max_length=150)
-    event = models.CharField(max_length=60)  # invoice_sent, bill_approved, stock_low, bill_overdue, high_value_transaction
+    event = models.CharField(max_length=60) 
     condition_field = models.CharField(max_length=60, blank=True)
-    condition_op = models.CharField(max_length=20, blank=True)  # gt, lt, eq, contains
+    condition_op = models.CharField(max_length=20, blank=True) 
     condition_val = models.CharField(max_length=100, blank=True)
-    action_type = models.CharField(max_length=40, default='notification')  # notification, webhook, alert
+    action_type = models.CharField(max_length=40, default='notification')  
     action_payload = models.TextField(blank=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -376,13 +369,8 @@ class WebhookConfig(models.Model):
     name = models.CharField(max_length=100)
     url = models.URLField()
     secret = models.CharField(max_length=100, blank=True)
-    events = models.CharField(max_length=255, default='*')  # comma separated
+    events = models.CharField(max_length=255, default='*') 
     active = models.BooleanField(default=True)
-
-
-# ==============================================================================
-# Connected Banking, Feeds & Reconciliation
-# ==============================================================================
 
 class BankAccount(models.Model):
     SAVINGS, CURRENT, CREDIT_CARD = 'savings', 'current', 'credit_card'
@@ -412,11 +400,11 @@ class BankTransaction(models.Model):
     date = models.DateField()
     description = models.CharField(max_length=300)
     reference = models.CharField(max_length=100, blank=True)
-    withdrawal = models.DecimalField(default=Decimal('0.00'), **MONEY)  # Debit from bank
-    deposit = models.DecimalField(default=Decimal('0.00'), **MONEY)     # Credit to bank
+    withdrawal = models.DecimalField(default=Decimal('0.00'), **MONEY) 
+    deposit = models.DecimalField(default=Decimal('0.00'), **MONEY)     
     balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
-    status = models.CharField(max_length=20, default='unreconciled')    # unreconciled, matched, reconciled
-    matched_entity_type = models.CharField(max_length=40, blank=True)   # payment_received, payment_made, expense, bill, invoice
+    status = models.CharField(max_length=20, default='unreconciled')   
+    matched_entity_type = models.CharField(max_length=40, blank=True)   
     matched_entity_id = models.PositiveIntegerField(null=True, blank=True)
     reconciled_at = models.DateTimeField(null=True, blank=True)
     transaction_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
@@ -426,10 +414,6 @@ class BankTransaction(models.Model):
     class Meta:
         ordering = ['-date', '-id']
 
-
-# ==============================================================================
-# Document Management & Auto-Scan OCR Repository
-# ==============================================================================
 
 class DocumentFolder(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -459,20 +443,15 @@ class ManagedDocument(models.Model):
     folder = models.ForeignKey(DocumentFolder, null=True, blank=True, on_delete=models.SET_NULL, related_name='documents')
     category = models.CharField(max_length=30, choices=CATEGORIES, default='receipt')
     file = models.FileField(upload_to='managed_docs/%Y/%m/', blank=True, null=True)
-    file_data = models.TextField(blank=True, default='')  # data URL or path for mock preview
+    file_data = models.TextField(blank=True, default='') 
     filename = models.CharField(max_length=255)
     file_size = models.PositiveIntegerField(default=0)
     mime_type = models.CharField(max_length=100, blank=True)
-
-    # Soft delete & Trash recovery (/#/documents/trash)
     is_deleted = models.BooleanField(default=False, db_index=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
-
-    # Automated OCR Scanning & Field Extraction
-    ocr_status = models.CharField(max_length=20, default='none')  # none, pending, processed, failed
-    ocr_data = models.JSONField(default=dict, blank=True)        # extracted merchant, date, total, tax, items
-
-    converted_to_type = models.CharField(max_length=30, blank=True)  # bill, expense, invoice
+    ocr_status = models.CharField(max_length=20, default='none')
+    ocr_data = models.JSONField(default=dict, blank=True)
+    converted_to_type = models.CharField(max_length=30, blank=True)
     converted_to_id = models.PositiveIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -484,10 +463,6 @@ class ManagedDocument(models.Model):
     def __str__(self):
         return f'{self.title} ({self.filename})'
 
-
-# ==============================================================================
-# Sales Pipeline: Sales Orders, Recurring Invoices, Retainers, Challans, Credit Notes
-# ==============================================================================
 
 class SalesOrder(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='sales_orders')
@@ -507,7 +482,7 @@ class RecurringInvoice(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     next_date = models.DateField()
-    status = models.CharField(max_length=20, default='active')  # active, paused, expired
+    status = models.CharField(max_length=20, default='active')
     subtotal = models.DecimalField(default=Decimal('0.00'), **MONEY)
     total = models.DecimalField(default=Decimal('0.00'), **MONEY)
     lines_data = models.JSONField(default=list, blank=True)
@@ -529,7 +504,7 @@ class DeliveryChallan(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='delivery_challans')
     date = models.DateField()
     challan_type = models.CharField(max_length=40, choices=CHALLAN_TYPES, default='other')
-    status = models.CharField(max_length=20, default='open')  # draft, open, delivered, closed
+    status = models.CharField(max_length=20, default='open')
     vehicle_number = models.CharField(max_length=50, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -553,10 +528,6 @@ class CreditNoteLine(Line):
     credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name='lines')
 
 
-# ==============================================================================
-# Purchases Pipeline: Purchase Orders, Expenses, Vendor Credits
-# ==============================================================================
-
 class PurchaseOrder(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='purchase_orders')
     delivery_date = models.DateField(null=True, blank=True)
@@ -571,7 +542,7 @@ class Expense(models.Model):
     date = models.DateField()
     expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses')
     vendor = models.ForeignKey(Vendor, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
-    amount = models.DecimalField(**MONEY)        # taxable amount
+    amount = models.DecimalField(**MONEY)
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     total = models.DecimalField(**MONEY)
@@ -604,13 +575,10 @@ class VendorCreditLine(Line):
     vendor_credit = models.ForeignKey(VendorCredit, on_delete=models.CASCADE, related_name='lines')
 
 
-# ==============================================================================
-# Indian GST, E-Way Bill & E-Invoicing Compliance
-# ==============================================================================
 
 class EWayBill(models.Model):
-    bill_number = models.CharField(max_length=16, unique=True)  # 12-digit standard e-way bill
-    doc_type = models.CharField(max_length=10, default='INV')   # INV, CHL, BIL
+    bill_number = models.CharField(max_length=16, unique=True)
+    doc_type = models.CharField(max_length=10, default='INV')
     doc_number = models.CharField(max_length=40)
     doc_date = models.DateField()
     party_name = models.CharField(max_length=200)
@@ -622,7 +590,7 @@ class EWayBill(models.Model):
     transporter_name = models.CharField(max_length=100, blank=True)
     vehicle_number = models.CharField(max_length=30, blank=True)
     valid_until = models.DateTimeField()
-    status = models.CharField(max_length=20, default='generated')  # generated, active, cancelled, expired
+    status = models.CharField(max_length=20, default='generated')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -634,26 +602,23 @@ class EWayBill(models.Model):
 
 class EInvoiceRecord(models.Model):
     invoice = models.OneToOneField(Invoice, on_delete=models.CASCADE, related_name='einvoice')
-    irn = models.CharField(max_length=64, unique=True)  # 64-character hash
+    irn = models.CharField(max_length=64, unique=True)
     ack_no = models.CharField(max_length=30)
     ack_date = models.DateTimeField()
     signed_qr_code = models.TextField(blank=True)
-    status = models.CharField(max_length=20, default='generated')  # generated, cancelled
+    status = models.CharField(max_length=20, default='generated')
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-# ==============================================================================
-# Time Tracking, Price Lists, Categories & Warehouses
-# ==============================================================================
 
 class Project(models.Model):
     name = models.CharField(max_length=150)
     code = models.CharField(max_length=40, blank=True)
     customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name='projects')
-    billing_method = models.CharField(max_length=40, default='hourly_rate')  # fixed_cost, hourly_rate, task_hours
+    billing_method = models.CharField(max_length=40, default='hourly_rate')
     rate_per_hour = models.DecimalField(default=Decimal('0.00'), **MONEY)
     budget_hours = models.DecimalField(default=Decimal('0.00'), **QTY)
-    status = models.CharField(max_length=20, default='active')  # active, completed, hold
+    status = models.CharField(max_length=20, default='active')
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -693,8 +658,8 @@ class ItemCategory(models.Model):
 class PriceList(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
-    pricing_scheme = models.CharField(max_length=30, default='percentage')  # percentage, fixed
-    percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))  # e.g., -10% wholesale
+    pricing_scheme = models.CharField(max_length=30, default='percentage')
+    percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -721,17 +686,14 @@ class Warehouse(models.Model):
         return f'{self.name} ({self.code})'
 
 
-# ==============================================================================
-# Convosis Payments & Payment Gateway Integration
-# ==============================================================================
 
 class PaymentTransaction(models.Model):
-    gateway = models.CharField(max_length=40, default='razorpay')  # razorpay, stripe, upi
+    gateway = models.CharField(max_length=40, default='razorpay')
     transaction_id = models.CharField(max_length=100, unique=True)
     invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL, related_name='payment_txns')
     amount = models.DecimalField(**MONEY)
     fee = models.DecimalField(default=Decimal('0.00'), **MONEY)
-    status = models.CharField(max_length=30, default='captured')  # created, authorized, captured, refunded, failed
+    status = models.CharField(max_length=30, default='captured') 
     customer_email = models.CharField(max_length=120, blank=True)
     payment_link = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -740,9 +702,7 @@ class PaymentTransaction(models.Model):
         ordering = ['-created_at']
 
 
-# ==============================================================================
-# AI Integration & Anomaly Detection (Zia / Financial Intelligence)
-# ==============================================================================
+
 
 class FinancialAnomaly(models.Model):
     TYPES = [
@@ -754,11 +714,11 @@ class FinancialAnomaly(models.Model):
     ]
     title = models.CharField(max_length=200)
     anomaly_type = models.CharField(max_length=40, choices=TYPES)
-    severity = models.CharField(max_length=20, default='medium')  # high, medium, low
+    severity = models.CharField(max_length=20, default='medium')
     description = models.TextField()
     entity_type = models.CharField(max_length=40, blank=True)
     entity_id = models.PositiveIntegerField(null=True, blank=True)
-    status = models.CharField(max_length=20, default='detected')  # detected, dismissed, resolved
+    status = models.CharField(max_length=20, default='detected')
     detected_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -768,19 +728,16 @@ class FinancialAnomaly(models.Model):
         return f'[{self.severity.upper()}] {self.title}'
 
 
-# ==============================================================================
-# Enterprise Banking: Live Feeds, Statement Batches & Auto-Match Rules
-# ==============================================================================
 
 class BankFeedConnection(models.Model):
     bank_account = models.OneToOneField(BankAccount, on_delete=models.CASCADE, related_name='feed_connection')
-    provider = models.CharField(max_length=50, default='setu_aa')  # setu_aa, icici_corp, hdfc_api, razorpayx, plaid
+    provider = models.CharField(max_length=50, default='setu_aa')
     provider_name = models.CharField(max_length=100, default='Open Banking Live Feed')
-    status = models.CharField(max_length=30, default='connected')  # connected, syncing, disconnected, error
+    status = models.CharField(max_length=30, default='connected')
     consent_id = models.CharField(max_length=100, blank=True)
     consent_expires_at = models.DateTimeField(null=True, blank=True)
     auto_sync = models.BooleanField(default=True)
-    sync_frequency = models.CharField(max_length=30, default='hourly')  # real_time, hourly, daily
+    sync_frequency = models.CharField(max_length=30, default='hourly')
     account_mask = models.CharField(max_length=30, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -793,12 +750,12 @@ class BankStatementBatch(models.Model):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='statement_batches')
     batch_number = models.CharField(max_length=50, unique=True)
     filename = models.CharField(max_length=255)
-    source = models.CharField(max_length=30, default='csv_import')  # csv_import, ofx_import, camt053, live_feed
+    source = models.CharField(max_length=30, default='csv_import')
     imported_at = models.DateTimeField(auto_now_add=True)
     total_rows = models.PositiveIntegerField(default=0)
     imported_count = models.PositiveIntegerField(default=0)
     duplicate_count = models.PositiveIntegerField(default=0)
-    status = models.CharField(max_length=30, default='completed')  # completed, rolled_back, failed
+    status = models.CharField(max_length=30, default='completed')
     reconciled_count = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -811,11 +768,11 @@ class BankStatementBatch(models.Model):
 class BankRule(models.Model):
     name = models.CharField(max_length=150)
     priority = models.PositiveSmallIntegerField(default=10)
-    field = models.CharField(max_length=40, default='description')  # description, reference, amount, withdrawal, deposit
-    operator = models.CharField(max_length=20, default='contains')  # contains, equals, starts_with, greater_than, less_than
+    field = models.CharField(max_length=40, default='description')
+    operator = models.CharField(max_length=20, default='contains')
     value = models.CharField(max_length=200)
     assign_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
-    assign_party_type = models.CharField(max_length=20, blank=True)  # customer, vendor
+    assign_party_type = models.CharField(max_length=20, blank=True)
     assign_party_id = models.PositiveIntegerField(null=True, blank=True)
     auto_reconcile = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
@@ -828,9 +785,6 @@ class BankRule(models.Model):
         return f'{self.name} ({self.field} {self.operator} "{self.value}")'
 
 
-# ==============================================================================
-# Statutory Tax Filing: GSTR-1 & GSTR-3B Official GSTN Returns
-# ==============================================================================
 
 class GSTRReturn(models.Model):
     GSTR1, GSTR3B = 'GSTR1', 'GSTR3B'
@@ -838,16 +792,16 @@ class GSTRReturn(models.Model):
 
     return_type = models.CharField(max_length=15, choices=TYPES)
     financial_year = models.CharField(max_length=15, default='2026-27')
-    tax_period = models.CharField(max_length=10, default='042026')  # MMYYYY
-    status = models.CharField(max_length=30, default='draft')  # draft, validated, ready_for_filing, filed
-    arn = models.CharField(max_length=40, blank=True)  # Application Reference Number
+    tax_period = models.CharField(max_length=10, default='042026') 
+    status = models.CharField(max_length=30, default='draft')
+    arn = models.CharField(max_length=40, blank=True)
     filed_at = models.DateTimeField(null=True, blank=True)
     taxable_value = models.DecimalField(default=Decimal('0.00'), **MONEY)
     cgst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     sgst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     igst_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     total_tax = models.DecimalField(default=Decimal('0.00'), **MONEY)
-    payload_json = models.JSONField(default=dict, blank=True)  # Official Government GSTN format
+    payload_json = models.JSONField(default=dict, blank=True)
     response_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -857,10 +811,6 @@ class GSTRReturn(models.Model):
     def __str__(self):
         return f'{self.return_type} ({self.tax_period}) - {self.status}'
 
-
-# ==============================================================================
-# Enterprise Security: RBAC User Profile, Disaster Recovery Backups & Async Jobs
-# ==============================================================================
 
 class UserProfile(models.Model):
     ADMIN, ACCOUNTANT, AUDITOR, CASHIER, PORTAL = 'admin', 'accountant', 'auditor', 'cashier', 'portal'
@@ -891,8 +841,8 @@ class SecurityBackupRecord(models.Model):
     filename = models.CharField(max_length=255)
     file_size_bytes = models.PositiveIntegerField(default=0)
     checksum_sha256 = models.CharField(max_length=64)
-    backup_type = models.CharField(max_length=30, default='snapshot')  # automated, manual, disaster_recovery_test
-    status = models.CharField(max_length=30, default='verified')  # verified, testing, archived, failed
+    backup_type = models.CharField(max_length=30, default='snapshot')
+    status = models.CharField(max_length=30, default='verified')
     record_counts = models.JSONField(default=dict, blank=True)
     disaster_recovery_test_passed = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -906,9 +856,9 @@ class SecurityBackupRecord(models.Model):
 
 class BackgroundTask(models.Model):
     task_id = models.CharField(max_length=50, unique=True)
-    task_type = models.CharField(max_length=50)  # bank_sync, statement_import, bulk_invoice_pdf, gstr_filing_export, backup_snapshot
-    status = models.CharField(max_length=30, default='completed')  # pending, running, completed, failed
-    progress = models.PositiveSmallIntegerField(default=100)  # 0-100%
+    task_type = models.CharField(max_length=50)
+    status = models.CharField(max_length=30, default='completed')
+    progress = models.PositiveSmallIntegerField(default=100)
     summary = models.CharField(max_length=255, blank=True)
     details = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
@@ -922,9 +872,6 @@ class BackgroundTask(models.Model):
         return f'Task {self.task_id} ({self.task_type}: {self.status})'
 
 
-# ==============================================================================
-# Customer & Vendor Portals
-# ==============================================================================
 
 class CustomerPortalAccess(models.Model):
     token = models.CharField(max_length=64, unique=True)

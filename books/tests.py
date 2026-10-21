@@ -131,7 +131,7 @@ class Payments(Base):
     def test_cannot_pay_draft_or_other_customers_invoice(self):
         c, other = self.customer(), self.customer(name='Other Co')
         inv = self.invoice(c)
-        self.assertEqual(self.receive(c, '100', [{'invoice': inv['id'], 'amount': '100'}]).status_code, 400)  # draft
+        self.assertEqual(self.receive(c, '100', [{'invoice': inv['id'], 'amount': '100'}]).status_code, 400) 
         self.send(inv)
         self.assertEqual(self.receive(other, '100', [{'invoice': inv['id'], 'amount': '100'}]).status_code, 400)
 
@@ -253,30 +253,23 @@ class EnterpriseFeaturesTest(Base):
         self.assertEqual(g3_resp.status_code, 200)
 
     def test_documents_soft_delete_and_trash_recovery(self):
-        # Create document
         r = self.post('documents/', {'title': 'AWS Receipt', 'category': 'receipt', 'filename': 'aws_invoice.pdf', 'file_data': 'test'})
         self.assertEqual(r.status_code, 201)
         doc_id = r.json()['id']
-        # Verify OCR processed
         self.assertEqual(r.json()['ocr_status'], 'processed')
 
-        # Soft delete
         del_r = self.client.delete(f'/api/documents/{doc_id}/')
         self.assertEqual(del_r.status_code, 204)
 
-        # Check not in active list
         active_docs = self.client.get('/api/documents/?trash=0').json()
         self.assertFalse(any(d['id'] == doc_id for d in active_docs['results']))
 
-        # Check in trash list (/#/documents/trash)
         trash_docs = self.client.get('/api/documents/?trash=1').json()
         self.assertTrue(any(d['id'] == doc_id for d in trash_docs['results']))
 
-        # Restore from trash
         rest_r = self.client.post(f'/api/documents/{doc_id}/restore/')
         self.assertEqual(rest_r.status_code, 200)
 
-        # Verify back in active
         active_again = self.client.get('/api/documents/?trash=0').json()
         self.assertTrue(any(d['id'] == doc_id for d in active_again['results']))
 
@@ -291,26 +284,19 @@ class EnterpriseFeaturesTest(Base):
         self.assertEqual(sugg.status_code, 200)
 
     def test_transaction_locking(self):
-        # Lock transactions prior to today + 5 days
         lock_date = '2026-10-25'
         lock_resp = self.client.post('/api/locking/', data=json.dumps({'lock_date': lock_date, 'reason': 'Audit Closed'}), content_type='application/json')
         self.assertEqual(lock_resp.status_code, 200)
 
-        # Attempt to create an invoice in locked period
         c = self.customer()
         inv_locked = self.client.post('/api/invoices/', data=json.dumps({'customer': c['id'], 'date': '2026-10-20', 'lines': [{'description': 'Test', 'quantity': 1, 'rate': 100}]}), content_type='application/json')
         self.assertEqual(inv_locked.status_code, 403)
-
-        # Unlock
         self.client.post('/api/locking/', data=json.dumps({'lock_date': None}), content_type='application/json')
 
     def test_zia_ai_and_mcp_protocol(self):
-        # Zia natural language query
         zia_resp = self.client.post('/api/ai/query/', data=json.dumps({'query': 'What is our revenue this month?'}), content_type='application/json')
         self.assertEqual(zia_resp.status_code, 200)
         self.assertIn('revenue', zia_resp.json()['answer'].lower())
-
-        # MCP JSON-RPC protocol
         mcp_init = self.client.post('/api/mcp/', data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize'}), content_type='application/json')
         self.assertEqual(mcp_init.status_code, 200)
         self.assertIn('convosis-books-mcp', mcp_init.json()['result']['serverInfo']['name'])
@@ -326,7 +312,7 @@ class EnterpriseFeaturesTest(Base):
         self.assertIn('latency_ms', resp.json()['database'])
 
     def test_fingpt_doubt_clearance(self):
-        # 1. Debit vs Credit doubt
+
         r1 = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({'query': 'Clear my doubt: debit vs credit rules'}), content_type='application/json')
         self.assertEqual(r1.status_code, 200)
         d1 = r1.json()
@@ -334,20 +320,16 @@ class EnterpriseFeaturesTest(Base):
         self.assertIn('debit', d1['answer'].lower())
         self.assertTrue(len(d1['key_takeaways']) >= 2)
 
-        # 2. GST ITC Section 16 doubt
         r2 = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({'query': 'How do I claim GST input tax credit itc under section 16?'}), content_type='application/json')
         self.assertEqual(r2.status_code, 200)
         d2 = r2.json()
         self.assertIn('section 16', d2['answer'].lower())
-
-        # 3. SOC2 & GDPR Security compliance doubt
         r3 = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({'query': 'What are our SOC2 Type II and GDPR compliance controls?'}), content_type='application/json')
         self.assertEqual(r3.status_code, 200)
         d3 = r3.json()
         self.assertIn('soc 2', d3['answer'].lower())
 
     def test_enterprise_security_compliance(self):
-        # Summary
         r = self.client.get('/api/security/compliance-summary/')
         self.assertEqual(r.status_code, 200)
         data = r.json()
@@ -356,12 +338,9 @@ class EnterpriseFeaturesTest(Base):
         self.assertIn('gdpr', data)
         self.assertEqual(data['soc2']['compliance_score'], 100)
 
-        # MFA Toggle
         r_mfa = self.client.post('/api/security/mfa-toggle/')
         self.assertEqual(r_mfa.status_code, 200)
         self.assertIn('mfa_enabled', r_mfa.json())
-
-        # GDPR Export
         r_gdpr = self.client.post('/api/security/gdpr-export/')
         self.assertEqual(r_gdpr.status_code, 200)
         self.assertIn('export_metadata', r_gdpr.json())
@@ -379,7 +358,6 @@ class LiveBankingFeedsAndReconciliationTest(Base):
         self.bank_acc_id = r.json()['id']
 
     def test_live_bank_feed_sync_and_duplicate_prevention(self):
-        # 1. First sync imports live transactions
         res1 = self.client.post(f"/api/banking/feed-sync/{self.bank_acc_id}/", data=json.dumps({'feed_provider': 'live_sandbox'}), content_type='application/json')
         self.assertEqual(res1.status_code, 200)
         d1 = res1.json()
@@ -388,21 +366,18 @@ class LiveBankingFeedsAndReconciliationTest(Base):
         self.assertEqual(d1['duplicates_skipped'], 0)
         batch_id = d1['batch_id']
 
-        # 2. Second sync immediately afterwards detects idempotent hashes and skips all duplicates
         res2 = self.client.post(f"/api/banking/feed-sync/{self.bank_acc_id}/", data=json.dumps({'feed_provider': 'live_sandbox'}), content_type='application/json')
         self.assertEqual(res2.status_code, 200)
         d2 = res2.json()
         self.assertEqual(d2['synced_transactions'], 0)
         self.assertGreater(d2['duplicates_skipped'], 0)
 
-        # 3. Rollback the imported batch recovers the account state safely
         res_rb = self.client.post(f"/api/banking/rollback/{batch_id}/")
         self.assertEqual(res_rb.status_code, 200)
         self.assertEqual(res_rb.json()['status'], 'rolled_back')
         self.assertEqual(res_rb.json()['batch_id'], batch_id)
 
     def test_bank_rules_crud_and_matching(self):
-        # Create bank rule
         r_rule = self.client.post('/api/banking/rules/', data=json.dumps({
             'name': 'Cloud Infra Rule',
             'field': 'description',
@@ -414,12 +389,9 @@ class LiveBankingFeedsAndReconciliationTest(Base):
         self.assertEqual(r_rule.status_code, 201)
         rule_id = r_rule.json()['id']
 
-        # List bank rules
         r_list = self.client.get('/api/banking/rules/')
         self.assertEqual(r_list.status_code, 200)
         self.assertTrue(any(x['id'] == rule_id for x in r_list.json()))
-
-        # Delete rule
         r_del = self.client.delete(f"/api/banking/rules/{rule_id}/")
         self.assertEqual(r_del.status_code, 200)
 
@@ -428,7 +400,6 @@ class GstFilingAndStatutoryComplianceTest(Base):
     def test_authenticated_irn_and_einvoice(self):
         c = self.customer(gstin='29AAACP1234A1Z5')
         inv = self.invoice(c)
-        # Authenticated IRN generation
         r = self.client.post(f"/api/einvoice/authenticated/{inv['id']}/")
         self.assertEqual(r.status_code, 200)
         data = r.json()
@@ -449,13 +420,11 @@ class GstFilingAndStatutoryComplianceTest(Base):
         return_id = data.get('return_id')
         self.assertIsNotNone(return_id)
 
-        # File return with e-Sign
         r_file = self.client.post(f"/api/gst/returns/{return_id}/file/", data=json.dumps({'e_sign_type': 'DSC_TOKEN'}), content_type='application/json')
         self.assertEqual(r_file.status_code, 200)
         self.assertEqual(r_file.json()['status'], 'filed')
         self.assertTrue(r_file.json()['arn'].startswith('AA'))
 
-        # Return history
         r_hist = self.client.get('/api/gst/returns/history/')
         self.assertEqual(r_hist.status_code, 200)
         self.assertTrue(len(r_hist.json()) >= 1)
@@ -468,7 +437,6 @@ class GstFilingAndStatutoryComplianceTest(Base):
         self.assertIn('sup_details', data)
 
     def test_mca_rule_3_tamper_evident_audit_chain(self):
-        # Trigger an audited event
         self.customer(name='Audit Trail Test Customer')
         r = self.client.get('/api/security/audit-chain/verify/')
         self.assertEqual(r.status_code, 200)
@@ -480,7 +448,6 @@ class GstFilingAndStatutoryComplianceTest(Base):
 
 class SecurityTotpMfaAndDisasterRecoveryTest(Base):
     def test_totp_mfa_setup_and_verification(self):
-        # 1. Setup returns secret and otpauth uri
         r_setup = self.client.post('/api/security/mfa/setup/')
         self.assertEqual(r_setup.status_code, 200)
         data = r_setup.json()
@@ -489,14 +456,12 @@ class SecurityTotpMfaAndDisasterRecoveryTest(Base):
         self.assertTrue(len(data['backup_codes']) >= 8)
         backup_code = data['backup_codes'][0]
 
-        # 2. Verify with emergency backup code
         r_verify = self.client.post('/api/security/mfa/verify/', data=json.dumps({'token': backup_code}), content_type='application/json')
         self.assertEqual(r_verify.status_code, 200)
         self.assertTrue(r_verify.json()['verified'])
         self.assertTrue(r_verify.json()['mfa_enabled'])
 
     def test_backup_snapshot_and_disaster_recovery_drill(self):
-        # 1. Create cryptographic backup snapshot
         r_bk = self.client.post('/api/security/backup/create/', data=json.dumps({'type': 'pre_audit_snapshot'}), content_type='application/json')
         self.assertEqual(r_bk.status_code, 200)
         bdata = r_bk.json()
@@ -504,12 +469,9 @@ class SecurityTotpMfaAndDisasterRecoveryTest(Base):
         self.assertTrue(len(bdata['checksum_sha256']) == 64)
         snap_id = bdata['snapshot_id']
 
-        # 2. List backups
         r_list = self.client.get('/api/security/backup/list/')
         self.assertEqual(r_list.status_code, 200)
         self.assertTrue(any(b['snapshot_id'] == snap_id for b in r_list.json()))
-
-        # 3. Run disaster recovery simulation drill
         r_drill = self.client.post('/api/security/backup/disaster-recovery-drill/', data=json.dumps({'snapshot_id': snap_id}), content_type='application/json')
         self.assertEqual(r_drill.status_code, 200)
         ddata = r_drill.json()
@@ -532,7 +494,7 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
     def test_customer_portal_token_and_data(self):
         cust = self.customer(name='Global Portals Client')
         self.invoice(cust)
-        # Access portal via customer ID or token
+
         r = self.client.get(f"/api/portal/customer/{cust['id']}/")
         self.assertEqual(r.status_code, 200)
         pdata = r.json()
@@ -549,12 +511,10 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertEqual(r.json()['vendor_name'], 'Raw Materials Supplies Ltd')
 
     def test_zoho_books_interoperability_export_and_import(self):
-        # 1. Export in Zoho schema
         r_exp = self.client.get('/api/interop/zoho/export/items/')
         self.assertEqual(r_exp.status_code, 200)
         self.assertIn('data', r_exp.json())
 
-        # 2. Import Zoho schema records
         zoho_items = [
             {'Item Name': 'Zoho Imported Widget', 'SKU': 'ZOHO-WIDGET-01', 'Rate': '750.00', 'Tax Percentage': '18', 'Usage unit': 'pcs'}
         ]

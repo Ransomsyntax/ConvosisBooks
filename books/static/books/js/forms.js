@@ -273,7 +273,6 @@ async function itemForm(id) {
   }).join('');
   const extraSalesOpt = (!salesFound && curSalesAccount) ? `<option value="${esc(curSalesAccount)}" selected>${esc(curSalesAccount)}</option>` : '';
 
-  // Purchase accounts list
   const PURCHASE_ACCOUNTS = [
     'Cost of Goods Sold',
     'Purchase Account',
@@ -292,7 +291,6 @@ async function itemForm(id) {
   }).join('');
   const extraPurchOpt = (!purchFound && curPurchAccount) ? `<option value="${esc(curPurchAccount)}" selected>${esc(curPurchAccount)}</option>` : '';
 
-  // Inventory accounts list
   const INVENTORY_ACCOUNTS = [
     'Inventory Asset',
     'Work in Progress',
@@ -308,14 +306,12 @@ async function itemForm(id) {
   }).join('');
   const extraInvOpt = (!invFound && curInvAccount) ? `<option value="${esc(curInvAccount)}" selected>${esc(curInvAccount)}</option>` : '';
 
-  // Preferred Vendor options
   const curVendorId = r.preferred_vendor_id != null ? String(r.preferred_vendor_id) : '';
   const vendorOptsHtml = (vendors || []).map(v => {
     const isSel = (String(v.id) === curVendorId);
     return `<option value="${v.id}" ${isSel ? 'selected' : ''}>${esc(v.name)}</option>`;
   }).join('');
 
-  // Default tax slabs configuration matching Zoho Books requirements
   const DEFAULT_TAX_SLABS = [0, 5, 12, 18, 28, 40];
   const curRate = num(r.gst_rate != null ? r.gst_rate : 18);
   const isCustomRate = !DEFAULT_TAX_SLABS.includes(curRate);

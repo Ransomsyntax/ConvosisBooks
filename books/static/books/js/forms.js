@@ -1628,11 +1628,11 @@ async function ziaAiAssistantModal() {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;background:rgba(16,163,127,0.15);color:var(--up);border-color:rgba(16,163,127,0.3);font-weight:600;">Executive financial briefing</button>
           <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Revenue this month</button>
           <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Show overdue invoices</button>
           <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Top customers</button>
           <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Scan for financial anomalies</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Forecast cash flow</button>
           <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">GST tax liability</button>
         </div>
         <div style="display:flex;gap:8px;">

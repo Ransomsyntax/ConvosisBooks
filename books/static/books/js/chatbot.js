@@ -10,16 +10,16 @@
 
   const CATEGORY_PROMPTS = {
     all: [
-      'Explain Debit vs Credit in double-entry bookkeeping',
-      'How do I claim GST Input Tax Credit (ITC) without rejection?',
-      'What are our SOC2 Type II & GDPR compliance safeguards?',
-      'How do automated bank feeds and auto-matching work?',
+      'What is our current financial position and executive briefing?',
+      'Show overdue customer invoices and balances',
       'What is our current month revenue & net margin?',
-      'Explain Interstate (IGST) vs Intrastate (CGST+SGST) tax',
-      'How do I setup Multi-Factor Authentication (MFA)?',
-      'What is the difference between GSTR-1 and GSTR-3B?'
+      'What is our current GST tax liability and ITC balance?',
+      'Explain Debit vs Credit in double-entry bookkeeping',
+      'How do automated bank feeds and auto-matching work?',
+      'What are our SOC2 Type II & GDPR compliance safeguards?'
     ],
     accounting: [
+      'What is our current financial position and executive briefing?',
       'Explain Debit vs Credit in double-entry bookkeeping',
       'What are the 3 Golden Rules of accounting?',
       'Explain Accrual basis vs Cash basis accounting',
@@ -761,6 +761,13 @@
         <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
         <div class="fingpt-msg-bubble">
           <h3>Hello! Welcome to ConvosisBooks 👋</h3>
+          <div style="background:rgba(16,163,127,0.1);border:1px solid rgba(16,163,127,0.25);border-radius:8px;padding:6px 10px;margin:6px 0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+            <span style="color:#10a37f;font-weight:600;display:flex;align-items:center;gap:6px;">
+              <span style="width:7px;height:7px;border-radius:50%;background:#10a37f;display:inline-block;box-shadow:0 0 6px #10a37f;"></span>
+              Live Ledger Database Connected
+            </span>
+            <span style="color:#94a3b8;">Accrual Accounting Grounding</span>
+          </div>
           <p style="margin:4px 0 10px;line-height:1.5;">I'm your accounting assistant for <b>${esc(org.name || 'your business')}</b>. I can help you understand bookkeeping, GST, tax-related questions, bank reconciliation, financial reports, and ledger transactions. Select a topic below to get started.</p>
 
           <div style="font-size:12px;font-weight:700;color:#10a37f;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">

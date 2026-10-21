@@ -900,3 +900,77 @@ class VendorPortalAccess(models.Model):
         return f'Portal for {self.vendor.name}'
 
 
+class Notification(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    category = models.CharField(max_length=30, default='system')
+    link = models.CharField(max_length=200, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.title} ({self.category})'
+
+
+class TenantSubscription(models.Model):
+    STARTER, GROWTH, ENTERPRISE = 'starter', 'growth', 'enterprise'
+    TIERS = [
+        (STARTER, 'Starter Edition (Small Business)'),
+        (GROWTH, 'Growth Edition (Mid-Market)'),
+        (ENTERPRISE, 'Enterprise Scale Edition (Multi-GSTIN)'),
+    ]
+
+    tier = models.CharField(max_length=30, choices=TIERS, default=GROWTH)
+    billing_cycle = models.CharField(max_length=20, default='annual')
+    status = models.CharField(max_length=20, default='active')
+    invoice_limit = models.PositiveIntegerField(default=1000)
+    user_seat_limit = models.PositiveIntegerField(default=15)
+    storage_limit_mb = models.PositiveIntegerField(default=10240)
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+    auto_renew = models.BooleanField(default=True)
+    payment_method = models.CharField(max_length=50, default='Visa ending in 4242')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.tier} ({self.status})'
+
+
+class DeveloperApiKey(models.Model):
+    name = models.CharField(max_length=100)
+    key_prefix = models.CharField(max_length=16, default='sk_live_')
+    masked_key = models.CharField(max_length=40)
+    key_hash = models.CharField(max_length=64, unique=True)
+    scopes = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} ({self.masked_key})'
+
+
+class WebhookSubscription(models.Model):
+    endpoint_url = models.URLField()
+    secret = models.CharField(max_length=64)
+    events = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    last_delivery_at = models.DateTimeField(null=True, blank=True)
+    last_status_code = models.PositiveSmallIntegerField(default=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.endpoint_url}'
+
+
+

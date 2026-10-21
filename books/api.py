@@ -2842,3 +2842,114 @@ def interop_zoho_import_view(request, entity):
     res = services.import_zoho_compatible_data(entity, records, user=request.user)
     return j(res)
 
+
+@api_view
+def notifications_list_view(request):
+    res = services.list_notifications(user=request.user)
+    return j(res)
+
+
+@api_view
+def notification_mark_read_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.mark_notification_read(pk, user=request.user)
+    return j(res)
+
+
+@api_view
+def notifications_mark_all_read_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.mark_all_notifications_read(user=request.user)
+    return j(res)
+
+
+@api_view
+def subscription_summary_view(request):
+    res = services.get_tenant_subscription_summary()
+    return j(res)
+
+
+@api_view
+def subscription_update_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    tier = d.get('tier', 'growth')
+    cycle = d.get('billing_cycle', 'annual')
+    res = services.update_tenant_subscription(tier, billing_cycle=cycle)
+    return j(res)
+
+
+@api_view
+def tenant_admin_summary_view(request):
+    res = services.get_tenant_admin_summary()
+    return j(res)
+
+
+@api_view
+def tenant_admin_invite_user_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    res = services.invite_tenant_user(
+        username=d.get('username'),
+        email=d.get('email'),
+        role=d.get('role', 'accountant'),
+        phone=d.get('phone', '')
+    )
+    return j(res)
+
+
+@api_view
+def tenant_admin_update_role_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    res = services.update_tenant_user_role(pk, d.get('role', 'accountant'))
+    return j(res)
+
+
+@api_view
+def developer_keys_list_create_view(request):
+    if request.method == 'POST':
+        d = body(request)
+        res = services.create_developer_api_key(d.get('name'), d.get('scopes'))
+        return j(res, status=201)
+    res = services.list_developer_api_keys()
+    return j({'keys': res})
+
+
+@api_view
+def developer_key_revoke_view(request, pk):
+    if request.method not in ('POST', 'DELETE'):
+        raise ApiError(405, 'Method not allowed.')
+    res = services.revoke_developer_api_key(pk)
+    return j(res)
+
+
+@api_view
+def developer_webhooks_list_create_view(request):
+    if request.method == 'POST':
+        d = body(request)
+        res = services.create_webhook_subscription(d.get('endpoint_url'), d.get('events'))
+        return j(res, status=201)
+    res = services.list_webhook_subscriptions()
+    return j({'webhooks': res})
+
+
+@api_view
+def developer_webhook_test_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.test_webhook_delivery(pk)
+    return j(res)
+
+
+@api_view
+def assistant_accounting_context_view(request):
+    res = services.get_live_accounting_context()
+    return j(res)
+
+

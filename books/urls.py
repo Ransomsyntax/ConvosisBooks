@@ -61,6 +61,24 @@ urlpatterns = [
     path('interop/zoho/export/<slug:entity>/', api.interop_zoho_export_view),
     path('interop/zoho/import/<slug:entity>/', api.interop_zoho_import_view),
 
+    path('notifications/', api.notifications_list_view),
+    path('notifications/<int:pk>/mark-read/', api.notification_mark_read_view),
+    path('notifications/mark-all-read/', api.notifications_mark_all_read_view),
+
+    path('subscription/summary/', api.subscription_summary_view),
+    path('subscription/update/', api.subscription_update_view),
+
+    path('tenant/admin/summary/', api.tenant_admin_summary_view),
+    path('tenant/admin/invite/', api.tenant_admin_invite_user_view),
+    path('tenant/admin/users/<int:pk>/role/', api.tenant_admin_update_role_view),
+
+    path('developer/keys/', api.developer_keys_list_create_view),
+    path('developer/keys/<int:pk>/revoke/', api.developer_key_revoke_view),
+    path('developer/webhooks/', api.developer_webhooks_list_create_view),
+    path('developer/webhooks/<int:pk>/test/', api.developer_webhook_test_view),
+
+    path('ai/context/', api.assistant_accounting_context_view),
+
     path('<slug:name>/', api.collection),
     path('<slug:name>/<int:pk>/', api.item),
     path('<slug:name>/<int:pk>/<slug:act>/', api.action),

@@ -2258,3 +2258,710 @@ async function securityCompliancePage(root) {
 }
 
 
+async function subscriptionBillingPage(root) {
+  root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Subscription & Usage Metrics…</div>`;
+  try {
+    const data = await api('subscription/summary/');
+
+    root.innerHTML = `
+      <div class="bc">Home / Settings / Subscription & Billing</div>
+      <div class="hd">
+        <div>
+          <h1>Subscription, Usage Metering & Billing</h1>
+          <div class="sub" style="margin-top:2px;">
+            Manage SaaS tier plans, invoice volume quotas, user seats, and billing statements.
+          </div>
+        </div>
+        <div class="act">
+          <button class="btn p" id="btnChangePlan" type="button" style="background:linear-gradient(135deg,var(--accent),var(--accent-to));border:none;">
+            Change Plan / Upgrade
+          </button>
+        </div>
+      </div>
+
+      <!-- Current Plan Status Banner -->
+      <div class="card" style="margin-top:14px;padding:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;background:var(--surface-glass-elevated);">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(168,85,247,0.18));color:var(--accent);display:grid;place-items:center;font-size:22px;">⚡</div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h2 style="font-size:17px;margin:0;">${esc(data.tier_display || 'Growth Edition')}</h2>
+              <span class="pastel-chip chip-mint" style="font-size:11px;padding:2px 8px;text-transform:uppercase;">${esc(data.status || 'Active')}</span>
+            </div>
+            <div class="sub" style="font-size:12px;margin-top:2px;">
+              Billed ${esc(data.billing_cycle || 'annually')} · Auto-renews on <b>${esc(data.period_end || '15 Jan 2027')}</b> via ${esc(data.payment_method || 'Visa ending in 4242')}
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn" id="btnUpdatePaymentMethod" type="button" style="font-size:12px;">Update Payment Method</button>
+        </div>
+      </div>
+
+      <!-- Quota Usage Metering Cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
+        <div class="card" style="padding:16px;">
+          <div class="sub" style="font-size:12px;">Monthly Invoices Generated</div>
+          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.invoices.used} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.invoices.limit}</span></div>
+          <div class="bar"><i style="width:${data.usage.invoices.pct}%;background:var(--accent);"></i></div>
+          <div class="sub" style="font-size:11px;">${data.usage.invoices.pct}% of monthly tier quota used</div>
+        </div>
+
+        <div class="card" style="padding:16px;">
+          <div class="sub" style="font-size:12px;">User Seat Licenses</div>
+          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.user_seats.used} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.user_seats.limit}</span></div>
+          <div class="bar"><i style="width:${data.usage.user_seats.pct}%;background:var(--up);"></i></div>
+          <div class="sub" style="font-size:11px;">${data.usage.user_seats.limit - data.usage.user_seats.used} additional seats available</div>
+        </div>
+
+        <div class="card" style="padding:16px;">
+          <div class="sub" style="font-size:12px;">Secure Document Vault Storage</div>
+          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.storage_mb.used} MB <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${(data.usage.storage_mb.limit / 1024).toFixed(0)} GB</span></div>
+          <div class="bar"><i style="width:${data.usage.storage_mb.pct}%;background:var(--ok);"></i></div>
+          <div class="sub" style="font-size:11px;">AES-256 encrypted OCR staging</div>
+        </div>
+
+        <div class="card" style="padding:16px;">
+          <div class="sub" style="font-size:12px;">Connected Bank Feeds</div>
+          <div style="font-size:22px;font-weight:700;margin:6px 0;color:var(--accent);">${data.usage.connected_banks} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">accounts</span></div>
+          <div class="sub" style="font-size:11px;margin-top:14px;">Open Banking automated reconciliation</div>
+        </div>
+      </div>
+
+      <!-- Pricing Plans Comparison Grid -->
+      <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Available SaaS Edition Tiers</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+        <!-- Starter Tier -->
+        <div class="card" style="padding:22px;border:${data.tier === 'starter' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <b style="font-size:16px;">Starter Edition</b>
+            ${data.tier === 'starter' ? '<span class="pastel-chip chip-indigo">Current</span>' : ''}
+          </div>
+          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹899 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
+          <div class="sub" style="font-size:12px;margin-bottom:16px;">Best for sole proprietors and boutique agencies.</div>
+          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
+            <li>Up to 300 tax invoices / month</li>
+            <li>5 User seats with RBAC</li>
+            <li>2 GB Document vault storage</li>
+            <li>Standard GST & P&L reports</li>
+          </ul>
+          <button class="btn" style="width:100%;" ${data.tier === 'starter' ? 'disabled' : ''} onclick="changePlanAction('starter')">
+            ${data.tier === 'starter' ? 'Active Plan' : 'Downgrade to Starter'}
+          </button>
+        </div>
+
+        <!-- Growth Tier -->
+        <div class="card" style="padding:22px;border:${data.tier === 'growth' ? '2px solid var(--accent)' : '1px solid var(--bd)'};background:var(--surface-glass-elevated);position:relative;">
+          <div style="position:absolute;top:-10px;right:20px;background:linear-gradient(135deg,var(--accent),var(--accent-to));color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;text-transform:uppercase;">Most Popular</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <b style="font-size:16px;">Growth Edition</b>
+            ${data.tier === 'growth' ? '<span class="pastel-chip chip-mint">Current</span>' : ''}
+          </div>
+          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹2,499 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
+          <div class="sub" style="font-size:12px;margin-bottom:16px;">For fast-growing companies and multi-branch operations.</div>
+          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
+            <li>Up to 1,000 tax invoices / month</li>
+            <li>15 User seats & Customer Portals</li>
+            <li>10 GB Encrypted storage</li>
+            <li>Live Open Banking Feeds & Auto-matching</li>
+            <li>IRN E-Invoicing & E-Way Bills</li>
+            <li>Zia & Convo Bot AI Ledger Intelligence</li>
+          </ul>
+          <button class="btn p" style="width:100%;" ${data.tier === 'growth' ? 'disabled' : ''} onclick="changePlanAction('growth')">
+            ${data.tier === 'growth' ? 'Current Active Edition' : 'Upgrade to Growth'}
+          </button>
+        </div>
+
+        <!-- Enterprise Scale Tier -->
+        <div class="card" style="padding:22px;border:${data.tier === 'enterprise' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <b style="font-size:16px;">Enterprise Scale</b>
+            ${data.tier === 'enterprise' ? '<span class="pastel-chip chip-mint">Current</span>' : ''}
+          </div>
+          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹6,999 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
+          <div class="sub" style="font-size:12px;margin-bottom:16px;">High-throughput multi-entity enterprise operations.</div>
+          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
+            <li>10,000+ invoices / month quota</li>
+            <li>100 User seats & Auditor logins</li>
+            <li>100 GB High-availability vault storage</li>
+            <li>Multi-GSTIN multi-warehouse matrix</li>
+            <li>Dedicated API Webhooks & 100 req/sec quota</li>
+            <li>Priority 24/7 SLA & compliance support</li>
+          </ul>
+          <button class="btn" style="width:100%;" ${data.tier === 'enterprise' ? 'disabled' : ''} onclick="changePlanAction('enterprise')">
+            ${data.tier === 'enterprise' ? 'Active Plan' : 'Upgrade to Enterprise'}
+          </button>
+        </div>
+      </div>
+
+      <!-- Billing History Table -->
+      <h2 style="font-size:16px;margin:28px 0 12px;font-weight:700;">Billing Invoices & Payment Statements</h2>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice Number</th>
+              <th>Billing Date</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th class="r">Amount Paid</th>
+              <th class="r">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.invoices_history.map(inv => `
+              <tr>
+                <td><b>${esc(inv.invoice_no)}</b></td>
+                <td>${esc(inv.date)}</td>
+                <td>${esc(inv.description)}</td>
+                <td><span class="st ok">${esc(inv.status)}</span></td>
+                <td class="r"><b>${esc(inv.amount)}</b></td>
+                <td class="r">
+                  <button class="btn" type="button" style="font-size:11px;padding:3px 9px;" onclick="toast('Downloaded tax receipt ${inv.invoice_no}', 'ok')">Download Receipt</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    window.changePlanAction = async (targetTier) => {
+      try {
+        const res = await api('subscription/update/', { method: 'POST', body: { tier: targetTier } });
+        toast(`Successfully switched subscription to ${res.tier_display}!`, 'ok');
+        subscriptionBillingPage(root);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    $('#btnChangePlan', root).addEventListener('click', () => {
+      Modal.open({
+        title: 'Modify SaaS Subscription Tier',
+        body: `
+          <div style="padding:10px 0;">
+            <p class="sub" style="margin-bottom:14px;">Select your preferred edition and billing cadence:</p>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Edition Tier</label>
+              <select class="in" id="modalPlanTier">
+                <option value="starter" ${data.tier === 'starter' ? 'selected' : ''}>Starter Edition (₹899/mo)</option>
+                <option value="growth" ${data.tier === 'growth' ? 'selected' : ''}>Growth Edition (₹2,499/mo)</option>
+                <option value="enterprise" ${data.tier === 'enterprise' ? 'selected' : ''}>Enterprise Scale Edition (₹6,999/mo)</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label>Billing Cadence</label>
+              <select class="in" id="modalPlanCadence">
+                <option value="annual">Annual Billing (Save 20%)</option>
+                <option value="monthly">Monthly Billing</option>
+              </select>
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnConfirmPlanChange">Confirm Plan Update</button>
+        `
+      });
+
+      $('#btnConfirmPlanChange').addEventListener('click', async () => {
+        const tier = $('#modalPlanTier').value;
+        const cycle = $('#modalPlanCadence').value;
+        try {
+          await api('subscription/update/', { method: 'POST', body: { tier, billing_cycle: cycle } });
+          toast('Subscription plan updated successfully!', 'ok');
+          Modal.close();
+          subscriptionBillingPage(root);
+        } catch (e) { toast(e.message, 'err'); }
+      });
+    });
+
+    $('#btnUpdatePaymentMethod', root).addEventListener('click', () => {
+      toast('Payment gateway portal: current card is active and validated with Razorpay/Stripe tokenization.', 'ok');
+    });
+
+  } catch (e) {
+    root.innerHTML = errBox(e.message, true);
+    const btn = $('[data-retry]', root);
+    if (btn) btn.addEventListener('click', () => subscriptionBillingPage(root));
+  }
+}
+
+
+async function tenantAdminPage(root) {
+  root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Tenant Administration…</div>`;
+  try {
+    const data = await api('tenant/admin/summary/');
+
+    root.innerHTML = `
+      <div class="bc">Home / Accountant / SaaS Tenant Administration</div>
+      <div class="hd">
+        <div>
+          <h1>SaaS Tenant Administration & Governance</h1>
+          <div class="sub" style="margin-top:2px;">
+            Multi-tenant data isolation, seat provisioning, role permissions, and tenant security health.
+          </div>
+        </div>
+        <div class="act">
+          <button class="btn p" id="btnInviteMember" type="button" style="background:linear-gradient(135deg,var(--accent),var(--accent-to));border:none;">
+            + Invite Team Member
+          </button>
+        </div>
+      </div>
+
+      <!-- Tenant Isolation & Infrastructure Card -->
+      <div class="card" style="margin-top:14px;padding:20px;background:var(--surface-glass-elevated);">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h2 style="font-size:16px;margin:0;">${esc(data.organization.name)}</h2>
+              <span class="pastel-chip chip-sky" style="font-size:11px;">Tenant ID: ${esc(data.organization.id)}</span>
+            </div>
+            <div class="sub" style="font-size:12px;margin-top:2px;">
+              GSTIN: <b>${esc(data.organization.gstin)}</b> · Primary Currency: <b>${esc(data.organization.currency)}</b> · State: <b>${esc(data.organization.state)}</b>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <span class="pastel-chip chip-mint" style="font-size:11.5px;padding:4px 10px;">${esc(data.organization.tenant_isolation)}</span>
+            <span class="pastel-chip chip-indigo" style="font-size:11.5px;padding:4px 10px;">${esc(data.organization.data_residency)}</span>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;">
+            <div class="sub" style="font-size:11px;">Active Team Members</div>
+            <div style="font-size:20px;font-weight:700;margin-top:4px;">${data.metrics.total_users} Users</div>
+          </div>
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;">
+            <div class="sub" style="font-size:11px;">Cryptographic Audit Events</div>
+            <div style="font-size:20px;font-weight:700;margin-top:4px;">${data.metrics.total_audit_events} Events</div>
+          </div>
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;">
+            <div class="sub" style="font-size:11px;">Database Ledger Invoices</div>
+            <div style="font-size:20px;font-weight:700;margin-top:4px;">${data.metrics.total_invoices_issued} Invoices</div>
+          </div>
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;">
+            <div class="sub" style="font-size:11px;">MFA Enforcement Policy</div>
+            <div style="font-size:13px;font-weight:700;color:var(--up);margin-top:7px;">Mandatory (TOTP RFC 6238)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Team Members & Seat Allocations Table -->
+      <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Team Members & Role Access Control</h2>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Member Name</th>
+              <th>Username / Email</th>
+              <th>Role & Access Scope</th>
+              <th>MFA Security</th>
+              <th>Date Joined</th>
+              <th>Last Active</th>
+              <th class="r">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.members.map(u => `
+              <tr>
+                <td><b>${esc(u.full_name)}</b></td>
+                <td>
+                  <div>${esc(u.username)}</div>
+                  <div class="sub" style="font-size:11px;">${esc(u.email)}</div>
+                </td>
+                <td>
+                  <span class="pastel-chip ${u.role === 'admin' ? 'chip-rose' : u.role === 'auditor' ? 'chip-indigo' : 'chip-sky'}" style="font-size:11px;">
+                    ${esc(u.role_display)}
+                  </span>
+                </td>
+                <td>
+                  <span style="font-size:12px;color:${u.mfa_enabled ? 'var(--up)' : 'var(--bad)'};font-weight:600;">
+                    ${u.mfa_enabled ? '✓ TOTP Active' : '⚠ Inactive'}
+                  </span>
+                </td>
+                <td>${esc(u.date_joined)}</td>
+                <td>${esc(u.last_login)}</td>
+                <td class="r">
+                  <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="changeRoleModal(${u.id}, '${esc(u.username)}', '${esc(u.role)}')">Edit Role</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    window.changeRoleModal = (userId, username, currentRole) => {
+      Modal.open({
+        title: `Modify Permissions: ${username}`,
+        body: `
+          <div style="padding:10px 0;">
+            <div class="fg">
+              <label>Role Assignment</label>
+              <select class="in" id="editMemberRole">
+                <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>Administrator (Full Access)</option>
+                <option value="accountant" ${currentRole === 'accountant' ? 'selected' : ''}>Standard Accountant</option>
+                <option value="auditor" ${currentRole === 'auditor' ? 'selected' : ''}>Statutory Auditor (Read-Only)</option>
+                <option value="cashier" ${currentRole === 'cashier' ? 'selected' : ''}>Billing Operator & Cashier</option>
+              </select>
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnSaveRole">Update Role</button>
+        `
+      });
+
+      $('#btnSaveRole').addEventListener('click', async () => {
+        const role = $('#editMemberRole').value;
+        try {
+          await api(`tenant/admin/users/${userId}/role/`, { method: 'POST', body: { role } });
+          toast(`Role updated to ${role}!`, 'ok');
+          Modal.close();
+          tenantAdminPage(root);
+        } catch (e) { toast(e.message, 'err'); }
+      });
+    };
+
+    $('#btnInviteMember', root).addEventListener('click', () => {
+      Modal.open({
+        title: 'Invite Team Member to Tenant',
+        body: `
+          <div style="padding:10px 0;">
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Full Username</label>
+              <input class="in" id="invUsername" placeholder="e.g. karthik_audit" required>
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Work Email</label>
+              <input class="in" id="invEmail" type="email" placeholder="karthik@enterprise.com" required>
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Mobile Number (for SMS & OTP)</label>
+              <input class="in" id="invPhone" placeholder="+91 98400 12345">
+            </div>
+            <div class="fg">
+              <label>Role Scope</label>
+              <select class="in" id="invRole">
+                <option value="accountant">Standard Accountant</option>
+                <option value="auditor">Statutory Auditor (Read-Only)</option>
+                <option value="cashier">Billing Operator & Cashier</option>
+                <option value="admin">Administrator (Full Access)</option>
+              </select>
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnSendInvite">Send Invitation</button>
+        `
+      });
+
+      $('#btnSendInvite').addEventListener('click', async () => {
+        const username = $('#invUsername').value.trim();
+        const email = $('#invEmail').value.trim();
+        const phone = $('#invPhone').value.trim();
+        const role = $('#invRole').value;
+        if (!username || !email) { toast('Username and email are required', 'err'); return; }
+
+        try {
+          await api('tenant/admin/invite/', { method: 'POST', body: { username, email, phone, role } });
+          toast(`Invitation sent to ${username}!`, 'ok');
+          Modal.close();
+          tenantAdminPage(root);
+        } catch (e) { toast(e.message, 'err'); }
+      });
+    });
+
+  } catch (e) {
+    root.innerHTML = errBox(e.message, true);
+    const btn = $('[data-retry]', root);
+    if (btn) btn.addEventListener('click', () => tenantAdminPage(root));
+  }
+}
+
+
+async function developerPlatformPage(root, tab = 'keys') {
+  PAGE.reload = () => developerPlatformPage(root, tab);
+  root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Developer Platform…</div>`;
+
+  try {
+    const [keysData, webhooksData] = await Promise.all([
+      api('developer/keys/'),
+      api('developer/webhooks/')
+    ]);
+
+    const tabLinks = [
+      ['API Keys', '#/developer/platform?tab=keys', tab === 'keys'],
+      ['Webhook Subscriptions', '#/developer/platform?tab=webhooks', tab === 'webhooks'],
+      ['Interactive API Explorer', '#/developer/platform?tab=docs', tab === 'docs'],
+    ];
+
+    root.innerHTML = `
+      <div class="bc">Home / Developer Platform</div>
+      <div class="hd">
+        <div>
+          <h1>API Developer Platform & Webhooks</h1>
+          <div class="sub" style="margin-top:2px;">
+            Headless REST API access, scoped developer tokens, automated webhook dispatch, and developer guides.
+          </div>
+        </div>
+        <div class="act">
+          ${tab === 'keys' ? `<button class="btn p" id="btnNewApiKey" type="button">+ Generate API Key</button>` : ''}
+          ${tab === 'webhooks' ? `<button class="btn p" id="btnNewWebhook" type="button">+ Add Webhook Endpoint</button>` : ''}
+        </div>
+      </div>
+
+      <div class="tabs" style="margin:14px 0;">
+        <button class="btn ${tab === 'keys' ? 'p' : ''}" id="tabBtnKeys" type="button">API Keys (${keysData.keys.length})</button>
+        <button class="btn ${tab === 'webhooks' ? 'p' : ''}" id="tabBtnWebhooks" type="button">Webhooks (${webhooksData.webhooks.length})</button>
+        <button class="btn ${tab === 'docs' ? 'p' : ''}" id="tabBtnDocs" type="button">API Explorer & Code Snippets</button>
+      </div>
+
+      <div id="dev-tab-content"></div>
+    `;
+
+    $('#tabBtnKeys', root).addEventListener('click', () => developerPlatformPage(root, 'keys'));
+    $('#tabBtnWebhooks', root).addEventListener('click', () => developerPlatformPage(root, 'webhooks'));
+    $('#tabBtnDocs', root).addEventListener('click', () => developerPlatformPage(root, 'docs'));
+
+    const contentBox = $('#dev-tab-content', root);
+
+    if (tab === 'keys') {
+      contentBox.innerHTML = `
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table>
+            <thead>
+              <tr>
+                <th>Key Name</th>
+                <th>Token Identifier</th>
+                <th>Allowed Scopes</th>
+                <th>Created Date</th>
+                <th>Last Used</th>
+                <th class="r">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${keysData.keys.map(k => `
+                <tr>
+                  <td><b>${esc(k.name)}</b></td>
+                  <td><code>${esc(k.masked_key)}</code></td>
+                  <td>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      ${k.scopes.map(s => `<span class="pastel-chip chip-sky" style="font-size:10px;">${esc(s)}</span>`).join('')}
+                    </div>
+                  </td>
+                  <td>${esc(k.created_at)}</td>
+                  <td><span class="st ok">${esc(k.last_used_at)}</span></td>
+                  <td class="r">
+                    <button class="btn" style="font-size:11px;padding:3px 8px;color:var(--bad);" onclick="revokeApiKey(${k.id})">Revoke</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      window.revokeApiKey = async (keyId) => {
+        if (!confirm('Are you sure you want to revoke this API key? Applications using it will lose access immediately.')) return;
+        try {
+          await api(`developer/keys/${keyId}/revoke/`, { method: 'POST' });
+          toast('API Key revoked successfully!', 'ok');
+          developerPlatformPage(root, 'keys');
+        } catch (e) { toast(e.message, 'err'); }
+      };
+
+      const btnNewKey = $('#btnNewApiKey', root);
+      if (btnNewKey) btnNewKey.addEventListener('click', () => {
+        Modal.open({
+          title: 'Generate Scoped Developer API Key',
+          body: `
+            <div style="padding:10px 0;">
+              <div class="fg" style="margin-bottom:12px;">
+                <label>Key Name / System Label</label>
+                <input class="in" id="modalKeyName" placeholder="e.g. Production Shopify Sync Key" required>
+              </div>
+              <div class="fg">
+                <label>Permission Scopes</label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;font-size:12px;">
+                  <label><input type="checkbox" checked value="read:invoices" class="chk-scope"> read:invoices</label>
+                  <label><input type="checkbox" checked value="write:invoices" class="chk-scope"> write:invoices</label>
+                  <label><input type="checkbox" checked value="read:banking" class="chk-scope"> read:banking</label>
+                  <label><input type="checkbox" checked value="write:payments" class="chk-scope"> write:payments</label>
+                  <label><input type="checkbox" value="read:gst" class="chk-scope"> read:gst</label>
+                  <label><input type="checkbox" value="admin:all" class="chk-scope"> admin:all</label>
+                </div>
+              </div>
+            </div>
+          `,
+          footer: `
+            <button class="btn" data-close>Cancel</button>
+            <button class="btn p" id="btnSubmitGenerateKey">Generate Key</button>
+          `
+        });
+
+        $('#btnSubmitGenerateKey').addEventListener('click', async () => {
+          const name = $('#modalKeyName').value.trim();
+          const scopes = $$('.chk-scope:checked').map(c => c.value);
+          if (!name) { toast('Please provide a key name', 'err'); return; }
+
+          try {
+            const res = await api('developer/keys/', { method: 'POST', body: { name, scopes } });
+            Modal.open({
+              title: 'API Key Created Successfully',
+              body: `
+                <div style="padding:14px;text-align:center;">
+                  <div style="font-size:28px;margin-bottom:8px;">🔑</div>
+                  <h3 style="margin:0 0 4px;">Save your Secret API Key</h3>
+                  <p class="sub" style="margin-bottom:14px;font-size:12px;">Please copy this key now. You will not be able to view it again.</p>
+                  <div style="background:var(--surface-glass-subtle);padding:12px;border-radius:8px;border:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <code style="font-size:13px;word-break:break-all;color:var(--accent);">${esc(res.raw_key)}</code>
+                    <button class="btn" type="button" onclick="navigator.clipboard.writeText('${res.raw_key}');toast('Copied API key to clipboard!', 'ok');">Copy</button>
+                  </div>
+                </div>
+              `,
+              footer: `<button class="btn p" data-close onclick="developerPlatformPage(document.getElementById('pg'), 'keys')">Done</button>`
+            });
+          } catch (e) { toast(e.message, 'err'); }
+        });
+      });
+
+    } else if (tab === 'webhooks') {
+      contentBox.innerHTML = `
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table>
+            <thead>
+              <tr>
+                <th>Webhook Destination URL</th>
+                <th>Subscribed Events</th>
+                <th>Signing Secret</th>
+                <th>Last Delivery Status</th>
+                <th class="r">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${webhooksData.webhooks.map(w => `
+                <tr>
+                  <td><b>${esc(w.endpoint_url)}</b></td>
+                  <td>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      ${w.events.map(ev => `<span class="pastel-chip chip-lavender" style="font-size:10px;">${esc(ev)}</span>`).join('')}
+                    </div>
+                  </td>
+                  <td><code>${esc(w.secret_masked)}</code></td>
+                  <td>
+                    <span class="st ok">${w.last_status_code} OK</span>
+                    <span class="sub" style="font-size:11px;margin-left:6px;">${esc(w.last_delivery_at)}</span>
+                  </td>
+                  <td class="r">
+                    <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="testWebhookPing(${w.id})">⚡ Test Ping</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      window.testWebhookPing = async (hookId) => {
+        try {
+          const res = await api(`developer/webhooks/${hookId}/test/`, { method: 'POST' });
+          Modal.open({
+            title: `Webhook Test Ping: 200 OK (${res.latency_ms}ms)`,
+            body: `
+              <div style="padding:10px 0;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                  <span class="st ok" style="font-size:13px;">HTTP 200 Delivered</span>
+                  <span class="sub" style="font-size:12px;">Round-trip latency: ${res.latency_ms}ms</span>
+                </div>
+                <div class="sub" style="font-size:12px;margin-bottom:6px;">Dispatched JSON Payload:</div>
+                <pre style="background:var(--surface-glass-subtle);padding:12px;border-radius:8px;border:1px solid var(--bd);font-size:11.5px;max-height:220px;overflow-y:auto;">${JSON.stringify(res.payload_dispatched, null, 2)}</pre>
+              </div>
+            `,
+            footer: `<button class="btn p" data-close>Dismiss</button>`
+          });
+        } catch (e) { toast(e.message, 'err'); }
+      };
+
+      const btnNewWebhook = $('#btnNewWebhook', root);
+      if (btnNewWebhook) btnNewWebhook.addEventListener('click', () => {
+        Modal.open({
+          title: 'Register Webhook Endpoint',
+          body: `
+            <div style="padding:10px 0;">
+              <div class="fg" style="margin-bottom:12px;">
+                <label>HTTPS Endpoint URL</label>
+                <input class="in" id="modalWebhookUrl" placeholder="https://api.yourdomain.com/webhooks/convosis" required>
+              </div>
+              <div class="fg">
+                <label>Events to Deliver</label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;font-size:12px;">
+                  <label><input type="checkbox" checked value="invoice.created" class="chk-event"> invoice.created</label>
+                  <label><input type="checkbox" checked value="payment.received" class="chk-event"> payment.received</label>
+                  <label><input type="checkbox" checked value="bank.reconciled" class="chk-event"> bank.reconciled</label>
+                  <label><input type="checkbox" value="einvoice.generated" class="chk-event"> einvoice.generated</label>
+                </div>
+              </div>
+            </div>
+          `,
+          footer: `
+            <button class="btn" data-close>Cancel</button>
+            <button class="btn p" id="btnSubmitWebhook">Create Webhook</button>
+          `
+        });
+
+        $('#btnSubmitWebhook').addEventListener('click', async () => {
+          const url = $('#modalWebhookUrl').value.trim();
+          const events = $$('.chk-event:checked').map(c => c.value);
+          if (!url) { toast('Please specify an endpoint URL', 'err'); return; }
+
+          try {
+            await api('developer/webhooks/', { method: 'POST', body: { endpoint_url: url, events } });
+            toast('Webhook registered successfully!', 'ok');
+            Modal.close();
+            developerPlatformPage(root, 'webhooks');
+          } catch (e) { toast(e.message, 'err'); }
+        });
+      });
+
+    } else {
+      contentBox.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="card" style="padding:20px;">
+            <h3 style="font-size:15px;margin:0 0 8px;">Authenticating API Requests</h3>
+            <p class="sub" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">
+              Convosis Books accepts API keys via standard HTTP <code>Authorization: Bearer sk_live_...</code> headers. All API endpoints respond with structured JSON.
+            </p>
+            <div style="background:var(--surface-glass-subtle);padding:14px;border-radius:8px;border:1px solid var(--bd);font-family:monospace;font-size:12px;line-height:1.6;">
+              curl -X GET https://books-d8i1.onrender.com/api/invoices/ \\<br>
+              &nbsp;&nbsp;-H "Authorization: Bearer sk_live_your_api_key_here" \\<br>
+              &nbsp;&nbsp;-H "Accept: application/json"
+            </div>
+          </div>
+
+          <div class="card" style="padding:20px;">
+            <h3 style="font-size:15px;margin:0 0 8px;">Python SDK Quickstart</h3>
+            <div style="background:var(--surface-glass-subtle);padding:14px;border-radius:8px;border:1px solid var(--bd);font-family:monospace;font-size:12px;line-height:1.6;">
+              import requests<br><br>
+              client = requests.Session()<br>
+              client.headers.update({'Authorization': 'Bearer sk_live_your_api_key_here'})<br><br>
+              # Fetch live receivables<br>
+              invoices = client.get('https://books-d8i1.onrender.com/api/invoices/?status=sent').json()<br>
+              print(f"Total pending invoices: {len(invoices['results'])}")
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+  } catch (e) {
+    root.innerHTML = errBox(e.message, true);
+    const btn = $('[data-retry]', root);
+    if (btn) btn.addEventListener('click', () => developerPlatformPage(root, tab));
+  }
+}
+
+
+

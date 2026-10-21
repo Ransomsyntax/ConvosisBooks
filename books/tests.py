@@ -523,4 +523,115 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertEqual(r_imp.json()['imported_count'], 1)
         self.assertEqual(r_imp.json()['status'], 'success')
 
+    def test_realtime_notifications_lifecycle(self):
+        r = self.client.get('/api/notifications/')
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn('unread_count', data)
+        self.assertIn('notifications', data)
+        self.assertTrue(len(data['notifications']) >= 1)
+
+        # Mark all read
+        r_mark = self.client.post('/api/notifications/mark-all-read/')
+        self.assertEqual(r_mark.status_code, 200)
+        self.assertEqual(r_mark.json()['status'], 'success')
+
+        # Check unread count is now 0
+        r_after = self.client.get('/api/notifications/')
+        self.assertEqual(r_after.json()['unread_count'], 0)
+
+    def test_subscription_and_usage_metering(self):
+        r = self.client.get('/api/subscription/summary/')
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn('tier', data)
+        self.assertIn('usage', data)
+        self.assertIn('invoices', data['usage'])
+        self.assertIn('user_seats', data['usage'])
+
+        # Upgrade plan to enterprise
+        r_up = self.client.post('/api/subscription/update/', data=json.dumps({'tier': 'enterprise', 'billing_cycle': 'annual'}), content_type='application/json')
+        self.assertEqual(r_up.status_code, 200)
+        self.assertEqual(r_up.json()['tier'], 'enterprise')
+
+    def test_saas_tenant_admin_governance(self):
+        r = self.client.get('/api/tenant/admin/summary/')
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn('organization', data)
+        self.assertIn('members', data)
+        self.assertIn('metrics', data)
+
+        # Invite user
+        r_inv = self.client.post('/api/tenant/admin/invite/', data=json.dumps({
+            'username': 'compliance_auditor',
+            'email': 'auditor@convosis.com',
+            'role': 'auditor',
+            'phone': '+91-9988776655'
+        }), content_type='application/json')
+        self.assertEqual(r_inv.status_code, 200)
+        uid = r_inv.json()['user_id']
+
+        # Update role
+        r_role = self.client.post(f'/api/tenant/admin/users/{uid}/role/', data=json.dumps({'role': 'accountant'}), content_type='application/json')
+        self.assertEqual(r_role.status_code, 200)
+        self.assertEqual(r_role.json()['role'], 'accountant')
+
+    def test_developer_api_keys_and_webhooks(self):
+        # 1. API Keys
+        r_keys = self.client.get('/api/developer/keys/')
+        self.assertEqual(r_keys.status_code, 200)
+        self.assertIn('keys', r_keys.json())
+
+        r_create_key = self.client.post('/api/developer/keys/', data=json.dumps({
+            'name': 'ERP Sync Token',
+            'scopes': ['read:invoices', 'write:invoices']
+        }), content_type='application/json')
+        self.assertEqual(r_create_key.status_code, 201)
+        self.assertTrue(r_create_key.json()['raw_key'].startswith('sk_live_'))
+        key_id = r_create_key.json()['id']
+
+        # Revoke key
+        r_revoke = self.client.post(f'/api/developer/keys/{key_id}/revoke/')
+        self.assertEqual(r_revoke.status_code, 200)
+
+        # 2. Webhooks
+        r_hooks = self.client.get('/api/developer/webhooks/')
+        self.assertEqual(r_hooks.status_code, 200)
+        self.assertIn('webhooks', r_hooks.json())
+
+        r_create_hook = self.client.post('/api/developer/webhooks/', data=json.dumps({
+            'endpoint_url': 'https://api.myapp.com/webhooks/accounting',
+            'events': ['invoice.created', 'payment.received']
+        }), content_type='application/json')
+        self.assertEqual(r_create_hook.status_code, 201)
+        hook_id = r_create_hook.json()['id']
+
+        # Test ping
+        r_ping = self.client.post(f'/api/developer/webhooks/{hook_id}/test/')
+        self.assertEqual(r_ping.status_code, 200)
+        self.assertEqual(r_ping.json()['status'], 'delivered')
+        self.assertEqual(r_ping.json()['status_code'], 200)
+
+    def test_ai_assistant_live_accounting_context(self):
+        # Verify context endpoint
+        r_ctx = self.client.get('/api/ai/context/')
+        self.assertEqual(r_ctx.status_code, 200)
+        data = r_ctx.json()
+        self.assertIn('total_bank_cash', data)
+        self.assertIn('total_receivable', data)
+        self.assertIn('month_net_profit', data)
+
+        # Verify query with live context grounding
+        r_ai = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({
+            'query': 'Give me an executive briefing of our current business health'
+        }), content_type='application/json')
+        self.assertEqual(r_ai.status_code, 200)
+        res = r_ai.json()
+        self.assertEqual(res['doubt_topic'], 'Live Accounting Executive Briefing')
+        self.assertIn('Available Cash & Bank', res['answer'])
+        self.assertIn('cards', res)
+        self.assertTrue(len(res['cards']) >= 3)
+
+
 

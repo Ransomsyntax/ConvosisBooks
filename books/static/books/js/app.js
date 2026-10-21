@@ -10,7 +10,7 @@ const NAV = [
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
   ['Banking', 'banking', ['Bank Accounts', 'Transactions', 'Bank Reconciliation', 'Transfers']],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
-  ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Security & Compliance']],
+  ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
   ['Reports', 'reports', ['Reports Center', 'Business Overview', 'Sales Reports', 'Purchase Reports', 'Inventory Reports', 'Receivables', 'Payables', 'Tax Reports', 'Accounting Reports', 'Cash Flow Reports']],
   ['Documents', 'documents', ['All Documents', 'Files', 'Bank Statements', 'Folders', 'Trash']],
   ['Convosis Payments', 'pay', ['Payment Overview', 'Payment Transactions', 'Payment Settings']],
@@ -73,7 +73,13 @@ const ROUTES = {
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
   'accountant/transaction-locking': r => transactionLockingPage(r),
   'accountant/statutory-audit-logs': r => listPage(r, LISTS['audit-logs']),
+  'accountant/tenant-admin': r => tenantAdminPage(r),
   'accountant/security-compliance': r => securityCompliancePage(r),
+
+  // Platform & Settings
+  'settings/subscription-billing': r => subscriptionBillingPage(r),
+  'settings/tenant-admin': r => tenantAdminPage(r),
+  'developer/platform': r => developerPlatformPage(r),
 
   // Reports
   'reports/reports-center': r => reportsCenterPage(r),
@@ -175,10 +181,84 @@ function openRecord(t, id) {
   fn().catch(e => toast(e.message, 'err'));
 }
 
+const NotificationCenter = {
+  async fetch() {
+    try {
+      const data = await api('notifications/');
+      const dot = $('#notifDot');
+      const countChip = $('#notifCountChip');
+      const count = (data && data.unread_count) || 0;
+      if (dot) dot.style.display = count > 0 ? 'block' : 'none';
+      if (countChip) countChip.textContent = count;
+
+      const container = $('#notifListContainer');
+      if (!container) return;
+
+      if (!data || !data.notifications || !data.notifications.length) {
+        container.innerHTML = `
+          <div style="padding:32px 20px;text-align:center;color:var(--tx-muted);">
+            <div style="font-size:26px;margin-bottom:6px;">🔔</div>
+            <div style="font-weight:600;font-size:13px;color:var(--tx);">All caught up!</div>
+            <div style="font-size:12px;margin-top:2px;">No unread alerts or notifications</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = data.notifications.map(n => `
+        <div class="notif-item" data-notif-id="${n.id}" data-link="${esc(n.link || '')}" style="display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd);cursor:pointer;background:${n.is_read ? 'transparent' : 'var(--surface-glass-subtle)'};transition:background 0.15s ease;">
+          <div style="width:32px;height:32px;border-radius:8px;background:${n.category === 'billing' ? 'rgba(239,68,68,0.15)' : n.category === 'banking' ? 'rgba(16,185,129,0.15)' : n.category === 'inventory' ? 'rgba(245,158,11,0.15)' : 'rgba(99,102,241,0.15)'};color:${n.category === 'billing' ? '#ef4444' : n.category === 'banking' ? '#10b981' : n.category === 'inventory' ? '#f59e0b' : '#6366f1'};display:grid;place-items:center;font-size:14px;flex-shrink:0;">
+            ${n.category === 'billing' ? '💳' : n.category === 'banking' ? '🏦' : n.category === 'inventory' ? '📦' : '⚖️'}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;">
+              <span style="font-weight:${n.is_read ? '500' : '700'};font-size:12.5px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(n.title)}</span>
+              <span style="font-size:10px;color:var(--tx-muted);flex-shrink:0;">${esc(n.created_at)}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--tx-muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(n.message)}</div>
+          </div>
+        </div>
+      `).join('');
+    } catch (e) {
+      /* non-blocking notification fetch */
+    }
+  },
+
+  async markRead(id) {
+    try {
+      await api(`notifications/${id}/mark-read/`, { method: 'POST' });
+      this.fetch();
+    } catch(e) {}
+  },
+
+  async markAllRead() {
+    try {
+      await api('notifications/mark-all-read/', { method: 'POST' });
+      toast('All notifications marked as read', 'ok');
+      this.fetch();
+    } catch(e) { toast(e.message, 'err'); }
+  }
+};
+
 document.addEventListener('click', async e => {
   const t = e.target;
-  const tog = (btn, pop) => { if (!t.closest(btn)) return false; const on = $(pop).classList.contains('on'); closePops(); if (!on) $(pop).classList.add('on'); return true; };
+  const tog = (btn, pop) => { if (!t.closest(btn)) return false; const on = $(pop).style.display === 'flex' || $(pop).classList.contains('on'); closePops(); if (!on) { $(pop).classList.add('on'); $(pop).style.display = 'flex'; } return true; };
+  if (tog('#notifBtn', '#notifPop')) { NotificationCenter.fetch(); return; }
   if (tog('#qc', '#qcm') || tog('#um', '#umm')) return;
+
+  const markAllBtn = t.closest('#markAllReadBtn');
+  if (markAllBtn) { NotificationCenter.markAllRead(); return; }
+
+  const notifItem = t.closest('.notif-item');
+  if (notifItem) {
+    closePops();
+    const nid = notifItem.dataset.notifId;
+    const link = notifItem.dataset.link;
+    if (nid) NotificationCenter.markRead(nid);
+    if (link) location.hash = link;
+    return;
+  }
+
   const q = t.closest('[data-q]');
   if (q) { closePops(); QC[q.dataset.q][1]().catch(err => toast(err.message, 'err')); return; }
   const sr = t.closest('#qr [data-t]');
@@ -202,7 +282,10 @@ document.addEventListener('click', async e => {
     }
     return;
   }
-  if (!t.closest('.pop')) closePops();
+  if (!t.closest('.pop')) {
+    closePops();
+    const np = $('#notifPop'); if (np) np.style.display = 'none';
+  }
   const g = t.closest('[data-g]');
   if (g) { const k = g.dataset.g; openG = openG.includes(k) ? openG.filter(x => x !== k) : [...openG, k]; pref.set('open', openG); document.body.classList.remove('col'); drawNav(location.hash.slice(2) || 'home/dashboard'); return; }
   if (t.closest('#burger')) { innerWidth <= 900 ? document.body.classList.toggle('mo') : document.body.classList.toggle('col'); return; }
@@ -228,9 +311,17 @@ $('#q').addEventListener('input', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === '/' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && !Modal.count()) { e.preventDefault(); $('#q').focus(); }
-  if (e.key === 'Escape') closePops();
+  if (e.key === 'Escape') {
+    closePops();
+    const np = $('#notifPop'); if (np) np.style.display = 'none';
+  }
 });
 
-loadMe().then(() => { route(); addEventListener('hashchange', route); }).catch(err => {
+loadMe().then(() => {
+  route();
+  addEventListener('hashchange', route);
+  NotificationCenter.fetch();
+  setInterval(() => NotificationCenter.fetch(), 45000);
+}).catch(err => {
   $('#pg').innerHTML = errBox('Could not load the application: ' + err.message, false);
 });

@@ -1444,14 +1444,13 @@ async function importStatementModal(baId) {
           <div style="border:1px solid var(--bd);border-radius:10px;padding:20px;text-align:center;background:var(--surface-glass-subtle);height:100%;">
             <div style="font-size:24px;margin-bottom:6px;">⚡</div>
             <div style="font-weight:700;margin-bottom:4px;">Live Bank Feed (Open Banking API)</div>
-            <div class="sub" style="font-size:12px;margin-bottom:12px;">Real-time sync via RazorpayX, Plaid, Yodlee or Account Aggregator</div>
+            <div class="sub" style="font-size:12px;margin-bottom:12px;">Real-time sync via Corporate Banking &amp; RBI Account Aggregator</div>
             <div class="fg" style="text-align:left;margin-bottom:12px;">
               <label style="font-size:11px;">Feed Provider</label>
               <select class="in" id="feed-provider-sel">
                 <option value="live_sandbox">Live Production Sandbox (Corporate Feeds)</option>
-                <option value="razorpayx">RazorpayX Corporate Banking API</option>
                 <option value="setu_aa">Setu / Sahamati Account Aggregator</option>
-                <option value="plaid">Plaid / Yodlee Global Banking</option>
+                <option value="open_banking">Open Banking Direct Corporate API</option>
               </select>
             </div>
             <button type="button" class="btn p" id="btn-live-sync-now" style="width:100%;">⚡ Sync Live Bank Feed</button>

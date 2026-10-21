@@ -1425,7 +1425,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
                 f"There are currently **{len(inv_open)} overdue customer invoices** with an outstanding unpaid balance of **₹{tot_overdue:,.2f}**.\n\n"
                 f"**Recommended Recovery Actions**:\n"
                 f"1. Issue automated payment reminders via WhatsApp / Email.\n"
-                f"2. Send instant Razorpay / UPI payment links directly from the invoice detail view.\n"
+                f"2. Send instant UPI payment links directly from the invoice detail view.\n"
                 f"3. Review customer credit limits before issuing fresh sales orders."
             ),
             'key_takeaways': [
@@ -1873,13 +1873,13 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
         }
 
 
-    if 'bank feed' in q or 'reconcil' in q or 'statement' in q or 'gateway' in q or 'razorpay' in q or 'stripe' in q:
+    if 'bank feed' in q or 'reconcil' in q or 'statement' in q or 'gateway' in q or 'upi' in q or 'payment' in q:
         return {
             'query': raw_query,
-            'doubt_topic': 'Automatic Bank Feeds, Reconciliation & Payment Gateways',
-            'summary': 'Bank statements auto-match via 3-way heuristics (amount, date window, reference); gateways settle invoices via webhooks.',
+            'doubt_topic': 'Automatic Bank Feeds, Reconciliation & UPI Payment Gateway',
+            'summary': 'Bank statements auto-match via 3-way heuristics (amount, date window, reference); UPI webhooks settle invoices automatically.',
             'answer': (
-                f"### Connected Banking, Reconciliation & Payment Gateways\n\n"
+                f"### Connected Banking, Reconciliation & UPI Payment Gateway\n\n"
                 f"#### 1. Automatic Bank Feeds & Statement Import:\n"
                 f"- Import bank statement files directly in **CSV, OFX, or CAMT.053 formats**.\n"
                 f"- Transactions are parsed into withdrawals (debits) and deposits (credits) linked to your primary bank account.\n\n"
@@ -1889,10 +1889,10 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
                 f"2. **Date Window**: checks ±3 calendar days around the transaction date.\n"
                 f"3. **Reference / Narration Match**: fuzzy-matches NEFT/IMPS/UPI UTR numbers against invoice reference numbers.\n"
                 f"High-confidence suggestions are presented with a 1-click **Reconcile** action.\n\n"
-                f"#### 3. Ready-to-Use Payment Gateways (Razorpay, Stripe & UPI):\n"
-                f"- Automatically generates payment links on customer invoices.\n"
-                f"- Real-time webhooks receive payment capture notifications, generate a `PaymentReceived` entry, allocate it to the invoice, and update the invoice status to **Paid** without manual operator intervention.\n"
-                f"- Complies with PCI-DSS Level 1 tokenization and zero-card-storage standards."
+                f"#### 3. Ready-to-Use UPI Payment Gateway:\n"
+                f"- Automatically generates dynamic UPI payment links & QR codes on customer invoices.\n"
+                f"- Real-time webhooks receive UPI payment notifications, generate a `PaymentReceived` entry, allocate it to the invoice, and update the invoice status to **Paid** without manual operator intervention.\n"
+                f"- Complies with NPCI UPI security guidelines and zero cardholder data storage standards."
             ),
             'key_takeaways': [
                 "Reconciling bank accounts eliminates ghost ledger balances and catches unauthorized debits.",
@@ -2012,7 +2012,7 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
             f"**Recommended Topics to Explore:**\n"
             f"1. **Double-Entry Bookkeeping**: Master Golden Rules, debits vs. credits, and trial balance balancing.\n"
             f"2. **GST / Tax Compliance**: Section 16 ITC claiming, GSTR-1 vs GSTR-3B filings, and E-Way bill generation.\n"
-            f"3. **Bank Reconciliation & Gateways**: Auto-match algorithms, bank statement imports, and Razorpay/Stripe collections.\n"
+            f"3. **Bank Reconciliation & Gateways**: Auto-match algorithms, bank statement imports, and instant UPI collections.\n"
             f"4. **Security & Governance**: Multi-Factor Authentication (MFA), statutory audit trails, and period locking.\n"
             f"5. **Real-Time Data**: Ask me *'What is our revenue this month?'*, *'Show overdue invoices'*, or *'Forecast cash flow'*."
         ),
@@ -2055,7 +2055,7 @@ def compute_txn_hash(dt, withdrawal, deposit, ref, desc):
 
 def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
     """
-    Simulate/execute live Open Banking aggregator feed sync (Setu/ICICI/HDFC/RazorpayX/Plaid).
+    Simulate/execute live Open Banking aggregator feed sync (Setu/ICICI/HDFC/Account Aggregator).
     Implements:
     - Idempotent duplicate transaction detection via SHA-256 tuple hashing
     - Statement batch tracking
@@ -3520,7 +3520,7 @@ def test_webhook_delivery(webhook_id):
         'data': {
             'invoice_id': 'INV-2026-000042',
             'amount_paid': 14500.00,
-            'gateway': 'Razorpay / UPI',
+            'gateway': 'UPI',
             'transaction_utr': 'UTR' + secrets.token_hex(6).upper()
         }
     }

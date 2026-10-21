@@ -37,7 +37,7 @@
     banking: [
       'How do automated bank feeds and auto-matching work?',
       'How do I reconcile bank transactions with open invoices?',
-      'How do integrated payment gateways (Razorpay, Stripe, UPI) work?',
+      'How does integrated UPI payment collection work?',
       'What happens when a customer pays via payment link?'
     ],
     security: [

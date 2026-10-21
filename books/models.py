@@ -688,7 +688,7 @@ class Warehouse(models.Model):
 
 
 class PaymentTransaction(models.Model):
-    gateway = models.CharField(max_length=40, default='razorpay')
+    gateway = models.CharField(max_length=40, default='upi')
     transaction_id = models.CharField(max_length=100, unique=True)
     invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL, related_name='payment_txns')
     amount = models.DecimalField(**MONEY)

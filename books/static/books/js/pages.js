@@ -1851,10 +1851,10 @@ async function paymentOverviewPage(root) {
     <div class="hd">
       <div>
         <h1>Convosis Payments Overview</h1>
-        <div class="sub" style="margin-top:2px;">Integrated payment collection gateway powered by Razorpay, Stripe & UPI</div>
+        <div class="sub" style="margin-top:2px;">Integrated payment collection gateway powered by UPI Payment</div>
       </div>
       <div class="act">
-        <button class="btn" onclick="location.hash='#/pay/payment-settings'" type="button">Configure Gateway</button>
+        <button class="btn" onclick="location.hash='#/pay/payment-settings'" type="button">Configure UPI Gateway</button>
         <button class="btn p" onclick="location.hash='#/pay/payment-transactions'" type="button">View All Transactions</button>
       </div>
     </div>
@@ -1878,7 +1878,7 @@ async function paymentOverviewPage(root) {
         </div>
         <div class="card" style="padding:16px;">
           <div class="sub">Active Gateway</div>
-          <div style="font-size:20px;font-weight:700;color:var(--accent);margin:6px 0;">Razorpay + UPI</div>
+          <div style="font-size:20px;font-weight:700;color:var(--accent);margin:6px 0;">UPI Payment</div>
           <div class="sub" style="font-size:11px;">Direct Bank Settlement</div>
         </div>
         <div class="card" style="padding:16px;">
@@ -1891,7 +1891,7 @@ async function paymentOverviewPage(root) {
         <div class="card" style="margin-top:16px;padding:32px;text-align:center;">
           <div style="font-size:36px;margin-bottom:8px;">💳</div>
           <h3 style="margin:0 0 6px;">No Online Transactions Yet</h3>
-          <p class="sub" style="max-width:440px;margin:0 auto 16px;">Payment links generated on your invoices will automatically appear here once paid by your clients.</p>
+          <p class="sub" style="max-width:440px;margin:0 auto 16px;">UPI payment links generated on your invoices will automatically appear here once paid by your clients.</p>
           <button class="btn p" onclick="location.hash='#/sales/invoices'" type="button">Go to Invoices</button>
         </div>
       ` : ''}
@@ -1902,36 +1902,42 @@ async function paymentOverviewPage(root) {
 }
 
 function paymentSettingsPage(root) {
-  const savedCfg = pref.get('convosis_payment_cfg', { key_id: '', key_secret: '', webhook_url: location.origin + '/api/webhooks/razorpay/' });
+  const savedCfg = pref.get('convosis_payment_cfg', { upi_id: '', merchant_name: '', key_secret: '', webhook_url: location.origin + '/api/webhooks/upi/' });
 
   root.innerHTML = `
     <div class="bc">Home / Convosis Payments / Settings</div>
     <div class="hd">
       <div>
-        <h1>Payment Gateway Configuration</h1>
-        <div class="sub" style="margin-top:2px;">Connect Razorpay, Stripe, or UPI for automated client invoice payment links</div>
+        <h1>UPI Payment Gateway Configuration</h1>
+        <div class="sub" style="margin-top:2px;">Configure UPI Payment for automated client invoice payment links &amp; QR codes</div>
       </div>
       <div class="act">
         <button class="btn p" id="btn-save-pay-cfg" type="button">Save Settings</button>
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:24px;">
-      <h3 style="font-size:15px;margin-bottom:6px;">Razorpay & UPI Gateway Credentials</h3>
-      <div class="sub" style="font-size:12px;margin-bottom:16px;">Obtain your API keys from the Razorpay Dashboard under Settings &gt; API Keys.</div>
+      <h3 style="font-size:15px;margin-bottom:6px;">UPI Payment Gateway Credentials</h3>
+      <div class="sub" style="font-size:12px;margin-bottom:16px;">Configure your UPI VPA / Merchant ID and webhook callback settings for automated payment settlement.</div>
       <form id="pay-cfg-form">
         <div class="g">
           <div class="fg s6">
-            <label>Key ID</label>
-            <input class="in" id="pay_key_id" name="key_id" placeholder="rzp_live_..." value="${esc(savedCfg.key_id || '')}">
+            <label>UPI ID / Merchant VPA</label>
+            <input class="in" id="pay_upi_id" name="upi_id" placeholder="e.g. merchant@upi or company@okaxis" value="${esc(savedCfg.upi_id || savedCfg.key_id || '')}">
           </div>
           <div class="fg s6">
-            <label>Key Secret</label>
-            <input class="in" id="pay_key_secret" name="key_secret" type="password" placeholder="Enter Razorpay Key Secret" value="${esc(savedCfg.key_secret || '')}">
+            <label>Merchant Payee Name</label>
+            <input class="in" id="pay_merchant_name" name="merchant_name" placeholder="Convosis Technologies Pvt Ltd" value="${esc(savedCfg.merchant_name || '')}">
+          </div>
+          <div class="fg s6">
+            <label>Merchant Secret / Key</label>
+            <input class="in" id="pay_key_secret" name="key_secret" type="password" placeholder="Enter UPI Merchant Secret" value="${esc(savedCfg.key_secret || '')}">
+          </div>
+          <div class="fg s6">
+            <label>UPI Webhook Endpoint URL</label>
+            <input class="in" id="pay_webhook_url" name="webhook_url" value="${esc(savedCfg.webhook_url || location.origin + '/api/webhooks/upi/')}" readonly>
           </div>
           <div class="fg s12">
-            <label>Webhook Endpoint URL</label>
-            <input class="in" id="pay_webhook_url" name="webhook_url" value="${esc(savedCfg.webhook_url || location.origin + '/api/webhooks/razorpay/')}" readonly>
-            <div class="sub" style="font-size:11px;margin-top:4px;">Configure this webhook in your gateway dashboard to receive instant settlement alerts.</div>
+            <div class="sub" style="font-size:11px;margin-top:2px;">Configure this webhook endpoint in your UPI gateway / bank portal to receive instant settlement alerts.</div>
           </div>
         </div>
       </form>
@@ -1939,11 +1945,12 @@ function paymentSettingsPage(root) {
   `;
 
   $('#btn-save-pay-cfg', root).addEventListener('click', () => {
-    const key_id = $('#pay_key_id', root).value.trim();
+    const upi_id = ($('#pay_upi_id', root) ? $('#pay_upi_id', root).value : '').trim();
+    const merchant_name = ($('#pay_merchant_name', root) ? $('#pay_merchant_name', root).value : '').trim();
     const key_secret = $('#pay_key_secret', root).value.trim();
     const webhook_url = $('#pay_webhook_url', root).value.trim();
-    pref.set('convosis_payment_cfg', { key_id, key_secret, webhook_url });
-    toast('Payment gateway configuration saved successfully!');
+    pref.set('convosis_payment_cfg', { upi_id, merchant_name, key_secret, webhook_url, key_id: upi_id });
+    toast('UPI payment gateway configuration saved successfully!');
   });
 }
 
@@ -2148,9 +2155,9 @@ async function securityCompliancePage(root) {
                 </div>
               </div>
               <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:14px;">
-                <div style="font-weight:600;font-size:13px;margin-bottom:4px;color:var(--accent);">Integrated Payment Gateways</div>
+                <div style="font-weight:600;font-size:13px;margin-bottom:4px;color:var(--accent);">Integrated UPI Payment Gateway</div>
                 <div class="sub" style="font-size:12px;line-height:1.5;">
-                  Connected Razorpay, Stripe, and UPI payment gateways with automated webhooks for instant invoice reconciliation and zero cardholder data storage.
+                  Connected UPI payment gateway with automated webhooks for instant invoice reconciliation and zero cardholder data storage.
                 </div>
               </div>
               <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:14px;">
@@ -2476,7 +2483,7 @@ async function subscriptionBillingPage(root) {
     });
 
     $('#btnUpdatePaymentMethod', root).addEventListener('click', () => {
-      toast('Payment gateway portal: current card is active and validated with Razorpay/Stripe tokenization.', 'ok');
+      toast('Payment gateway portal: UPI payment collection active and validated.', 'ok');
     });
 
   } catch (e) {

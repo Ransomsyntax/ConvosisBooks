@@ -1745,7 +1745,7 @@ async function cashFlowPage(root) {
 function reportsCenterPage(root) {
   const cards = [
     { title: 'Business Overview (P&L)', sub: 'Gross profit, operating margin, net profit breakdown', href: '#/reports/business-overview', icon: '📊' },
-    { title: 'Trial Balance', sub: 'Comprehensive double-entry general ledger verification', href: '#/reports/accounting-reports', icon: '⚖️' },
+    { title: 'Trial Balance', sub: 'Checks whether total debits and credits match in the trial balance.', href: '#/reports/accounting-reports', icon: '⚖️' },
     { title: 'Statement of Cash Flows', sub: 'Operating, investing, and financing cash flows', href: '#/reports/cash-flow-reports', icon: '💸' },
     { title: 'Sales Reports by Customer', sub: 'Customer-wise turnover and GST breakdown', href: '#/reports/sales-reports', icon: '📈' },
     { title: 'Purchases Reports by Vendor', sub: 'Vendor bill volume and expenditure trends', href: '#/reports/purchase-reports', icon: '🛒' },
@@ -1915,7 +1915,7 @@ async function securityCompliancePage(root) {
             Period Locking
           </button>
           <button class="btn p" onclick="if(window.openFinGptDoubtBot) window.openFinGptDoubtBot('What are our SOC2 Type II and GDPR compliance controls?');" type="button" style="background:linear-gradient(135deg,#10a37f,#6366f1);border:none;">
-            Clear Doubts with FinGPT
+            Ask the Accounting Assistant
           </button>
         </div>
       </div>

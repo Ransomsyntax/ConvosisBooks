@@ -1623,7 +1623,7 @@ async function ziaAiAssistantModal() {
           <div style="display:flex;gap:10px;align-items:flex-start;">
             <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div>
             <div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);max-width:85%;line-height:1.5;">
-              Hello! I am <b>Zia</b>, your embedded financial intelligence copilot. How can I assist you with your books today?
+              Hello! I am <b>Zia</b>, your accounting assistant. How can I assist you with your books today?
             </div>
           </div>
         </div>

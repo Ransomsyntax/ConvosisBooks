@@ -575,7 +575,7 @@
       </div>
       <div class="fingpt-launcher-text">
         <span class="fingpt-launcher-title">Convo Bot</span>
-        <span class="fingpt-launcher-sub">Clear Accounting & Tax Doubts</span>
+        <span class="fingpt-launcher-sub">Get Help with Accounting and Tax</span>
       </div>
     `;
     document.body.appendChild(launcher);
@@ -591,7 +591,7 @@
             <h3>Convo Bot <span class="pastel-chip chip-sky" style="font-size:10px;">Enterprise</span></h3>
             <div class="fingpt-status-pill">
               <span class="fingpt-status-dot"></span>
-              <span>Doubt Clearance Engine · Online</span>
+              <span>Accounting Assistant · Online</span>
             </div>
           </div>
         </div>
@@ -760,10 +760,8 @@
       <div class="fingpt-msg-row bot">
         <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
         <div class="fingpt-msg-bubble">
-          <h3>Hello! I am Convosis FinGPT 🤖</h3>
-          <p style="margin:4px 0 10px;line-height:1.5;">
-            I am your ChatGPT-powered financial copilot for <b>${esc(org.name || 'your enterprise')}</b>. I clear all doubts regarding <b>double-entry bookkeeping</b>, <b>GST & tax laws</b>, <b>automated bank feeds</b>, <b>SOC2/GDPR compliance</b>, or <b>live ledger data</b>.
-          </p>
+          <h3>Hello! Welcome to ConvosisBooks 👋</h3>
+          <p style="margin:4px 0 10px;line-height:1.5;">I'm your accounting assistant for <b>${esc(org.name || 'your business')}</b>. I can help you understand bookkeeping, GST, tax-related questions, bank reconciliation, financial reports, and ledger transactions. Select a topic below to get started.</p>
 
           <div style="font-size:12px;font-weight:700;color:#10a37f;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">
             Suggested Doubts to Explore:

@@ -182,6 +182,14 @@ const closePops = () => {
     }, 180);
   });
 })();
+
+// Mobile touch event support: instant tap outside to close dropdowns
+document.addEventListener('touchstart', e => {
+  const t = e.target;
+  if (!t.closest('.pop') && !t.closest('#um') && !t.closest('#qc') && !t.closest('#notifBtn') && !t.closest('#orgbtn')) {
+    closePops();
+  }
+}, { passive: true });
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],

@@ -1140,14 +1140,29 @@ tr:hover td {
   background: transparent;
 }
 
-/* Hovering user menu wrapper OR dropdown displays IN */
-.user-menu-wrap:hover #umm.pop,
+/* Desktop Hover: Smooth display IN on pointer hover */
+@media (hover: hover) and (pointer: fine) {
+  .user-menu-wrap:hover #umm.pop {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    transform: translateY(0) scale(1) !important;
+  }
+}
+
+/* Touch & Click: Smooth display IN when active / toggled */
 .user-menu-wrap.open #umm.pop,
 #umm.pop.on {
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
   transform: translateY(0) scale(1) !important;
+}
+
+/* Universal touch optimization */
+button, .btn, .mi, .av, .ib, .plus, .theme-toggle-btn, .sw {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #umm .who {
@@ -1607,6 +1622,10 @@ body.login {
 
 /* Responsive adjustments */
 @media (max-width: 900px) {
+  #top, .top-bar {
+    padding: 0 14px;
+    gap: 8px;
+  }
   #side, aside.sidebar {
     transform: translateX(-100%);
     width: 260px;
@@ -1619,7 +1638,81 @@ body.login {
     margin-left: 0;
   }
   .org, .app {
+    display: none !important;
+  }
+}
+
+/* Phone Breakpoint (<= 640px - All Android phones & iPhones) */
+@media (max-width: 640px) {
+  #top, .top-bar {
+    padding: 0 10px;
+    gap: 6px;
+    height: 56px;
+  }
+
+  /* Make sure the user dropdown never overflows mobile screen edges */
+  #umm.pop {
+    min-width: 220px;
+    max-width: calc(100vw - 16px);
+    right: -2px;
+    top: calc(100% + 6px);
+    border-radius: 12px;
+  }
+
+  /* Mobile Quick Create */
+  #qcm.pop {
+    max-width: calc(100vw - 20px);
+    right: -10px;
+  }
+
+  /* Mobile Notification popover */
+  #notifPop {
+    max-width: calc(100vw - 16px) !important;
+    width: 360px !important;
+    right: -36px !important;
+  }
+
+  /* Compact button styling on phones */
+  .theme-toggle-btn span {
     display: none;
+  }
+  .theme-toggle-btn {
+    padding: 7px;
+  }
+
+  .plus span {
+    display: none;
+  }
+  .plus {
+    padding: 7px 10px;
+  }
+
+  .av {
+    width: 34px;
+    height: 34px;
+    font-size: 12.5px;
+  }
+
+  #umm .mi {
+    padding: 10.5px 12px; /* iOS & Android 44px HIG touch target */
+    font-size: 13px;
+  }
+}
+
+/* Small Phone Breakpoint (<= 380px - iPhone SE, Galaxy Z Flip cover, small Androids) */
+@media (max-width: 380px) {
+  #top, .top-bar {
+    padding: 0 6px;
+    gap: 4px;
+  }
+  #umm.pop {
+    min-width: 200px;
+    max-width: calc(100vw - 12px);
+    right: 0;
+  }
+  #notifPop {
+    max-width: calc(100vw - 12px) !important;
+    right: -20px !important;
   }
 }
 

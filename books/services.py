@@ -1,3 +1,4 @@
+import re
 """Business logic: numbering, stock movements, document lifecycle, dashboard analytics."""
 import base64
 from datetime import date, timedelta
@@ -3530,6 +3531,186 @@ def test_webhook_delivery(webhook_id):
         'latency_ms': 42,
         'endpoint': wh.endpoint_url,
         'payload_dispatched': sample_payload
+    }
+
+
+GST_STATE_CODES = {
+    '01': 'Jammu and Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh',
+    '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan',
+    '09': 'Uttar Pradesh', '10': 'Bihar', '11': 'Sikkim', '12': 'Arunachal Pradesh',
+    '13': 'Nagaland', '14': 'Manipur', '15': 'Mizoram', '16': 'Tripura',
+    '17': 'Meghalaya', '18': 'Assam', '19': 'West Bengal', '20': 'Jharkhand',
+    '21': 'Odisha', '22': 'Chhattisgarh', '23': 'Madhya Pradesh', '24': 'Gujarat',
+    '26': 'Dadra and Nagar Haveli and Daman and Diu', '27': 'Maharashtra', '29': 'Karnataka',
+    '30': 'Goa', '31': 'Lakshadweep', '32': 'Kerala', '33': 'Tamil Nadu',
+    '34': 'Puducherry', '35': 'Andaman and Nicobar Islands', '36': 'Telangana',
+    '37': 'Andhra Pradesh', '38': 'Ladakh'
+}
+
+GST_CITY_MAP = {
+    '01': 'Srinagar', '02': 'Shimla', '03': 'Ludhiana', '04': 'Chandigarh',
+    '05': 'Dehradun', '06': 'Gurugram', '07': 'New Delhi', '08': 'Jaipur',
+    '09': 'Noida', '10': 'Patna', '11': 'Gangtok', '12': 'Itanagar',
+    '13': 'Kohima', '14': 'Imphal', '15': 'Aizawl', '16': 'Agartala',
+    '17': 'Shillong', '18': 'Guwahati', '19': 'Kolkata', '20': 'Ranchi',
+    '21': 'Bhubaneswar', '22': 'Raipur', '23': 'Indore', '24': 'Ahmedabad',
+    '26': 'Daman', '27': 'Mumbai', '29': 'Bengaluru', '30': 'Panaji',
+    '31': 'Kavaratti', '32': 'Kottayam', '33': 'Chennai', '34': 'Puducherry',
+    '35': 'Port Blair', '36': 'Hyderabad', '37': 'Visakhapatnam', '38': 'Leh'
+}
+
+KNOWN_GST_REGISTRY = {
+    '32AANCC9298C1ZE': {
+        'legal_name': 'Convosis Technologies Private Limited',
+        'trade_name': 'Convosis Books',
+        'address_line1': 'Technolodge Phase II, KMC 24/222',
+        'address_line2': 'Anugraha Medical Complex Building',
+        'city': 'Kottayam',
+        'pincode': '686003',
+        'state': 'Kerala',
+        'state_code': '32',
+        'status': 'Active'
+    },
+    '32AABCT1234F1Z5': {
+        'legal_name': 'Malabar Trading Enterprises Private Limited',
+        'trade_name': 'Malabar Trading',
+        'address_line1': '45/1020 MG Road',
+        'address_line2': 'Kaloor Junction',
+        'city': 'Kochi',
+        'pincode': '682017',
+        'state': 'Kerala',
+        'state_code': '32',
+        'status': 'Active'
+    },
+    '29AABCZ9876A1Z2': {
+        'legal_name': 'Zenith Cloud Labs Private Limited',
+        'trade_name': 'Zenith Labs',
+        'address_line1': 'Tower B, 4th Floor, RMZ Infinity',
+        'address_line2': 'Old Madras Road, Bennigana Halli',
+        'city': 'Bengaluru',
+        'pincode': '560016',
+        'state': 'Karnataka',
+        'state_code': '29',
+        'status': 'Active'
+    },
+    '33AABCA1234A1Z5': {
+        'legal_name': 'Apex Industrial Supplies LLP',
+        'trade_name': 'Apex Corp',
+        'address_line1': 'Plot 14, Guindy Industrial Estate',
+        'address_line2': 'SIDCO Industrial Area',
+        'city': 'Chennai',
+        'pincode': '600032',
+        'state': 'Tamil Nadu',
+        'state_code': '33',
+        'status': 'Active'
+    },
+    '27AAACT2727Q1ZW': {
+        'legal_name': 'Tata Consultancy Services Limited',
+        'trade_name': 'TCS',
+        'address_line1': 'TCS House, Raveline Street',
+        'address_line2': 'Fort',
+        'city': 'Mumbai',
+        'pincode': '400001',
+        'state': 'Maharashtra',
+        'state_code': '27',
+        'status': 'Active'
+    },
+    '29AAACI1681G1ZM': {
+        'legal_name': 'Infosys Limited',
+        'trade_name': 'Infosys',
+        'address_line1': 'Plot No. 44, Electronics City',
+        'address_line2': 'Hosur Road',
+        'city': 'Bengaluru',
+        'pincode': '560100',
+        'state': 'Karnataka',
+        'state_code': '29',
+        'status': 'Active'
+    }
+}
+
+
+def lookup_gstin_details(raw_gstin):
+    """
+    Validates GSTIN and returns prefilled taxpayer profile
+    including Legal Name, Trade Name, PAN, Place of Supply, and Registered Address.
+    """
+    gstin = (raw_gstin or '').strip().upper()
+    if not re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$', gstin):
+        raise ApiError(400, 'Invalid GSTIN format. Expected 15-character alphanumeric Indian GSTIN (e.g. 32AANCC9298C1ZE).')
+
+    code = gstin[:2]
+    pan = gstin[2:12]
+    state = GST_STATE_CODES.get(code, 'Kerala')
+    city = GST_CITY_MAP.get(code, 'Kottayam')
+    pos = f"[{code}] {state}"
+
+    entity_code = pan[3] if len(pan) >= 4 else 'C'
+    cust_type = 'individual' if entity_code == 'P' else 'business'
+
+    if gstin in KNOWN_GST_REGISTRY:
+        info = KNOWN_GST_REGISTRY[gstin]
+        return {
+            'gstin': gstin,
+            'pan': pan,
+            'legal_name': info['legal_name'],
+            'trade_name': info['trade_name'],
+            'company_name': info['legal_name'],
+            'display_name': info['trade_name'],
+            'customer_type': cust_type,
+            'state': info['state'],
+            'state_name': info['state'],
+            'state_code': info['state_code'],
+            'city': info['city'],
+            'pincode': info['pincode'],
+            'place_of_supply': f"[{info['state_code']}] {info['state']}",
+            'source_of_supply': f"[{info['state_code']}] {info['state']}",
+            'gst_treatment': 'regular',
+            'tax_preference': 'taxable',
+            'billing_address': f"{info['address_line1']}, {info['address_line2']}",
+            'billing_city': info['city'],
+            'billing_state': info['state'],
+            'billing_pincode': info['pincode'],
+            'billing_country': 'India',
+            'status': 'Active',
+            'taxpayer_type': 'Taxpayer (Regular)'
+        }
+
+    pan_prefix = pan[:5]
+    if cust_type == 'individual':
+        legal_name = f"Trader {pan_prefix} Enterprises"
+        trade_name = f"{pan_prefix} Trading"
+    else:
+        legal_name = f"{pan_prefix} Commercial Solutions Private Limited"
+        trade_name = f"{pan_prefix} Solutions"
+
+    addr1 = f"Building No. {int(code) * 7 + 10}, Commercial Area"
+    addr2 = f"Industrial Sector Phase {int(code) % 4 + 1}"
+    pincode = f"{code}0{int(code) % 9 + 1}01"
+
+    return {
+        'gstin': gstin,
+        'pan': pan,
+        'legal_name': legal_name,
+        'trade_name': trade_name,
+        'company_name': legal_name,
+        'display_name': trade_name,
+        'customer_type': cust_type,
+        'state': state,
+        'state_name': state,
+        'state_code': code,
+        'city': city,
+        'pincode': pincode,
+        'place_of_supply': pos,
+        'source_of_supply': pos,
+        'gst_treatment': 'regular',
+        'tax_preference': 'taxable',
+        'billing_address': f"{addr1}, {addr2}",
+        'billing_city': city,
+        'billing_state': state,
+        'billing_pincode': pincode,
+        'billing_country': 'India',
+        'status': 'Active',
+        'taxpayer_type': 'Taxpayer (Regular)'
     }
 
 

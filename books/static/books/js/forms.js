@@ -121,30 +121,779 @@ function formModal({ title, body, submit = 'Save', actions, wide, onSubmit, onRe
   return m;
 }
 
-/* ---------- parties ---------- */
+/* ---------- Enterprise Customer & Vendor Forms ---------- */
+
+const GST_STATE_OPTIONS = [
+  ['', 'Select state / place of supply'],
+  ['[32] Kerala', '[32] Kerala'],
+  ['[33] Tamil Nadu', '[33] Tamil Nadu'],
+  ['[29] Karnataka', '[29] Karnataka'],
+  ['[27] Maharashtra', '[27] Maharashtra'],
+  ['[07] Delhi', '[07] Delhi'],
+  ['[24] Gujarat', '[24] Gujarat'],
+  ['[36] Telangana', '[36] Telangana'],
+  ['[37] Andhra Pradesh', '[37] Andhra Pradesh'],
+  ['[19] West Bengal', '[19] West Bengal'],
+  ['[09] Uttar Pradesh', '[09] Uttar Pradesh'],
+  ['[06] Haryana', '[06] Haryana'],
+  ['[08] Rajasthan', '[08] Rajasthan'],
+  ['[23] Madhya Pradesh', '[23] Madhya Pradesh'],
+  ['[10] Bihar', '[10] Bihar'],
+  ['[21] Odisha', '[21] Odisha'],
+  ['[03] Punjab', '[03] Punjab'],
+  ['[22] Chhattisgarh', '[22] Chhattisgarh'],
+  ['[20] Jharkhand', '[20] Jharkhand'],
+  ['[05] Uttarakhand', '[05] Uttarakhand'],
+  ['[02] Himachal Pradesh', '[02] Himachal Pradesh'],
+  ['[30] Goa', '[30] Goa'],
+  ['[18] Assam', '[18] Assam'],
+  ['[04] Chandigarh', '[04] Chandigarh'],
+  ['[34] Puducherry', '[34] Puducherry'],
+  ['[01] Jammu and Kashmir', '[01] Jammu and Kashmir'],
+  ['[38] Ladakh', '[38] Ladakh'],
+  ['[11] Sikkim', '[11] Sikkim'],
+  ['[17] Meghalaya', '[17] Meghalaya'],
+  ['[16] Tripura', '[16] Tripura'],
+  ['[14] Manipur', '[14] Manipur'],
+  ['[13] Nagaland', '[13] Nagaland'],
+  ['[12] Arunachal Pradesh', '[12] Arunachal Pradesh'],
+  ['[15] Mizoram', '[15] Mizoram'],
+  ['[35] Andaman and Nicobar Islands', '[35] Andaman and Nicobar Islands'],
+  ['[31] Lakshadweep', '[31] Lakshadweep'],
+  ['[26] Dadra and Nagar Haveli and Daman and Diu', '[26] Dadra and Nagar Haveli and Daman and Diu'],
+  ['Other Territory', '[97] Other Territory']
+];
+
+const GST_TREATMENT_OPTIONS_CUSTOMER = [
+  ['business_regular', 'Registered Business - Regular'],
+  ['business_composition', 'Registered Business - Composition'],
+  ['unregistered', 'Unregistered Business'],
+  ['consumer', 'Consumer'],
+  ['overseas', 'Overseas'],
+  ['sez', 'Special Economic Zone (SEZ)'],
+  ['deemed_export', 'Deemed Export']
+];
+
+const GST_TREATMENT_OPTIONS_VENDOR = [
+  ['business_regular', 'Registered Business - Regular'],
+  ['business_composition', 'Registered Business - Composition'],
+  ['unregistered', 'Unregistered Business'],
+  ['overseas', 'Overseas'],
+  ['sez', 'Special Economic Zone (SEZ)']
+];
+
+const LANGUAGE_OPTIONS = [
+  ['English', 'English'],
+  ['Hindi', 'Hindi (हिंदी)'],
+  ['Tamil', 'Tamil (தமிழ்)'],
+  ['Malayalam', 'Malayalam (മലയാളം)'],
+  ['Kannada', 'Kannada (ಕನ್ನಡ)'],
+  ['Telugu', 'Telugu (తెలుగు)'],
+  ['Marathi', 'Marathi (मराठी)'],
+  ['Gujarati', 'Gujarati (ગુજરાતી)'],
+  ['Bengali', 'Bengali (বাংলা)']
+];
+
+const CURRENCY_OPTIONS = [
+  ['INR', 'INR - Indian Rupee (₹)'],
+  ['USD', 'USD - US Dollar ($)'],
+  ['EUR', 'EUR - Euro (€)'],
+  ['GBP', 'GBP - British Pound (£)'],
+  ['AED', 'AED - UAE Dirham (د.إ)'],
+  ['SGD', 'SGD - Singapore Dollar (S$)']
+];
+
+const PAYMENT_TERMS_OPTIONS = [
+  ['1', 'Due on Receipt'],
+  ['15', 'Net 15'],
+  ['30', 'Net 30'],
+  ['45', 'Net 45'],
+  ['60', 'Net 60'],
+  ['0', 'Due end of the month'],
+  ['-1', 'Due end of next month']
+];
+
+const TDS_OPTIONS = [
+  ['', 'None'],
+  ['194C', '194C - Payments to Contractors / Subcontractors (1% / 2%)'],
+  ['194J', '194J - Fees for Professional or Technical Services (2% / 10%)'],
+  ['194I_LAND', '194I - Rent on Land, Building or Furniture (10%)'],
+  ['194I_PLANT', '194I - Rent on Plant, Machinery or Equipment (2%)'],
+  ['194Q', '194Q - Purchase of Goods exceeding ₹50 Lakhs (0.1%)'],
+  ['194H', '194H - Commission or Brokerage (5%)']
+];
+
 async function partyForm(kind, id) {
-  const one = kind === 'customers' ? 'customer' : 'vendor';
-  const r = id ? await api(`${kind}/${id}/`) : { payment_terms: 30, active: true, state: APP.org.state };
-  const stOpts = [['', 'Select state'], ...STATES];
+  const isCust = kind === 'customers';
+  const entityLabel = isCust ? 'Customer' : 'Vendor';
+  const r = id ? await api(`${kind}/${id}/`) : {
+    customer_type: 'business',
+    currency: 'INR',
+    payment_terms: 30,
+    opening_balance: '0.00',
+    opening_balance_type: 'debit',
+    gst_treatment: 'business_regular',
+    tax_preference: 'taxable',
+    active: true,
+    state: APP.org.state || 'Kerala',
+    place_of_supply: `[32] ${APP.org.state || 'Kerala'}`,
+    source_of_supply: `[32] ${APP.org.state || 'Kerala'}`,
+    contact_persons_data: [],
+    custom_fields_data: {},
+    documents_data: []
+  };
+
+  let contactPersonsList = Array.isArray(r.contact_persons_data) ? [...r.contact_persons_data] : [];
+  let customFieldsList = r.custom_fields_data && typeof r.custom_fields_data === 'object'
+    ? Object.entries(r.custom_fields_data).map(([k, v]) => ({ label: k, value: v }))
+    : [];
+  let documentsList = Array.isArray(r.documents_data) ? [...r.documents_data] : [];
+
+  const defaultPos = r.place_of_supply || (r.state ? `[32] ${r.state}` : '[32] Kerala');
+  const defaultSos = r.source_of_supply || (r.state ? `[32] ${r.state}` : '[32] Kerala');
+
+  const formHtml = `
+    <div class="party-form-wrap">
+      <!-- 1. GST Portal Prefill Header Banner -->
+      <div class="gst-prefill-banner">
+        <div class="gst-prefill-info">
+          <div class="gst-badge-icon">🏛️</div>
+          <div>
+            <div class="gst-prefill-title">Prefill ${entityLabel} details from the GST portal using the ${entityLabel}'s GSTIN.</div>
+            <div class="gst-prefill-sub">Auto-populates trade name, legal entity, PAN, state, and registered billing address.</div>
+          </div>
+        </div>
+        <div class="gst-prefill-ctrls">
+          <input class="in gst-prefill-input" id="gst_prefill_code" placeholder="Enter 15-digit GSTIN" maxlength="15" value="${esc(r.gstin || '')}">
+          <button type="button" class="btn p" id="btn_trigger_gst_prefill" style="white-space:nowrap;">Prefill</button>
+        </div>
+      </div>
+
+      <!-- 2. Customer Type Selector (Customer Only) -->
+      ${isCust ? `
+        <div style="display:flex;align-items:center;gap:16px;">
+          <label style="font-size:12.5px;font-weight:600;color:var(--tx2);">Customer Type</label>
+          <div class="party-type-bar">
+            <label class="party-type-pill ${r.customer_type !== 'individual' ? 'active' : ''}" id="pill_type_business">
+              <input type="radio" name="customer_type" value="business" ${r.customer_type !== 'individual' ? 'checked' : ''} style="display:none;">
+              <span>🏢 Business</span>
+            </label>
+            <label class="party-type-pill ${r.customer_type === 'individual' ? 'active' : ''}" id="pill_type_individual">
+              <input type="radio" name="customer_type" value="individual" ${r.customer_type === 'individual' ? 'checked' : ''} style="display:none;">
+              <span>👤 Individual</span>
+            </label>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- 3. Primary Contact & Company Details -->
+      <div class="g" style="gap:14px;">
+        <div class="fg s4">
+          <label>Primary Contact</label>
+          <div style="display:flex;gap:6px;">
+            <select class="in" id="primary_salutation" name="primary_salutation" style="width:75px;flex-shrink:0;">
+              <option value="Mr.">Mr.</option>
+              <option value="Mrs.">Mrs.</option>
+              <option value="Ms.">Ms.</option>
+              <option value="Miss">Miss</option>
+              <option value="Dr.">Dr.</option>
+            </select>
+            <input class="in" id="contact_person" name="contact_person" placeholder="First Name &amp; Last Name" value="${esc(r.contact_person || '')}">
+          </div>
+        </div>
+        <div class="fg s4">
+          <label>Company Name</label>
+          <input class="in" id="company" name="company" placeholder="e.g. Convosis Technologies Pvt Ltd" value="${esc(r.company || '')}">
+        </div>
+        <div class="fg s4">
+          <label>${entityLabel} Display Name <span class="rq">*</span></label>
+          <div style="display:flex;gap:6px;">
+            <input class="in" id="name" name="name" required placeholder="${entityLabel} Display Name" value="${esc(r.name || '')}" style="font-weight:600;">
+            <select class="in" id="display_name_picker" title="Quick pick name source" style="width:40px;padding:4px;flex-shrink:0;">
+              <option value="">▼</option>
+              <option value="company">From Company</option>
+              <option value="contact">From Contact</option>
+            </select>
+          </div>
+          <div class="er" data-err="name"></div>
+        </div>
+
+        <div class="fg s4">
+          <label>Email Address</label>
+          <input class="in" id="email" name="email" type="email" placeholder="billing@company.com" value="${esc(r.email || '')}">
+          <div class="er" data-err="email"></div>
+        </div>
+        <div class="fg s4">
+          <label>Work Phone</label>
+          <input class="in" id="phone" name="phone" type="tel" placeholder="+91-9847017737" value="${esc(r.phone || '')}">
+          <div class="er" data-err="phone"></div>
+        </div>
+        <div class="fg s4">
+          <label>Mobile</label>
+          <input class="in" id="mobile" name="mobile" type="tel" placeholder="+91-9840012345" value="${esc(r.mobile || '')}">
+          <div class="er" data-err="mobile"></div>
+        </div>
+        ${isCust ? `
+          <div class="fg s4">
+            <label>Customer Language</label>
+            <select class="in" id="customer_language" name="customer_language">
+              ${LANGUAGE_OPTIONS.map(([val, lbl]) => `<option value="${val}" ${r.customer_language === val ? 'selected' : ''}>${lbl}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- 4. Tax & Financial Governance Section -->
+      <div class="card" style="padding:16px 18px;background:var(--surface-glass-subtle);">
+        <h4 style="margin:0 0 12px;font-size:13.5px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:6px;">
+          <span>⚖️</span> Tax &amp; Statutory Governance
+        </h4>
+        <div class="g" style="gap:12px;">
+          <div class="fg s4">
+            <label>GST Treatment</label>
+            <select class="in" id="gst_treatment" name="gst_treatment">
+              ${(isCust ? GST_TREATMENT_OPTIONS_CUSTOMER : GST_TREATMENT_OPTIONS_VENDOR).map(([v, l]) => `
+                <option value="${v}" ${r.gst_treatment === v ? 'selected' : ''}>${l}</option>
+              `).join('')}
+            </select>
+          </div>
+          <div class="fg s4">
+            <label>${isCust ? 'Place of Supply' : 'Source of Supply'}</label>
+            <select class="in" id="${isCust ? 'place_of_supply' : 'source_of_supply'}" name="${isCust ? 'place_of_supply' : 'source_of_supply'}">
+              ${GST_STATE_OPTIONS.map(([v, l]) => {
+                const cur = isCust ? defaultPos : defaultSos;
+                const isSel = cur.includes(v) || v.includes(r.state || 'None');
+                return `<option value="${v}" ${isSel ? 'selected' : ''}>${l}</option>`;
+              }).join('')}
+            </select>
+          </div>
+          <div class="fg s4">
+            <label>GSTIN</label>
+            <input class="in" id="gstin" name="gstin" maxlength="15" placeholder="e.g. 32AANCC9298C1ZE" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.gstin || '')}">
+            <div class="er" data-err="gstin"></div>
+          </div>
+
+          <div class="fg s3">
+            <label>PAN</label>
+            <input class="in" id="pan" name="pan" maxlength="10" placeholder="e.g. AANCC9298C" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.pan || '')}">
+            <div class="er" data-err="pan"></div>
+          </div>
+          <div class="fg s3">
+            <label>Currency</label>
+            <select class="in" id="currency" name="currency">
+              ${CURRENCY_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.currency === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fg s3">
+            <label>Opening Balance</label>
+            <div style="display:flex;gap:4px;">
+              <input class="in" id="opening_balance" name="opening_balance" type="number" step="0.01" placeholder="0.00" value="${r.opening_balance || '0.00'}">
+              <select class="in" id="opening_balance_type" name="opening_balance_type" style="width:65px;flex-shrink:0;">
+                <option value="debit" ${r.opening_balance_type !== 'credit' ? 'selected' : ''}>Dr</option>
+                <option value="credit" ${r.opening_balance_type === 'credit' ? 'selected' : ''}>Cr</option>
+              </select>
+            </div>
+          </div>
+          <div class="fg s3">
+            <label>Payment Terms</label>
+            <select class="in" id="payment_terms" name="payment_terms">
+              ${PAYMENT_TERMS_OPTIONS.map(([v, l]) => `<option value="${v}" ${String(r.payment_terms) === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Customer Tax Preference -->
+          ${isCust ? `
+            <div class="fg s6">
+              <label>Tax Preference</label>
+              <div style="display:flex;gap:18px;align-items:center;height:36px;">
+                <label class="radio-label"><input type="radio" name="tax_preference" value="taxable" ${r.tax_preference !== 'tax_exempt' ? 'checked' : ''}> Taxable</label>
+                <label class="radio-label"><input type="radio" name="tax_preference" value="tax_exempt" ${r.tax_preference === 'tax_exempt' ? 'checked' : ''}> Tax Exempt</label>
+              </div>
+            </div>
+            <div class="fg s6" id="exemption_reason_wrap" style="${r.tax_preference === 'tax_exempt' ? '' : 'display:none;'}">
+              <label>Exemption Reason</label>
+              <input class="in" id="exemption_reason" name="exemption_reason" placeholder="e.g. Export / SEZ / Govt Notification" value="${esc(r.exemption_reason || '')}">
+            </div>
+          ` : `
+            <!-- Vendor MSME & TDS Controls -->
+            <div class="fg s6">
+              <label class="ck" style="margin-top:6px;">
+                <input type="checkbox" id="is_msme_registered" name="is_msme_registered" ${r.is_msme_registered ? 'checked' : ''}>
+                <b>MSME Registered?</b> This vendor is MSME registered
+              </label>
+              <div id="msme_fields_wrap" style="${r.is_msme_registered ? '' : 'display:none;'}margin-top:8px;display:flex;gap:8px;">
+                <select class="in" id="msme_type" name="msme_type" style="width:110px;">
+                  <option value="micro" ${r.msme_type === 'micro' ? 'selected' : ''}>Micro</option>
+                  <option value="small" ${r.msme_type === 'small' ? 'selected' : ''}>Small</option>
+                  <option value="medium" ${r.msme_type === 'medium' ? 'selected' : ''}>Medium</option>
+                </select>
+                <input class="in" id="msme_reg_number" name="msme_reg_number" placeholder="Udyam Reg Number (UDYAM-XX-00-0000000)" value="${esc(r.msme_reg_number || '')}">
+              </div>
+            </div>
+            <div class="fg s3">
+              <label>Income Tax TDS</label>
+              <select class="in" id="tds_section" name="tds_section">
+                ${TDS_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.tds_section === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
+            <div class="fg s3">
+              <label class="ck" style="margin-top:24px;">
+                <input type="checkbox" id="apply_gst_tds" name="apply_gst_tds" ${r.apply_gst_tds ? 'checked' : ''}>
+                <b>GST TDS</b> (Sec 51)
+              </label>
+            </div>
+          `}
+        </div>
+
+        ${isCust ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd-glass);display:flex;align-items:center;gap:12px;">
+            <label class="ck">
+              <input type="checkbox" id="portal_enabled" name="portal_enabled" ${r.portal_enabled ? 'checked' : ''}>
+              <b>Enable Portal?</b> Allow self-service customer portal access
+            </label>
+            <div style="font-size:12px;color:var(--tx-muted);">(Allows viewing invoices, payment receipts, and paying online)</div>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- 5. Secondary Tab Navigation Bar -->
+      <div style="margin-top:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <h4 style="margin:0;font-size:13.5px;font-weight:700;">Other Details</h4>
+          <button type="button" class="btn" id="btn_toggle_add_details" style="font-size:11.5px;padding:3px 8px;">[Add more details ▼]</button>
+        </div>
+        <div class="party-tabs-header" id="party_tabs_bar">
+          <button type="button" class="party-tab-btn active" data-tab="tab_address">Address</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_contacts">Contact Persons (<span id="cnt_badge">${contactPersonsList.length}</span>)</button>
+          ${!isCust ? `<button type="button" class="party-tab-btn" data-tab="tab_bank">Bank Details</button>` : ''}
+          <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">Custom Fields</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_tags">Reporting Tags</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_remarks">Remarks</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_documents">Documents (<span id="doc_badge">${documentsList.length}</span>/10)</button>
+        </div>
+
+        <!-- Tab 1: Address -->
+        <div class="party-tab-pane active" id="tab_address">
+          <div class="g" style="gap:16px;">
+            <div class="${isCust ? 's6' : 's12'}">
+              <h5 style="margin:0 0 8px;font-size:12.5px;font-weight:700;">Billing Address</h5>
+              <div class="g" style="gap:8px;">
+                <div class="fg s12"><label>Attention</label><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"></div>
+                <div class="fg s12"><label>Address Line</label><textarea class="in" id="billing_address" name="billing_address" rows="2" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea></div>
+                <div class="fg s4"><label>City</label><input class="in" id="billing_city" name="billing_city" placeholder="Kottayam" value="${esc(r.billing_city || '')}"></div>
+                <div class="fg s4"><label>State</label><input class="in" id="billing_state" name="billing_state" placeholder="Kerala" value="${esc(r.billing_state || r.state || '')}"></div>
+                <div class="fg s4"><label>Pincode</label><input class="in" id="billing_pincode" name="billing_pincode" placeholder="686003" value="${esc(r.billing_pincode || '')}"></div>
+                <div class="fg s6"><label>Country</label><input class="in" id="billing_country" name="billing_country" value="${esc(r.billing_country || 'India')}"></div>
+                <div class="fg s6"><label>Phone</label><input class="in" id="billing_phone" name="billing_phone" value="${esc(r.billing_phone || '')}"></div>
+              </div>
+            </div>
+
+            ${isCust ? `
+              <div class="s6">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                  <h5 style="margin:0;font-size:12.5px;font-weight:700;">Shipping Address</h5>
+                  <button type="button" class="btn" id="btn_copy_billing_addr" style="font-size:11px;padding:3px 8px;">📋 Copy billing address</button>
+                </div>
+                <div class="g" style="gap:8px;">
+                  <div class="fg s12"><label>Attention</label><input class="in" id="shipping_attention" name="shipping_attention" placeholder="Receiving / Logistics" value="${esc(r.shipping_attention || '')}"></div>
+                  <div class="fg s12"><label>Address Line</label><textarea class="in" id="shipping_address" name="shipping_address" rows="2" placeholder="Delivery street address">${esc(r.shipping_address || '')}</textarea></div>
+                  <div class="fg s4"><label>City</label><input class="in" id="shipping_city" name="shipping_city" placeholder="City" value="${esc(r.shipping_city || '')}"></div>
+                  <div class="fg s4"><label>State</label><input class="in" id="shipping_state" name="shipping_state" placeholder="State" value="${esc(r.shipping_state || '')}"></div>
+                  <div class="fg s4"><label>Pincode</label><input class="in" id="shipping_pincode" name="shipping_pincode" placeholder="Pincode" value="${esc(r.shipping_pincode || '')}"></div>
+                  <div class="fg s6"><label>Country</label><input class="in" id="shipping_country" name="shipping_country" value="${esc(r.shipping_country || 'India')}"></div>
+                  <div class="fg s6"><label>Phone</label><input class="in" id="shipping_phone" name="shipping_phone" value="${esc(r.shipping_phone || '')}"></div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Tab 2: Contact Persons -->
+        <div class="party-tab-pane" id="tab_contacts">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div class="sub" style="font-size:12px;">Add designated key contacts (sales, finance, dispatch) for this ${entityLabel}.</div>
+            <button type="button" class="btn" id="btn_add_contact_row" style="font-size:12px;">+ Add Contact Person</button>
+          </div>
+          <div id="contact_persons_container"></div>
+        </div>
+
+        <!-- Tab 3: Bank Details (Vendor Only) -->
+        ${!isCust ? `
+          <div class="party-tab-pane" id="tab_bank">
+            <div class="g" style="gap:12px;max-width:680px;">
+              <div class="fg s6">
+                <label>Bank Name</label>
+                <input class="in" id="bank_name" name="bank_name" placeholder="e.g. State Bank of India / HDFC Bank" value="${esc(r.bank_name || '')}">
+              </div>
+              <div class="fg s6">
+                <label>Account Holder Name</label>
+                <input class="in" id="bank_account_holder" name="bank_account_holder" placeholder="Legal Account Name" value="${esc(r.bank_account_holder || r.name || '')}">
+              </div>
+              <div class="fg s6">
+                <label>Bank Account Number</label>
+                <input class="in" id="bank_account_number" name="bank_account_number" type="password" placeholder="Account Number" value="${esc(r.bank_account_number || '')}">
+              </div>
+              <div class="fg s6">
+                <label>Re-enter Account Number</label>
+                <input class="in" id="bank_account_number_confirm" type="text" placeholder="Re-enter to verify" value="${esc(r.bank_account_number || '')}">
+                <div class="er" id="bank_acc_err"></div>
+              </div>
+              <div class="fg s4">
+                <label>IFSC Code</label>
+                <input class="in" id="bank_ifsc" name="bank_ifsc" placeholder="SBIN0001234" style="text-transform:uppercase;" value="${esc(r.bank_ifsc || '')}">
+              </div>
+              <div class="fg s4">
+                <label>Branch Name</label>
+                <input class="in" id="bank_branch" name="bank_branch" placeholder="Main Branch" value="${esc(r.bank_branch || '')}">
+              </div>
+              <div class="fg s4">
+                <label>UPI ID / VPA</label>
+                <input class="in" id="bank_upi_id" name="bank_upi_id" placeholder="vendor@upi" value="${esc(r.bank_upi_id || '')}">
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Tab 4: Custom Fields -->
+        <div class="party-tab-pane" id="tab_custom_fields">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div class="sub" style="font-size:12px;">Add custom key-value metadata properties for this account.</div>
+            <button type="button" class="btn" id="btn_add_custom_field" style="font-size:12px;">+ Add Custom Field</button>
+          </div>
+          <div id="custom_fields_container"></div>
+        </div>
+
+        <!-- Tab 5: Reporting Tags -->
+        <div class="party-tab-pane" id="tab_tags">
+          <div class="fg" style="max-width:560px;">
+            <label>Reporting Tags (Comma separated)</label>
+            <input class="in" id="reporting_tags" name="reporting_tags" placeholder="e.g. Enterprise, South-Zone, Healthcare" value="${esc(r.reporting_tags || '')}">
+            <div class="sub" style="font-size:11px;margin-top:4px;">Tags can be used to filter and group financial reports across departments and cost centers.</div>
+          </div>
+        </div>
+
+        <!-- Tab 6: Remarks -->
+        <div class="party-tab-pane" id="tab_remarks">
+          <div class="fg">
+            <label>Internal Remarks / Notes</label>
+            <textarea class="in" id="remarks" name="remarks" rows="3" placeholder="Remarks for internal team reference only (not printed on customer invoices)...">${esc(r.remarks || r.notes || '')}</textarea>
+          </div>
+        </div>
+
+        <!-- Tab 7: Documents -->
+        <div class="party-tab-pane" id="tab_documents">
+          <div class="doc-upload-box" id="doc_drop_zone">
+            <div style="font-size:26px;margin-bottom:4px;">📁</div>
+            <div style="font-weight:600;margin-bottom:2px;">Upload Documents &amp; Attachments</div>
+            <div class="sub" style="font-size:12px;color:var(--tx-muted);">You can upload a maximum of 10 files, 10MB each (PDF, PNG, JPG, DOCX, CSV)</div>
+            <input type="file" id="party_file_input" multiple style="display:none;" accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.csv">
+            <button type="button" class="btn" style="margin-top:10px;" onclick="$('#party_file_input').click()">Browse Files</button>
+          </div>
+          <div id="uploaded_files_list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
   formModal({
-    title: (id ? 'Edit ' : 'New ') + one, wide: true,
-    body: `<div class="fgrid">${[
-      fld({ name: 'name', label: 'Display name', req: 1, value: r.name, col: 'c2', attrs: 'maxlength="200"' }),
-      fld({ name: 'company', label: 'Company name', value: r.company }), fld({ name: 'contact_person', label: 'Contact person', value: r.contact_person }),
-      fld({ name: 'email', label: 'Email', type: 'email', value: r.email }), fld({ name: 'phone', label: 'Phone', type: 'tel', value: r.phone }),
-      fld({ name: 'state', label: 'State / place of supply', type: 'select', opts: stOpts, value: r.state }),
-      fld({ name: 'payment_terms', label: 'Payment terms (days)', type: 'number', value: r.payment_terms, attrs: 'min="0" max="365" step="1"' }),
-      fld({ name: 'gstin', label: 'GSTIN', value: r.gstin, attrs: 'maxlength="15"', ph: '22AAAAA0000A1Z5' }), fld({ name: 'pan', label: 'PAN', value: r.pan, attrs: 'maxlength="10"' }),
-      fld({ name: 'billing_address', label: 'Billing address', type: 'textarea', value: r.billing_address, col: 'c2' }),
-      kind === 'customers' ? fld({ name: 'shipping_address', label: 'Shipping address', type: 'textarea', value: r.shipping_address, col: 'c2' }) : '',
-      fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes, col: 'c2' }),
-      id ? fld({ name: 'active', label: 'Active', type: 'checkbox', value: r.active }) : '',
-    ].join('')}</div>`,
+    title: (id ? 'Edit ' : 'New ') + entityLabel,
+    wide: true,
+    body: formHtml,
+    onReady: (form, modal) => {
+      // 1. Tab Switching
+      const tabs = $$('.party-tab-btn', modal.el);
+      const panes = $$('.party-tab-pane', modal.el);
+      tabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+          tabs.forEach(b => b.classList.remove('active'));
+          panes.forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          const target = $('#' + btn.dataset.tab, modal.el);
+          if (target) target.classList.add('active');
+        });
+      });
+
+      // 2. Toggle Add More Details
+      $('#btn_toggle_add_details', modal.el).addEventListener('click', () => {
+        const tabsBar = $('#party_tabs_bar', modal.el);
+        if (tabsBar.style.display === 'none') {
+          tabsBar.style.display = 'flex';
+          panes[0].classList.add('active');
+        } else {
+          tabsBar.style.display = 'none';
+        }
+      });
+
+      // 3. Customer Type Pills
+      if (isCust) {
+        const pillBiz = $('#pill_type_business', modal.el);
+        const pillInd = $('#pill_type_individual', modal.el);
+        pillBiz.addEventListener('click', () => {
+          pillBiz.classList.add('active'); pillInd.classList.remove('active');
+          $('input[name="customer_type"][value="business"]', modal.el).checked = true;
+        });
+        pillInd.addEventListener('click', () => {
+          pillInd.classList.add('active'); pillBiz.classList.remove('active');
+          $('input[name="customer_type"][value="individual"]', modal.el).checked = true;
+        });
+
+        // Tax preference toggle
+        $$('input[name="tax_preference"]', modal.el).forEach(radio => {
+          radio.addEventListener('change', () => {
+            const wrap = $('#exemption_reason_wrap', modal.el);
+            if (radio.value === 'tax_exempt' && radio.checked) wrap.style.display = 'block';
+            else if (radio.checked) wrap.style.display = 'none';
+          });
+        });
+      } else {
+        // Vendor MSME toggle
+        const msmeCk = $('#is_msme_registered', modal.el);
+        const msmeWrap = $('#msme_fields_wrap', modal.el);
+        msmeCk.addEventListener('change', () => {
+          msmeWrap.style.display = msmeCk.checked ? 'flex' : 'none';
+        });
+      }
+
+      // 4. GST Portal Prefill
+      const doPrefill = async () => {
+        const gstinVal = ($('#gst_prefill_code', modal.el).value || $('#gstin', modal.el).value || '').trim().toUpperCase();
+        if (!gstinVal || gstinVal.length < 15) {
+          toast('Please enter a valid 15-character GSTIN to prefill.', 'err');
+          return;
+        }
+        const btn = $('#btn_trigger_gst_prefill', modal.el);
+        btn.disabled = true;
+        btn.textContent = 'Fetching…';
+        try {
+          const res = await api('compliance/gstin-lookup/' + encodeURIComponent(gstinVal) + '/');
+          $('#company', modal.el).value = res.company_name || res.legal_name || '';
+          $('#name', modal.el).value = res.display_name || res.trade_name || res.legal_name || '';
+          $('#gstin', modal.el).value = res.gstin;
+          $('#gst_prefill_code', modal.el).value = res.gstin;
+          $('#pan', modal.el).value = res.pan;
+
+          const posSel = $('#' + (isCust ? 'place_of_supply' : 'source_of_supply'), modal.el);
+          if (posSel && res.place_of_supply) {
+            for (const opt of posSel.options) {
+              if (opt.value.includes(res.state_code) || opt.value.includes(res.state)) {
+                opt.selected = true; break;
+              }
+            }
+          }
+
+          const gstTrSel = $('#gst_treatment', modal.el);
+          if (gstTrSel) gstTrSel.value = res.gst_treatment || 'business_regular';
+
+          if (isCust && res.customer_type) {
+            if (res.customer_type === 'individual') $('#pill_type_individual', modal.el).click();
+            else $('#pill_type_business', modal.el).click();
+          }
+
+          $('#billing_address', modal.el).value = res.billing_address || '';
+          $('#billing_city', modal.el).value = res.billing_city || '';
+          $('#billing_state', modal.el).value = res.billing_state || res.state || '';
+          $('#billing_pincode', modal.el).value = res.billing_pincode || '';
+
+          toast(`Successfully prefilled ${res.legal_name} from GST Portal!`, 'ok');
+        } catch (err) {
+          toast(err.message || 'Unable to fetch GST details.', 'err');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Prefill';
+        }
+      };
+
+      $('#btn_trigger_gst_prefill', modal.el).addEventListener('click', doPrefill);
+
+      // Keep both GSTIN inputs in sync
+      $('#gstin', modal.el).addEventListener('input', e => {
+        $('#gst_prefill_code', modal.el).value = e.target.value;
+      });
+      $('#gst_prefill_code', modal.el).addEventListener('input', e => {
+        $('#gstin', modal.el).value = e.target.value;
+      });
+
+      // 5. Display Name Quick Picker
+      $('#display_name_picker', modal.el).addEventListener('change', e => {
+        const val = e.target.value;
+        if (val === 'company') {
+          const comp = $('#company', modal.el).value.trim();
+          if (comp) $('#name', modal.el).value = comp;
+        } else if (val === 'contact') {
+          const cont = $('#contact_person', modal.el).value.trim();
+          if (cont) $('#name', modal.el).value = cont;
+        }
+        e.target.value = '';
+      });
+
+      // 6. Copy Billing Address to Shipping
+      if (isCust) {
+        $('#btn_copy_billing_addr', modal.el).addEventListener('click', () => {
+          $('#shipping_attention', modal.el).value = $('#billing_attention', modal.el).value;
+          $('#shipping_address', modal.el).value = $('#billing_address', modal.el).value;
+          $('#shipping_city', modal.el).value = $('#billing_city', modal.el).value;
+          $('#shipping_state', modal.el).value = $('#billing_state', modal.el).value;
+          $('#shipping_pincode', modal.el).value = $('#billing_pincode', modal.el).value;
+          $('#shipping_phone', modal.el).value = $('#billing_phone', modal.el).value;
+          toast('Billing address copied to shipping address.', 'ok');
+        });
+      }
+
+      // 7. Contact Persons Dynamic List
+      const contContainer = $('#contact_persons_container', modal.el);
+      const renderContacts = () => {
+        $('#cnt_badge', modal.el).textContent = contactPersonsList.length;
+        if (!contactPersonsList.length) {
+          contContainer.innerHTML = '<div class="sub" style="padding:8px 0;font-size:12px;">No additional contact persons added yet.</div>';
+          return;
+        }
+        contContainer.innerHTML = contactPersonsList.map((c, i) => `
+          <div class="contact-row-card" data-idx="${i}">
+            <select class="in sal-input" style="padding:4px;">
+              <option value="Mr." ${c.salutation === 'Mr.' ? 'selected' : ''}>Mr.</option>
+              <option value="Mrs." ${c.salutation === 'Mrs.' ? 'selected' : ''}>Mrs.</option>
+              <option value="Ms." ${c.salutation === 'Ms.' ? 'selected' : ''}>Ms.</option>
+              <option value="Dr." ${c.salutation === 'Dr.' ? 'selected' : ''}>Dr.</option>
+            </select>
+            <input class="in fn-input" placeholder="First Name" value="${esc(c.first_name || '')}">
+            <input class="in ln-input" placeholder="Last Name" value="${esc(c.last_name || '')}">
+            <input class="in em-input" placeholder="Email" value="${esc(c.email || '')}">
+            <input class="in ph-input" placeholder="Work Phone" value="${esc(c.phone || '')}">
+            <input class="in mb-input" placeholder="Mobile" value="${esc(c.mobile || '')}">
+            <button type="button" class="btn d btn-del-contact" style="padding:4px 6px;">✕</button>
+          </div>
+        `).join('');
+
+        $$('.contact-row-card', contContainer).forEach(card => {
+          const idx = Number(card.dataset.idx);
+          card.querySelector('.sal-input').addEventListener('change', e => { contactPersonsList[idx].salutation = e.target.value; });
+          card.querySelector('.fn-input').addEventListener('input', e => { contactPersonsList[idx].first_name = e.target.value; });
+          card.querySelector('.ln-input').addEventListener('input', e => { contactPersonsList[idx].last_name = e.target.value; });
+          card.querySelector('.em-input').addEventListener('input', e => { contactPersonsList[idx].email = e.target.value; });
+          card.querySelector('.ph-input').addEventListener('input', e => { contactPersonsList[idx].phone = e.target.value; });
+          card.querySelector('.mb-input').addEventListener('input', e => { contactPersonsList[idx].mobile = e.target.value; });
+          card.querySelector('.btn-del-contact').addEventListener('click', () => {
+            contactPersonsList.splice(idx, 1);
+            renderContacts();
+          });
+        });
+      };
+
+      $('#btn_add_contact_row', modal.el).addEventListener('click', () => {
+        contactPersonsList.push({ salutation: 'Mr.', first_name: '', last_name: '', email: '', phone: '', mobile: '', designation: '' });
+        renderContacts();
+      });
+      renderContacts();
+
+      // 8. Custom Fields Dynamic List
+      const cfContainer = $('#custom_fields_container', modal.el);
+      const renderCustomFields = () => {
+        if (!customFieldsList.length) {
+          cfContainer.innerHTML = '<div class="sub" style="padding:8px 0;font-size:12px;">No custom fields defined.</div>';
+          return;
+        }
+        cfContainer.innerHTML = customFieldsList.map((cf, i) => `
+          <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center;" data-cf-idx="${i}">
+            <input class="in cf-label" placeholder="Field Label (e.g. Region / Lead Source)" value="${esc(cf.label || '')}" style="width:200px;">
+            <input class="in cf-val" placeholder="Value" value="${esc(cf.value || '')}" style="flex:1;">
+            <button type="button" class="btn d btn-del-cf" style="padding:4px 8px;">✕</button>
+          </div>
+        `).join('');
+
+        $$('[data-cf-idx]', cfContainer).forEach(row => {
+          const idx = Number(row.dataset.cfIdx);
+          row.querySelector('.cf-label').addEventListener('input', e => { customFieldsList[idx].label = e.target.value; });
+          row.querySelector('.cf-val').addEventListener('input', e => { customFieldsList[idx].value = e.target.value; });
+          row.querySelector('.btn-del-cf').addEventListener('click', () => {
+            customFieldsList.splice(idx, 1);
+            renderCustomFields();
+          });
+        });
+      };
+
+      $('#btn_add_custom_field', modal.el).addEventListener('click', () => {
+        customFieldsList.push({ label: '', value: '' });
+        renderCustomFields();
+      });
+      renderCustomFields();
+
+      // 9. Document Attachments
+      const docListEl = $('#uploaded_files_list', modal.el);
+      const renderDocs = () => {
+        $('#doc_badge', modal.el).textContent = documentsList.length;
+        if (!documentsList.length) {
+          docListEl.innerHTML = '';
+          return;
+        }
+        docListEl.innerHTML = documentsList.map((doc, i) => `
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;background:var(--surface-glass);border:1px solid var(--bd-glass);font-size:12px;">
+            <span>📄</span>
+            <span><b>${esc(doc.name)}</b> (${esc(doc.size)})</span>
+            <button type="button" class="lk btn-del-doc" data-doc-idx="${i}" style="color:var(--dn);font-weight:700;margin-left:4px;">✕</button>
+          </div>
+        `).join('');
+
+        $$('.btn-del-doc', docListEl).forEach(btn => {
+          btn.addEventListener('click', () => {
+            documentsList.splice(Number(btn.dataset.docIdx), 1);
+            renderDocs();
+          });
+        });
+      };
+
+      const fileInput = $('#party_file_input', modal.el);
+      fileInput.addEventListener('change', () => {
+        const files = Array.from(fileInput.files);
+        if (documentsList.length + files.length > 10) {
+          toast('You can upload a maximum of 10 files.', 'err');
+          return;
+        }
+        for (const file of files) {
+          if (file.size > 10 * 1024 * 1024) {
+            toast(`File ${file.name} exceeds the 10MB limit.`, 'err');
+            continue;
+          }
+          const sz = file.size < 1024 * 1024 ? Math.round(file.size / 1024) + ' KB' : (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+          documentsList.push({ name: file.name, size: sz, type: file.type });
+        }
+        renderDocs();
+        fileInput.value = '';
+      });
+      renderDocs();
+    },
     onSubmit: async d => {
+      // Validate Bank Account Confirmation for Vendors
+      if (!isCust) {
+        const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
+        const cfAcc = ($('#bank_account_number_confirm', modal.el) ? $('#bank_account_number_confirm', modal.el).value : '').trim();
+        if (acc && cfAcc && acc !== cfAcc) {
+          throw new ApiErr(400, { bank_account_number: 'Bank account numbers do not match.' }, 'Bank account numbers do not match.');
+        }
+      }
+
+      // Attach dynamic lists
+      d.contact_persons_data = contactPersonsList.filter(c => c.first_name || c.ln_input || c.email);
+      const cfMap = {};
+      customFieldsList.forEach(cf => {
+        if (cf.label.trim()) cfMap[cf.label.trim()] = (cf.value || '').trim();
+      });
+      d.custom_fields_data = cfMap;
+      d.documents_data = documentsList;
+
+      // Sync state for GST calculations
+      if (isCust && d.place_of_supply) {
+        const stMatch = d.place_of_supply.replace(/^\[\d+\]\s*/, '').trim();
+        if (stMatch) d.state = stMatch;
+      } else if (!isCust && d.source_of_supply) {
+        const stMatch = d.source_of_supply.replace(/^\[\d+\]\s*/, '').trim();
+        if (stMatch) d.state = stMatch;
+      }
+
       if (!id) d.active = true;
       await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
-      toast(`${one[0].toUpperCase() + one.slice(1)} ${id ? 'updated' : 'created'}`); refresh();
-    },
+      toast(`${entityLabel} ${id ? 'updated' : 'created'} successfully!`, 'ok');
+      refresh();
+    }
   });
 }
 

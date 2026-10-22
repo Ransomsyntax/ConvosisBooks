@@ -35,6 +35,7 @@ urlpatterns = [
     path('gst/returns/gstr3b/', api.gst_returns_gstr3b_view),
     path('gst/returns/<int:pk>/file/', api.gst_returns_file_view),
     path('gst/returns/history/', api.gst_returns_history_view),
+    path('compliance/gstin-lookup/<slug:gstin>/', api.gstin_lookup_view),
     path('locking/', api.transaction_locking_view),
 
     path('ai/doubt-clearance/', api.ai_doubt_clearance_view),

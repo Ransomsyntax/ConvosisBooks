@@ -634,4 +634,123 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertTrue(len(res['cards']) >= 3)
 
 
+class EnterpriseCustomerVendorWorkflowsTest(Base):
+    def test_gstin_lookup_endpoint_valid_and_prefill_payload(self):
+        r = self.client.get('/api/compliance/gstin-lookup/29AAACB1234P1Z5/')
+        self.assertEqual(r.status_code, 200)
+        d = r.json()
+        self.assertEqual(d['gstin'], '29AAACB1234P1Z5')
+        self.assertEqual(d['state_name'], 'Karnataka')
+        self.assertEqual(d['state_code'], '29')
+        self.assertEqual(d['pan'], 'AAACB1234P')
+        self.assertEqual(d['status'], 'Active')
+        self.assertEqual(d['gst_treatment'], 'regular')
+        self.assertIn('city', d)
+        self.assertIn('pincode', d)
+        self.assertIn('trade_name', d)
+
+    def test_gstin_lookup_invalid_format(self):
+        r = self.client.get('/api/compliance/gstin-lookup/INVALIDGST/')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('error', r.json())
+
+    def test_customer_creation_with_enterprise_statutory_and_details(self):
+        c_data = {
+            'name': 'Apex Innovations Pvt Ltd',
+            'customer_type': 'business',
+            'company': 'Apex Innovations',
+            'email': 'accounts@apex.in',
+            'phone': '+91 98765 43210',
+            'mobile': '+91 91234 56789',
+            'customer_language': 'English',
+            'gstin': '29AAACA9999P1Z1',
+            'gst_treatment': 'regular',
+            'place_of_supply': '[29] Karnataka',
+            'pan': 'AAACA9999P',
+            'tax_preference': 'taxable',
+            'currency': 'INR',
+            'opening_balance': '25000.00',
+            'opening_balance_type': 'dr',
+            'payment_terms_label': 'Net 30',
+            'portal_enabled': True,
+            'billing_attention': 'Finance Head',
+            'billing_city': 'Bengaluru',
+            'billing_pincode': '560001',
+            'billing_country': 'India',
+            'shipping_city': 'Bengaluru',
+            'shipping_pincode': '560001',
+            'shipping_country': 'India',
+            'contact_persons_data': [
+                {
+                    'salutation': 'Mr.',
+                    'name': 'Rahul Sharma',
+                    'email': 'rahul@apex.in',
+                    'work_phone': '080-12345678',
+                    'mobile': '9876543210',
+                    'designation': 'VP Finance'
+                }
+            ],
+            'custom_fields_data': [
+                {'label': 'Tax Auditor', 'value': 'PwC India'}
+            ],
+            'reporting_tags': 'Q3-Expansion, High-Value',
+            'remarks': 'VIP Enterprise Account',
+            'documents_data': [
+                {'name': 'gst_cert.pdf', 'size': 120450, 'type': 'application/pdf', 'data': 'mock_base64'}
+            ]
+        }
+        r = self.post('customers/', c_data)
+        self.assertEqual(r.status_code, 201, r.content)
+        res = r.json()
+        self.assertEqual(res['customer_type'], 'business')
+        self.assertEqual(res['place_of_supply'], '[29] Karnataka')
+        self.assertEqual(res['state'], 'Karnataka')
+        self.assertTrue(res['portal_enabled'])
+        self.assertEqual(res['billing_city'], 'Bengaluru')
+        self.assertEqual(len(res['contact_persons_data']), 1)
+        self.assertEqual(res['contact_persons_data'][0]['name'], 'Rahul Sharma')
+        self.assertEqual(res['reporting_tags'], 'Q3-Expansion, High-Value')
+
+    def test_vendor_creation_with_bank_details_msme_and_tds(self):
+        v_data = {
+            'name': 'Kirloskar Heavy Forge Ltd',
+            'company': 'Kirloskar Heavy Forge',
+            'email': 'vendor@kirloskar.com',
+            'phone': '020-88776655',
+            'gstin': '27AAACK5555M1Z8',
+            'gst_treatment': 'regular',
+            'source_of_supply': '[27] Maharashtra',
+            'pan': 'AAACK5555M',
+            'tax_preference': 'taxable',
+            'is_msme_registered': True,
+            'msme_type': 'Medium',
+            'msme_reg_number': 'UDYAM-MH-01-0012345',
+            'apply_gst_tds': True,
+            'tds_section': '194C',
+            'bank_name': 'State Bank of India',
+            'bank_account_holder': 'Kirloskar Heavy Forge Ltd',
+            'bank_account_number': '309988776655',
+            'bank_ifsc': 'SBIN0001234',
+            'bank_branch': 'Shivajinagar',
+            'bank_upi_id': 'kirloskar@sbi',
+            'currency': 'INR',
+            'opening_balance': '50000.00',
+            'opening_balance_type': 'cr',
+            'payment_terms_label': 'Net 45'
+        }
+        r = self.post('vendors/', v_data)
+        self.assertEqual(r.status_code, 201, r.content)
+        res = r.json()
+        self.assertTrue(res['is_msme_registered'])
+        self.assertEqual(res['msme_type'], 'Medium')
+        self.assertEqual(res['msme_reg_number'], 'UDYAM-MH-01-0012345')
+        self.assertTrue(res['apply_gst_tds'])
+        self.assertEqual(res['tds_section'], '194C')
+        self.assertEqual(res['bank_name'], 'State Bank of India')
+        self.assertEqual(res['bank_account_number'], '309988776655')
+        self.assertEqual(res['bank_upi_id'], 'kirloskar@sbi')
+        self.assertEqual(res['state'], 'Maharashtra')
+
+
+
 

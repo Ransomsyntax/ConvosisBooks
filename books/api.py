@@ -57,7 +57,7 @@ def api_view(fn):
         try:
             return fn(request, *args, **kwargs)
         except ApiError as e:
-            return j({'message': e.message, 'errors': e.errors}, e.status)
+            return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
         except ProtectedError:
             return j({'message': 'This record is used by other transactions and cannot be deleted. Mark it inactive instead.'}, 409)
     return wrapper
@@ -223,22 +223,55 @@ class PartyResource(Resource):
             qs = qs.filter(active=(a == '1'))
         return qs
 
-    def extra(self, c):
+    def extra(self, c, data):
         return {}
 
     def clean(self, data):
         c = Cleaner(data)
         out = {
-            'name': c.text('name', True, 200), 'company': c.text('company', max_len=200),
+            'name': c.text('name', True, 200),
+            'company': c.text('company', max_len=200),
             'contact_person': c.text('contact_person', max_len=120),
-            'email': c.text('email', max_len=254, email=True), 'phone': c.text('phone', max_len=20, phone=True),
-            'billing_address': c.text('billing_address', max_len=1000), 'state': c.text('state', max_len=60),
+            'email': c.text('email', max_len=254, email=True),
+            'phone': c.text('phone', max_len=30, phone=True),
+            'mobile': c.text('mobile', max_len=30, phone=True),
+            'billing_address': c.text('billing_address', max_len=1000),
+            'billing_attention': c.text('billing_attention', max_len=150),
+            'billing_city': c.text('billing_city', max_len=100),
+            'billing_pincode': c.text('billing_pincode', max_len=20),
+            'billing_country': c.text('billing_country', max_len=100, default='India'),
+            'billing_phone': c.text('billing_phone', max_len=30, phone=True),
+            'state': c.text('state', max_len=60),
             'gstin': c.text('gstin', max_len=15, upper=True, pattern=GSTIN_RE, pattern_msg='Enter a valid 15-character GSTIN.'),
             'pan': c.text('pan', max_len=10, upper=True, pattern=PAN_RE, pattern_msg='Enter a valid 10-character PAN.'),
+            'gst_treatment': c.text('gst_treatment', max_len=40, default='business_regular'),
+            'tax_preference': c.text('tax_preference', max_len=30, default='taxable'),
+            'exemption_reason': c.text('exemption_reason', max_len=200),
+            'currency': c.text('currency', max_len=10, default='INR'),
+            'opening_balance': c.number('opening_balance', default=Decimal('0.00')),
+            'opening_balance_type': c.choice('opening_balance_type', ['debit', 'credit', 'dr', 'cr'], default='debit'),
             'payment_terms': c.integer('payment_terms', 0, 365, 30),
-            'notes': c.text('notes', max_len=2000), 'active': c.boolean('active', True),
+            'payment_terms_label': c.text('payment_terms_label', max_len=50, default='Net 30'),
+            'reporting_tags': c.text('reporting_tags', max_len=255),
+            'remarks': c.text('remarks', max_len=2000),
+            'notes': c.text('notes', max_len=2000),
+            'active': c.boolean('active', True),
         }
-        out.update(self.extra(c))
+        if isinstance(data.get('contact_persons_data'), list):
+            out['contact_persons_data'] = data['contact_persons_data']
+        if isinstance(data.get('custom_fields_data'), dict):
+            out['custom_fields_data'] = data['custom_fields_data']
+        if isinstance(data.get('documents_data'), list):
+            out['documents_data'] = data['documents_data']
+        out.update(self.extra(c, data))
+        if not out.get('state'):
+            pos = out.get('place_of_supply') or out.get('source_of_supply') or data.get('billing_state') or ''
+            if ']' in pos:
+                out['state'] = pos.split(']', 1)[-1].strip()
+            elif pos:
+                out['state'] = pos.strip()
+            elif out.get('gstin') and len(out.get('gstin')) >= 2:
+                out['state'] = services.GST_STATE_CODES.get(out['gstin'][:2], '')
         c.done()
         return out
 
@@ -261,12 +294,60 @@ class PartyResource(Resource):
         return self.row(o, party_stats(self.kind, [o.pk])[o.pk])
 
     def row(self, o, s):
-        r = {'id': o.pk, 'name': o.name, 'company': o.company, 'contact_person': o.contact_person, 'email': o.email,
-             'phone': o.phone, 'billing_address': o.billing_address, 'state': o.state, 'gstin': o.gstin, 'pan': o.pan,
-             'payment_terms': o.payment_terms, 'notes': o.notes, 'active': o.active,
-             'billed': s['billed'], 'outstanding': s['outstanding'], 'overdue': s['overdue']}
+        r = {
+            'id': o.pk, 'name': o.name, 'display_name': o.name, 'company': o.company, 'company_name': o.company,
+            'contact_person': o.contact_person, 'primary_contact': o.contact_person, 'email': o.email,
+            'phone': o.phone, 'mobile': getattr(o, 'mobile', ''),
+            'billing_address': o.billing_address, 'billing_attention': getattr(o, 'billing_attention', ''),
+            'billing_city': getattr(o, 'billing_city', ''), 'billing_pincode': getattr(o, 'billing_pincode', ''),
+            'billing_country': getattr(o, 'billing_country', 'India'), 'billing_phone': getattr(o, 'billing_phone', ''),
+            'state': o.state, 'gstin': o.gstin, 'pan': o.pan,
+            'gst_treatment': getattr(o, 'gst_treatment', 'business_regular'),
+            'tax_preference': getattr(o, 'tax_preference', 'taxable'),
+            'exemption_reason': getattr(o, 'exemption_reason', ''),
+            'currency': getattr(o, 'currency', 'INR'),
+            'opening_balance': getattr(o, 'opening_balance', Decimal('0.00')),
+            'opening_balance_type': getattr(o, 'opening_balance_type', 'debit'),
+            'payment_terms': o.payment_terms,
+            'payment_terms_label': getattr(o, 'payment_terms_label', 'Net 30'),
+            'contact_persons_data': getattr(o, 'contact_persons_data', []),
+            'custom_fields_data': getattr(o, 'custom_fields_data', {}),
+            'reporting_tags': getattr(o, 'reporting_tags', ''),
+            'remarks': getattr(o, 'remarks', ''),
+            'documents_data': getattr(o, 'documents_data', []),
+            'notes': o.notes, 'active': o.active,
+            'billed': s['billed'], 'outstanding': s['outstanding'], 'overdue': s['overdue']
+        }
         if self.kind == 'customer':
-            r['shipping_address'] = o.shipping_address
+            r.update({
+                'customer_type': getattr(o, 'customer_type', 'business'),
+                'customer_language': getattr(o, 'customer_language', 'English'),
+                'place_of_supply': getattr(o, 'place_of_supply', o.state),
+                'shipping_address': o.shipping_address,
+                'shipping_attention': getattr(o, 'shipping_attention', ''),
+                'shipping_city': getattr(o, 'shipping_city', ''),
+                'shipping_state': getattr(o, 'shipping_state', ''),
+                'shipping_pincode': getattr(o, 'shipping_pincode', ''),
+                'shipping_country': getattr(o, 'shipping_country', 'India'),
+                'shipping_phone': getattr(o, 'shipping_phone', ''),
+                'portal_enabled': getattr(o, 'portal_enabled', False),
+                'portal_language': getattr(o, 'portal_language', 'English'),
+            })
+        elif self.kind == 'vendor':
+            r.update({
+                'source_of_supply': getattr(o, 'source_of_supply', o.state),
+                'is_msme_registered': getattr(o, 'is_msme_registered', False),
+                'msme_type': getattr(o, 'msme_type', ''),
+                'msme_reg_number': getattr(o, 'msme_reg_number', ''),
+                'apply_gst_tds': getattr(o, 'apply_gst_tds', False),
+                'tds_section': getattr(o, 'tds_section', ''),
+                'bank_name': getattr(o, 'bank_name', ''),
+                'bank_account_holder': getattr(o, 'bank_account_holder', ''),
+                'bank_account_number': getattr(o, 'bank_account_number', ''),
+                'bank_ifsc': getattr(o, 'bank_ifsc', ''),
+                'bank_branch': getattr(o, 'bank_branch', ''),
+                'bank_upi_id': getattr(o, 'bank_upi_id', ''),
+            })
         return r
 
 
@@ -278,8 +359,21 @@ class CustomerResource(PartyResource):
                 ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Payment terms (days)', 'payment_terms'),
                 ('Billed', 'billed'), ('Receivable', 'outstanding'), ('Overdue', 'overdue'), ('Active', 'active')]
 
-    def extra(self, c):
-        return {'shipping_address': c.text('shipping_address', max_len=1000)}
+    def extra(self, c, data):
+        return {
+            'customer_type': c.choice('customer_type', ['business', 'individual'], default='business'),
+            'customer_language': c.text('customer_language', max_len=40, default='English'),
+            'place_of_supply': c.text('place_of_supply', max_len=80),
+            'shipping_address': c.text('shipping_address', max_len=1000),
+            'shipping_attention': c.text('shipping_attention', max_len=150),
+            'shipping_city': c.text('shipping_city', max_len=100),
+            'shipping_state': c.text('shipping_state', max_len=80),
+            'shipping_pincode': c.text('shipping_pincode', max_len=20),
+            'shipping_country': c.text('shipping_country', max_len=100, default='India'),
+            'shipping_phone': c.text('shipping_phone', max_len=30, phone=True),
+            'portal_enabled': c.boolean('portal_enabled', default=False),
+            'portal_language': c.text('portal_language', max_len=40, default='English'),
+        }
 
 
 class VendorResource(PartyResource):
@@ -289,6 +383,22 @@ class VendorResource(PartyResource):
     csv_cols = [('Name', 'name'), ('Company', 'company'), ('Email', 'email'), ('Phone', 'phone'), ('State', 'state'),
                 ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Payment terms (days)', 'payment_terms'),
                 ('Billed', 'billed'), ('Payable', 'outstanding'), ('Overdue', 'overdue'), ('Active', 'active')]
+
+    def extra(self, c, data):
+        return {
+            'source_of_supply': c.text('source_of_supply', max_len=80),
+            'is_msme_registered': c.boolean('is_msme_registered', default=False),
+            'msme_type': c.text('msme_type', max_len=30),
+            'msme_reg_number': c.text('msme_reg_number', max_len=60),
+            'apply_gst_tds': c.boolean('apply_gst_tds', default=False),
+            'tds_section': c.text('tds_section', max_len=50),
+            'bank_name': c.text('bank_name', max_len=120),
+            'bank_account_holder': c.text('bank_account_holder', max_len=150),
+            'bank_account_number': c.text('bank_account_number', max_len=60),
+            'bank_ifsc': c.text('bank_ifsc', max_len=20, upper=True),
+            'bank_branch': c.text('bank_branch', max_len=100),
+            'bank_upi_id': c.text('bank_upi_id', max_len=100),
+        }
 
 
 class ItemResource(Resource):
@@ -2950,6 +3060,12 @@ def developer_webhook_test_view(request, pk):
 @api_view
 def assistant_accounting_context_view(request):
     res = services.get_live_accounting_context()
+    return j(res)
+
+
+@api_view
+def gstin_lookup_view(request, gstin):
+    res = services.lookup_gstin_details(gstin)
     return j(res)
 
 

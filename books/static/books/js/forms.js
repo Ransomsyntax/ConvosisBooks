@@ -467,9 +467,8 @@ async function partyForm(kind, id) {
           <button type="button" class="party-tab-btn" data-tab="tab_contacts">Contact Persons (<span id="cnt_badge">${contactPersonsList.length}</span>)</button>
           ${!isCust ? `<button type="button" class="party-tab-btn" data-tab="tab_bank">Bank Details</button>` : ''}
           <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">Custom Fields</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_tags">Reporting Tags</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_remarks">Remarks</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_documents">Documents (<span id="doc_badge">${documentsList.length}</span>/10)</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_remarks">Notes</button>
+          <button type="button" class="party-tab-btn" data-tab="tab_documents">Attachments (<span id="doc_badge">${documentsList.length}</span>/10)</button>
         </div>
 
         <!-- Tab 1: Address -->
@@ -562,29 +561,19 @@ async function partyForm(kind, id) {
           </div>
           <div id="custom_fields_container"></div>
         </div>
-
-        // <!-- Tab 5: Reporting Tags -->
-        // <div class="party-tab-pane" id="tab_tags">
-        //   <div class="fg" style="max-width:560px;">
-        //     <label>Reporting Tags (Comma separated)</label>
-        //     <input class="in" id="reporting_tags" name="reporting_tags" placeholder="e.g. Enterprise, South-Zone, Healthcare" value="${esc(r.reporting_tags || '')}">
-        //     <div class="sub" style="font-size:11px;margin-top:4px;">Tags can be used to filter and group financial reports across departments and cost centers.</div>
-        //   </div>
-        // </div>
-
-        <!-- Tab 6: Remarks -->
+        <!-- Tab: Notes -->
         <div class="party-tab-pane" id="tab_remarks">
           <div class="fg">
-            <label>Internal Notes</label>
-            <textarea class="in" id="remarks" name="remarks" rows="3" placeholder="Remarks for internal team reference only (not printed on customer invoices)...">${esc(r.remarks || r.notes || '')}</textarea>
+            <label>Notes</label>
+            <textarea class="in" id="notes" name="notes" rows="3" placeholder="Notes for internal team reference only (not printed on customer invoices)...">${esc(r.notes || r.remarks || '')}</textarea>
           </div>
         </div>
 
-        <!-- Tab 7: Documents -->
+        <!-- Tab: Attachments -->
         <div class="party-tab-pane" id="tab_documents">
           <div class="doc-upload-box" id="doc_drop_zone">
-            <div style="font-size:26px;margin-bottom:4px;">📁</div>
-            <div style="font-weight:600;margin-bottom:2px;">Upload Documents &amp; Attachments</div>
+            <div style="font-size:26px;margin-bottom:4px;">📎</div>
+            <div style="font-weight:600;margin-bottom:2px;">Upload Attachments</div>
             <div class="sub" style="font-size:12px;color:var(--tx-muted);">You can upload a maximum of 10 files, 10MB each (PDF, PNG, JPG, DOCX, CSV)</div>
             <input type="file" id="party_file_input" multiple style="display:none;" accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.csv">
             <button type="button" class="btn" style="margin-top:10px;" onclick="$('#party_file_input').click()">Browse Files</button>
@@ -879,6 +868,10 @@ async function partyForm(kind, id) {
       });
       d.custom_fields_data = cfMap;
       d.documents_data = documentsList;
+
+      // Sync notes and remarks
+      d.notes = (d.notes || d.remarks || '').trim();
+      d.remarks = d.notes;
 
       // Sync state for GST calculations
       if (isCust && d.place_of_supply) {

@@ -1,4 +1,8 @@
-
+/**
+ * Convo Bot — AI Doubt Clearance & Enterprise Accounting Copilot
+ * Font color strictly Black (#000000) and Orange (#ea580c / #f97316 / #c2410c).
+ * All white fonts turned to orange.
+ */
 'use strict';
 
 (function () {
@@ -56,7 +60,6 @@
     ]
   };
 
-  
   function injectStyles() {
     if (document.getElementById('fingpt-chat-styles')) return;
     const style = document.createElement('style');
@@ -72,34 +75,39 @@
         align-items: center;
         gap: 10px;
         cursor: pointer;
-        padding: 5px;
+        padding: 6px 10px 6px 6px;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.75);
-        backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        box-shadow: 0 10px 30px -5px rgba(16, 185, 129, 0.35), 0 0 20px rgba(99, 102, 241, 0.25);
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(20px) saturate(180%);
+        border: 1.5px solid rgba(234, 88, 12, 0.45);
+        box-shadow: 0 10px 30px -5px rgba(234, 88, 12, 0.35), 0 0 15px rgba(249, 115, 22, 0.2);
         transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         user-select: none;
       }
       #fingpt-launcher:hover {
         transform: translateY(-3px) scale(1.03);
-        box-shadow: 0 14px 35px -4px rgba(16, 185, 129, 0.45), 0 0 30px rgba(99, 102, 241, 0.4);
+        box-shadow: 0 14px 35px -4px rgba(234, 88, 12, 0.5), 0 0 25px rgba(249, 115, 22, 0.35);
+        border-color: #ea580c;
       }
       .fingpt-launcher-icon {
-        width: 44px;
-        height: 44px;
+        width: 42px;
+        height: 42px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #10a37f, #6366f1);
+        background: linear-gradient(135deg, #f97316, #ea580c);
         display: grid;
         place-items: center;
-        color: #fff;
+        color: #000000;
         position: relative;
+        box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
+      }
+      .fingpt-launcher-icon svg {
+        stroke: #000000;
       }
       .fingpt-launcher-pulse {
         position: absolute;
         inset: -4px;
         border-radius: 50%;
-        border: 2px solid #10a37f;
+        border: 2px solid #ea580c;
         opacity: 0.8;
         animation: fingpt-ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite;
       }
@@ -108,14 +116,14 @@
         70%, 100% { transform: scale(1.4); opacity: 0; }
       }
       .fingpt-launcher-text {
-        padding-right: 14px;
+        padding-right: 6px;
         display: flex;
         flex-direction: column;
       }
       .fingpt-launcher-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: #fff;
+        font-size: 13.5px;
+        font-weight: 800;
+        color: #ea580c;
         line-height: 1.2;
         letter-spacing: -0.2px;
         display: flex;
@@ -126,30 +134,32 @@
         font-size: 9px;
         padding: 1px 6px;
         border-radius: 99px;
-        background: #10a37f;
-        color: #fff;
-        font-weight: 700;
+        background: #fff7ed;
+        border: 1px solid #ea580c;
+        color: #ea580c;
+        font-weight: 800;
         text-transform: uppercase;
       }
       .fingpt-launcher-sub {
         font-size: 11px;
-        color: #cbd5e1;
+        color: #000000;
+        font-weight: 600;
       }
 
-      /* ChatGPT Window Widget */
+      /* Chatbot Window Widget */
       #fingpt-widget {
         position: fixed;
         bottom: 84px;
         right: 24px;
-        width: 440px;
+        width: 450px;
         height: 640px;
         max-width: calc(100vw - 32px);
         max-height: calc(100vh - 100px);
-        background: var(--surface-glass, rgba(15, 23, 42, 0.92));
+        background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(28px) saturate(180%);
-        border: 1px solid var(--bd-glass, rgba(255, 255, 255, 0.15));
+        border: 1.5px solid rgba(234, 88, 12, 0.35);
         border-radius: 18px;
-        box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
+        box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.2), 0 0 25px rgba(234, 88, 12, 0.15);
         z-index: 99998;
         display: flex;
         flex-direction: column;
@@ -158,6 +168,8 @@
         opacity: 0;
         transform: translateY(20px) scale(0.96);
         pointer-events: none;
+        color: #000000;
+        font-family: inherit;
       }
       #fingpt-widget.open {
         opacity: 1;
@@ -179,11 +191,11 @@
       /* Chat Header */
       .fingpt-header {
         padding: 14px 18px;
-        border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.1));
+        border-bottom: 1.5px solid rgba(234, 88, 12, 0.2);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: rgba(15, 23, 42, 0.4);
+        background: #fff7ed;
       }
       .fingpt-header-left {
         display: flex;
@@ -194,38 +206,47 @@
         width: 36px;
         height: 36px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #10a37f, #6366f1);
+        background: linear-gradient(135deg, #f97316, #ea580c);
         display: grid;
         place-items: center;
-        color: #fff;
+        color: #000000;
         font-weight: 800;
         font-size: 15px;
-        box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);
+        box-shadow: 0 0 12px rgba(234, 88, 12, 0.4);
       }
       .fingpt-title-wrap h3 {
         margin: 0;
         font-size: 14.5px;
-        font-weight: 700;
-        color: var(--tx, #fff);
+        font-weight: 800;
+        color: #ea580c;
         letter-spacing: -0.2px;
         display: flex;
         align-items: center;
         gap: 6px;
+      }
+      .fingpt-enterprise-badge {
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: 99px;
+        background: #ffedd5;
+        border: 1px solid rgba(234, 88, 12, 0.4);
+        color: #ea580c;
+        font-weight: 700;
       }
       .fingpt-status-pill {
         display: inline-flex;
         align-items: center;
         gap: 5px;
         font-size: 11px;
-        color: #10a37f;
-        font-weight: 500;
+        color: #000000;
+        font-weight: 600;
       }
       .fingpt-status-dot {
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: #10a37f;
-        box-shadow: 0 0 6px #10a37f;
+        background: #ea580c;
+        box-shadow: 0 0 6px #ea580c;
       }
       .fingpt-header-actions {
         display: flex;
@@ -235,7 +256,7 @@
       .fingpt-tool-btn {
         background: transparent;
         border: none;
-        color: var(--tx-muted, #94a3b8);
+        color: #000000;
         cursor: pointer;
         padding: 6px;
         border-radius: 6px;
@@ -244,8 +265,11 @@
         transition: all 0.15s;
       }
       .fingpt-tool-btn:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--tx, #fff);
+        background: #ffedd5;
+        color: #ea580c;
+      }
+      .fingpt-tool-btn svg {
+        stroke: currentColor;
       }
 
       /* Category Pills */
@@ -255,31 +279,33 @@
         gap: 6px;
         overflow-x: auto;
         white-space: nowrap;
-        border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.08));
-        background: rgba(0, 0, 0, 0.1);
+        border-bottom: 1px solid rgba(234, 88, 12, 0.18);
+        background: rgba(255, 255, 255, 0.7);
       }
       .fingpt-categories::-webkit-scrollbar { height: 3px; }
-      .fingpt-categories::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+      .fingpt-categories::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
       .fingpt-cat-btn {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: #ffffff;
+        border: 1px solid rgba(0, 0, 0, 0.12);
         padding: 4px 10px;
         border-radius: 99px;
         font-size: 11.5px;
-        color: var(--tx-muted, #94a3b8);
+        color: #000000;
         cursor: pointer;
         transition: all 0.2s;
-        font-weight: 500;
+        font-weight: 600;
       }
       .fingpt-cat-btn:hover {
-        background: rgba(255, 255, 255, 0.12);
-        color: var(--tx, #fff);
+        background: #fff7ed;
+        border-color: #ea580c;
+        color: #ea580c;
       }
       .fingpt-cat-btn.active {
-        background: linear-gradient(135deg, rgba(16, 163, 127, 0.25), rgba(99, 102, 241, 0.25));
-        border-color: #10a37f;
-        color: #fff;
-        font-weight: 600;
+        background: #fff7ed;
+        border: 1.5px solid #ea580c;
+        color: #ea580c;
+        font-weight: 800;
+        box-shadow: 0 2px 8px rgba(234, 88, 12, 0.18);
       }
 
       /* Message Feed */
@@ -291,9 +317,10 @@
         flex-direction: column;
         gap: 16px;
         scroll-behavior: smooth;
+        background: transparent;
       }
       .fingpt-messages::-webkit-scrollbar { width: 5px; }
-      .fingpt-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+      .fingpt-messages::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
 
       /* Message Bubbles */
       .fingpt-msg-row {
@@ -314,56 +341,112 @@
         word-break: break-word;
       }
       .fingpt-msg-row.user .fingpt-msg-bubble {
-        background: linear-gradient(135deg, var(--accent, #1877f2), var(--accent-to, #6366f1));
-        color: #fff;
+        background: #fff7ed;
+        border: 1.5px solid rgba(234, 88, 12, 0.45);
+        color: #ea580c;
+        font-weight: 600;
         border-bottom-right-radius: 4px;
+        box-shadow: 0 2px 10px rgba(234, 88, 12, 0.12);
       }
       .fingpt-msg-row.bot .fingpt-msg-bubble {
-        background: var(--surface-glass-subtle, rgba(255, 255, 255, 0.05));
-        border: 1px solid var(--bd, rgba(255, 255, 255, 0.1));
-        color: var(--tx, #e2e8f0);
+        background: #ffffff;
+        border: 1px solid rgba(234, 88, 12, 0.22);
+        color: #000000;
         border-bottom-left-radius: 4px;
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.05);
       }
 
-      /* Markdown & Card Formatting in AI Responses */
-      .fingpt-msg-bubble h3 { font-size: 15px; margin: 6px 0 10px; font-weight: 700; color: #fff; }
-      .fingpt-msg-bubble h4 { font-size: 13.5px; margin: 12px 0 6px; font-weight: 600; color: #38bdf8; }
-      .fingpt-msg-bubble ul, .fingpt-msg-bubble ol { margin: 6px 0; padding-left: 20px; }
-      .fingpt-msg-bubble li { margin-bottom: 4px; }
-      .fingpt-msg-bubble b, .fingpt-msg-bubble strong { color: #fff; font-weight: 700; }
+      /* Markdown & Formatting in AI Responses (Strictly Black & Orange) */
+      .fingpt-msg-bubble p {
+        margin: 0 0 8px;
+        color: #000000;
+      }
+      .fingpt-msg-bubble p:last-child {
+        margin-bottom: 0;
+      }
+      .fingpt-msg-bubble h3 {
+        font-size: 15px;
+        margin: 6px 0 10px;
+        font-weight: 800;
+        color: #ea580c;
+      }
+      .fingpt-msg-bubble h4 {
+        font-size: 13.5px;
+        margin: 12px 0 6px;
+        font-weight: 700;
+        color: #ea580c;
+      }
+      .fingpt-msg-bubble ul, .fingpt-msg-bubble ol {
+        margin: 6px 0;
+        padding-left: 20px;
+        color: #000000;
+      }
+      .fingpt-msg-bubble li {
+        margin-bottom: 4px;
+        color: #000000;
+      }
+      .fingpt-msg-bubble b, .fingpt-msg-bubble strong {
+        color: #ea580c;
+        font-weight: 700;
+      }
       .fingpt-msg-bubble code {
-        background: rgba(0, 0, 0, 0.35);
+        background: #fff7ed;
+        border: 1px solid rgba(234, 88, 12, 0.3);
         padding: 2px 6px;
         border-radius: 4px;
         font-size: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        color: #38bdf8;
+        color: #ea580c;
+        font-weight: 600;
+      }
+      .fingpt-msg-bubble pre {
+        background: #fff7ed;
+        border: 1px solid rgba(234, 88, 12, 0.25);
+        border-radius: 8px;
+        padding: 10px;
+        overflow-x: auto;
+      }
+      .fingpt-msg-bubble pre code {
+        background: transparent;
+        border: none;
+        padding: 0;
+        color: #ea580c;
       }
       .fingpt-msg-bubble table {
         width: 100%;
         border-collapse: collapse;
         margin: 10px 0;
         font-size: 12px;
+        border: 1px solid rgba(234, 88, 12, 0.25);
+        border-radius: 6px;
+        overflow: hidden;
       }
       .fingpt-msg-bubble th, .fingpt-msg-bubble td {
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(234, 88, 12, 0.2);
         padding: 6px 8px;
         text-align: left;
       }
-      .fingpt-msg-bubble th { background: rgba(255, 255, 255, 0.08); font-weight: 600; color: #fff; }
+      .fingpt-msg-bubble th {
+        background: #fff7ed;
+        font-weight: 700;
+        color: #ea580c;
+      }
+      .fingpt-msg-bubble td {
+        color: #000000;
+      }
 
       /* Key Takeaways Callout */
       .fingpt-takeaways {
         margin-top: 12px;
         padding: 10px 14px;
-        background: rgba(16, 185, 129, 0.08);
-        border: 1px solid rgba(16, 185, 129, 0.25);
+        background: #fff7ed;
+        border: 1.5px solid rgba(234, 88, 12, 0.35);
         border-radius: 8px;
       }
       .fingpt-takeaways-title {
         font-size: 12px;
-        font-weight: 700;
-        color: #10a37f;
+        font-weight: 800;
+        color: #ea580c;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 6px;
@@ -371,23 +454,30 @@
         align-items: center;
         gap: 6px;
       }
+      .fingpt-takeaways-title svg {
+        stroke: #ea580c;
+      }
       .fingpt-takeaways ul {
         margin: 0;
         padding-left: 16px;
         font-size: 12px;
-        color: var(--tx, #cbd5e1);
+        color: #000000;
+      }
+      .fingpt-takeaways li {
+        color: #000000;
       }
 
       /* Rule Formula Box */
       .fingpt-formula-box {
         margin-top: 10px;
         padding: 8px 12px;
-        background: rgba(99, 102, 241, 0.1);
-        border-left: 3px solid #6366f1;
+        background: #fff7ed;
+        border-left: 3px solid #ea580c;
         border-radius: 0 8px 8px 0;
         font-size: 12px;
         font-family: ui-monospace, monospace;
-        color: #c7d2fe;
+        color: #ea580c;
+        font-weight: 600;
       }
 
       /* Action Deep-Links */
@@ -398,13 +488,13 @@
         margin-top: 12px;
       }
       .fingpt-action-chip {
-        padding: 4px 10px;
+        padding: 5px 11px;
         border-radius: 6px;
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #38bdf8;
+        background: #fff7ed;
+        border: 1px solid rgba(234, 88, 12, 0.4);
+        color: #ea580c;
         font-size: 11.5px;
-        font-weight: 600;
+        font-weight: 700;
         text-decoration: none;
         cursor: pointer;
         display: inline-flex;
@@ -413,9 +503,12 @@
         transition: all 0.15s;
       }
       .fingpt-action-chip:hover {
-        background: rgba(56, 189, 248, 0.15);
-        border-color: #38bdf8;
-        color: #fff;
+        background: #ffedd5;
+        border-color: #ea580c;
+        color: #000000;
+      }
+      .fingpt-action-chip svg {
+        stroke: currentColor;
       }
 
       /* Message Toolbar (Copy, Feedback) */
@@ -425,14 +518,14 @@
         gap: 10px;
         margin-top: 8px;
         padding-top: 6px;
-        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        border-top: 1px solid rgba(234, 88, 12, 0.18);
         font-size: 11px;
-        color: var(--tx-muted, #94a3b8);
+        color: #000000;
       }
       .fingpt-copy-btn, .fingpt-fb-btn {
         background: none;
         border: none;
-        color: inherit;
+        color: #000000;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -440,9 +533,13 @@
         padding: 2px 4px;
         border-radius: 4px;
         transition: color 0.15s;
+        font-weight: 600;
       }
       .fingpt-copy-btn:hover, .fingpt-fb-btn:hover {
-        color: var(--tx, #fff);
+        color: #ea580c;
+      }
+      .fingpt-copy-btn svg, .fingpt-fb-btn svg {
+        stroke: currentColor;
       }
 
       /* Typing Indicator Animation */
@@ -456,7 +553,7 @@
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: #10a37f;
+        background: #ea580c;
         animation: fingpt-bounce 1.4s infinite ease-in-out both;
       }
       .fingpt-typing-dots span:nth-child(1) { animation-delay: -0.32s; }
@@ -474,12 +571,13 @@
         margin-top: 10px;
       }
       .fingpt-prompt-btn {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: #ffffff;
+        border: 1px solid rgba(234, 88, 12, 0.25);
         border-radius: 8px;
         padding: 8px 12px;
         font-size: 12px;
-        color: var(--tx, #cbd5e1);
+        color: #000000;
+        font-weight: 500;
         text-align: left;
         cursor: pointer;
         transition: all 0.2s;
@@ -487,18 +585,21 @@
         align-items: center;
         justify-content: space-between;
       }
+      .fingpt-prompt-btn svg {
+        stroke: currentColor;
+      }
       .fingpt-prompt-btn:hover {
-        background: rgba(16, 163, 127, 0.1);
-        border-color: #10a37f;
-        color: #fff;
+        background: #fff7ed;
+        border-color: #ea580c;
+        color: #ea580c;
         transform: translateX(3px);
       }
 
       /* Chat Input Bar */
       .fingpt-input-area {
         padding: 12px 16px;
-        border-top: 1px solid var(--bd, rgba(255, 255, 255, 0.1));
-        background: rgba(15, 23, 42, 0.6);
+        border-top: 1.5px solid rgba(234, 88, 12, 0.2);
+        background: rgba(255, 255, 255, 0.9);
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -510,38 +611,46 @@
       }
       #fingpt-textarea {
         flex: 1;
-        background: rgba(0, 0, 0, 0.25);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: #ffffff;
+        border: 1.5px solid rgba(234, 88, 12, 0.35);
         border-radius: 12px;
         padding: 10px 14px;
-        color: var(--tx, #fff);
+        color: #000000;
         font-size: 13.5px;
         line-height: 1.45;
         resize: none;
         max-height: 120px;
         outline: none;
-        transition: border-color 0.2s;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      #fingpt-textarea::placeholder {
+        color: #000000;
+        opacity: 0.6;
       }
       #fingpt-textarea:focus {
-        border-color: #10a37f;
-        box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.2);
+        border-color: #ea580c;
+        box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.2);
       }
       #fingpt-send-btn {
         width: 40px;
         height: 40px;
         border-radius: 10px;
-        background: linear-gradient(135deg, #10a37f, #6366f1);
+        background: linear-gradient(135deg, #f97316, #ea580c);
         border: none;
-        color: #fff;
+        color: #000000;
         cursor: pointer;
         display: grid;
         place-items: center;
         transition: all 0.2s;
         flex-shrink: 0;
+        box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
+      }
+      #fingpt-send-btn svg {
+        stroke: #000000;
       }
       #fingpt-send-btn:hover:not(:disabled) {
         transform: scale(1.05);
-        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+        box-shadow: 0 4px 16px rgba(234, 88, 12, 0.55);
       }
       #fingpt-send-btn:disabled {
         opacity: 0.5;
@@ -549,14 +658,16 @@
       }
       .fingpt-input-hint {
         font-size: 11px;
-        color: var(--tx-muted, #94a3b8);
+        color: #000000;
         display: flex;
         justify-content: space-between;
+      }
+      .fingpt-input-hint b {
+        color: #ea580c;
       }
     `;
     document.head.appendChild(style);
   }
-
 
   function createDoubtBotUI() {
     injectStyles();
@@ -569,12 +680,12 @@
     launcher.innerHTML = `
       <div class="fingpt-launcher-icon">
         <div class="fingpt-launcher-pulse"></div>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
         </svg>
       </div>
       <div class="fingpt-launcher-text">
-        <span class="fingpt-launcher-title">Convo Bot</span>
+        <span class="fingpt-launcher-title">Convo Bot <span class="fingpt-launcher-badge">AI</span></span>
         <span class="fingpt-launcher-sub">Get Help with Accounting and Tax</span>
       </div>
     `;
@@ -588,7 +699,7 @@
         <div class="fingpt-header-left">
           <div class="fingpt-avatar">G</div>
           <div class="fingpt-title-wrap">
-            <h3>Convo Bot <span class="pastel-chip chip-sky" style="font-size:10px;">Enterprise</span></h3>
+            <h3>Convo Bot <span class="fingpt-enterprise-badge">Enterprise</span></h3>
             <div class="fingpt-status-pill">
               <span class="fingpt-status-dot"></span>
               <span>Accounting Assistant · Online</span>
@@ -624,9 +735,9 @@
       <!-- Input Area -->
       <div class="fingpt-input-area">
         <div class="fingpt-input-row">
-          <textarea id="fingpt-textarea" rows="1" placeholder="Ask " autocomplete="off"></textarea>
+          <textarea id="fingpt-textarea" rows="1" placeholder="Ask your accounting or tax doubt..." autocomplete="off"></textarea>
           <button id="fingpt-send-btn" type="button" title="Send (Enter)">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
             </svg>
@@ -640,16 +751,13 @@
     `;
     document.body.appendChild(widget);
 
-    
     renderWelcomeGreeting();
 
-    
     launcher.addEventListener('click', () => toggleDoubtBot());
     $('#fingpt-close-btn').addEventListener('click', () => toggleDoubtBot(false));
     $('#fingpt-max-btn').addEventListener('click', toggleMaximize);
     $('#fingpt-reset-btn').addEventListener('click', resetChat);
 
-    
     widget.addEventListener('click', (e) => {
       const catBtn = e.target.closest('.fingpt-cat-btn');
       if (catBtn) {
@@ -687,7 +795,7 @@
 
       const fbBtn = e.target.closest('.fingpt-fb-btn');
       if (fbBtn) {
-        fbBtn.style.color = '#10a37f';
+        fbBtn.style.color = '#ea580c';
         fbBtn.textContent = '✓ Thanks for feedback!';
       }
     });
@@ -761,16 +869,16 @@
         <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
         <div class="fingpt-msg-bubble">
           <h3>Hello! Welcome to ConvosisBooks 👋</h3>
-          <div style="background:rgba(16,163,127,0.1);border:1px solid rgba(16,163,127,0.25);border-radius:8px;padding:6px 10px;margin:6px 0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;">
-            <span style="color:#10a37f;font-weight:600;display:flex;align-items:center;gap:6px;">
-              <span style="width:7px;height:7px;border-radius:50%;background:#10a37f;display:inline-block;box-shadow:0 0 6px #10a37f;"></span>
+          <div style="background:#fff7ed;border:1px solid rgba(234,88,12,0.3);border-radius:8px;padding:6px 10px;margin:6px 0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+            <span style="color:#ea580c;font-weight:700;display:flex;align-items:center;gap:6px;">
+              <span style="width:7px;height:7px;border-radius:50%;background:#ea580c;display:inline-block;box-shadow:0 0 6px #ea580c;"></span>
               Live Ledger Database Connected
             </span>
-            <span style="color:#94a3b8;">Accrual Accounting Grounding</span>
+            <span style="color:#000000;font-weight:600;">Accrual Accounting Grounding</span>
           </div>
-          <p style="margin:4px 0 10px;line-height:1.5;">I'm your accounting assistant for <b>${esc(org.name || 'your business')}</b>. I can help you understand bookkeeping, GST, tax-related questions, bank reconciliation, financial reports, and ledger transactions. Select a topic below to get started.</p>
+          <p style="margin:4px 0 10px;line-height:1.5;color:#000000;">I'm your accounting assistant for <b>${esc(org.name || 'your business')}</b>. I can help you understand bookkeeping, GST, tax-related questions, bank reconciliation, financial reports, and ledger transactions. Select a topic below to get started.</p>
 
-          <div style="font-size:12px;font-weight:700;color:#10a37f;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">
+          <div style="font-size:12px;font-weight:800;color:#ea580c;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">
             Suggested Doubts to Explore:
           </div>
           <div class="fingpt-prompts-grid" id="fingpt-suggested-prompts-container">
@@ -831,7 +939,7 @@
 
     // Unordered lists
     out = out.replace(/^\s*-\s+(.*$)/gim, '<li>$1</li>');
-    out = out.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+    out = out.replace(/(<li>[\s\S]*<\/li>)/, '<ul>$1</ul>');
 
     // Numbered lists
     out = out.replace(/^\s*\d+\.\s+(.*$)/gim, '<li>$1</li>');
@@ -853,7 +961,7 @@
 
     const stream = $('#fingpt-messages-stream');
 
-    // Render User Message
+    // Render User Message (Turn white font to orange)
     const userRow = document.createElement('div');
     userRow.className = 'fingpt-msg-row user';
     userRow.innerHTML = `<div class="fingpt-msg-bubble">${esc(q)}</div>`;
@@ -866,7 +974,7 @@
     botRow.innerHTML = `
       <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
       <div class="fingpt-msg-bubble" style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:12px;color:#94a3b8;">FinGPT is analyzing accounting standards & your ledger…</span>
+        <span style="font-size:12px;color:#ea580c;font-weight:700;">FinGPT is analyzing accounting standards & your ledger…</span>
         <div class="fingpt-typing-dots"><span></span><span></span><span></span></div>
       </div>
     `;
@@ -896,9 +1004,9 @@
         extraContentHtml += `
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0;">
             ${res.cards.map(c => `
-              <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);padding:8px 10px;border-radius:8px;">
-                <div style="font-size:11px;color:#94a3b8;">${esc(c.label)}</div>
-                <div style="font-size:15px;font-weight:700;color:#38bdf8;margin-top:2px;">${esc(c.value)}</div>
+              <div style="background:#fff7ed;border:1px solid rgba(234,88,12,0.3);padding:8px 10px;border-radius:8px;">
+                <div style="font-size:11px;color:#000000;font-weight:600;">${esc(c.label)}</div>
+                <div style="font-size:15px;font-weight:800;color:#ea580c;margin-top:2px;">${esc(c.value)}</div>
               </div>
             `).join('')}
           </div>
@@ -909,17 +1017,17 @@
       if (res.data && res.data.length) {
         const keys = Object.keys(res.data[0]);
         extraContentHtml += `
-          <div style="overflow-x:auto;max-height:190px;margin:10px 0;border:1px solid rgba(255,255,255,0.12);border-radius:8px;">
+          <div style="overflow-x:auto;max-height:190px;margin:10px 0;border:1px solid rgba(234,88,12,0.25);border-radius:8px;">
             <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
               <thead>
-                <tr style="background:rgba(255,255,255,0.08);">
-                  ${keys.map(k => `<th style="padding:6px 8px;text-align:left;">${esc(k)}</th>`).join('')}
+                <tr style="background:#fff7ed;">
+                  ${keys.map(k => `<th style="padding:6px 8px;text-align:left;color:#ea580c;font-weight:700;border-bottom:1px solid rgba(234,88,12,0.25);">${esc(k)}</th>`).join('')}
                 </tr>
               </thead>
               <tbody>
                 ${res.data.map(row => `
                   <tr>
-                    ${keys.map(k => `<td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);">${esc(row[k])}</td>`).join('')}
+                    ${keys.map(k => `<td style="padding:6px 8px;border-top:1px solid rgba(234,88,12,0.15);color:#000000;">${esc(row[k])}</td>`).join('')}
                   </tr>
                 `).join('')}
               </tbody>
@@ -930,7 +1038,7 @@
 
       // Formula Box if any
       if (res.rule_formula) {
-        extraContentHtml += `<div class="fingpt-formula-box"><b>Accounting Rule / Formula:</b> ${esc(res.rule_formula)}</div>`;
+        extraContentHtml += `<div class="fingpt-formula-box"><b style="color:#000000;">Accounting Rule / Formula:</b> <span style="color:#ea580c;">${esc(res.rule_formula)}</span></div>`;
       }
 
       // Key Takeaways Box
@@ -938,11 +1046,11 @@
         extraContentHtml += `
           <div class="fingpt-takeaways">
             <div class="fingpt-takeaways-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
               Key Takeaways
             </div>
             <ul>
-              ${res.key_takeaways.map(t => `<li>${esc(t)}</li>`).join('')}
+              ${res.key_takeaways.map(t => `<li style="color:#000000;">${esc(t)}</li>`).join('')}
             </ul>
           </div>
         `;
@@ -965,10 +1073,10 @@
       // Follow-up Related Doubts
       if (res.related_doubts && res.related_doubts.length) {
         extraContentHtml += `
-          <div style="font-size:11.5px;font-weight:600;color:#94a3b8;margin:12px 0 6px;">Related Questions You Can Ask:</div>
+          <div style="font-size:11.5px;font-weight:700;color:#ea580c;margin:12px 0 6px;">Related Questions You Can Ask:</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             ${res.related_doubts.map(rd => `
-              <button class="fingpt-prompt-btn" style="padding:4px 8px;font-size:11px;" data-query="${esc(rd)}" type="button">${esc(rd)}</button>
+              <button class="fingpt-prompt-btn" style="padding:4px 8px;font-size:11px;color:#000000;" data-query="${esc(rd)}" type="button">${esc(rd)}</button>
             `).join('')}
           </div>
         `;
@@ -999,9 +1107,9 @@
 
     } catch (e) {
       botRow.innerHTML = `
-        <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;background:var(--dn,#ef4444);">!</div>
-        <div class="fingpt-msg-bubble" style="color:#f87171;">
-          <b>Error reaching FinGPT service:</b> ${esc(e.message || 'Please check your connection and try again.')}
+        <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;background:#ea580c;color:#000000;">!</div>
+        <div class="fingpt-msg-bubble" style="color:#ea580c;border:1.5px solid #ea580c;background:#fff7ed;">
+          <b style="color:#000000;">Error reaching FinGPT service:</b> <span style="color:#ea580c;">${esc(e.message || 'Please check your connection and try again.')}</span>
         </div>
       `;
     } finally {

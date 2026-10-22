@@ -3,7 +3,7 @@
 const IC = { home: 'M3 11l9-8 9 8v10h-6v-6H9v6H3z', items: 'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10', inventory: 'M4 4h16v6H4zM4 14h16v6H4z', sales: 'M3 4h3l2 11h10l2-8H7', purchases: 'M5 8h14l-1 12H6zM9 8V6a3 3 0 016 0v2', time: 'M12 7v5l3 2M12 3a9 9 0 100 18 9 9 0 000-18', banking: 'M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18', filing: 'M6 3h9l4 4v14H6zM9 12h7M9 16h7', accountant: 'M12 4a3 3 0 100 6 3 3 0 000-6M5 20c0-4 3-6 7-6s7 2 7 6', reports: 'M5 20V10M12 20V4M19 20v-7', documents: 'M3 6h7l2 2h9v11H3z', pay: 'M3 7h18v10H3zM3 11h18' };
 const NAV = [
   ['Home', 'home', ['Dashboard', 'Getting Started', 'Recent Updates']],
-  ['Items', 'items', ['Items & Services', 'Item Categories', 'Price Lists']],
+  ['Items', 'items', ['Items', 'Item Categories', 'Price Lists']],
   ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Movement', 'Warehouses']],
   ['Sales', 'sales', ['Customers', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],

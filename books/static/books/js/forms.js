@@ -563,19 +563,19 @@ async function partyForm(kind, id) {
           <div id="custom_fields_container"></div>
         </div>
 
-        <!-- Tab 5: Reporting Tags -->
-        <div class="party-tab-pane" id="tab_tags">
-          <div class="fg" style="max-width:560px;">
-            <label>Reporting Tags (Comma separated)</label>
-            <input class="in" id="reporting_tags" name="reporting_tags" placeholder="e.g. Enterprise, South-Zone, Healthcare" value="${esc(r.reporting_tags || '')}">
-            <div class="sub" style="font-size:11px;margin-top:4px;">Tags can be used to filter and group financial reports across departments and cost centers.</div>
-          </div>
-        </div>
+        // <!-- Tab 5: Reporting Tags -->
+        // <div class="party-tab-pane" id="tab_tags">
+        //   <div class="fg" style="max-width:560px;">
+        //     <label>Reporting Tags (Comma separated)</label>
+        //     <input class="in" id="reporting_tags" name="reporting_tags" placeholder="e.g. Enterprise, South-Zone, Healthcare" value="${esc(r.reporting_tags || '')}">
+        //     <div class="sub" style="font-size:11px;margin-top:4px;">Tags can be used to filter and group financial reports across departments and cost centers.</div>
+        //   </div>
+        // </div>
 
         <!-- Tab 6: Remarks -->
         <div class="party-tab-pane" id="tab_remarks">
           <div class="fg">
-            <label>Internal Remarks / Notes</label>
+            <label>Internal Notes</label>
             <textarea class="in" id="remarks" name="remarks" rows="3" placeholder="Remarks for internal team reference only (not printed on customer invoices)...">${esc(r.remarks || r.notes || '')}</textarea>
           </div>
         </div>

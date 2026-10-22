@@ -1,4 +1,9 @@
+/* ==========================================================================
+   CONVOSIS BOOKS — Ultra-Premium Glassmorphism & macOS Glass Design System
+   Dynamic Wallpapers · Optical Blur · Specular Sheen · Ambient Illumination
+   ========================================================================== */
 
+/* --- Dynamic Theme Variables & Glass Tokens --- */
 :root {
   --glass-blur: 28px;
   --glass-alpha: 0.62;
@@ -19,6 +24,8 @@
   --convosis-gradient: linear-gradient(135deg, var(--accent-from) 0%, var(--accent-to) 100%);
   --convosis-cyan-glow: rgba(var(--accent-rgb), 0.35);
   --convosis-glow-border: rgba(var(--accent-rgb), 0.4);
+
+  /* Light Glass Palette */
   --tx: #0f172a;
   --tx2: #475569;
   --tx-muted: #64748b;
@@ -33,6 +40,7 @@
   --shadow-glass: 0 10px 36px -4px rgba(0, 0, 0, 0.08), 0 4px 14px -2px rgba(0, 0, 0, 0.04);
   --shadow-glass-lg: 0 20px 50px -10px rgba(0, 0, 0, 0.16), 0 10px 24px -4px rgba(0, 0, 0, 0.08);
 
+  /* Pastel Palette for Badges & Icons */
   --pastel-sky-bg: rgba(56, 189, 248, 0.15);
   --pastel-sky-border: rgba(56, 189, 248, 0.4);
   --pastel-sky-text: #0284c7;
@@ -63,6 +71,7 @@
   --info: var(--accent);
 }
 
+/* --- Dark Theme Overrides --- */
 [data-theme="dark"] {
   --tx: #f8fafc;
   --tx2: #cbd5e1;
@@ -102,6 +111,9 @@
   --pastel-rose-text: #fb7185;
 }
 
+/* ==========================================================================
+   WALLPAPER ENGINE & BACKDROP LAYERS
+   ========================================================================== */
 .wallpaper {
   position: fixed;
   inset: 0;
@@ -129,6 +141,7 @@
   opacity: 1;
 }
 
+/* Animated subtle wallpaper float / drift */
 @keyframes wpFloatAnimation {
   0%   { transform: scale(1.03) translate(0, 0); }
   50%  { transform: scale(1.07) translate(-14px, -8px); }
@@ -149,6 +162,7 @@
   transition: background 0.3s ease;
 }
 
+/* --- Base HTML / Body Glass Reset --- */
 html, body {
   min-height: 100vh;
   margin: 0;
@@ -159,7 +173,9 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-
+/* ==========================================================================
+   TOP HEADER — Frosted Glass Bar
+   ========================================================================== */
 #top, .top-bar {
   position: fixed;
   inset: 0 0 auto;
@@ -205,7 +221,7 @@ html, body {
   -webkit-text-fill-color: transparent;
 }
 
-
+/* Icon Buttons on Top Bar */
 .ib, .icon-btn {
   background: var(--surface-glass-subtle);
   backdrop-filter: blur(8px);
@@ -244,6 +260,7 @@ html, body {
   box-shadow: 0 0 8px #f43f5e;
 }
 
+/* Search Box with Glass Pill */
 #gs, .search-box {
   position: relative;
   flex: 0 1 420px;
@@ -296,6 +313,7 @@ html, body {
   pointer-events: none;
 }
 
+/* Organization Pill Button */
 .org, .org-dropdown-btn {
   background: var(--surface-glass-subtle);
   backdrop-filter: blur(10px);
@@ -330,6 +348,7 @@ html, body {
   margin-left: 4px;
 }
 
+/* Dark Mode Toggle Pill */
 .theme-toggle-btn {
   background: var(--surface-glass-subtle);
   backdrop-filter: blur(10px);
@@ -355,6 +374,7 @@ html, body {
   box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.2), var(--specular-sheen);
 }
 
+/* Quick Create Pill Button */
 .plus, .btn-quick-create {
   background: var(--convosis-gradient);
   color: var(--accent-on, #fff);
@@ -380,6 +400,7 @@ html, body {
   transform: translateY(0) scale(0.98);
 }
 
+/* User Avatar Bubble */
 .av {
   width: 36px;
   height: 36px;
@@ -400,7 +421,9 @@ html, body {
   box-shadow: 0 6px 20px rgba(var(--accent-rgb), 0.35), var(--specular-sheen);
 }
 
-
+/* ==========================================================================
+   SIDEBAR NAVIGATION — macOS Frosted Pane
+   ========================================================================== */
 #side, aside.sidebar {
   position: fixed;
   top: 60px;
@@ -421,6 +444,7 @@ html, body {
   flex-direction: column;
 }
 
+/* Section Header Titles */
 .sec, .nav-section-title {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -430,10 +454,12 @@ html, body {
   font-weight: 700;
 }
 
-
+/* Nav Item Container */
 .ni {
   margin-bottom: 3px;
 }
+
+/* Nav Item Buttons */
 .ni > button, .nav-dropdown-trigger {
   display: flex;
   align-items: center;
@@ -483,7 +509,7 @@ html, body {
   color: var(--accent);
 }
 
-
+/* Active Nav State */
 .ni.act > button {
   font-weight: 600;
   color: var(--accent);
@@ -492,7 +518,7 @@ html, body {
   box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.12), var(--specular-sheen);
 }
 
-
+/* Submenu Children */
 .ch, .nav-dropdown-menu {
   display: none;
   padding: 4px 0 6px 36px;
@@ -527,7 +553,7 @@ html, body {
   box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.3), var(--specular-sheen);
 }
 
-
+/* Nav Pastel Icon Badges */
 .nav-pastel-icon {
   width: 28px;
   height: 28px;
@@ -548,6 +574,7 @@ html, body {
 .icon-lavender { background: var(--pastel-lavender-bg); border: 1px solid var(--pastel-lavender-border); color: var(--pastel-lavender-text); }
 .icon-rose     { background: var(--pastel-rose-bg); border: 1px solid var(--pastel-rose-border); color: var(--pastel-rose-text); }
 
+/* Pastel Chips / Counter Badges */
 .pastel-chip {
   font-size: 11px;
   font-weight: 600;
@@ -559,7 +586,7 @@ html, body {
 .chip-sky { background: var(--pastel-sky-bg); border: 1px solid var(--pastel-sky-border); color: var(--pastel-sky-text); }
 .chip-mint { background: var(--pastel-mint-bg); border: 1px solid var(--pastel-mint-border); color: var(--pastel-mint-text); }
 
-
+/* Sidebar User Footer */
 .sidebar-footer {
   margin-top: auto;
   padding-top: 12px;
@@ -614,6 +641,7 @@ html, body {
   gap: 4px;
 }
 
+/* Collapsed Sidebar Styles */
 body.col #side, #app.sidebar-collapsed aside.sidebar {
   width: 68px;
 }
@@ -625,6 +653,9 @@ body.col main, #app.sidebar-collapsed .main-wrapper {
   margin-left: 68px;
 }
 
+/* ==========================================================================
+   MAIN CONTENT AREA & PAGE WRAPPER
+   ========================================================================== */
 main, .main-wrapper {
   margin-left: 260px;
   padding-top: 60px;
@@ -637,6 +668,9 @@ main, .main-wrapper {
   margin: 0 auto;
 }
 
+/* ==========================================================================
+   CARDS & KPI CONTAINERS — Elevated Frosted Glass Surfaces
+   ========================================================================== */
 .card {
   background: var(--surface-glass);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
@@ -674,6 +708,7 @@ main, .main-wrapper {
   padding: 18px 20px;
 }
 
+/* KPI Cards */
 .kpi {
   padding: 16px 18px;
   display: block;
@@ -726,6 +761,9 @@ main, .main-wrapper {
   font-weight: 500;
 }
 
+/* ==========================================================================
+   BUTTONS & CONTROLS
+   ========================================================================== */
 .btn {
   height: 35px;
   padding: 0 14px;
@@ -760,6 +798,7 @@ main, .main-wrapper {
   cursor: not-allowed;
 }
 
+/* Primary Accent Button */
 .btn.p, .btn-primary {
   background: var(--convosis-gradient);
   backdrop-filter: blur(14px);
@@ -777,7 +816,7 @@ main, .main-wrapper {
   filter: brightness(1.08);
 }
 
-
+/* Danger Button */
 .btn.d {
   color: var(--bad);
   border-color: rgba(244, 63, 94, 0.4);
@@ -791,7 +830,7 @@ main, .main-wrapper {
   box-shadow: 0 6px 18px rgba(244, 63, 94, 0.25);
 }
 
-
+/* Secondary Button */
 .btn-secondary {
   background: var(--surface-glass);
   border: 1px solid var(--bd-glass);
@@ -811,6 +850,9 @@ main, .main-wrapper {
   place-items: center;
 }
 
+/* ==========================================================================
+   INPUTS, SELECTS & FORMS
+   ========================================================================== */
 .in, .form-control {
   width: 100%;
   height: 36px;
@@ -843,6 +885,9 @@ select.in {
   color: #f8fafc;
 }
 
+/* ==========================================================================
+   TABLES & DATA GRIDS
+   ========================================================================== */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -873,6 +918,7 @@ tr:hover td {
   background: var(--surface-glass-subtle);
 }
 
+/* Status Badges */
 .st {
   font-size: 11.5px;
   padding: 3px 10px;
@@ -891,6 +937,7 @@ tr:hover td {
 .st.in { background: var(--pastel-sky-bg); color: var(--pastel-sky-text); border-color: var(--pastel-sky-border); }
 .st.gr { background: var(--surface-glass-subtle); color: var(--tx-muted); border-color: var(--bd-glass); }
 
+/* Tabs - Glass Pill Navigation */
 .tabs {
   display: flex;
   gap: 8px;
@@ -920,7 +967,9 @@ tr:hover td {
   font-weight: 600;
 }
 
-
+/* ==========================================================================
+   MODALS, DIALOGS & OVERLAYS
+   ========================================================================== */
 .mo {
   position: fixed;
   inset: 0;
@@ -998,7 +1047,7 @@ tr:hover td {
   flex-wrap: wrap;
 }
 
-
+/* Popover Dropdowns */
 .pop {
   position: absolute;
   background: var(--surface-glass-solid);
@@ -1012,12 +1061,18 @@ tr:hover td {
   min-width: 230px;
   padding: 6px;
   display: none;
+  flex-direction: column;
 }
-.pop.on { display: block; }
+.pop.on {
+  display: flex !important;
+  flex-direction: column !important;
+}
 .pop.right { right: 0; top: 46px; }
 #gs .pop { top: 44px; left: 0; width: 100%; }
 .pop a, .pop .mi {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   padding: 8px 12px;
@@ -1028,6 +1083,7 @@ tr:hover td {
   cursor: pointer;
   font-size: 13px;
   transition: all 0.15s;
+  box-sizing: border-box;
 }
 .pop a:hover, .pop .mi:hover {
   background: var(--pastel-sky-bg);
@@ -1036,7 +1092,127 @@ tr:hover td {
   transform: translateX(2px);
 }
 
+/* User Profile Menu & Smooth Hover In-Out Dropdown */
+.user-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
 
+#umm.pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 250px;
+  width: max-content;
+  max-width: 320px;
+  padding: 7px;
+  display: flex !important;
+  flex-direction: column !important;
+  background: var(--surface-glass-solid);
+  backdrop-filter: blur(28px) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(28px) saturate(var(--glass-sat));
+  color: var(--tx);
+  border: 1px solid var(--bd-glass);
+  border-radius: 14px;
+  box-shadow: 0 16px 42px -4px rgba(0, 0, 0, 0.18), var(--specular-sheen);
+  z-index: 1000;
+
+  /* Smooth display in-out animation */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.96);
+  transform-origin: top right;
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Invisible bridge so mouse moving from avatar button to menu never drops hover */
+#umm.pop::before {
+  content: '';
+  position: absolute;
+  top: -14px;
+  left: 0;
+  right: 0;
+  height: 16px;
+  background: transparent;
+}
+
+/* Hovering user menu wrapper OR dropdown displays IN */
+.user-menu-wrap:hover #umm.pop,
+.user-menu-wrap.open #umm.pop,
+#umm.pop.on {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: translateY(0) scale(1) !important;
+}
+
+#umm .who {
+  padding: 8px 12px 9px;
+  font-size: 11.5px;
+  color: var(--tx-muted);
+  line-height: 1.35;
+  border-bottom: 1px solid var(--bd-glass-subtle);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+#umm .who b, #umm .who .who-user {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tx);
+  margin-top: 2px;
+}
+
+.umm-divider {
+  height: 1px;
+  background: var(--bd-glass-subtle);
+  margin: 4px 6px;
+}
+
+#umm .mi {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: all 0.16s ease;
+}
+#umm .mi svg {
+  flex-shrink: 0;
+  color: var(--tx-muted);
+  transition: color 0.16s ease, transform 0.16s ease;
+}
+#umm .mi:hover {
+  background: var(--pastel-sky-bg);
+  color: var(--accent);
+  transform: translateX(2px);
+}
+#umm .mi:hover svg {
+  color: var(--accent);
+}
+#umm .mi.umm-logout:hover {
+  background: rgba(225, 29, 72, 0.12);
+  color: var(--bad);
+}
+#umm .mi.umm-logout:hover svg {
+  color: var(--bad);
+}
+
+/* Toast Notification */
 #toast, .toast-container {
   position: fixed;
   bottom: 24px;
@@ -1066,7 +1242,9 @@ tr:hover td {
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-
+/* ==========================================================================
+   APPEARANCE DRAWER — macOS Slide-Out Tuner Panel
+   ========================================================================== */
 .ap-drawer {
   position: fixed;
   top: 0;
@@ -1142,6 +1320,7 @@ tr:hover td {
   margin-top: -4px;
 }
 
+/* Segmented Buttons */
 .seg {
   display: flex;
   background: var(--surface-glass-subtle);
@@ -1172,6 +1351,7 @@ tr:hover td {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--specular-sheen);
 }
 
+/* Color Swatches */
 .swatches {
   display: flex;
   gap: 10px;
@@ -1203,6 +1383,7 @@ tr:hover td {
   margin-top: -2px;
 }
 
+/* Wallpaper Grid */
 .wp-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1280,7 +1461,7 @@ tr:hover td {
   margin-top: 6px;
 }
 
-
+/* Range Sliders */
 .ap-slider {
   display: flex;
   flex-direction: column;
@@ -1323,7 +1504,7 @@ tr:hover td {
   transform: scale(1.15);
 }
 
-
+/* macOS Toggle Switch */
 .ap-row {
   display: flex;
   align-items: center;
@@ -1376,7 +1557,9 @@ tr:hover td {
   margin-top: 10px;
 }
 
-
+/* ==========================================================================
+   LOGIN PAGE — Frosted Floating Portal
+   ========================================================================== */
 body.login {
   display: grid;
   place-items: center;
@@ -1422,6 +1605,7 @@ body.login {
   font-size: 13px;
 }
 
+/* Responsive adjustments */
 @media (max-width: 900px) {
   #side, aside.sidebar {
     transform: translateX(-100%);
@@ -1439,6 +1623,9 @@ body.login {
   }
 }
 
+/* ==========================================================================
+   ZOHO BOOKS STYLE ITEM MODAL & FORM CONTROLS
+   ========================================================================== */
 .zoho-item-modal {
   display: flex;
   flex-direction: column;
@@ -1497,7 +1684,7 @@ body.login {
   user-select: none;
 }
 
-
+/* Radio Group */
 .zoho-radio-group {
   display: flex;
   align-items: center;
@@ -1539,7 +1726,7 @@ body.login {
   box-shadow: 0 1px 4px rgba(var(--accent-rgb), 0.4);
 }
 
-
+/* HSN Code with Search Icon */
 .hsn-search-wrap {
   position: relative;
   display: flex;
@@ -1555,7 +1742,7 @@ body.login {
   pointer-events: none;
 }
 
-
+/* Image Upload Dropzone Box (Zoho Books Style) */
 .zoho-right-image {
   height: 100%;
   display: flex;
@@ -1659,7 +1846,7 @@ body.login {
   color: var(--bad);
 }
 
-
+/* Horizontal Divider */
 .zoho-divider {
   border: 0;
   height: 1px;
@@ -1667,7 +1854,7 @@ body.login {
   margin: 4px 0 8px;
 }
 
-
+/* Half & Half Split Grid */
 .zoho-split-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1732,7 +1919,7 @@ body.login {
   gap: 12px;
 }
 
-
+/* Currency Input Group */
 .input-currency-group {
   display: flex;
   align-items: stretch;
@@ -1800,6 +1987,8 @@ select option {
   background: #111827;
   color: #f1f5f9;
 }
+
+
 
 /* ---------- Enterprise Customer & Vendor Form Styles ---------- */
 .party-form-wrap {
@@ -1902,6 +2091,7 @@ select option {
   box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.18);
 }
 
+/* Party Tabs & Form Components */
 .party-tabs-header {
   display: flex;
   align-items: center;
@@ -1968,5 +2158,3 @@ select option {
   border-color: var(--accent);
   background: var(--surface-glass);
 }
-
-

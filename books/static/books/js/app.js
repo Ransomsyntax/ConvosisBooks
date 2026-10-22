@@ -157,7 +157,31 @@ function applyOrg() {
 }
 
 /* menus */
-const closePops = () => $$('.pop.on').forEach(p => p.classList.remove('on'));
+const closePops = () => {
+  $$('.pop.on').forEach(p => { p.classList.remove('on'); p.style.display = ''; });
+  $$('.user-menu-wrap.open').forEach(w => w.classList.remove('open'));
+};
+
+(function initUserMenuHover() {
+  const wrap = $('#userMenuWrapper') || $('#um')?.closest('.user-menu-wrap') || $('#um')?.closest('.rel');
+  const menu = $('#umm');
+  if (!wrap || !menu) return;
+  let timer = null;
+
+  wrap.addEventListener('mouseenter', () => {
+    clearTimeout(timer);
+    menu.classList.add('on');
+    wrap.classList.add('open');
+  });
+
+  wrap.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      menu.classList.remove('on');
+      wrap.classList.remove('open');
+    }, 180);
+  });
+})();
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
@@ -242,7 +266,19 @@ const NotificationCenter = {
 
 document.addEventListener('click', async e => {
   const t = e.target;
-  const tog = (btn, pop) => { if (!t.closest(btn)) return false; const on = $(pop).style.display === 'flex' || $(pop).classList.contains('on'); closePops(); if (!on) { $(pop).classList.add('on'); $(pop).style.display = 'flex'; } return true; };
+  const tog = (btn, pop) => {
+    if (!t.closest(btn)) return false;
+    const p = $(pop);
+    if (!p) return false;
+    const on = p.classList.contains('on');
+    closePops();
+    if (!on) {
+      p.classList.add('on');
+      const w = p.closest('.user-menu-wrap');
+      if (w) w.classList.add('open');
+    }
+    return true;
+  };
   if (tog('#notifBtn', '#notifPop')) { NotificationCenter.fetch(); return; }
   if (tog('#qc', '#qcm') || tog('#um', '#umm')) return;
 

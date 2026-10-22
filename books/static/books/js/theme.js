@@ -1,3 +1,6 @@
+// CONVOSIS — Appearance Engine
+// Glassmorphism tuning, accent colours, light / dark / auto mode, and Mist theme backdrop.
+// Applied through CSS variables (see css/glass.css) so changes are live.
 
 (function () {
   'use strict';
@@ -7,21 +10,10 @@
 
   /* ------------------------------------------------------------------ data */
   const WALLPAPERS = [
-    { id: 'bigsur',   name: 'Big Sur',   css: 'radial-gradient(55% 60% at 20% 15%, #ff9a9e 0%, transparent 65%), radial-gradient(60% 60% at 85% 25%, #a18cd1 0%, transparent 65%), radial-gradient(70% 70% at 55% 105%, #5b86e5 0%, transparent 70%), linear-gradient(135deg, #fbc2eb, #8ec5fc)' },
-    { id: 'monterey', name: 'Monterey',  css: 'radial-gradient(60% 60% at 80% 10%, #f093fb 0%, transparent 60%), radial-gradient(70% 70% at 10% 90%, #4facfe 0%, transparent 65%), radial-gradient(50% 50% at 50% 50%, #7f5af0 0%, transparent 70%), linear-gradient(160deg, #2b1055, #7597de)' },
-    { id: 'ventura',  name: 'Ventura',   css: 'radial-gradient(55% 55% at 15% 20%, #ffd86f 0%, transparent 60%), radial-gradient(60% 60% at 90% 35%, #fc6262 0%, transparent 62%), radial-gradient(70% 70% at 40% 110%, #6a3093 0%, transparent 70%), linear-gradient(135deg, #ff9966, #a044ff)' },
-    { id: 'sonoma',   name: 'Sonoma',    css: 'radial-gradient(55% 55% at 20% 15%, #f9f586 0%, transparent 60%), radial-gradient(60% 60% at 85% 30%, #84fab0 0%, transparent 62%), radial-gradient(75% 75% at 50% 110%, #2b8a6e 0%, transparent 70%), linear-gradient(150deg, #d4fc79, #96e6a1)' },
-    { id: 'sequoia',  name: 'Sequoia',   css: 'radial-gradient(60% 60% at 80% 15%, #3a7bd5 0%, transparent 62%), radial-gradient(70% 70% at 15% 95%, #11998e 0%, transparent 65%), linear-gradient(160deg, #0f2027, #203a43 55%, #2c5364)' },
-    { id: 'aurora',   name: 'Aurora',    css: 'radial-gradient(60% 50% at 25% 20%, #00f5a0 0%, transparent 60%), radial-gradient(55% 55% at 80% 30%, #a855f7 0%, transparent 62%), radial-gradient(70% 60% at 50% 105%, #0ea5e9 0%, transparent 65%), linear-gradient(180deg, #05060f, #0b1b2e)' },
-    { id: 'sunset',   name: 'Sunset',    css: 'radial-gradient(60% 60% at 50% 0%, #ffd194 0%, transparent 60%), radial-gradient(70% 70% at 90% 60%, #f857a6 0%, transparent 62%), radial-gradient(70% 70% at 10% 90%, #ff5858 0%, transparent 65%), linear-gradient(180deg, #fe8c00, #f83600)' },
-    { id: 'ocean',    name: 'Ocean',     css: 'radial-gradient(60% 60% at 20% 10%, #a1ffce 0%, transparent 60%), radial-gradient(70% 70% at 85% 80%, #2193b0 0%, transparent 65%), linear-gradient(160deg, #6dd5ed, #2193b0)' },
-    { id: 'lavender', name: 'Lavender',  css: 'radial-gradient(60% 60% at 20% 20%, #ffecd2 0%, transparent 60%), radial-gradient(60% 60% at 85% 70%, #fcb69f 0%, transparent 62%), linear-gradient(135deg, #e0c3fc, #8ec5fc)' },
-    { id: 'mist',     name: 'Mist',      css: 'radial-gradient(60% 60% at 15% 10%, #ffffff 0%, transparent 60%), radial-gradient(60% 60% at 90% 90%, #cbd5e1 0%, transparent 65%), linear-gradient(160deg, #e2e8f0, #cbd5e1)' },
-    { id: 'graphite', name: 'Graphite',  css: 'radial-gradient(60% 60% at 20% 15%, #6b7280 0%, transparent 60%), radial-gradient(70% 70% at 85% 85%, #374151 0%, transparent 65%), linear-gradient(160deg, #1f2937, #111827)' },
-    { id: 'midnight', name: 'Midnight',  css: 'radial-gradient(60% 60% at 75% 15%, #4c1d95 0%, transparent 60%), radial-gradient(70% 70% at 15% 90%, #1e3a8a 0%, transparent 65%), linear-gradient(170deg, #020617, #0f172a)' }
+    { id: 'mist', name: 'Mist', css: 'radial-gradient(60% 60% at 15% 10%, #ffffff 0%, transparent 60%), radial-gradient(60% 60% at 90% 90%, #cbd5e1 0%, transparent 65%), linear-gradient(160deg, #e2e8f0, #cbd5e1)' }
   ];
 
-
+  // k = how much to darken the accent for text on light glass
   const ACCENTS = [
     { id: 'convosis', name: 'Convosis Cyan', base: '#0284c7', k: 0.1 },
     { id: 'blue',     name: 'Classic Blue',  base: '#0a84ff', k: 0.3 },
@@ -42,19 +34,20 @@
   };
 
   const DEFAULTS = {
-    mode: 'light',
+    mode: 'light',          // light | dark | auto
     accent: 'convosis',
-    wallpaper: 'bigsur',
-    wpBlur: 0,
-    wpDim: 0,
+    wallpaper: 'mist',      // Mist theme exclusively
+    wpBlur: 0,              // px
+    wpDim: 0,               // %
     animate: true,
-    glassPreset: 'frosted',
+    glassPreset: 'frosted', // preset id | custom
     glassBlur: 28,
     glassOpacity: 62,
     glassSat: 180,
     sidebarHidden: false
   };
 
+  /* --------------------------------------------------------------- helpers */
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
   const rgbToHex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
@@ -64,14 +57,15 @@
     else if (window.ConvosisApp && ConvosisApp.showToast) ConvosisApp.showToast(m);
   };
 
+  /* ---------------------------------------------------------------- engine */
   const ThemeEngine = {
     state: Object.assign({}, DEFAULTS),
-    custom: null,
     _ready: false,
     _wpKey: null,
     _wpIdx: 0,
     _saveTimer: null,
 
+    /* ---- lifecycle ---- */
     init() {
       if (this._ready) return;
       this._ready = true;
@@ -94,19 +88,22 @@
     },
 
     load() {
+      try { localStorage.removeItem(WP_KEY); } catch (e) { /* ignore */ }
       let saved = null;
       try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* ignore */ }
       if (saved) {
         this.state = Object.assign({}, DEFAULTS, saved);
       } else {
+        // First run: check stored dark theme preference
         const legacy = window.convosisStore && window.convosisStore.state && window.convosisStore.state.themeMode;
         this.state = Object.assign({}, DEFAULTS, legacy === 'dark' ? { mode: 'dark' } : {});
       }
-      try { this.custom = JSON.parse(localStorage.getItem(WP_KEY) || 'null'); } catch (e) { this.custom = null; }
-      if (this.state.wallpaper === 'custom' && !this.custom) this.state.wallpaper = DEFAULTS.wallpaper;
+      // Enforce Mist theme exclusively and remove custom wallpapers
+      this.state.wallpaper = 'mist';
     },
 
     save() {
+      this.state.wallpaper = 'mist';
       clearTimeout(this._saveTimer);
       this._saveTimer = setTimeout(() => {
         try { localStorage.setItem(KEY, JSON.stringify(this.state)); } catch (e) { /* ignore */ }
@@ -140,6 +137,7 @@
       }
     },
 
+    /* ---- state helpers ---- */
     resolvedMode() {
       const m = this.state.mode;
       if (m === 'auto') return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -151,6 +149,7 @@
       this.setMode(cur === 'dark' ? 'light' : 'dark');
     },
 
+    /* ---- apply everything ---- */
     apply(initial) {
       const s = this.state;
       const root = document.documentElement;
@@ -165,6 +164,7 @@
       const app = document.getElementById('app');
       if (app) app.classList.toggle('sidebar-collapsed', !!s.sidebarHidden && window.innerWidth > 768);
 
+      // Update theme toggle buttons if any exist in DOM
       const themeBtn = document.getElementById('themeToggleBtn');
       if (themeBtn) {
         const isDark = mode === 'dark';
@@ -179,6 +179,7 @@
         }
       }
 
+      // Keep legacy store in sync if present
       const store = window.convosisStore;
       if (store && store.state && store.state.themeMode !== mode) {
         store.state.themeMode = mode;
@@ -204,6 +205,7 @@
       set('--accent-to', to);
       set('--accent-on', a.on || '#ffffff');
 
+      // Global themed variables used across modules and styles
       set('--convosis-cyan', a.base);
       set('--convosis-blue', to);
       set('--convosis-blue-dark', mix(to, '#000000', 0.15));
@@ -244,15 +246,10 @@
       wp.classList.toggle('wp-animated', !!s.animate);
 
       const layers = wp.querySelectorAll('.wp-image');
-      let css = null, key = 'none';
-      if (s.wallpaper === 'custom' && this.custom && this.custom.src) {
-        css = `url("${String(this.custom.src).replace(/"/g, '%22')}") center / cover no-repeat`;
-        key = 'custom:' + this.custom.src.length + ':' + this.custom.src.slice(-24);
-      } else if (s.wallpaper !== 'none') {
-        const w = WALLPAPERS.find(x => x.id === s.wallpaper) || WALLPAPERS[0];
-        css = w.css;
-        key = w.id;
-      }
+      const w = WALLPAPERS[0];
+      const css = w.css;
+      const key = 'mist';
+
       if (key === this._wpKey) return;
       this._wpKey = key;
 
@@ -274,9 +271,10 @@
       window.dispatchEvent(new CustomEvent('convosis:appearance', { detail: { mode: this.resolvedMode(), accent: this.state.accent } }));
     },
 
+    /* ---- setters used by the UI ---- */
     setMode(m) { this.state.mode = m; this.save(); this.apply(); this.emit(); },
     setAccent(id) { this.state.accent = id; this.save(); this.apply(); this.emit(); },
-    setWallpaper(id) { this.state.wallpaper = id; this.save(); this.apply(); },
+    setWallpaper(id) { this.state.wallpaper = 'mist'; this.save(); this.apply(); },
     setAnimate(v) { this.state.animate = !!v; this.save(); this.apply(); },
     setGlassPreset(id) {
       const p = GLASS_PRESETS[id]; if (!p) return;
@@ -289,6 +287,7 @@
       if (app) app.classList.toggle('sidebar-collapsed', !!v);
     },
 
+    // slider changes — no re-render so dragging stays ultra-smooth
     live(key, value) {
       this.state[key] = Number(value);
       if (key.indexOf('glass') === 0) this.state.glassPreset = 'custom';
@@ -312,68 +311,16 @@
       document.querySelectorAll('.ap-root [data-preset]').forEach(b => b.classList.toggle('on', b.dataset.preset === this.state.glassPreset));
     },
 
-    /*custom wallpaper*/
-    pickFile() {
-      const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
-      inp.onchange = () => { if (inp.files && inp.files[0]) this.uploadFile(inp.files[0]); };
-      inp.click();
-    },
-
-    uploadFile(file) {
-      if (!file || !/^image\//.test(file.type)) { toast('Please choose an image file.'); return; }
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 1920, r = Math.min(1, MAX / Math.max(img.width, img.height));
-        const c = document.createElement('canvas');
-        c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        URL.revokeObjectURL(url);
-        this.setCustom(c.toDataURL('image/jpeg', 0.82), file.name);
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); toast('Could not read that image.'); };
-      img.src = url;
-    },
-
-    applyUrl(btn) {
-      const input = btn.closest('.wp-url').querySelector('input');
-      const v = (input.value || '').trim();
-      if (!/^https?:\/\//i.test(v)) { toast('Enter a full image URL starting with https://'); return; }
-      const img = new Image();
-      img.onload = () => this.setCustom(v, 'Image URL');
-      img.onerror = () => toast('That URL could not be loaded as an image.');
-      img.src = v;
-    },
-
-    setCustom(src, name) {
-      this.custom = { src, name };
-      let persisted = true;
-      try { localStorage.setItem(WP_KEY, JSON.stringify(this.custom)); } catch (e) { persisted = false; }
-      this.state.wallpaper = 'custom';
-      this._wpKey = null;
-      this.save(); this.apply();
-      toast(persisted ? 'Custom wallpaper applied' : 'Wallpaper applied (too large to keep after reload)');
-    },
-
-    clearCustom() {
-      this.custom = null;
-      try { localStorage.removeItem(WP_KEY); } catch (e) { /* ignore */ }
-      if (this.state.wallpaper === 'custom') this.state.wallpaper = DEFAULTS.wallpaper;
-      this._wpKey = null;
-      this.save(); this.apply();
-    },
-
     reset() {
-      this.custom = null;
       try { localStorage.removeItem(WP_KEY); } catch (e) { /* ignore */ }
       const hidden = this.state.sidebarHidden;
-      this.state = Object.assign({}, DEFAULTS, { sidebarHidden: hidden });
+      this.state = Object.assign({}, DEFAULTS, { sidebarHidden: hidden, wallpaper: 'mist' });
       this._wpKey = null;
       this.save(); this.apply(); this.emit();
       toast('Appearance reset to defaults');
     },
 
+    /* ---- drawer ---- */
     openDrawer() { this.ensureDom(); this.refreshPanels(); document.getElementById('appearanceDrawer').classList.add('open'); },
     closeDrawer() { const d = document.getElementById('appearanceDrawer'); if (d) d.classList.remove('open'); },
     toggleDrawer() { const d = document.getElementById('appearanceDrawer'); (d && d.classList.contains('open')) ? this.closeDrawer() : this.openDrawer(); },
@@ -383,6 +330,7 @@
       this.syncControls();
     },
 
+    /* ---- panel markup (used by the drawer and the Settings page) ---- */
     panelHTML() {
       const s = this.state;
       const modeBtn = (m, label) => `<button class="${s.mode === m ? 'on' : ''}" onclick="ThemeEngine.setMode('${m}')">${label}</button>`;
@@ -393,16 +341,6 @@
         </div>`;
       const check = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
       const accent = ACCENTS.find(a => a.id === s.accent) || ACCENTS[0];
-
-      const tiles = WALLPAPERS.map(w => `
-        <button class="wp-tile ${s.wallpaper === w.id ? 'on' : ''}" style="background:${w.css}" title="${w.name}" onclick="ThemeEngine.setWallpaper('${w.id}')">
-          <span class="wp-check">${check}</span><span class="wp-name">${w.name}</span>
-        </button>`).join('');
-
-      const customTile = this.custom ? `
-        <button class="wp-tile ${s.wallpaper === 'custom' ? 'on' : ''}" style="background:url('${String(this.custom.src).replace(/'/g, '%27')}') center/cover" title="Your wallpaper" onclick="ThemeEngine.setWallpaper('custom')">
-          <span class="wp-check">${check}</span><span class="wp-name">Yours</span>
-        </button>` : '';
 
       return `
       <div class="ap">
@@ -422,21 +360,12 @@
         </div>
 
         <div class="ap-sec wide">
-          <div class="wp-grid">
-            ${tiles}
-            ${customTile}
-            <button class="wp-tile wp-action" onclick="ThemeEngine.pickFile()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Upload image
+          <div class="ap-h">Theme Wallpaper</div>
+          <div class="ap-desc">Translucent glass shines through the Mist backdrop.</div>
+          <div class="wp-grid" style="grid-template-columns: 1fr;">
+            <button class="wp-tile on" style="background:${WALLPAPERS[0].css}; height:54px;" title="Mist" onclick="ThemeEngine.setWallpaper('mist')">
+              <span class="wp-check">${check}</span><span class="wp-name">Mist (Active Theme)</span>
             </button>
-            <button class="wp-tile wp-action ${s.wallpaper === 'none' ? 'on' : ''}" onclick="ThemeEngine.setWallpaper('none')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>
-              No wallpaper
-            </button>
-          </div>
-          <div class="wp-url">
-            <input class="form-control" type="url" placeholder="…or paste image URL (https://)">
-            <button class="btn btn-secondary btn-sm" onclick="ThemeEngine.applyUrl(this)">Apply</button>
           </div>
           ${slider('wpBlur', 'Wallpaper Blur', 0, 40, 1)}
           ${slider('wpDim', 'Wallpaper Dimming', 0, 60, 1)}
@@ -444,7 +373,6 @@
             <span>Slowly drift wallpaper</span>
             <label class="mac-switch"><input type="checkbox" ${s.animate ? 'checked' : ''} onchange="ThemeEngine.setAnimate(this.checked)"><i></i></label>
           </div>
-          ${this.custom ? '<div class="ap-row"><span>Custom wallpaper: ' + String(this.custom.name || 'image').replace(/[<>&"]/g, '') + '</span><button class="btn btn-secondary btn-sm" onclick="ThemeEngine.clearCustom()">Remove</button></div>' : ''}
         </div>
 
         <div class="ap-sec wide">
@@ -468,6 +396,7 @@
 
   window.ThemeEngine = ThemeEngine;
 
+  // Auto initialize on DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => ThemeEngine.init());
   } else {

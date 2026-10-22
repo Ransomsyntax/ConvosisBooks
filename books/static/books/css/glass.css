@@ -110,7 +110,7 @@
   pointer-events: none;
   z-index: -10;
   overflow: hidden;
-  background-color: #0b1120;
+  background: radial-gradient(60% 60% at 15% 10%, #ffffff 0%, transparent 60%), radial-gradient(60% 60% at 90% 90%, #cbd5e1 0%, transparent 65%), linear-gradient(160deg, #e2e8f0, #cbd5e1);
 }
 
 .wp-image {

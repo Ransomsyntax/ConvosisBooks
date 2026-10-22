@@ -2251,3 +2251,99 @@ select option {
   border-color: var(--accent);
   background: var(--surface-glass);
 }
+
+
+/* Party Details Vertical Split Layout */
+.party-details-split {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 8px;
+  border: 1px solid var(--bd-glass);
+  border-radius: 12px;
+  background: var(--surface-glass-subtle);
+  padding: 12px;
+  min-height: 290px;
+}
+
+.party-tabs-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 195px;
+  flex-shrink: 0;
+  border-right: 1.5px solid var(--bd-glass);
+  padding-right: 12px;
+}
+
+.party-tabs-sidebar .party-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  border-bottom: none;
+  transition: all 0.18s ease;
+}
+
+.party-tabs-sidebar .party-tab-btn:hover {
+  background: var(--surface-glass);
+  color: var(--tx);
+}
+
+.party-tabs-sidebar .party-tab-btn.active {
+  background: var(--surface-glass);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.14);
+  font-weight: 700;
+}
+
+.party-tab-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
+  font-weight: 700;
+}
+
+.party-tabs-sidebar .party-tab-btn.active .party-tab-badge {
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent);
+}
+
+.party-tabs-content {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 4px 10px;
+}
+
+@media (max-width: 680px) {
+  .party-details-split {
+    flex-direction: column;
+    padding: 8px;
+  }
+  .party-tabs-sidebar {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1.5px solid var(--bd-glass);
+    padding-right: 0;
+    padding-bottom: 8px;
+  }
+  .party-tabs-sidebar .party-tab-btn {
+    width: auto;
+    white-space: nowrap;
+  }
+}

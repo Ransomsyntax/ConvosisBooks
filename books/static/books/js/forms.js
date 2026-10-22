@@ -456,22 +456,43 @@ async function partyForm(kind, id) {
         ` : ''}
       </div>
 
-      <!-- 5. Secondary Tab Navigation Bar -->
-      <div style="margin-top:4px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <!-- 5. Secondary Details (Vertical Split Layout) -->
+      <div style="margin-top:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <h4 style="margin:0;font-size:13.5px;font-weight:700;">Other Details</h4>
-          <button type="button" class="btn" id="btn_toggle_add_details" style="font-size:11.5px;padding:3px 8px;">[Add more details ▼]</button>
-        </div>
-        <div class="party-tabs-header" id="party_tabs_bar">
-          <button type="button" class="party-tab-btn active" data-tab="tab_address">Address</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_contacts">Contact Persons (<span id="cnt_badge">${contactPersonsList.length}</span>)</button>
-          ${!isCust ? `<button type="button" class="party-tab-btn" data-tab="tab_bank">Bank Details</button>` : ''}
-          <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">Custom Fields</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_remarks">Notes</button>
-          <button type="button" class="party-tab-btn" data-tab="tab_documents">Attachments (<span id="doc_badge">${documentsList.length}</span>/10)</button>
+          <button type="button" class="btn" id="btn_toggle_add_details" style="font-size:11.5px;padding:4px 12px;cursor:pointer;">Add More</button>
         </div>
 
-        <!-- Tab 1: Address -->
+        <div class="party-details-split" id="party_details_split">
+          <!-- Left side: vertically aligned tabs -->
+          <div class="party-tabs-sidebar" id="party_tabs_bar">
+            <button type="button" class="party-tab-btn active" data-tab="tab_address">
+              <span>Address</span>
+            </button>
+            <button type="button" class="party-tab-btn" data-tab="tab_contacts">
+              <span>Contact Persons</span>
+              <span class="party-tab-badge" id="cnt_badge">${contactPersonsList.length}</span>
+            </button>
+            ${!isCust ? `
+              <button type="button" class="party-tab-btn" data-tab="tab_bank">
+                <span>Bank Details</span>
+              </button>
+            ` : ''}
+            <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">
+              <span>Custom Fields</span>
+            </button>
+            <button type="button" class="party-tab-btn" data-tab="tab_remarks">
+              <span>Notes</span>
+            </button>
+            <button type="button" class="party-tab-btn" data-tab="tab_documents">
+              <span>Attachments</span>
+              <span class="party-tab-badge" id="doc_badge">${documentsList.length}</span>
+            </button>
+          </div>
+
+          <!-- Right side: show contents -->
+          <div class="party-tabs-content">
+            <!-- Tab 1: Address -->
         <div class="party-tab-pane active" id="tab_address">
           <div class="g" style="gap:16px;">
             <div class="${isCust ? 's6' : 's12'}">
@@ -580,6 +601,8 @@ async function partyForm(kind, id) {
           </div>
           <div id="uploaded_files_list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
+          </div> <!-- /party-tabs-content -->
+        </div> <!-- /party-details-split -->
       </div>
     </div>
   `;
@@ -604,12 +627,15 @@ async function partyForm(kind, id) {
 
       // 2. Toggle Add More Details
       $('#btn_toggle_add_details', modal.el).addEventListener('click', () => {
-        const tabsBar = $('#party_tabs_bar', modal.el);
-        if (tabsBar.style.display === 'none') {
-          tabsBar.style.display = 'flex';
-          panes[0].classList.add('active');
-        } else {
-          tabsBar.style.display = 'none';
+        const splitEl = $('#party_details_split', modal.el);
+        if (splitEl) {
+          if (splitEl.style.display === 'none') {
+            splitEl.style.display = 'flex';
+            const activeTab = $('.party-tab-btn.active', modal.el) || tabs[0];
+            if (activeTab) activeTab.click();
+          } else {
+            splitEl.style.display = 'none';
+          }
         }
       });
 

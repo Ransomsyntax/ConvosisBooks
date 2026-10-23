@@ -314,14 +314,22 @@ class EnterpriseFeaturesTest(Base):
         self.assertEqual(resp.json()['status'], 'healthy')
         self.assertIn('latency_ms', resp.json()['database'])
 
-    def test_fingpt_doubt_clearance(self):
+    def test_convobot_doubt_clearance(self):
+        r_cb = self.client.post('/api/convobot/query/', data=json.dumps({'query': 'What is our revenue this month?'}), content_type='application/json')
+        self.assertEqual(r_cb.status_code, 200)
+        d_cb = r_cb.json()
+        self.assertIn('revenue', d_cb['answer'].lower())
+        self.assertEqual(d_cb['model'], 'gpt-4o-mini')
+        self.assertTrue(d_cb['llm_grounded'])
 
-        r1 = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({'query': 'Clear my doubt: debit vs credit rules'}), content_type='application/json')
+        r1 = self.client.post('/api/convobot/doubt-clearance/', data=json.dumps({'query': 'Clear my doubt: debit vs credit rules'}), content_type='application/json')
         self.assertEqual(r1.status_code, 200)
         d1 = r1.json()
         self.assertIn('doubt_topic', d1)
         self.assertIn('debit', d1['answer'].lower())
         self.assertTrue(len(d1['key_takeaways']) >= 2)
+        self.assertEqual(d1['model'], 'gpt-4o-mini')
+        self.assertTrue(d1['llm_grounded'])
 
         r2 = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({'query': 'How do I claim GST input tax credit itc under section 16?'}), content_type='application/json')
         self.assertEqual(r2.status_code, 200)
@@ -331,6 +339,8 @@ class EnterpriseFeaturesTest(Base):
         self.assertEqual(r3.status_code, 200)
         d3 = r3.json()
         self.assertIn('soc 2', d3['answer'].lower())
+
+    test_fingpt_doubt_clearance = test_convobot_doubt_clearance
 
     def test_enterprise_security_compliance(self):
         r = self.client.get('/api/security/compliance-summary/')

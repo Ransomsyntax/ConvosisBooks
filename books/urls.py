@@ -40,6 +40,8 @@ urlpatterns = [
 
     path('ai/doubt-clearance/', api.ai_doubt_clearance_view),
     path('ai/query/', api.ai_query_view),
+    path('convobot/doubt-clearance/', api.convobot_doubt_clearance_view),
+    path('convobot/query/', api.convobot_query_view),
     path('ai/anomalies/', api.ai_anomalies_view),
     path('ai/anomalies/<int:pk>/resolve/', api.ai_anomalies_resolve_view),
     path('mcp/', api.mcp_view),

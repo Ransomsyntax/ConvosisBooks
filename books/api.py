@@ -2522,25 +2522,29 @@ def transaction_locking_view(request):
 
 
 @api_view
-def ai_doubt_clearance_view(request):
+def convobot_doubt_clearance_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
     q = d.get('query', '')
     category = d.get('category', 'all')
     history = d.get('history', [])
-    res = services.process_doubt_clearance(q, category=category, history=history, user=request.user)
+    res = services.process_convobot_query(q, category=category, history=history, user=request.user)
     return j(res)
 
 
 @api_view
-def ai_query_view(request):
+def convobot_query_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
     q = d.get('query', '')
-    res = services.process_zia_query(q, request.user)
+    res = services.process_convobot_query(q, user=request.user)
     return j(res)
+
+
+ai_doubt_clearance_view = convobot_doubt_clearance_view
+ai_query_view = convobot_query_view
 
 
 @api_view

@@ -1,5 +1,4 @@
 'use strict';
-/* Home dashboard*/
 const DASH = { period: pref.get('period', 'fy'), hidden: pref.get('hidden', []), custom: pref.get('custom', null), charts: {} };
 const WID = [['kpi', 'KPI cards'], ['recpay', 'Receivables & payables'], ['cash', 'Cash flow'], ['mix', 'Revenue by category'], ['revexp', 'Revenue vs expenses'], ['aging', 'Aging'], ['sales', 'Sales performance'], ['inv', 'Inventory overview'], ['top', 'Top customers'], ['act', 'Recent activity']];
 const PERIODS = [['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['lastm', 'Last Month'], ['quarter', 'This Quarter'], ['fy', 'This Financial Year'], ['pfy', 'Previous Financial Year'], ['custom', 'Custom Range']];

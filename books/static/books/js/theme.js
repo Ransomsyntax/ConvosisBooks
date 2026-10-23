@@ -5,7 +5,6 @@
   const KEY = 'convosis_appearance_v1';
   const WP_KEY = 'convosis_wallpaper_custom_v1';
 
-  /* ------------------------------------------------------------------ data */
   const WALLPAPERS = [
     { id: 'mist', name: 'Mist', css: 'radial-gradient(60% 60% at 15% 10%, #ffffff 0%, transparent 60%), radial-gradient(60% 60% at 90% 90%, #cbd5e1 0%, transparent 65%), linear-gradient(160deg, #e2e8f0, #cbd5e1)' }
   ];
@@ -43,7 +42,6 @@
     sidebarHidden: false
   };
 
-  /* --------------------------------------------------------------- helpers */
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const hexToRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
   const rgbToHex = (r, g, b) => '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
@@ -53,7 +51,6 @@
     else if (window.ConvosisApp && ConvosisApp.showToast) ConvosisApp.showToast(m);
   };
 
-  /* ---------------------------------------------------------------- engine */
   const ThemeEngine = {
     state: Object.assign({}, DEFAULTS),
     _ready: false,
@@ -61,7 +58,6 @@
     _wpIdx: 0,
     _saveTimer: null,
 
-    /* ---- lifecycle ---- */
     init() {
       if (this._ready) return;
       this._ready = true;
@@ -84,9 +80,9 @@
     },
 
     load() {
-      try { localStorage.removeItem(WP_KEY); } catch (e) { /* ignore */ }
+      try { localStorage.removeItem(WP_KEY); } catch (e) { }
       let saved = null;
-      try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* ignore */ }
+      try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
       if (saved) {
         this.state = Object.assign({}, DEFAULTS, saved);
       } else {
@@ -100,7 +96,7 @@
       this.state.wallpaper = 'mist';
       clearTimeout(this._saveTimer);
       this._saveTimer = setTimeout(() => {
-        try { localStorage.setItem(KEY, JSON.stringify(this.state)); } catch (e) { /* ignore */ }
+        try { localStorage.setItem(KEY, JSON.stringify(this.state)); } catch (e) { }
       }, 150);
     },
 
@@ -131,7 +127,6 @@
       }
     },
 
-    /* ---- state helpers ---- */
     resolvedMode() {
       const m = this.state.mode;
       if (m === 'auto') return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -143,7 +138,6 @@
       this.setMode(cur === 'dark' ? 'light' : 'dark');
     },
 
-    /* ---- apply everything ---- */
     apply(initial) {
       const s = this.state;
       const root = document.documentElement;
@@ -262,7 +256,6 @@
       window.dispatchEvent(new CustomEvent('convosis:appearance', { detail: { mode: this.resolvedMode(), accent: this.state.accent } }));
     },
 
-    /* ---- setters used by the UI ---- */
     setMode(m) { this.state.mode = m; this.save(); this.apply(); this.emit(); },
     setAccent(id) { this.state.accent = id; this.save(); this.apply(); this.emit(); },
     setWallpaper(id) { this.state.wallpaper = 'mist'; this.save(); this.apply(); },
@@ -302,7 +295,7 @@
     },
 
     reset() {
-      try { localStorage.removeItem(WP_KEY); } catch (e) { /* ignore */ }
+      try { localStorage.removeItem(WP_KEY); } catch (e) { }
       const hidden = this.state.sidebarHidden;
       this.state = Object.assign({}, DEFAULTS, { sidebarHidden: hidden, wallpaper: 'mist' });
       this._wpKey = null;
@@ -310,7 +303,6 @@
       toast('Appearance reset to defaults');
     },
 
-    /* ---- drawer ---- */
     openDrawer() { this.ensureDom(); this.refreshPanels(); document.getElementById('appearanceDrawer').classList.add('open'); },
     closeDrawer() { const d = document.getElementById('appearanceDrawer'); if (d) d.classList.remove('open'); },
     toggleDrawer() { const d = document.getElementById('appearanceDrawer'); (d && d.classList.contains('open')) ? this.closeDrawer() : this.openDrawer(); },
@@ -320,7 +312,6 @@
       this.syncControls();
     },
 
-    /* ---- panel markup (used by the drawer and the Settings page) ---- */
     panelHTML() {
       const s = this.state;
       const modeBtn = (m, label) => `<button class="${s.mode === m ? 'on' : ''}" onclick="ThemeEngine.setMode('${m}')">${label}</button>`;

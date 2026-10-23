@@ -126,7 +126,7 @@ function route() {
   else { const g = NAV.find(n => h.startsWith(n[1] + '/')), nm = g && g[2].find(c => slug(c) === h.split('/')[1]); plannedPage(root, g && g[0], nm); }
   window.scrollTo(0, 0);
 }
-async function refresh() { try { await loadMe(); } catch (e) { /* keep stale header */ } if (PAGE.reload) PAGE.reload(); else route(); }
+async function refresh() { try { await loadMe(); } catch (e) { } if (PAGE.reload) PAGE.reload(); else route(); }
 
 async function loadMe() {
   const me = await api('me/');
@@ -143,7 +143,6 @@ function applyOrg() {
   const un = $('#sidebarUserName'); if (un) un.textContent = APP.user.name || APP.user.username || 'Admin';
 }
 
-/* menus */
 const closePops = () => {
   $$('.pop.on').forEach(p => { p.classList.remove('on'); p.style.display = ''; });
   $$('.user-menu-wrap.open').forEach(w => w.classList.remove('open'));
@@ -238,7 +237,6 @@ const NotificationCenter = {
         </div>
       `).join('');
     } catch (e) {
-      /* non-blocking notification fetch */
     }
   },
 
@@ -336,7 +334,7 @@ $('#q').addEventListener('input', e => {
       if ($('#q').value.trim() !== v) return;
       box.innerHTML = r.length ? r.map(x => `<button class="mi" type="button" data-t="${esc(x.type)}" data-id="${esc(x.id)}"><b>${esc(x.label)}</b> <span class="sub">${esc(x.sub)}</span></button>`).join('') : '<div class="sub" style="padding:8px">No results</div>';
       box.classList.add('on');
-    } catch (err) { /* search is best-effort */ }
+    } catch (err) { }
   }, 220);
 });
 document.addEventListener('keydown', e => {

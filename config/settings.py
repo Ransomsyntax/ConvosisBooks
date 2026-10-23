@@ -94,3 +94,9 @@ if not DEBUG and os.environ.get('DJANGO_HTTPS', '0') == '1':
     SECURE_HSTS_SECONDS = 31536000
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
+
+LLM_PROVIDER = os.environ.get('CONVOBOT_LLM_PROVIDER', 'openai')
+LLM_MODEL = os.environ.get('CONVOBOT_LLM_MODEL', 'gpt-4o-mini')
+LLM_API_KEY = os.environ.get('CONVOBOT_LLM_API_KEY', os.environ.get('OPENAI_API_KEY', ''))
+LLM_API_BASE = os.environ.get('CONVOBOT_LLM_API_BASE', 'https://api.openai.com/v1').rstrip('/')
+LLM_TIMEOUT = int(os.environ.get('CONVOBOT_LLM_TIMEOUT', '12'))

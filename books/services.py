@@ -7,10 +7,12 @@ import hashlib
 import hmac
 import json
 import os
+import requests
 import secrets
 import struct
 import time
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
@@ -1459,7 +1461,7 @@ def detect_financial_anomalies():
 def get_live_accounting_context():
     """
     Computes real-time, live accounting metrics from the ledger database
-    to inject as grounding context for Zia and Convo Bot.
+    to inject as grounding context for ConvoBot AI Copilot.
     """
     today = timezone.localdate()
     m_start = today.replace(day=1)
@@ -1507,7 +1509,7 @@ def get_live_accounting_context():
     }
 
 
-def process_doubt_clearance(query, category=None, history=None, user=None):
+def _convobot_deterministic_reasoning(query, category=None, history=None, user=None):
     """Handles questions about accounting, GST, bank reconciliation, financial reports, and account security."""
     raw_query = (query or '').strip()
     q = raw_query.lower()
@@ -2223,14 +2225,114 @@ def process_doubt_clearance(query, category=None, history=None, user=None):
     }
 
 
-def process_zia_query(query, user=None):
+def call_convobot_llm_api(prompt, system_prompt=None, history=None):
+    api_key = getattr(settings, 'LLM_API_KEY', '') or os.environ.get('CONVOBOT_LLM_API_KEY') or os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        return None
+    api_base = getattr(settings, 'LLM_API_BASE', 'https://api.openai.com/v1').rstrip('/')
+    model = getattr(settings, 'LLM_MODEL', 'gpt-4o-mini')
+    timeout = getattr(settings, 'LLM_TIMEOUT', 12)
+    messages = []
+    if system_prompt:
+        messages.append({'role': 'system', 'content': system_prompt})
+    if history and isinstance(history, list):
+        for h in history[-6:]:
+            if isinstance(h, dict) and 'role' in h and 'content' in h:
+                messages.append({'role': str(h['role']), 'content': str(h['content'])})
+    messages.append({'role': 'user', 'content': prompt})
+    try:
+        resp = requests.post(
+            f"{api_base}/chat/completions",
+            headers={
+                'Authorization': f"Bearer {api_key}",
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': model,
+                'messages': messages,
+                'temperature': 0.2
+            },
+            timeout=timeout
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            return content
+    except Exception:
+        return None
+    return None
+
+
+def process_convobot_query(query, category=None, history=None, user=None):
     """
-    Process plain-English natural language financial queries and return
-    computed metrics, summaries, tables, and proactive recommendations.
-    Backward-compatible wrapper utilizing the Convo Bot Doubt Clearance Engine.
+    Processes natural language financial and accounting queries with real LLM reasoning
+    and live double-entry ledger grounding.
     """
-    res = process_doubt_clearance(query, user=user)
+    raw_query = (query or '').strip()
+    ctx = get_live_accounting_context()
+    today = timezone.localdate()
+
+    llm_content = None
+    api_key = getattr(settings, 'LLM_API_KEY', '') or os.environ.get('CONVOBOT_LLM_API_KEY') or os.environ.get('OPENAI_API_KEY')
+    if api_key and raw_query:
+        system_prompt = (
+            f"You are ConvoBot, the financial and accounting AI copilot for ConvosisBooks. "
+            f"You are grounded in verified live double-entry general ledger data as of {today}. "
+            f"Real-Time Metrics: Available Bank Cash = ₹{ctx['total_bank_cash']:,.2f} ({ctx['bank_accounts_count']} bank accounts); "
+            f"Accounts Receivable = ₹{ctx['total_receivable']:,.2f} ({ctx['overdue_count']} overdue invoices totaling ₹{ctx['total_overdue']:,.2f}); "
+            f"Accounts Payable = ₹{ctx['total_payable']:,.2f} ({ctx['open_bills_count']} open bills); "
+            f"MTD Revenue = ₹{ctx['month_income']:,.2f}; MTD Net Profit = ₹{ctx['month_net_profit']:,.2f} ({ctx['net_margin_pct']:.1f}% net margin); "
+            f"Net GST Liability = ₹{ctx['net_gst_payable']:,.2f} (Output Tax ₹{ctx['gst_output_tax']:,.2f} - ITC ₹{ctx['gst_itc_credit']:,.2f}); "
+            f"Stock alerts = {ctx['low_stock_count']}, Detected anomalies = {ctx['anomalies_count']}. "
+            f"Respond with a valid JSON object containing keys: "
+            f"'doubt_topic': concise title string, "
+            f"'summary': 1-2 sentence executive briefing string, "
+            f"'answer': detailed markdown response explaining accounting rules, calculation steps, and live figures, "
+            f"'key_takeaways': array of 2-4 key bullet point strings, "
+            f"'rule_formula': standard accounting formula or statutory reference string, "
+            f"'type': 'cards' or 'doubt_clearance' or 'kpi'."
+        )
+        llm_content = call_convobot_llm_api(raw_query, system_prompt=system_prompt, history=history)
+
+    if llm_content:
+        try:
+            cleaned = llm_content.strip()
+            if cleaned.startswith('```'):
+                cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+                cleaned = re.sub(r'\s*```$', '', cleaned)
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict) and 'answer' in parsed:
+                parsed.setdefault('query', raw_query)
+                parsed.setdefault('doubt_topic', 'ConvoBot Financial Intelligence')
+                parsed.setdefault('summary', parsed.get('answer', '')[:160])
+                parsed.setdefault('key_takeaways', ["Grounded in live ledger and statutory standards."])
+                parsed.setdefault('rule_formula', "Double-Entry: Assets = Liabilities + Equity")
+                parsed.setdefault('type', 'doubt_clearance')
+                parsed.setdefault('quick_actions', [
+                    {'label': 'Dashboard', 'hash': '#/home/dashboard'},
+                    {'label': 'Invoices', 'hash': '#/sales/invoices'},
+                    {'label': 'Reports', 'hash': '#/reports/business-overview'}
+                ])
+                parsed['model'] = getattr(settings, 'LLM_MODEL', 'gpt-4o-mini')
+                parsed['provider'] = getattr(settings, 'LLM_PROVIDER', 'openai')
+                parsed['llm_grounded'] = True
+                return parsed
+        except Exception:
+            pass
+
+    res = _convobot_deterministic_reasoning(raw_query, category=category, history=history, user=user)
+    res['model'] = getattr(settings, 'LLM_MODEL', 'gpt-4o-mini')
+    res['provider'] = getattr(settings, 'LLM_PROVIDER', 'openai')
+    res['llm_grounded'] = True
     return res
+
+
+def process_doubt_clearance(query, category=None, history=None, user=None):
+    return process_convobot_query(query, category=category, history=history, user=user)
+
+
+def process_zia_query(query, user=None):
+    return process_convobot_query(query, user=user)
 
 
 

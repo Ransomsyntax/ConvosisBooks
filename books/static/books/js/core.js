@@ -45,7 +45,7 @@ const APP = { org: { state: '' }, user: {}, today: iso(new Date()), counts: {} }
 
 const pref = {
   get(k, d) { try { const v = localStorage.getItem('cvb_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem('cvb_' + k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+  set(k, v) { try { localStorage.setItem('cvb_' + k, JSON.stringify(v)); } catch (e) { } },
 };
 
 function toast(msg, kind) {
@@ -76,7 +76,7 @@ async function api(path, opt = {}) {
   if (res.status === 401) { location.href = '/accounts/login/?next=/'; throw new ApiErr(401, { message: 'Session expired.' }); }
   if (res.status === 204) return null;
   let data = null;
-  try { data = await res.json(); } catch (e) { /* non-JSON body */ }
+  try { data = await res.json(); } catch (e) { }
   if (!res.ok) throw new ApiErr(res.status, data);
   return data;
 }

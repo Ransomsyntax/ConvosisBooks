@@ -1,8 +1,3 @@
-/**
- * Convo Bot — AI Doubt Clearance & Enterprise Accounting Copilot
- * Font color strictly Black (#000000) and Orange (#ea580c / #f97316 / #c2410c).
- * All white fonts turned to orange.
- */
 'use strict';
 
 (function () {
@@ -61,12 +56,12 @@
   };
 
   function injectStyles() {
-    if (document.getElementById('fingpt-chat-styles')) return;
+    if (document.getElementById('convobot-chat-styles')) return;
     const style = document.createElement('style');
-    style.id = 'fingpt-chat-styles';
+    style.id = 'convobot-chat-styles';
     style.textContent = `
-      /* Floating Launcher Button */
-      #fingpt-launcher {
+      
+      #convobot-launcher {
         position: fixed;
         bottom: 24px;
         right: 24px;
@@ -84,12 +79,12 @@
         transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         user-select: none;
       }
-      #fingpt-launcher:hover {
+      #convobot-launcher:hover {
         transform: translateY(-3px) scale(1.03);
         box-shadow: 0 14px 35px -4px rgba(234, 88, 12, 0.5), 0 0 25px rgba(249, 115, 22, 0.35);
         border-color: #ea580c;
       }
-      .fingpt-launcher-icon {
+      .convobot-launcher-icon {
         width: 42px;
         height: 42px;
         border-radius: 50%;
@@ -100,27 +95,27 @@
         position: relative;
         box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
       }
-      .fingpt-launcher-icon svg {
+      .convobot-launcher-icon svg {
         stroke: #000000;
       }
-      .fingpt-launcher-pulse {
+      .convobot-launcher-pulse {
         position: absolute;
         inset: -4px;
         border-radius: 50%;
         border: 2px solid #ea580c;
         opacity: 0.8;
-        animation: fingpt-ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        animation: convobot-ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite;
       }
-      @keyframes fingpt-ping {
+      @keyframes convobot-ping {
         0% { transform: scale(0.95); opacity: 0.9; }
         70%, 100% { transform: scale(1.4); opacity: 0; }
       }
-      .fingpt-launcher-text {
+      .convobot-launcher-text {
         padding-right: 6px;
         display: flex;
         flex-direction: column;
       }
-      .fingpt-launcher-title {
+      .convobot-launcher-title {
         font-size: 13.5px;
         font-weight: 800;
         color: #ea580c;
@@ -130,7 +125,7 @@
         align-items: center;
         gap: 6px;
       }
-      .fingpt-launcher-badge {
+      .convobot-launcher-badge {
         font-size: 9px;
         padding: 1px 6px;
         border-radius: 99px;
@@ -140,14 +135,14 @@
         font-weight: 800;
         text-transform: uppercase;
       }
-      .fingpt-launcher-sub {
+      .convobot-launcher-sub {
         font-size: 11px;
         color: #000000;
         font-weight: 600;
       }
 
-      /* Chatbot Window Widget */
-      #fingpt-widget {
+      
+      #convobot-widget {
         position: fixed;
         bottom: 84px;
         right: 24px;
@@ -171,12 +166,12 @@
         color: #000000;
         font-family: inherit;
       }
-      #fingpt-widget.open {
+      #convobot-widget.open {
         opacity: 1;
         transform: translateY(0) scale(1);
         pointer-events: auto;
       }
-      #fingpt-widget.maximized {
+      #convobot-widget.maximized {
         top: 24px;
         left: 24px;
         right: 24px;
@@ -188,8 +183,8 @@
         border-radius: 20px;
       }
 
-      /* Chat Header */
-      .fingpt-header {
+      
+      .convobot-header {
         padding: 14px 18px;
         border-bottom: 1.5px solid rgba(234, 88, 12, 0.2);
         display: flex;
@@ -197,12 +192,12 @@
         justify-content: space-between;
         background: #fff7ed;
       }
-      .fingpt-header-left {
+      .convobot-header-left {
         display: flex;
         align-items: center;
         gap: 12px;
       }
-      .fingpt-avatar {
+      .convobot-avatar {
         width: 36px;
         height: 36px;
         border-radius: 50%;
@@ -214,7 +209,7 @@
         font-size: 15px;
         box-shadow: 0 0 12px rgba(234, 88, 12, 0.4);
       }
-      .fingpt-title-wrap h3 {
+      .convobot-title-wrap h3 {
         margin: 0;
         font-size: 14.5px;
         font-weight: 800;
@@ -224,7 +219,7 @@
         align-items: center;
         gap: 6px;
       }
-      .fingpt-enterprise-badge {
+      .convobot-enterprise-badge {
         font-size: 10px;
         padding: 2px 7px;
         border-radius: 99px;
@@ -233,7 +228,7 @@
         color: #ea580c;
         font-weight: 700;
       }
-      .fingpt-status-pill {
+      .convobot-status-pill {
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -241,19 +236,19 @@
         color: #000000;
         font-weight: 600;
       }
-      .fingpt-status-dot {
+      .convobot-status-dot {
         width: 6px;
         height: 6px;
         border-radius: 50%;
         background: #ea580c;
         box-shadow: 0 0 6px #ea580c;
       }
-      .fingpt-header-actions {
+      .convobot-header-actions {
         display: flex;
         align-items: center;
         gap: 6px;
       }
-      .fingpt-tool-btn {
+      .convobot-tool-btn {
         background: transparent;
         border: none;
         color: #000000;
@@ -264,16 +259,16 @@
         place-items: center;
         transition: all 0.15s;
       }
-      .fingpt-tool-btn:hover {
+      .convobot-tool-btn:hover {
         background: #ffedd5;
         color: #ea580c;
       }
-      .fingpt-tool-btn svg {
+      .convobot-tool-btn svg {
         stroke: currentColor;
       }
 
-      /* Category Pills */
-      .fingpt-categories {
+      
+      .convobot-categories {
         padding: 8px 14px;
         display: flex;
         gap: 6px;
@@ -282,9 +277,9 @@
         border-bottom: 1px solid rgba(234, 88, 12, 0.18);
         background: rgba(255, 255, 255, 0.7);
       }
-      .fingpt-categories::-webkit-scrollbar { height: 3px; }
-      .fingpt-categories::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
-      .fingpt-cat-btn {
+      .convobot-categories::-webkit-scrollbar { height: 3px; }
+      .convobot-categories::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
+      .convobot-cat-btn {
         background: #ffffff;
         border: 1px solid rgba(0, 0, 0, 0.12);
         padding: 4px 10px;
@@ -295,12 +290,12 @@
         transition: all 0.2s;
         font-weight: 600;
       }
-      .fingpt-cat-btn:hover {
+      .convobot-cat-btn:hover {
         background: #fff7ed;
         border-color: #ea580c;
         color: #ea580c;
       }
-      .fingpt-cat-btn.active {
+      .convobot-cat-btn.active {
         background: #fff7ed;
         border: 1.5px solid #ea580c;
         color: #ea580c;
@@ -308,8 +303,8 @@
         box-shadow: 0 2px 8px rgba(234, 88, 12, 0.18);
       }
 
-      /* Message Feed */
-      .fingpt-messages {
+      
+      .convobot-messages {
         flex: 1;
         overflow-y: auto;
         padding: 16px;
@@ -319,19 +314,19 @@
         scroll-behavior: smooth;
         background: transparent;
       }
-      .fingpt-messages::-webkit-scrollbar { width: 5px; }
-      .fingpt-messages::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
+      .convobot-messages::-webkit-scrollbar { width: 5px; }
+      .convobot-messages::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
 
-      /* Message Bubbles */
-      .fingpt-msg-row {
+      
+      .convobot-msg-row {
         display: flex;
         gap: 10px;
         width: 100%;
       }
-      .fingpt-msg-row.user {
+      .convobot-msg-row.user {
         justify-content: flex-end;
       }
-      .fingpt-msg-bubble {
+      .convobot-msg-bubble {
         max-width: 88%;
         padding: 12px 16px;
         border-radius: 14px;
@@ -340,7 +335,7 @@
         position: relative;
         word-break: break-word;
       }
-      .fingpt-msg-row.user .fingpt-msg-bubble {
+      .convobot-msg-row.user .convobot-msg-bubble {
         background: #fff7ed;
         border: 1.5px solid rgba(234, 88, 12, 0.45);
         color: #ea580c;
@@ -348,7 +343,7 @@
         border-bottom-right-radius: 4px;
         box-shadow: 0 2px 10px rgba(234, 88, 12, 0.12);
       }
-      .fingpt-msg-row.bot .fingpt-msg-bubble {
+      .convobot-msg-row.bot .convobot-msg-bubble {
         background: #ffffff;
         border: 1px solid rgba(234, 88, 12, 0.22);
         color: #000000;
@@ -356,40 +351,40 @@
         box-shadow: 0 3px 14px rgba(0, 0, 0, 0.05);
       }
 
-      /* Markdown & Formatting in AI Responses (Strictly Black & Orange) */
-      .fingpt-msg-bubble p {
+      
+      .convobot-msg-bubble p {
         margin: 0 0 8px;
         color: #000000;
       }
-      .fingpt-msg-bubble p:last-child {
+      .convobot-msg-bubble p:last-child {
         margin-bottom: 0;
       }
-      .fingpt-msg-bubble h3 {
+      .convobot-msg-bubble h3 {
         font-size: 15px;
         margin: 6px 0 10px;
         font-weight: 800;
         color: #ea580c;
       }
-      .fingpt-msg-bubble h4 {
+      .convobot-msg-bubble h4 {
         font-size: 13.5px;
         margin: 12px 0 6px;
         font-weight: 700;
         color: #ea580c;
       }
-      .fingpt-msg-bubble ul, .fingpt-msg-bubble ol {
+      .convobot-msg-bubble ul, .convobot-msg-bubble ol {
         margin: 6px 0;
         padding-left: 20px;
         color: #000000;
       }
-      .fingpt-msg-bubble li {
+      .convobot-msg-bubble li {
         margin-bottom: 4px;
         color: #000000;
       }
-      .fingpt-msg-bubble b, .fingpt-msg-bubble strong {
+      .convobot-msg-bubble b, .convobot-msg-bubble strong {
         color: #ea580c;
         font-weight: 700;
       }
-      .fingpt-msg-bubble code {
+      .convobot-msg-bubble code {
         background: #fff7ed;
         border: 1px solid rgba(234, 88, 12, 0.3);
         padding: 2px 6px;
@@ -399,20 +394,20 @@
         color: #ea580c;
         font-weight: 600;
       }
-      .fingpt-msg-bubble pre {
+      .convobot-msg-bubble pre {
         background: #fff7ed;
         border: 1px solid rgba(234, 88, 12, 0.25);
         border-radius: 8px;
         padding: 10px;
         overflow-x: auto;
       }
-      .fingpt-msg-bubble pre code {
+      .convobot-msg-bubble pre code {
         background: transparent;
         border: none;
         padding: 0;
         color: #ea580c;
       }
-      .fingpt-msg-bubble table {
+      .convobot-msg-bubble table {
         width: 100%;
         border-collapse: collapse;
         margin: 10px 0;
@@ -421,29 +416,29 @@
         border-radius: 6px;
         overflow: hidden;
       }
-      .fingpt-msg-bubble th, .fingpt-msg-bubble td {
+      .convobot-msg-bubble th, .convobot-msg-bubble td {
         border: 1px solid rgba(234, 88, 12, 0.2);
         padding: 6px 8px;
         text-align: left;
       }
-      .fingpt-msg-bubble th {
+      .convobot-msg-bubble th {
         background: #fff7ed;
         font-weight: 700;
         color: #ea580c;
       }
-      .fingpt-msg-bubble td {
+      .convobot-msg-bubble td {
         color: #000000;
       }
 
-      /* Key Takeaways Callout */
-      .fingpt-takeaways {
+      
+      .convobot-takeaways {
         margin-top: 12px;
         padding: 10px 14px;
         background: #fff7ed;
         border: 1.5px solid rgba(234, 88, 12, 0.35);
         border-radius: 8px;
       }
-      .fingpt-takeaways-title {
+      .convobot-takeaways-title {
         font-size: 12px;
         font-weight: 800;
         color: #ea580c;
@@ -454,21 +449,21 @@
         align-items: center;
         gap: 6px;
       }
-      .fingpt-takeaways-title svg {
+      .convobot-takeaways-title svg {
         stroke: #ea580c;
       }
-      .fingpt-takeaways ul {
+      .convobot-takeaways ul {
         margin: 0;
         padding-left: 16px;
         font-size: 12px;
         color: #000000;
       }
-      .fingpt-takeaways li {
+      .convobot-takeaways li {
         color: #000000;
       }
 
-      /* Rule Formula Box */
-      .fingpt-formula-box {
+      
+      .convobot-formula-box {
         margin-top: 10px;
         padding: 8px 12px;
         background: #fff7ed;
@@ -480,14 +475,14 @@
         font-weight: 600;
       }
 
-      /* Action Deep-Links */
-      .fingpt-actions-row {
+      
+      .convobot-actions-row {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
         margin-top: 12px;
       }
-      .fingpt-action-chip {
+      .convobot-action-chip {
         padding: 5px 11px;
         border-radius: 6px;
         background: #fff7ed;
@@ -502,17 +497,17 @@
         gap: 4px;
         transition: all 0.15s;
       }
-      .fingpt-action-chip:hover {
+      .convobot-action-chip:hover {
         background: #ffedd5;
         border-color: #ea580c;
         color: #000000;
       }
-      .fingpt-action-chip svg {
+      .convobot-action-chip svg {
         stroke: currentColor;
       }
 
-      /* Message Toolbar (Copy, Feedback) */
-      .fingpt-msg-toolbar {
+      
+      .convobot-msg-toolbar {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -522,7 +517,7 @@
         font-size: 11px;
         color: #000000;
       }
-      .fingpt-copy-btn, .fingpt-fb-btn {
+      .convobot-copy-btn, .convobot-fb-btn {
         background: none;
         border: none;
         color: #000000;
@@ -535,42 +530,42 @@
         transition: color 0.15s;
         font-weight: 600;
       }
-      .fingpt-copy-btn:hover, .fingpt-fb-btn:hover {
+      .convobot-copy-btn:hover, .convobot-fb-btn:hover {
         color: #ea580c;
       }
-      .fingpt-copy-btn svg, .fingpt-fb-btn svg {
+      .convobot-copy-btn svg, .convobot-fb-btn svg {
         stroke: currentColor;
       }
 
-      /* Typing Indicator Animation */
-      .fingpt-typing-dots {
+      
+      .convobot-typing-dots {
         display: inline-flex;
         align-items: center;
         gap: 4px;
         padding: 4px 8px;
       }
-      .fingpt-typing-dots span {
+      .convobot-typing-dots span {
         width: 6px;
         height: 6px;
         border-radius: 50%;
         background: #ea580c;
-        animation: fingpt-bounce 1.4s infinite ease-in-out both;
+        animation: convobot-bounce 1.4s infinite ease-in-out both;
       }
-      .fingpt-typing-dots span:nth-child(1) { animation-delay: -0.32s; }
-      .fingpt-typing-dots span:nth-child(2) { animation-delay: -0.16s; }
-      @keyframes fingpt-bounce {
+      .convobot-typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+      .convobot-typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+      @keyframes convobot-bounce {
         0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
         40% { transform: scale(1); opacity: 1; }
       }
 
-      /* Suggested Prompt Chips */
-      .fingpt-prompts-grid {
+      
+      .convobot-prompts-grid {
         display: flex;
         flex-direction: column;
         gap: 6px;
         margin-top: 10px;
       }
-      .fingpt-prompt-btn {
+      .convobot-prompt-btn {
         background: #ffffff;
         border: 1px solid rgba(234, 88, 12, 0.25);
         border-radius: 8px;
@@ -585,18 +580,18 @@
         align-items: center;
         justify-content: space-between;
       }
-      .fingpt-prompt-btn svg {
+      .convobot-prompt-btn svg {
         stroke: currentColor;
       }
-      .fingpt-prompt-btn:hover {
+      .convobot-prompt-btn:hover {
         background: #fff7ed;
         border-color: #ea580c;
         color: #ea580c;
         transform: translateX(3px);
       }
 
-      /* Chat Input Bar */
-      .fingpt-input-area {
+      
+      .convobot-input-area {
         padding: 12px 16px;
         border-top: 1.5px solid rgba(234, 88, 12, 0.2);
         background: rgba(255, 255, 255, 0.9);
@@ -604,12 +599,12 @@
         flex-direction: column;
         gap: 8px;
       }
-      .fingpt-input-row {
+      .convobot-input-row {
         display: flex;
         gap: 8px;
         align-items: flex-end;
       }
-      #fingpt-textarea {
+      #convobot-textarea {
         flex: 1;
         background: #ffffff;
         border: 1.5px solid rgba(234, 88, 12, 0.35);
@@ -623,15 +618,15 @@
         outline: none;
         transition: border-color 0.2s, box-shadow 0.2s;
       }
-      #fingpt-textarea::placeholder {
+      #convobot-textarea::placeholder {
         color: #000000;
         opacity: 0.6;
       }
-      #fingpt-textarea:focus {
+      #convobot-textarea:focus {
         border-color: #ea580c;
         box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.2);
       }
-      #fingpt-send-btn {
+      #convobot-send-btn {
         width: 40px;
         height: 40px;
         border-radius: 10px;
@@ -645,24 +640,24 @@
         flex-shrink: 0;
         box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
       }
-      #fingpt-send-btn svg {
+      #convobot-send-btn svg {
         stroke: #000000;
       }
-      #fingpt-send-btn:hover:not(:disabled) {
+      #convobot-send-btn:hover:not(:disabled) {
         transform: scale(1.05);
         box-shadow: 0 4px 16px rgba(234, 88, 12, 0.55);
       }
-      #fingpt-send-btn:disabled {
+      #convobot-send-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .fingpt-input-hint {
+      .convobot-input-hint {
         font-size: 11px;
         color: #000000;
         display: flex;
         justify-content: space-between;
       }
-      .fingpt-input-hint b {
+      .convobot-input-hint b {
         color: #ea580c;
       }
     `;
@@ -672,78 +667,78 @@
   function createDoubtBotUI() {
     injectStyles();
 
-    if (document.getElementById('fingpt-launcher')) return;
+    if (document.getElementById('convobot-launcher')) return;
 
     const launcher = document.createElement('div');
-    launcher.id = 'fingpt-launcher';
+    launcher.id = 'convobot-launcher';
     launcher.title = 'Convo Bot · Instant Accounting & Compliance Doubt Clearance (Ctrl+K)';
     launcher.innerHTML = `
-      <div class="fingpt-launcher-icon">
-        <div class="fingpt-launcher-pulse"></div>
+      <div class="convobot-launcher-icon">
+        <div class="convobot-launcher-pulse"></div>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
         </svg>
       </div>
-      <div class="fingpt-launcher-text">
-        <span class="fingpt-launcher-title">Convo Bot <span class="fingpt-launcher-badge">AI</span></span>
-        <span class="fingpt-launcher-sub">Get Help with Accounting and Tax</span>
+      <div class="convobot-launcher-text">
+        <span class="convobot-launcher-title">Convo Bot <span class="convobot-launcher-badge">AI</span></span>
+        <span class="convobot-launcher-sub">Get Help with Accounting and Tax</span>
       </div>
     `;
     document.body.appendChild(launcher);
 
     const widget = document.createElement('div');
-    widget.id = 'fingpt-widget';
+    widget.id = 'convobot-widget';
     widget.innerHTML = `
-      <!-- Header -->
-      <div class="fingpt-header">
-        <div class="fingpt-header-left">
-          <div class="fingpt-avatar">G</div>
-          <div class="fingpt-title-wrap">
-            <h3>Convo Bot <span class="fingpt-enterprise-badge">Enterprise</span></h3>
-            <div class="fingpt-status-pill">
-              <span class="fingpt-status-dot"></span>
+      
+      <div class="convobot-header">
+        <div class="convobot-header-left">
+          <div class="convobot-avatar">C</div>
+          <div class="convobot-title-wrap">
+            <h3>Convo Bot <span class="convobot-enterprise-badge">Enterprise</span></h3>
+            <div class="convobot-status-pill">
+              <span class="convobot-status-dot"></span>
               <span>Accounting Assistant · Online</span>
             </div>
           </div>
         </div>
-        <div class="fingpt-header-actions">
-          <button class="fingpt-tool-btn" id="fingpt-reset-btn" title="New Chat / Clear Conversation" type="button">
+        <div class="convobot-header-actions">
+          <button class="convobot-tool-btn" id="convobot-reset-btn" title="New Chat / Clear Conversation" type="button">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path></svg>
           </button>
-          <button class="fingpt-tool-btn" id="fingpt-max-btn" title="Expand / Maximize Window" type="button">
+          <button class="convobot-tool-btn" id="convobot-max-btn" title="Expand / Maximize Window" type="button">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
           </button>
-          <button class="fingpt-tool-btn" id="fingpt-close-btn" title="Minimize / Close" type="button">
+          <button class="convobot-tool-btn" id="convobot-close-btn" title="Minimize / Close" type="button">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
       </div>
 
-      <!-- Categories -->
-      <div class="fingpt-categories">
-        <button class="fingpt-cat-btn active" data-cat="all" type="button">⚡ All Doubts</button>
-        <button class="fingpt-cat-btn" data-cat="accounting" type="button">📖 Accounting & Ledger</button>
-        <button class="fingpt-cat-btn" data-cat="tax" type="button">🏛️ GST & Regional Tax</button>
-        <button class="fingpt-cat-btn" data-cat="banking" type="button">🏦 Banking & Gateways</button>
-        <button class="fingpt-cat-btn" data-cat="security" type="button">🛡️ SOC2, GDPR & Security</button>
-        <button class="fingpt-cat-btn" data-cat="live" type="button">📊 Live Business Data</button>
+      
+      <div class="convobot-categories">
+        <button class="convobot-cat-btn active" data-cat="all" type="button">⚡ All Doubts</button>
+        <button class="convobot-cat-btn" data-cat="accounting" type="button">📖 Accounting & Ledger</button>
+        <button class="convobot-cat-btn" data-cat="tax" type="button">🏛️ GST & Regional Tax</button>
+        <button class="convobot-cat-btn" data-cat="banking" type="button">🏦 Banking & Gateways</button>
+        <button class="convobot-cat-btn" data-cat="security" type="button">🛡️ SOC2, GDPR & Security</button>
+        <button class="convobot-cat-btn" data-cat="live" type="button">📊 Live Business Data</button>
       </div>
 
-      <!-- Messages Stream -->
-      <div class="fingpt-messages" id="fingpt-messages-stream"></div>
+      
+      <div class="convobot-messages" id="convobot-messages-stream"></div>
 
-      <!-- Input Area -->
-      <div class="fingpt-input-area">
-        <div class="fingpt-input-row">
-          <textarea id="fingpt-textarea" rows="1" placeholder="Ask your accounting or tax doubt..." autocomplete="off"></textarea>
-          <button id="fingpt-send-btn" type="button" title="Send (Enter)">
+      
+      <div class="convobot-input-area">
+        <div class="convobot-input-row">
+          <textarea id="convobot-textarea" rows="1" placeholder="Ask your accounting or tax doubt..." autocomplete="off"></textarea>
+          <button id="convobot-send-btn" type="button" title="Send (Enter)">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
             </svg>
           </button>
         </div>
-        <div class="fingpt-input-hint">
+        <div class="convobot-input-hint">
           <span>Press <b>Enter</b> to send, <b>Shift+Enter</b> for new line</span>
           <span>Shortcut: <b>Ctrl+K</b></span>
         </div>
@@ -754,37 +749,37 @@
     renderWelcomeGreeting();
 
     launcher.addEventListener('click', () => toggleDoubtBot());
-    $('#fingpt-close-btn').addEventListener('click', () => toggleDoubtBot(false));
-    $('#fingpt-max-btn').addEventListener('click', toggleMaximize);
-    $('#fingpt-reset-btn').addEventListener('click', resetChat);
+    $('#convobot-close-btn').addEventListener('click', () => toggleDoubtBot(false));
+    $('#convobot-max-btn').addEventListener('click', toggleMaximize);
+    $('#convobot-reset-btn').addEventListener('click', resetChat);
 
     widget.addEventListener('click', (e) => {
-      const catBtn = e.target.closest('.fingpt-cat-btn');
+      const catBtn = e.target.closest('.convobot-cat-btn');
       if (catBtn) {
-        $$('.fingpt-cat-btn', widget).forEach(b => b.classList.remove('active'));
+        $$('.convobot-cat-btn', widget).forEach(b => b.classList.remove('active'));
         catBtn.classList.add('active');
         activeCategory = catBtn.dataset.cat || 'all';
         renderCategoryPrompts(activeCategory);
       }
 
-      const promptBtn = e.target.closest('.fingpt-prompt-btn');
+      const promptBtn = e.target.closest('.convobot-prompt-btn');
       if (promptBtn) {
         const text = promptBtn.dataset.query || promptBtn.textContent.trim();
         handleSend(text);
       }
 
-      const actionLink = e.target.closest('.fingpt-action-chip');
+      const actionLink = e.target.closest('.convobot-action-chip');
       if (actionLink && actionLink.dataset.hash) {
         location.hash = actionLink.dataset.hash;
         if (!isMaximized) toggleDoubtBot(false);
       }
 
-      const copyBtn = e.target.closest('.fingpt-copy-btn');
+      const copyBtn = e.target.closest('.convobot-copy-btn');
       if (copyBtn) {
-        const bubble = copyBtn.closest('.fingpt-msg-bubble');
+        const bubble = copyBtn.closest('.convobot-msg-bubble');
         if (bubble) {
           const clone = bubble.cloneNode(true);
-          const toolbar = clone.querySelector('.fingpt-msg-toolbar');
+          const toolbar = clone.querySelector('.convobot-msg-toolbar');
           if (toolbar) toolbar.remove();
           navigator.clipboard.writeText(clone.innerText.trim()).then(() => {
             copyBtn.innerHTML = `✓ Copied`;
@@ -793,15 +788,15 @@
         }
       }
 
-      const fbBtn = e.target.closest('.fingpt-fb-btn');
+      const fbBtn = e.target.closest('.convobot-fb-btn');
       if (fbBtn) {
         fbBtn.style.color = '#ea580c';
         fbBtn.textContent = '✓ Thanks for feedback!';
       }
     });
 
-    const textarea = $('#fingpt-textarea');
-    const sendBtn = $('#fingpt-send-btn');
+    const textarea = $('#convobot-textarea');
+    const sendBtn = $('#convobot-send-btn');
 
     textarea.addEventListener('input', () => {
       textarea.style.height = 'auto';
@@ -827,20 +822,20 @@
 
   function toggleDoubtBot(force) {
     createDoubtBotUI();
-    const widget = $('#fingpt-widget');
+    const widget = $('#convobot-widget');
     if (!widget) return;
     isOpen = force !== undefined ? force : !isOpen;
     if (isOpen) {
       widget.classList.add('open');
-      setTimeout(() => $('#fingpt-textarea').focus(), 150);
+      setTimeout(() => $('#convobot-textarea').focus(), 150);
     } else {
       widget.classList.remove('open');
     }
   }
 
   function toggleMaximize() {
-    const widget = $('#fingpt-widget');
-    const btn = $('#fingpt-max-btn');
+    const widget = $('#convobot-widget');
+    const btn = $('#convobot-max-btn');
     isMaximized = !isMaximized;
     if (isMaximized) {
       widget.classList.add('maximized');
@@ -855,19 +850,19 @@
 
   function resetChat() {
     conversationHistory = [];
-    const stream = $('#fingpt-messages-stream');
+    const stream = $('#convobot-messages-stream');
     stream.innerHTML = '';
     renderWelcomeGreeting();
   }
 
   function renderWelcomeGreeting() {
-    const stream = $('#fingpt-messages-stream');
+    const stream = $('#convobot-messages-stream');
     const org = (window.APP && window.APP.org) || {};
 
     const greetingHtml = `
-      <div class="fingpt-msg-row bot">
-        <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
-        <div class="fingpt-msg-bubble">
+      <div class="convobot-msg-row bot">
+        <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">C</div>
+        <div class="convobot-msg-bubble">
           <h3>Hello! Welcome to ConvosisBooks 👋</h3>
           <div style="background:#fff7ed;border:1px solid rgba(234,88,12,0.3);border-radius:8px;padding:6px 10px;margin:6px 0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;">
             <span style="color:#ea580c;font-weight:700;display:flex;align-items:center;gap:6px;">
@@ -881,7 +876,7 @@
           <div style="font-size:12px;font-weight:800;color:#ea580c;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px;">
             Suggested Doubts to Explore:
           </div>
-          <div class="fingpt-prompts-grid" id="fingpt-suggested-prompts-container">
+          <div class="convobot-prompts-grid" id="convobot-suggested-prompts-container">
             ${renderPromptButtons(CATEGORY_PROMPTS[activeCategory] || CATEGORY_PROMPTS.all)}
           </div>
         </div>
@@ -893,7 +888,7 @@
 
   function renderPromptButtons(prompts) {
     return prompts.map(p => `
-      <button class="fingpt-prompt-btn" data-query="${esc(p)}" type="button">
+      <button class="convobot-prompt-btn" data-query="${esc(p)}" type="button">
         <span>${esc(p)}</span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
       </button>
@@ -901,7 +896,7 @@
   }
 
   function renderCategoryPrompts(cat) {
-    const container = document.getElementById('fingpt-suggested-prompts-container');
+    const container = document.getElementById('convobot-suggested-prompts-container');
     if (!container) return;
     const prompts = CATEGORY_PROMPTS[cat] || CATEGORY_PROMPTS.all;
     container.innerHTML = renderPromptButtons(prompts);
@@ -920,7 +915,7 @@
     out = out.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-    out = out.replace(/\$\$(.*?)\$\$/g, '<div class="fingpt-formula-box">$1</div>');
+    out = out.replace(/\$\$(.*?)\$\$/g, '<div class="convobot-formula-box">$1</div>');
 
     const tableRegex = /\|(.+)\|[\r\n]+\|[-:| ]+\|[\r\n]+((?:\|.+|[\r\n]*)+)/g;
     out = out.replace(tableRegex, (match, header, rows) => {
@@ -944,35 +939,35 @@
 
   async function handleSend(customQuery) {
     if (isTyping) return;
-    const textarea = $('#fingpt-textarea');
+    const textarea = $('#convobot-textarea');
     const q = (customQuery || textarea.value).trim();
     if (!q) return;
 
     textarea.value = '';
     textarea.style.height = 'auto';
 
-    const stream = $('#fingpt-messages-stream');
+    const stream = $('#convobot-messages-stream');
 
     const userRow = document.createElement('div');
-    userRow.className = 'fingpt-msg-row user';
-    userRow.innerHTML = `<div class="fingpt-msg-bubble">${esc(q)}</div>`;
+    userRow.className = 'convobot-msg-row user';
+    userRow.innerHTML = `<div class="convobot-msg-bubble">${esc(q)}</div>`;
     stream.appendChild(userRow);
     stream.scrollTop = stream.scrollHeight;
 
     const botRow = document.createElement('div');
-    botRow.className = 'fingpt-msg-row bot';
+    botRow.className = 'convobot-msg-row bot';
     botRow.innerHTML = `
-      <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
-      <div class="fingpt-msg-bubble" style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:12px;color:#ea580c;font-weight:700;">FinGPT is analyzing accounting standards & your ledger…</span>
-        <div class="fingpt-typing-dots"><span></span><span></span><span></span></div>
+      <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">C</div>
+      <div class="convobot-msg-bubble" style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:#ea580c;font-weight:700;">ConvoBot is analyzing accounting standards & your ledger…</span>
+        <div class="convobot-typing-dots"><span></span><span></span><span></span></div>
       </div>
     `;
     stream.appendChild(botRow);
     stream.scrollTop = stream.scrollHeight;
 
     isTyping = true;
-    $('#fingpt-send-btn').disabled = true;
+    $('#convobot-send-btn').disabled = true;
 
     try {
       const payload = {
@@ -981,7 +976,7 @@
         history: conversationHistory.slice(-6)
       };
 
-      const res = await api('ai/doubt-clearance/', { method: 'POST', body: payload });
+      const res = await api('convobot/doubt-clearance/', { method: 'POST', body: payload });
 
       conversationHistory.push({ role: 'user', content: q });
       conversationHistory.push({ role: 'assistant', content: res.summary || res.answer });
@@ -1024,13 +1019,13 @@
       }
 
       if (res.rule_formula) {
-        extraContentHtml += `<div class="fingpt-formula-box"><b style="color:#000000;">Accounting Rule / Formula:</b> <span style="color:#ea580c;">${esc(res.rule_formula)}</span></div>`;
+        extraContentHtml += `<div class="convobot-formula-box"><b style="color:#000000;">Accounting Rule / Formula:</b> <span style="color:#ea580c;">${esc(res.rule_formula)}</span></div>`;
       }
 
       if (res.key_takeaways && res.key_takeaways.length) {
         extraContentHtml += `
-          <div class="fingpt-takeaways">
-            <div class="fingpt-takeaways-title">
+          <div class="convobot-takeaways">
+            <div class="convobot-takeaways-title">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
               Key Takeaways
             </div>
@@ -1043,9 +1038,9 @@
 
       if (res.quick_actions && res.quick_actions.length) {
         extraContentHtml += `
-          <div class="fingpt-actions-row">
+          <div class="convobot-actions-row">
             ${res.quick_actions.map(a => `
-              <span class="fingpt-action-chip" data-hash="${esc(a.hash)}">
+              <span class="convobot-action-chip" data-hash="${esc(a.hash)}">
                 <span>${esc(a.label)}</span>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
               </span>
@@ -1059,28 +1054,28 @@
           <div style="font-size:11.5px;font-weight:700;color:#ea580c;margin:12px 0 6px;">Related Questions You Can Ask:</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             ${res.related_doubts.map(rd => `
-              <button class="fingpt-prompt-btn" style="padding:4px 8px;font-size:11px;color:#000000;" data-query="${esc(rd)}" type="button">${esc(rd)}</button>
+              <button class="convobot-prompt-btn" style="padding:4px 8px;font-size:11px;color:#000000;" data-query="${esc(rd)}" type="button">${esc(rd)}</button>
             `).join('')}
           </div>
         `;
       }
 
       const toolbarHtml = `
-        <div class="fingpt-msg-toolbar">
-          <button class="fingpt-copy-btn" type="button">
+        <div class="convobot-msg-toolbar">
+          <button class="convobot-copy-btn" type="button">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             Copy
           </button>
           <span>·</span>
           <span>Cleared your doubt?</span>
-          <button class="fingpt-fb-btn" type="button">👍 Yes</button>
-          <button class="fingpt-fb-btn" type="button">👎 More info</button>
+          <button class="convobot-fb-btn" type="button">👍 Yes</button>
+          <button class="convobot-fb-btn" type="button">👎 More info</button>
         </div>
       `;
 
       botRow.innerHTML = `
-        <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">G</div>
-        <div class="fingpt-msg-bubble">
+        <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">C</div>
+        <div class="convobot-msg-bubble">
           ${parseMarkdown(res.answer || res.summary)}
           ${extraContentHtml}
           ${toolbarHtml}
@@ -1089,28 +1084,31 @@
 
     } catch (e) {
       botRow.innerHTML = `
-        <div class="fingpt-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;background:#ea580c;color:#000000;">!</div>
-        <div class="fingpt-msg-bubble" style="color:#ea580c;border:1.5px solid #ea580c;background:#fff7ed;">
-          <b style="color:#000000;">Error reaching FinGPT service:</b> <span style="color:#ea580c;">${esc(e.message || 'Please check your connection and try again.')}</span>
+        <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;background:#ea580c;color:#000000;">!</div>
+        <div class="convobot-msg-bubble" style="color:#ea580c;border:1.5px solid #ea580c;background:#fff7ed;">
+          <b style="color:#000000;">Error reaching ConvoBot service:</b> <span style="color:#ea580c;">${esc(e.message || 'Please check your connection and try again.')}</span>
         </div>
       `;
     } finally {
       isTyping = false;
-      $('#fingpt-send-btn').disabled = false;
+      $('#convobot-send-btn').disabled = false;
       stream.scrollTop = stream.scrollHeight;
     }
   }
 
-  window.openFinGptDoubtBot = function (query) {
+  window.openConvoBot = function (query) {
     toggleDoubtBot(true);
     if (query) {
       setTimeout(() => handleSend(query), 100);
     }
   };
 
-  window.ziaAiAssistantModal = function (query) {
-    window.openFinGptDoubtBot(query);
+  window.convobotAiAssistantModal = function (query) {
+    window.openConvoBot(query);
   };
+
+  window.openFinGptDoubtBot = window.openConvoBot;
+  window.ziaAiAssistantModal = window.convobotAiAssistantModal;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', createDoubtBotUI);

@@ -346,10 +346,10 @@ const LISTS = {
   }
 };
 
-/* detail dialogs */
+
 const kvBox = pairs => `<div class="kv">${pairs.map(([k, v]) => `<div><span>${esc(k)}</span>${v}</div>`).join('')}</div>`;
 
-/* ==================== Document Sheet & Template Customizer ==================== */
+
 function renderDocSheet(d, kind, customOpts = {}) {
   const isRetainer = kind === 'retainer-invoices';
   const isBill = kind === 'bills';
@@ -1034,7 +1034,7 @@ async function docDetail(kind, id) {
   });
 }
 
-/* ==================== Retainer Invoices Modals ==================== */
+
 async function recordRetainerPaymentModal(doc, onDone) {
   let bankOpts = [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash']];
   try {
@@ -1403,7 +1403,7 @@ function plannedPage(root, group, name) {
   PAGE.reload = null;
 }
 
-/* ==================== Documents & Auto-Scan OCR Repository ==================== */
+
 async function documentsPage(root, mode = 'all') {
   PAGE.reload = () => documentsPage(root, mode);
   const isTrash = mode === 'trash';
@@ -2223,7 +2223,7 @@ async function reportTablePage(root, reportName, title, bc) {
   } catch (e) { $('#rt-table', root).innerHTML = errBox(e.message, true); }
 }
 
-/* ==================== Transaction Locking & Governance ==================== */
+
 async function transactionLockingPage(root) {
   PAGE.reload = () => transactionLockingPage(root);
   root.innerHTML = `
@@ -2406,13 +2406,13 @@ async function securityCompliancePage(root) {
           <button class="btn" onclick="location.hash='#/accountant/transaction-locking'" type="button">
             Period Locking
           </button>
-          <button class="btn p" onclick="if(window.openFinGptDoubtBot) window.openFinGptDoubtBot('What are our SOC2 Type II and GDPR compliance controls?');" type="button" style="background:linear-gradient(135deg,#10a37f,#6366f1);border:none;">
+          <button class="btn p" onclick="if(window.openConvoBot) window.openConvoBot('What are our SOC2 Type II and GDPR compliance controls?');" type="button" style="background:linear-gradient(135deg,#10a37f,#6366f1);border:none;">
             Ask the Accounting Assistant
           </button>
         </div>
       </div>
 
-      <!-- Top Score Cards -->
+      
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:16px;">
         <div class="card" style="padding:18px;">
           <div class="sub" style="font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">SOC 2 Type II Posture</div>
@@ -2441,9 +2441,9 @@ async function securityCompliancePage(root) {
         </div>
       </div>
 
-      <!-- Main Columns Grid -->
+      
       <div class="g" style="margin-top:16px;">
-        <!-- Left: MFA & Active Sessions -->
+        
         <div class="s6">
           <div class="card" style="padding:22px;height:100%;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -2505,7 +2505,7 @@ async function securityCompliancePage(root) {
           </div>
         </div>
 
-        <!-- Right: SOC 2 Type II & GDPR -->
+        
         <div class="s6">
           <div class="card" style="padding:22px;height:100%;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -2533,7 +2533,7 @@ async function securityCompliancePage(root) {
               `).join('')}
             </div>
 
-            <!-- GDPR Data Portability & Rights -->
+            
             <div style="border-top:1px solid var(--bd);padding-top:16px;margin-top:16px;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                 <div>
@@ -2552,7 +2552,7 @@ async function securityCompliancePage(root) {
           </div>
         </div>
 
-        <!-- Full Width: Multi-Tenant Architecture & Regional Compliance -->
+        
         <div class="s12">
           <div class="card" style="padding:22px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
@@ -2704,7 +2704,7 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      <!-- Current Plan Status Banner -->
+      
       <div class="card" style="margin-top:14px;padding:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;background:var(--surface-glass-elevated);">
         <div style="display:flex;align-items:center;gap:14px;">
           <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(168,85,247,0.18));color:var(--accent);display:grid;place-items:center;font-size:22px;">⚡</div>
@@ -2723,7 +2723,7 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      <!-- Quota Usage Metering Cards -->
+      
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
         <div class="card" style="padding:16px;">
           <div class="sub" style="font-size:12px;">Monthly Invoices Generated</div>
@@ -2753,10 +2753,10 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      <!-- Pricing Plans Comparison Grid -->
+      
       <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Available SaaS Edition Tiers</h2>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
-        <!-- Starter Tier -->
+        
         <div class="card" style="padding:22px;border:${data.tier === 'starter' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <b style="font-size:16px;">Starter Edition</b>
@@ -2775,7 +2775,7 @@ async function subscriptionBillingPage(root) {
           </button>
         </div>
 
-        <!-- Growth Tier -->
+        
         <div class="card" style="padding:22px;border:${data.tier === 'growth' ? '2px solid var(--accent)' : '1px solid var(--bd)'};background:var(--surface-glass-elevated);position:relative;">
           <div style="position:absolute;top:-10px;right:20px;background:linear-gradient(135deg,var(--accent),var(--accent-to));color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;text-transform:uppercase;">Most Popular</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -2790,14 +2790,14 @@ async function subscriptionBillingPage(root) {
             <li>10 GB Encrypted storage</li>
             <li>Live Open Banking Feeds & Auto-matching</li>
             <li>IRN E-Invoicing & E-Way Bills</li>
-            <li>Zia & Convo Bot AI Ledger Intelligence</li>
+            <li>ConvoBot AI Ledger Intelligence (LLM Powered)</li>
           </ul>
           <button class="btn p" style="width:100%;" ${data.tier === 'growth' ? 'disabled' : ''} onclick="changePlanAction('growth')">
             ${data.tier === 'growth' ? 'Current Active Edition' : 'Upgrade to Growth'}
           </button>
         </div>
 
-        <!-- Enterprise Scale Tier -->
+        
         <div class="card" style="padding:22px;border:${data.tier === 'enterprise' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <b style="font-size:16px;">Enterprise Scale</b>
@@ -2819,7 +2819,7 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      <!-- Billing History Table -->
+      
       <h2 style="font-size:16px;margin:28px 0 12px;font-weight:700;">Billing Invoices & Payment Statements</h2>
       <div class="card" style="padding:0;overflow:hidden;">
         <table>
@@ -2933,7 +2933,7 @@ async function tenantAdminPage(root) {
         </div>
       </div>
 
-      <!-- Tenant Isolation & Infrastructure Card -->
+      
       <div class="card" style="margin-top:14px;padding:20px;background:var(--surface-glass-elevated);">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
           <div>
@@ -2971,7 +2971,7 @@ async function tenantAdminPage(root) {
         </div>
       </div>
 
-      <!-- Team Members & Seat Allocations Table -->
+      
       <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Team Members & Role Access Control</h2>
       <div class="card" style="padding:0;overflow:hidden;">
         <table>

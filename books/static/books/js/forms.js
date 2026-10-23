@@ -121,7 +121,7 @@ function formModal({ title, body, submit = 'Save', actions, wide, onSubmit, onRe
   return m;
 }
 
-/* ---------- Enterprise Customer & Vendor Forms ---------- */
+
 
 const GST_STATE_OPTIONS = [
   ['', 'Select state / place of supply'],
@@ -254,7 +254,7 @@ async function partyForm(kind, id) {
 
   const formHtml = `
     <div class="party-form-wrap">
-      <!-- 1. GST Portal Prefill Header Banner -->
+      
       <div class="gst-prefill-banner">
         <div class="gst-prefill-info">
           <div class="gst-badge-icon">🏛️</div>
@@ -269,7 +269,7 @@ async function partyForm(kind, id) {
         </div>
       </div>
 
-      <!-- 2. Customer Type Selector (Customer Only) -->
+      
       ${isCust ? `
         <div style="display:flex;align-items:center;gap:16px;">
           <label style="font-size:12.5px;font-weight:600;color:var(--tx2);">Customer Type</label>
@@ -286,7 +286,7 @@ async function partyForm(kind, id) {
         </div>
       ` : ''}
 
-      <!-- 3. Primary Contact & Company Details -->
+      
       <div class="g" style="gap:14px;">
         <div class="fg s4">
           <label>Primary Contact</label>
@@ -343,7 +343,7 @@ async function partyForm(kind, id) {
         ` : ''}
       </div>
 
-      <!-- 4. Tax & Financial Governance Section -->
+      
       <div class="card" style="padding:16px 18px;background:var(--surface-glass-subtle);">
         <h4 style="margin:0 0 12px;font-size:13.5px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:6px;">
           <span>⚖️</span> Tax &amp; Statutory Governance
@@ -401,7 +401,7 @@ async function partyForm(kind, id) {
             </select>
           </div>
 
-          <!-- Customer Tax Preference -->
+          
           ${isCust ? `
             <div class="fg s6">
               <label>Tax Preference</label>
@@ -415,7 +415,7 @@ async function partyForm(kind, id) {
               <input class="in" id="exemption_reason" name="exemption_reason" placeholder="e.g. Export / SEZ / Govt Notification" value="${esc(r.exemption_reason || '')}">
             </div>
           ` : `
-            <!-- Vendor MSME & TDS Controls -->
+            
             <div class="fg s6">
               <label class="ck" style="margin-top:6px;">
                 <input type="checkbox" id="is_msme_registered" name="is_msme_registered" ${r.is_msme_registered ? 'checked' : ''}>
@@ -456,7 +456,7 @@ async function partyForm(kind, id) {
         ` : ''}
       </div>
 
-      <!-- 5. Secondary Details (Vertical Split Layout) -->
+      
       <div style="margin-top:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <h4 style="margin:0;font-size:13.5px;font-weight:700;">Other Details</h4>
@@ -464,7 +464,7 @@ async function partyForm(kind, id) {
         </div>
 
         <div class="party-details-split" id="party_details_split">
-          <!-- Left side: vertically aligned tabs -->
+          
           <div class="party-tabs-sidebar" id="party_tabs_bar">
             <button type="button" class="party-tab-btn active" data-tab="tab_address">
               <span>Address</span>
@@ -490,9 +490,9 @@ async function partyForm(kind, id) {
             </button>
           </div>
 
-          <!-- Right side: show contents -->
+          
           <div class="party-tabs-content">
-            <!-- Tab 1: Address -->
+            
         <div class="party-tab-pane active" id="tab_address">
           <div class="g" style="gap:16px;">
             <div class="${isCust ? 's6' : 's12'}">
@@ -528,7 +528,7 @@ async function partyForm(kind, id) {
           </div>
         </div>
 
-        <!-- Tab 2: Contact Persons -->
+        
         <div class="party-tab-pane" id="tab_contacts">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div class="sub" style="font-size:12px;">Add designated key contacts (sales, finance, dispatch) for this ${entityLabel}.</div>
@@ -537,7 +537,7 @@ async function partyForm(kind, id) {
           <div id="contact_persons_container"></div>
         </div>
 
-        <!-- Tab 3: Bank Details (Vendor Only) -->
+        
         ${!isCust ? `
           <div class="party-tab-pane" id="tab_bank">
             <div class="g" style="gap:12px;max-width:680px;">
@@ -574,7 +574,7 @@ async function partyForm(kind, id) {
           </div>
         ` : ''}
 
-        <!-- Tab 4: Custom Fields -->
+        
         <div class="party-tab-pane" id="tab_custom_fields">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div class="sub" style="font-size:12px;">Add custom key-value metadata properties for this account.</div>
@@ -582,7 +582,7 @@ async function partyForm(kind, id) {
           </div>
           <div id="custom_fields_container"></div>
         </div>
-        <!-- Tab: Notes -->
+        
         <div class="party-tab-pane" id="tab_remarks">
           <div class="fg">
             <label>Notes</label>
@@ -590,7 +590,7 @@ async function partyForm(kind, id) {
           </div>
         </div>
 
-        <!-- Tab: Attachments -->
+        
         <div class="party-tab-pane" id="tab_documents">
           <div class="doc-upload-box" id="doc_drop_zone">
             <div style="font-size:26px;margin-bottom:4px;">📎</div>
@@ -601,8 +601,8 @@ async function partyForm(kind, id) {
           </div>
           <div id="uploaded_files_list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
-          </div> <!-- /party-tabs-content -->
-        </div> <!-- /party-details-split -->
+          </div> 
+        </div> 
       </div>
     </div>
   `;
@@ -1097,21 +1097,21 @@ async function itemForm(id) {
     title: id ? 'Edit Item' : 'New Item',
     wide: true,
     body: `
-    <div class="zoho-item-modal">
-      <!-- Top Section: Item Details (Left) + Picture Upload (Right) -->
-      <div class="zoho-top-grid">
-        <div class="zoho-left-fields">
-          <!-- Name -->
+    <div class="convosis-item-modal zoho-item-modal">
+      
+      <div class="convosis-top-grid zoho-top-grid">
+        <div class="convosis-left-fields zoho-left-fields">
+          
           <div class="fg">
             <label for="item_name" class="req-label">Name<span class="rq">*</span></label>
             <input class="in" type="text" id="item_name" name="name" value="${esc(r.name || '')}" placeholder="Item name" required autofocus>
             <div class="er" data-err="name" role="alert"></div>
           </div>
 
-          <!-- Type (Radio: Goods / Service) -->
+          
           <div class="fg">
-            <label class="zoho-label">Type <span class="help-tip" title="Goods have physical inventory, services do not.">?</span></label>
-            <div class="zoho-radio-group">
+            <label class="convosis-label zoho-label">Type <span class="help-tip" title="Goods have physical inventory, services do not.">?</span></label>
+            <div class="convosis-radio-group zoho-radio-group">
               <label class="radio-label">
                 <input type="radio" name="item_type" value="goods" ${isGoods ? 'checked' : ''}>
                 <span>Goods</span>
@@ -1124,9 +1124,9 @@ async function itemForm(id) {
             <div class="er" data-err="item_type" role="alert"></div>
           </div>
 
-          <!-- Unit (Dropdown with Enter Option + Add New) -->
+          
           <div class="fg">
-            <label for="item_unit_select" class="zoho-label">Unit <span class="help-tip" title="Choose from dropdown or enter custom measuring unit for GST & billing.">?</span></label>
+            <label for="item_unit_select" class="convosis-label zoho-label">Unit <span class="help-tip" title="Choose from dropdown or enter custom measuring unit for GST & billing.">?</span></label>
             <div class="unit-combo-group">
               <select class="in" id="item_unit_select">
                 <option value="">Select Unit…</option>
@@ -1139,16 +1139,16 @@ async function itemForm(id) {
             <div class="er" data-err="unit" role="alert"></div>
           </div>
 
-          <!-- SKU -->
+          
           <div class="fg">
             <label for="item_sku" class="req-label">SKU<span class="rq">*</span> <span class="help-tip" title="Stock Keeping Unit (unique identifier).">?</span></label>
             <input class="in" type="text" id="item_sku" name="sku" value="${esc(r.sku || '')}" placeholder="e.g. PROD-001" maxlength="60" required style="text-transform:uppercase;">
             <div class="er" data-err="sku" role="alert"></div>
           </div>
 
-          <!-- HSN / SAC Code -->
+          
           <div class="fg">
-            <label for="item_hsn" class="zoho-label">HSN / SAC Code</label>
+            <label for="item_hsn" class="convosis-label zoho-label">HSN / SAC Code</label>
             <div class="hsn-search-wrap">
               <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="Type to add or search HSN/SAC" maxlength="10">
               <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -1165,7 +1165,7 @@ async function itemForm(id) {
             <div class="er" data-err="hsn_sac" role="alert"></div>
           </div>
 
-          <!-- Tax Preference & 2 GST Rate Fields -->
+          
           <div class="fgrid" style="gap:10px;">
             <div class="fg">
               <label for="item_tax_pref" class="req-label">Tax Preference<span class="rq">*</span></label>
@@ -1177,34 +1177,34 @@ async function itemForm(id) {
               </select>
             </div>
 
-            <!-- GST Field 1: Intra-State Tax Rate (CGST + SGST) -->
+            
             <div class="fg" id="gstIntraWrap">
-              <label for="item_gst_intra" class="zoho-label">Intra-State Tax Rate</label>
+              <label for="item_gst_intra" class="convosis-label zoho-label">Intra-State Tax Rate</label>
               <select class="in" id="item_gst_intra" name="gst_rate">
                 ${intraOptionsHtml}
               </select>
             </div>
           </div>
 
-          <!-- GST Field 2: Inter-State Tax Rate (IGST) -->
+          
           <div class="fg" id="gstInterWrap">
-            <label for="item_gst_inter" class="zoho-label">Inter-State Tax Rate (IGST)</label>
+            <label for="item_gst_inter" class="convosis-label zoho-label">Inter-State Tax Rate (IGST)</label>
             <select class="in" id="item_gst_inter">
               ${interOptionsHtml}
             </select>
           </div>
 
           <div class="fg">
-            <label for="item_category" class="zoho-label">Category</label>
+            <label for="item_category" class="convosis-label zoho-label">Category</label>
             <input class="in" type="text" id="item_category" name="category" value="${esc(r.category || '')}" placeholder="e.g. Hardware, Software, Services" maxlength="100">
           </div>
         </div>
 
-        <!-- Right: Picture Upload Box (Zoho Books Style) -->
-        <div class="zoho-right-image">
-          <label class="zoho-label">Item Image</label>
-          <div class="zoho-image-dropzone" id="itemImageDropzone">
-            <input type="file" id="itemImageFileInput" accept="image/*" style="display:none;">
+        
+        <div class="convosis-right-image zoho-right-image">
+          <label class="convosis-label zoho-label">Item Image</label>
+          <div class="convosis-image-dropzone zoho-image-dropzone" id="itemImageDropzone">
+            <input type="file" id="itemImageFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
             <input type="hidden" name="image_data" id="itemImageDataInput" value="${esc(img)}">
 
             <div id="dropzoneEmpty" class="dropzone-empty-state" style="${img ? 'display:none;' : ''}">
@@ -1229,13 +1229,13 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <!-- Horizontal Divider -->
-      <hr class="zoho-divider">
+      
+      <hr class="convosis-divider zoho-divider">
 
-      <!-- Half & Half: Sales Information (Left) and Purchase Information (Right) -->
-      <div class="zoho-split-grid">
-        <!-- Left Half: Sales Information -->
-        <div class="zoho-card-section" id="salesSection">
+      
+      <div class="convosis-split-grid zoho-split-grid">
+        
+        <div class="convosis-card-section zoho-card-section" id="salesSection">
           <div class="section-header-title">
             <h3 class="section-title">Sales Information</h3>
           </div>
@@ -1260,14 +1260,14 @@ async function itemForm(id) {
             </div>
 
             <div class="fg">
-              <label for="item_sales_desc" class="zoho-label">Description</label>
+              <label for="item_sales_desc" class="convosis-label zoho-label">Description</label>
               <textarea class="in" id="item_sales_desc" name="description" rows="3" placeholder="Sales description for customer invoices…">${esc(r.description || '')}</textarea>
             </div>
           </div>
         </div>
 
-        <!-- Right Half: Purchase Information -->
-        <div class="zoho-card-section" id="purchaseSection">
+        
+        <div class="convosis-card-section zoho-card-section" id="purchaseSection">
           <div class="section-header-title">
             <h3 class="section-title">Purchase Information</h3>
           </div>
@@ -1291,9 +1291,9 @@ async function itemForm(id) {
               <div class="er" data-err="purchase_account" role="alert"></div>
             </div>
 
-            <!-- Preferred Vendor (Requested in Purchase Info) -->
+            
             <div class="fg">
-              <label for="item_preferred_vendor" class="zoho-label">Preferred Vendor <span class="help-tip" title="Choose or add default vendor for bills & purchase orders.">?</span></label>
+              <label for="item_preferred_vendor" class="convosis-label zoho-label">Preferred Vendor <span class="help-tip" title="Choose or add default vendor for bills & purchase orders.">?</span></label>
               <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
                 <option value="">Select a vendor…</option>
                 ${vendorOptsHtml}
@@ -1303,15 +1303,15 @@ async function itemForm(id) {
             </div>
 
             <div class="fg">
-              <label for="item_purchase_desc" class="zoho-label">Description</label>
+              <label for="item_purchase_desc" class="convosis-label zoho-label">Description</label>
               <textarea class="in" id="item_purchase_desc" rows="3" placeholder="Purchase description for vendor bills…"></textarea>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Bottom: Inventory Information (for Goods) -->
-      <div class="zoho-card-section" id="inventorySection">
+      
+      <div class="convosis-card-section zoho-card-section" id="inventorySection">
         <div class="section-header-check">
           <label class="ck-section">
             <input type="checkbox" id="chkTrackInventory" name="track_inventory" ${r.track_inventory ? 'checked' : ''}>
@@ -1321,16 +1321,16 @@ async function itemForm(id) {
         <div class="section-body" id="inventoryBody" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-top:10px;">
           ${id ? '' : `
           <div class="fg" id="openingStockWrap">
-            <label class="zoho-label">Opening Stock</label>
+            <label class="convosis-label zoho-label">Opening Stock</label>
             <input class="in" type="number" step="0.001" min="0" name="opening_stock" placeholder="0.000">
           </div>
           `}
           <div class="fg">
-            <label class="zoho-label">Reorder Point / Level</label>
+            <label class="convosis-label zoho-label">Reorder Point / Level</label>
             <input class="in" type="number" step="0.001" min="0" name="reorder_level" value="${r.reorder_level == null ? '' : r.reorder_level}" placeholder="0.000">
           </div>
           <div class="fg">
-            <label for="item_inventory_account" class="zoho-label">Inventory Account</label>
+            <label for="item_inventory_account" class="convosis-label zoho-label">Inventory Account</label>
             <select class="in" id="item_inventory_account" name="inventory_account">
               ${inventoryAccountsHtml}
               ${extraInvOpt}
@@ -2102,7 +2102,7 @@ async function docForm(kind, id, targetEl, onDone) {
   });
 }
 
-/* payments */
+
 async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
@@ -2191,7 +2191,7 @@ async function adjustForm(preItem) {
   });
 }
 
-/* organization  */
+
 function orgForm() {
   const o = APP.org;
   formModal({
@@ -2221,7 +2221,7 @@ function orgForm() {
         </div>
         <div style="flex:1;">
           <label style="font-weight:600;font-size:13px;display:block;margin-bottom:4px;">Company Logo</label>
-          <input type="file" id="org-logo-file" accept="image/*" style="display:none">
+          <input type="file" id="org-logo-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
           <input type="hidden" name="logo_data" id="org-logo-input" value="${esc(o.logo_data || '/static/books/img/convosis-logo.png')}">
           <button type="button" class="btn" onclick="this.previousElementSibling.previousElementSibling.click()">Upload Logo</button>
           <button type="button" class="btn" id="reset-logo-btn" style="margin-left:6px;">Reset to Default</button>
@@ -2671,9 +2671,9 @@ async function lockDateModal() {
   });
 }
 
-async function ziaAiAssistantModal() {
+async function convobotAiAssistantModal() {
   const m = Modal.open({
-    title: 'Convosis Zia · Financial AI Assistant',
+    title: 'Convosis ConvoBot · Financial AI Copilot (LLM Powered)',
     wide: true,
     body: `
       <div style="display:flex;flex-direction:column;height:480px;">
@@ -2681,33 +2681,33 @@ async function ziaAiAssistantModal() {
           <span>Natural Language Financial Intelligence & Real-time Anomaly Engine</span>
           <span class="pastel-chip chip-sky">Model Context Protocol (MCP) Ready</span>
         </div>
-        <div id="zia-chat-box" style="flex:1;overflow-y:auto;padding:12px;background:var(--surface-glass-subtle);border-radius:10px;border:1px solid var(--bd);margin-bottom:12px;display:flex;flex-direction:column;gap:12px;">
+        <div id="convobot-chat-box" style="flex:1;overflow-y:auto;padding:12px;background:var(--surface-glass-subtle);border-radius:10px;border:1px solid var(--bd);margin-bottom:12px;display:flex;flex-direction:column;gap:12px;">
           <div style="display:flex;gap:10px;align-items:flex-start;">
-            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div>
+            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div>
             <div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);max-width:85%;line-height:1.5;">
-              Hello! I am <b>Zia</b>, your accounting assistant. How can I assist you with your books today?
+              Hello! I am <b>ConvoBot</b>, your accounting copilot. How can I assist you with your books today?
             </div>
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;background:rgba(16,163,127,0.15);color:var(--up);border-color:rgba(16,163,127,0.3);font-weight:600;">Executive financial briefing</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Revenue this month</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Show overdue invoices</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Top customers</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Scan for financial anomalies</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">GST tax liability</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;background:rgba(16,163,127,0.15);color:var(--up);border-color:rgba(16,163,127,0.3);font-weight:600;">Executive financial briefing</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Revenue this month</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Show overdue invoices</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Top customers</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Scan for financial anomalies</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">GST tax liability</button>
         </div>
         <div style="display:flex;gap:8px;">
-          <input class="in" id="zia-input" placeholder="Ask Zia anything about your financials, cash flow, taxes, or transactions..." style="flex:1;" autocomplete="off">
-          <button type="button" class="btn p" id="zia-send-btn" style="min-width:80px;">Ask Zia</button>
+          <input class="in" id="convobot-input" placeholder="Ask ConvoBot anything about your financials, cash flow, taxes, or transactions..." style="flex:1;" autocomplete="off">
+          <button type="button" class="btn p" id="convobot-send-btn" style="min-width:80px;">Ask ConvoBot</button>
         </div>
       </div>
     `,
     footer: `<button type="button" class="btn" data-close>Close</button>`
   });
 
-  const chat = $('#zia-chat-box', m.el);
-  const input = $('#zia-input', m.el);
+  const chat = $('#convobot-chat-box', m.el);
+  const input = $('#convobot-input', m.el);
 
   async function send(query) {
     const q = (query || input.value).trim();
@@ -2722,12 +2722,17 @@ async function ziaAiAssistantModal() {
 
     const lMsg = document.createElement('div');
     lMsg.style.cssText = 'display:flex;gap:10px;align-items:flex-start;';
-    lMsg.innerHTML = `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div><div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);">${spinner}</div>`;
+    lMsg.innerHTML = `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div><div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);">${spinner}</div>`;
     chat.appendChild(lMsg);
     chat.scrollTop = chat.scrollHeight;
 
     try {
-      const res = await api('ai/query/', { method: 'POST', body: { query: q } });
+      let res;
+      try {
+        res = await api('convobot/query/', { method: 'POST', body: { query: q } });
+      } catch (err) {
+        res = await api('ai/query/', { method: 'POST', body: { query: q } });
+      }
       let extraHtml = '';
       if (res.cards && res.cards.length) {
         extraHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px;">${res.cards.map(c => `<div style="background:var(--surface-glass-subtle);padding:8px 10px;border-radius:8px;border:1px solid var(--bd);"><div class="sub" style="font-size:11px;">${esc(c.label)}</div><div style="font-size:15px;font-weight:700;color:var(--accent);margin-top:2px;">${esc(c.value)}</div></div>`).join('')}</div>`;
@@ -2737,7 +2742,7 @@ async function ziaAiAssistantModal() {
         extraHtml += `<div class="tw" style="margin-top:10px;max-height:180px;overflow-y:auto;"><table><thead><tr>${keys.map(k => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${res.data.map(row => `<tr>${keys.map(k => `<td>${esc(row[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
       }
       lMsg.innerHTML = `
-        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div>
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div>
         <div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);max-width:85%;line-height:1.5;">
           ${res.answer.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}
           ${extraHtml}
@@ -2752,14 +2757,17 @@ async function ziaAiAssistantModal() {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  $('#zia-send-btn', m.el).addEventListener('click', () => send());
+  $('#convobot-send-btn', m.el).addEventListener('click', () => send());
   input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
   m.el.addEventListener('click', e => {
-    const chip = e.target.closest('.zia-prompt-chip');
+    const chip = e.target.closest('.convobot-prompt-chip');
     if (chip) send(chip.textContent);
   });
   input.focus();
 }
+
+window.convobotAiAssistantModal = convobotAiAssistantModal;
+window.ziaAiAssistantModal = convobotAiAssistantModal;
 
 async function projectModal(id) {
   const custs = await api('lookup/customers/');
@@ -3386,7 +3394,7 @@ function zohoMigrationModal() {
       <p class="sub">Bidirectional data compatibility with Zoho Books. Seamlessly export your books into standard Zoho CSV schemas, or migrate Zoho data into ConvosisBooks with 1-click schema translation.</p>
       
       <div class="g" style="margin-bottom:16px;">
-        <!-- Export to Zoho -->
+        
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📤</div>
@@ -3400,7 +3408,7 @@ function zohoMigrationModal() {
           </div>
         </div>
 
-        <!-- Import from Zoho -->
+        
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📥</div>

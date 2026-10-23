@@ -2247,3 +2247,24 @@ select option {
     white-space: nowrap;
   }
 }
+
+.doc-form-card {
+  width: 100%;
+  max-width: 940px;
+  background: var(--surface-glass-solid);
+  backdrop-filter: blur(36px) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(36px) saturate(var(--glass-sat));
+  border: 1px solid var(--bd-glass);
+  border-radius: 14px;
+  padding: 28px 32px;
+  box-shadow: var(--shadow-glass-lg);
+  margin-bottom: 50px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .doc-form-card {
+    padding: 16px;
+    border-radius: 10px;
+  }
+}

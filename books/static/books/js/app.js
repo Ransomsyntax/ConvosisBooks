@@ -179,8 +179,8 @@ document.addEventListener('touchstart', e => {
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
-  ['Invoice', () => docForm('invoices')],
-  ['Bill', () => docForm('bills')],
+  ['Invoice', () => { location.hash = '#/sales/invoices'; docMasterDetail($('#pg'), 'invoices', 'new'); }],
+  ['Bill', () => { location.hash = '#/purchases/bills'; docMasterDetail($('#pg'), 'bills', 'new'); }],
   ['Expense', () => expenseForm()],
   ['Journal Entry', () => journalForm()],
   ['Upload Document', () => documentUploadModal()],

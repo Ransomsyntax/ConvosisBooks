@@ -98,18 +98,18 @@ const LISTS = {
     onAction: (a, r) => a === 'edit' ? itemForm(r.id) : a === 'adjust' ? adjustForm(r.id) : deleteRecord('items', r, 'item'),
   },
   invoices: {
-    api: 'invoices', title: 'Invoices', bc: 'Sales', newLabel: 'New invoice', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No invoices yet.',
+    api: 'invoices', title: 'Invoices', bc: 'Sales', newLabel: 'New invoice', onNew: () => docMasterDetail($('#pg'), 'invoices', 'new'), ordering: '-date', empty: 'No invoices yet.',
     filters: docStatusFilters('Sent'),
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Invoice#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Due date', s: 'due_date', f: r => fd(r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }, { h: 'Balance due', ...money(r => inr(r.balance)) }],
     actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? docForm('invoices', r.id) : deleteRecord('invoices', r, 'invoice'),
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? docMasterDetail($('#pg'), 'invoices', r.id, true) : deleteRecord('invoices', r, 'invoice'),
   },
   bills: {
-    api: 'bills', title: 'Bills', bc: 'Purchases', newLabel: 'New bill', onNew: () => docForm('bills'), ordering: '-date', empty: 'No bills yet.',
+    api: 'bills', title: 'Bills', bc: 'Purchases', newLabel: 'New bill', onNew: () => docMasterDetail($('#pg'), 'bills', 'new'), ordering: '-date', empty: 'No bills yet.',
     filters: docStatusFilters('Open'),
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Bill#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` }, { h: 'Vendor', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Due date', s: 'due_date', f: r => fd(r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }, { h: 'Balance due', ...money(r => inr(r.balance)) }],
     actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'bills', r.id) : a === 'edit' ? docForm('bills', r.id) : deleteRecord('bills', r, 'bill'),
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'bills', r.id) : a === 'edit' ? docMasterDetail($('#pg'), 'bills', r.id, true) : deleteRecord('bills', r, 'bill'),
   },
   'payments-received': {
     api: 'payments-received', title: 'Payments Received', bc: 'Sales', newLabel: 'Record payment', onNew: () => paymentForm('payments-received'), ordering: '-date', empty: 'No payments recorded yet.',
@@ -153,7 +153,7 @@ const LISTS = {
   },
   'retainer-invoices': {
     api: 'retainer-invoices', title: 'Retainer Invoices', bc: 'Sales', newLabel: 'New retainer invoice',
-    onNew: () => docForm('retainer-invoices'), ordering: '-date', empty: 'No retainer invoices yet.',
+    onNew: () => docMasterDetail($('#pg'), 'retainer-invoices', 'new'), ordering: '-date', empty: 'No retainer invoices yet.',
     filters: docStatusFilters('Sent'),
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
@@ -165,7 +165,7 @@ const LISTS = {
       { h: 'Available Credit', ...money(r => inr(r.available_balance || 0)) },
     ],
     actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id) : a === 'edit' ? docForm('retainer-invoices', r.id) : deleteRecord('retainer-invoices', r, 'retainer invoice'),
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id) : a === 'edit' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id, true) : deleteRecord('retainer-invoices', r, 'retainer invoice'),
   },
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
@@ -709,7 +709,7 @@ async function openAttachmentsModal(kind, id, docNumber, onCountChange) {
   });
 }
 
-async function docMasterDetail(root, kind, selectedId) {
+async function docMasterDetail(root, kind, selectedId, openEdit) {
   const isRetainer = kind === 'retainer-invoices';
   const isBill = kind === 'bills';
   const inv = kind === 'invoices';
@@ -719,6 +719,29 @@ async function docMasterDetail(root, kind, selectedId) {
   let curDoc = null;
 
   PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId);
+
+  function openForm(editId) {
+    $$('.doc-row-card', root).forEach(c => c.classList.remove('active'));
+    if (editId) {
+      const card = $(`.doc-row-card[data-id="${editId}"]`, root);
+      if (card) card.classList.add('active');
+    }
+    docForm(kind, editId, $('#detail-col-box', root), (savedDoc) => {
+      if (savedDoc) {
+        selectedId = savedDoc.id;
+        loadList();
+      } else {
+        if (curDoc) {
+          renderMasterList();
+          renderDetailPane();
+        } else if (docs.length) {
+          loadDetail(docs[0].id);
+        } else {
+          loadList();
+        }
+      }
+    });
+  }
 
   root.innerHTML = `
     <div class="split-view-container">
@@ -757,13 +780,21 @@ async function docMasterDetail(root, kind, selectedId) {
       const res = await api(`${kind}/?` + qs(qParams));
       docs = res.results || [];
       renderMasterList();
+      if (selectedId === 'new') {
+        openForm(null);
+        return;
+      }
+      if (openEdit && selectedId) {
+        openForm(selectedId);
+        return;
+      }
       if (docs.length > 0) {
         const found = selectedId ? docs.find(d => String(d.id) === String(selectedId)) : null;
         loadDetail((found || docs[0]).id);
       } else {
         $('#detail-col-box', root).innerHTML = `<div class="empty" style="margin:auto;"><div>No ${isRetainer ? 'retainer invoices' : inv ? 'invoices' : 'bills'} found.<br><button class="btn p" id="empty-new-btn" style="margin-top:10px;">+ New ${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'}</button></div></div>`;
         const eb = $('#empty-new-btn', root);
-        if (eb) eb.addEventListener('click', () => docForm(kind));
+        if (eb) eb.addEventListener('click', () => openForm(null));
       }
     } catch (e) {
       $('#master-list-box', root).innerHTML = errBox(e.message);
@@ -870,7 +901,7 @@ async function docMasterDetail(root, kind, selectedId) {
     if (actBtn && curDoc) {
       const act = actBtn.dataset.act;
       const d = curDoc;
-      if (act === 'edit') return docForm(kind, d.id);
+      if (act === 'edit') return openForm(d.id);
       if (act === 'print') return window.print();
       if (act === 'portal') return customerPortalModal(d.customer_id || d.party_id || d.id);
       if (act === 'vportal') return customerPortalModal(d.vendor_id || d.party_id || d.id);
@@ -928,7 +959,7 @@ async function docMasterDetail(root, kind, selectedId) {
     });
   }
   const nBtn = $('#master-new-btn', root);
-  if (nBtn) nBtn.addEventListener('click', () => docForm(kind));
+  if (nBtn) nBtn.addEventListener('click', () => openForm(null));
   const vmBtn = $('#master-view-mode-btn', root);
   if (vmBtn) {
     vmBtn.addEventListener('click', () => {
@@ -983,7 +1014,7 @@ async function docDetail(kind, id) {
     const act = a.dataset.do;
     try {
       if (act === 'print') return window.print();
-      if (act === 'edit') { m.close(); return docForm(kind, id); }
+      if (act === 'edit') { m.close(); return docMasterDetail($('#pg'), kind, id, true); }
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
         $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
       });

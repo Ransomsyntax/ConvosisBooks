@@ -1633,11 +1633,27 @@ async function itemForm(id) {
   });
 }
 
-/*  invoices / bills / retainer invoices  */
-async function docForm(kind, id) {
+async function docForm(kind, id, targetEl, onDone) {
   const isRetainer = kind === 'retainer-invoices';
+  const isBill = kind === 'bills';
   const inv = kind === 'invoices' || isRetainer, pk = inv ? 'customer' : 'vendor';
-  const [parties, items, rec] = await Promise.all([api(`lookup/${inv ? 'customers' : 'vendors'}/`), api('lookup/items/'), id ? api(`${kind}/${id}/`) : null]);
+
+  let target = targetEl || document.getElementById('detail-col-box');
+  if (!target && !document.getElementById('modal-root')) {
+    const route = isRetainer ? 'sales/retainer-invoices' : (inv ? 'sales/invoices' : 'purchases/bills');
+    location.hash = '#/' + route;
+    setTimeout(() => {
+      const newTarget = document.getElementById('detail-col-box');
+      if (newTarget) docForm(kind, id, newTarget, onDone);
+    }, 120);
+    return;
+  }
+
+  const [parties, items, rec] = await Promise.all([
+    api(`lookup/${inv ? 'customers' : 'vendors'}/`),
+    api('lookup/items/'),
+    id ? api(`${kind}/${id}/`) : null
+  ]);
   if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   const itemOpts = [['', '— Custom line —'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])];
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
@@ -1649,6 +1665,300 @@ async function docForm(kind, id) {
 
   const docTitle = isRetainer ? 'Retainer Invoice' : (inv ? 'Invoice' : 'Bill');
   const docTitleLower = isRetainer ? 'retainer invoice' : (inv ? 'invoice' : 'bill');
+
+  if (target) {
+    target.innerHTML = `
+      <div class="doc-detail-bar" style="position:sticky; top:0; z-index:20;">
+        <div class="doc-detail-title-grp">
+          <h1 class="doc-detail-title">${id ? 'Edit ' + docTitle + ' ' + esc(r.number || '') : 'New ' + docTitle}</h1>
+          <span class="sub" style="font-size:12px;">Fill in document details below</span>
+        </div>
+        <div class="doc-detail-actions">
+          <button class="btn" type="button" id="btn-doc-cancel">Cancel</button>
+          <button class="btn" type="button" id="btn-doc-draft" data-action="draft">Save as Draft</button>
+          <button class="btn p" type="button" id="btn-doc-save" data-action="${id ? 'update' : 'post'}">${id ? 'Update ' + docTitle : (inv ? 'Save & Send' : 'Save & Approve')}</button>
+        </div>
+      </div>
+      <div class="doc-canvas-scroll" style="padding:20px 24px 60px; display:flex; justify-content:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02));">
+        <form id="on-screen-doc-form" class="doc-form-card" novalidate>
+          <div class="fe" data-err="_" role="alert"></div>
+          <div class="fgrid">
+            ${[
+              fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
+              fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
+              fld({ name: 'date', label: 'Date', type: 'date', req: 1, value: r.date }),
+              fld({ name: 'due_date', label: 'Due date', type: 'date', value: due0 }),
+              fld({ name: 'order_number', label: 'Order Number', value: r.order_number || '', ph: 'e.g. 653248543' }),
+              inv ? '' : fld({ name: 'vendor_ref', label: 'Vendor reference', value: r.vendor_ref }),
+            ].join('')}
+          </div>
+
+          <h3 style="margin:24px 0 8px; font-size:14px; font-weight:700; color:var(--tx); display:flex; align-items:center; gap:8px;">
+            <span>Line items</span>
+          </h3>
+          <div class="tw" style="border:1px solid var(--bd-glass); border-radius:8px; overflow:hidden;">
+            <table class="lt">
+              <thead>
+                <tr>
+                  <th style="min-width:240px">Item / Description</th>
+                  <th>HSN/SAC</th>
+                  <th>Qty</th>
+                  <th>Rate (₹)</th>
+                  <th>Disc %</th>
+                  <th>GST</th>
+                  <th class="r">Amount</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="lines">${r.lines.map(row).join('')}</tbody>
+            </table>
+          </div>
+          <div class="er" data-err="lines" role="alert"></div>
+          <button type="button" class="btn" data-add style="margin-top:10px; font-weight:600;">+ Add line</button>
+
+          <div class="tot" aria-live="polite" style="margin-top:20px;">
+            <div><span>Taxable value</span><b data-t="sub">₹0.00</b></div>
+            <div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div>
+            <div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div>
+            <div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div>
+            <div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div>
+          </div>
+
+          <div class="fgrid" style="margin-top:24px;">
+            ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}
+            ${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}
+          </div>
+
+          <div style="margin-top:20px; padding:16px; border:1px solid var(--bd-glass); border-radius:10px; background:var(--surface-glass-subtle);">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+              <label style="font-weight:600; font-size:13px; display:flex; align-items:center; gap:6px; color:var(--tx);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                Attached Files
+              </label>
+              <input type="file" id="doc-file-input" multiple style="display:none">
+              <button type="button" class="btn" id="btn-browse-attach">+ Attach File</button>
+            </div>
+            <div id="doc-attach-badges" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:28px; padding-top:18px; border-top:1px solid var(--bd-glass);">
+            <button class="btn" type="button" id="btn-doc-cancel-btm">Cancel</button>
+            <button class="btn" type="button" id="btn-doc-draft-btm" data-action="draft">Save as Draft</button>
+            <button class="btn p" type="button" id="btn-doc-save-btm" data-action="${id ? 'update' : 'post'}">${id ? 'Update ' + docTitle : (inv ? 'Save & Send' : 'Save & Approve')}</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    const form = $('#on-screen-doc-form', target);
+    const tb = $('#lines', form);
+    let dueTouched = !!due0;
+
+    const calc = () => {
+      const intra = norm(form.elements.place_of_supply.value) === norm(APP.org.state);
+      const t = { sub: 0, cgst: 0, sgst: 0, igst: 0 };
+      $$('tr.ln', form).forEach(tr => {
+        const taxable = r2(num($('.l-qty', tr).value) * num($('.l-rate', tr).value) * (100 - num($('.l-disc', tr).value)) / 100);
+        const tax = taxable * num($('.l-gst', tr).value) / 100;
+        const cg = intra ? r2(tax / 2) : 0, ig = intra ? 0 : r2(tax);
+        t.sub += taxable; t.cgst += cg; t.sgst += cg; t.igst += ig;
+        $('.l-amt', tr).textContent = inr(taxable + cg * 2 + ig);
+      });
+      $$('[data-t]', form).forEach(el => { const k = el.dataset.t; el.textContent = inr(k === 'total' ? t.sub + t.cgst + t.sgst + t.igst : t[k]); });
+      $('[data-t-row=cgst]', form).style.display = $('[data-t-row=sgst]', form).style.display = intra ? '' : 'none';
+      $('[data-t-row=igst]', form).style.display = intra ? 'none' : '';
+    };
+
+    const setDue = () => {
+      if (dueTouched) return;
+      const p = parties.find(x => String(x.id) === form.elements[pk].value), d = form.elements.date.value;
+      if (d) form.elements.due_date.value = addDays(d, p ? p.payment_terms : 30);
+    };
+
+    form.addEventListener('input', e => {
+      if (e.target.name === 'due_date') dueTouched = true;
+      if (e.target.name === 'date') setDue();
+      calc();
+    });
+
+    form.addEventListener('change', e => {
+      if (e.target.classList.contains('l-item')) {
+        const it = byId[e.target.value], tr = e.target.closest('tr');
+        if (it) {
+          $('.l-desc', tr).value = it.name;
+          $('.l-hsn', tr).value = it.hsn_sac || '';
+          $('.l-rate', tr).value = inv ? it.selling_price : it.purchase_price;
+          $('.l-gst', tr).value = String(num(it.gst_rate));
+        }
+      }
+      if (e.target.name === pk) {
+        const p = parties.find(x => String(x.id) === e.target.value);
+        if (p && p.state) form.elements.place_of_supply.value = p.state;
+        setDue();
+      }
+      calc();
+    });
+
+    form.addEventListener('click', e => {
+      if (e.target.closest('[data-add]')) {
+        tb.insertAdjacentHTML('beforeend', row({}));
+        calc();
+      }
+      const rm = e.target.closest('[data-rm]');
+      if (rm) {
+        if ($$('tr.ln', form).length > 1) {
+          rm.closest('tr').remove();
+          calc();
+        } else {
+          toast('At least one line is required.', 'err');
+        }
+      }
+    });
+
+    const attachBox = $('#doc-attach-badges', form);
+    const renderAttach = () => {
+      let h = '';
+      if (r.attachments && r.attachments.length) {
+        h += r.attachments.map(a => `<div class="attach-file-badge"><span>📎 ${esc(a.filename)} (${fmtBytes(a.file_size)})</span><button type="button" data-del-att="${a.id}" title="Remove file">×</button></div>`).join('');
+      }
+      h += pendingFiles.map((f, i) => `<div class="attach-file-badge" style="border-style:dashed;"><span>📎 ${esc(f.name)} (${fmtBytes(f.size)}) <small style="color:var(--accent);">new</small></span><button type="button" data-rem-pen="${i}" title="Remove file">×</button></div>`).join('');
+      if (!h) h = '<span class="sub" style="font-size:12px;">No files attached yet.</span>';
+      attachBox.innerHTML = h;
+    };
+    renderAttach();
+
+    attachBox.addEventListener('click', async e => {
+      const delBtn = e.target.closest('[data-del-att]');
+      if (delBtn) {
+        const attId = delBtn.dataset.delAtt;
+        try {
+          await api(`attachments/${attId}/`, { method: 'DELETE' });
+          r.attachments = (r.attachments || []).filter(a => String(a.id) !== String(attId));
+          renderAttach();
+          toast('Attachment removed');
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      const remBtn = e.target.closest('[data-rem-pen]');
+      if (remBtn) {
+        pendingFiles.splice(Number(remBtn.dataset.remPen), 1);
+        renderAttach();
+      }
+    });
+
+    const fileIn = $('#doc-file-input', form);
+    const browseBtn = $('#btn-browse-attach', form);
+    if (browseBtn && fileIn) {
+      browseBtn.addEventListener('click', () => fileIn.click());
+      fileIn.addEventListener('change', () => {
+        Array.from(fileIn.files).forEach(f => {
+          const reader = new FileReader();
+          reader.onload = ev => {
+            pendingFiles.push({ name: f.name, size: f.size, type: f.type, data: ev.target.result });
+            renderAttach();
+          };
+          reader.readAsDataURL(f);
+        });
+        fileIn.value = '';
+      });
+    }
+
+    const cancelFn = () => {
+      if (onDone) onDone(null);
+      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+    };
+
+    const cancelBtn1 = $('#btn-doc-cancel', target);
+    const cancelBtn2 = $('#btn-doc-cancel-btm', target);
+    if (cancelBtn1) cancelBtn1.addEventListener('click', cancelFn);
+    if (cancelBtn2) cancelBtn2.addEventListener('click', cancelFn);
+
+    const submitFn = async (action) => {
+      const btns = $$('#btn-doc-save, #btn-doc-draft, #btn-doc-save-btm, #btn-doc-draft-btm', target);
+      btns.forEach(b => { b.disabled = true; });
+      clearErrors(form);
+
+      try {
+        const d = readForm(form);
+        d.force = true;
+        d.lines = $$('tr.ln', form).map(tr => ({
+          item: $('.l-item', tr).value || null,
+          description: $('.l-desc', tr).value,
+          hsn_sac: $('.l-hsn', tr).value,
+          quantity: $('.l-qty', tr).value,
+          rate: $('.l-rate', tr).value,
+          discount_percent: $('.l-disc', tr).value || 0,
+          gst_rate: $('.l-gst', tr).value
+        }));
+
+        const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
+
+        for (const pf of pendingFiles) {
+          try {
+            await api('attachments/', {
+              method: 'POST',
+              body: {
+                entity_type: isRetainer ? 'retainer_invoice' : (inv ? 'invoice' : 'bill'),
+                entity_id: saved.id,
+                filename: pf.name,
+                file_size: pf.size,
+                mime_type: pf.type,
+                file_data: pf.data
+              }
+            });
+          } catch (e) {
+            console.error('Attachment upload error:', e);
+          }
+        }
+
+        if (action === 'post') {
+          try {
+            await api(`${kind}/${saved.id}/${inv ? 'send' : 'approve'}/`, { method: 'POST', body: {} });
+            toast(`${saved.number} ${inv ? 'sent' : 'approved'}`);
+          } catch (e) {
+            toast(`${saved.number} saved as draft, but could not be ${inv ? 'sent' : 'approved'}: ${e.message}`, 'err');
+          }
+        } else {
+          toast(`${saved.number} ${id ? 'updated' : 'saved'}`);
+        }
+
+        if (onDone) {
+          onDone(saved);
+        } else if (window.PAGE && window.PAGE.reload) {
+          window.PAGE.reload();
+        } else {
+          refresh();
+        }
+      } catch (err) {
+        if (err instanceof ApiErr) showErrors(form, err.errors, err.message);
+        else {
+          showErrors(form, {}, (err && err.message) || 'Unexpected error.');
+          console.error(err);
+        }
+      } finally {
+        btns.forEach(b => { b.disabled = false; });
+      }
+    };
+
+    const draftBtn1 = $('#btn-doc-draft', target);
+    const draftBtn2 = $('#btn-doc-draft-btm', target);
+    if (draftBtn1) draftBtn1.addEventListener('click', () => submitFn('draft'));
+    if (draftBtn2) draftBtn2.addEventListener('click', () => submitFn('draft'));
+
+    const saveBtn1 = $('#btn-doc-save', target);
+    const saveBtn2 = $('#btn-doc-save-btm', target);
+    if (saveBtn1) saveBtn1.addEventListener('click', () => submitFn(id ? 'update' : 'post'));
+    if (saveBtn2) saveBtn2.addEventListener('click', () => submitFn(id ? 'update' : 'post'));
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      submitFn(id ? 'update' : 'post');
+    });
+
+    if (!due0) setDue();
+    calc();
+    return;
+  }
 
   formModal({
     title: `${id ? 'Edit' : 'New'} ${docTitleLower}${id ? ' ' + r.number : ''}`, wide: true,
@@ -1673,10 +1983,10 @@ async function docForm(kind, id) {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           Attached Files
         </label>
-        <input type="file" id="doc-file-input" multiple style="display:none">
+        <input type="file" id="doc-file-input-m" multiple style="display:none">
         <button type="button" class="btn" onclick="this.previousElementSibling.click()">+ Attach File</button>
       </div>
-      <div id="doc-attach-badges" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      <div id="doc-attach-badges-m" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
     </div>`,
     onReady: (form, m) => {
       const tb = $('#lines', form);
@@ -1719,7 +2029,7 @@ async function docForm(kind, id) {
         if (rm) { if ($$('tr.ln', form).length > 1) { rm.closest('tr').remove(); m.markDirty(); calc(); } else toast('At least one line is required.', 'err'); }
       });
 
-      const attachBox = $('#doc-attach-badges', form);
+      const attachBox = $('#doc-attach-badges-m', form);
       const renderAttach = () => {
         let h = '';
         if (r.attachments && r.attachments.length) {
@@ -1750,7 +2060,7 @@ async function docForm(kind, id) {
         }
       });
 
-      const fileIn = $('#doc-file-input', form);
+      const fileIn = $('#doc-file-input-m', form);
       if (fileIn) {
         fileIn.addEventListener('change', () => {
           Array.from(fileIn.files).forEach(f => {

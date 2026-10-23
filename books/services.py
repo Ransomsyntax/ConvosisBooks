@@ -7,10 +7,11 @@ import hashlib
 import hmac
 import json
 import os
-import requests
 import secrets
 import struct
 import time
+import urllib.error
+import urllib.request
 
 from django.conf import settings
 from django.db import transaction
@@ -2241,25 +2242,46 @@ def call_convobot_llm_api(prompt, system_prompt=None, history=None):
                 messages.append({'role': str(h['role']), 'content': str(h['content'])})
     messages.append({'role': 'user', 'content': prompt})
     try:
-        resp = requests.post(
+        payload = json.dumps({
+            'model': model,
+            'messages': messages,
+            'temperature': 0.2
+        }).encode('utf-8')
+        req = urllib.request.Request(
             f"{api_base}/chat/completions",
+            data=payload,
             headers={
                 'Authorization': f"Bearer {api_key}",
                 'Content-Type': 'application/json'
             },
-            json={
-                'model': model,
-                'messages': messages,
-                'temperature': 0.2
-            },
-            timeout=timeout
+            method='POST'
         )
-        if resp.status_code == 200:
-            data = resp.json()
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
             content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
             return content
     except Exception:
-        return None
+        try:
+            import requests
+            resp = requests.post(
+                f"{api_base}/chat/completions",
+                headers={
+                    'Authorization': f"Bearer {api_key}",
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': model,
+                    'messages': messages,
+                    'temperature': 0.2
+                },
+                timeout=timeout
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                return content
+        except Exception:
+            return None
     return None
 
 

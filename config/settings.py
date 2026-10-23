@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import urllib.parse
+import hashlib
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -8,10 +10,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-key-change-me')
 if not DEBUG and SECRET_KEY.startswith('dev-only'):
-    raise ImproperlyConfigured('Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0.')
+    fallback_seed = os.environ.get('RENDER_SERVICE_ID', os.environ.get('RENDER_GIT_COMMIT', ''))
+    if fallback_seed:
+        SECRET_KEY = hashlib.sha256(f"render-secret-{fallback_seed}".encode('utf-8')).hexdigest()
+    else:
+        raise ImproperlyConfigured('Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0.')
 
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver,books-d8i1.onrender.com').split(',') if h.strip()]
+if '.onrender.com' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('.onrender.com')
+render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if render_host and render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_host)
+
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()]
+if 'https://*.onrender.com' not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append('https://*.onrender.com')
+if render_host:
+    r_origin = f"https://{render_host}"
+    if r_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(r_origin)
 
 INSTALLED_APPS = [
     'books',
@@ -53,7 +71,18 @@ TEMPLATES = [{
     ]},
 }]
 
-if os.environ.get('POSTGRES_DB'):
+db_url = os.environ.get('DATABASE_URL')
+if db_url:
+    parsed_db = urllib.parse.urlparse(db_url)
+    DATABASES = {'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': parsed_db.path.lstrip('/'),
+        'USER': parsed_db.username or 'postgres',
+        'PASSWORD': parsed_db.password or '',
+        'HOST': parsed_db.hostname or 'localhost',
+        'PORT': parsed_db.port or 5432,
+    }}
+elif os.environ.get('POSTGRES_DB'):
     DATABASES = {'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.environ['POSTGRES_DB'],
@@ -79,6 +108,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

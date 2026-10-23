@@ -12,7 +12,7 @@ import struct
 import time
 
 from django.db import transaction
-from django.db.models import DecimalField, F, Q, Sum, Value
+from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -24,8 +24,9 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, GSTRReturn, Invoice,
                      InvoiceLine, Item, Journal, JournalItem, LockDate, ManagedDocument,
                      Notification, Organization, PaymentMade, PaymentReceived, PurchaseOrder,
-                     RecurringInvoice, SalesOrder, SecurityBackupRecord, Sequence, StockMovement,
-                     TenantSubscription, UserProfile, Vendor, VendorPortalAccess,
+                     ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
+                     RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
+                     StockMovement, TenantSubscription, UserProfile, Vendor, VendorPortalAccess,
                      WebhookSubscription)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
@@ -36,8 +37,31 @@ def paid_expr():
     return Coalesce(Sum('allocations__amount'), Value(Z), output_field=DEC)
 
 
+def invoice_paid_expr():
+    alloc_sub = ReceivedAllocation.objects.filter(invoice=OuterRef('pk')).values('invoice').annotate(s=Sum('amount')).values('s')
+    ret_sub = RetainerInvoiceAllocation.objects.filter(invoice=OuterRef('pk')).values('invoice').annotate(s=Sum('amount')).values('s')
+    return Coalesce(Subquery(alloc_sub, output_field=DEC), Value(Z)) + Coalesce(Subquery(ret_sub, output_field=DEC), Value(Z))
+
+
 def invoice_qs():
-    return Invoice.objects.select_related('customer').annotate(paid_sum=paid_expr())
+    return Invoice.objects.select_related('customer').annotate(paid_sum=invoice_paid_expr())
+
+
+def retainer_paid_expr():
+    ret_pay_sub = RetainerPayment.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
+    return Coalesce(Subquery(ret_pay_sub, output_field=DEC), Value(Z))
+
+
+def retainer_applied_expr():
+    ret_alloc_sub = RetainerInvoiceAllocation.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
+    return Coalesce(Subquery(ret_alloc_sub, output_field=DEC), Value(Z))
+
+
+def retainer_qs():
+    return RetainerInvoice.objects.select_related('customer').annotate(
+        paid_sum=retainer_paid_expr(),
+        applied_sum=retainer_applied_expr(),
+    )
 
 
 def bill_qs():
@@ -178,6 +202,166 @@ def void_bill(bill, user):
     bill.save(update_fields=['status', 'updated_at'])
     post_bill_void_journal(bill, user)
     log_audit(user, 'void', 'Bill', bill.pk, f'Bill {bill.number} voided and reversed in ledger')
+
+
+@transaction.atomic
+def send_retainer_invoice(retainer, user):
+    check_transaction_lock(retainer.date)
+    if retainer.status != 'draft':
+        raise ApiError(409, 'Only draft retainer invoices can be sent.')
+    retainer.status = 'sent'
+    retainer.sent_at = timezone.now()
+    retainer.save(update_fields=['status', 'sent_at', 'updated_at'])
+    log_audit(user, 'send', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} sent to {retainer.customer.name} (₹{retainer.total})')
+
+
+@transaction.atomic
+def void_retainer_invoice(retainer, user):
+    check_transaction_lock(retainer.date)
+    if retainer.status not in ('sent', 'partial', 'paid'):
+        raise ApiError(409, 'Only sent or active retainer invoices can be voided (delete drafts instead).')
+    if retainer.allocations.exists():
+        raise ApiError(409, 'This retainer invoice has already been applied to invoices. Remove those applications first.')
+    if retainer.payments.exists():
+        raise ApiError(409, 'Payments are recorded for this retainer invoice. Delete those payments before voiding.')
+    retainer.status = 'void'
+    retainer.save(update_fields=['status', 'updated_at'])
+    log_audit(user, 'void', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} voided')
+
+
+@transaction.atomic
+def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', account='Bank Account', reference='', notes='', user=None):
+    check_transaction_lock(date_)
+    amount = q2(amount)
+    if amount <= Decimal('0.00'):
+        raise ApiError(400, 'Payment amount must be greater than zero.')
+    paid_sum = sum((p.amount for p in retainer.payments.all()), Decimal('0.00'))
+    bal = retainer.total - paid_sum
+    if amount > bal:
+        raise ApiError(400, f'Payment amount (₹{amount}) exceeds remaining balance due (₹{bal}).')
+
+    pay_num = next_number('RCPT')
+    pmt = PaymentReceived.objects.create(
+        number=pay_num, customer=retainer.customer, date=date_,
+        mode=mode, account=account, amount=amount,
+        reference=reference or f'Payment for Retainer {retainer.number}',
+        notes=notes, created_by=user if getattr(user, 'pk', None) else None
+    )
+    ret_pay = RetainerPayment.objects.create(
+        retainer=retainer, payment_received=pmt, date=date_, amount=amount,
+        mode=mode, account=account, reference=reference, notes=notes
+    )
+    new_paid = paid_sum + amount
+    retainer.status = 'paid' if new_paid >= retainer.total else 'partial'
+    retainer.save(update_fields=['status', 'updated_at'])
+
+    post_retainer_payment_journal(ret_pay, user)
+    log_audit(user, 'payment', 'RetainerInvoice', retainer.pk,
+              f'Recorded payment of ₹{amount} for retainer invoice {retainer.number} ({retainer.customer.name})')
+    return ret_pay
+
+
+def post_retainer_payment_journal(ret_pay, user):
+    """Debit Bank/Cash, Credit Customer Advance / Retainer Liability."""
+    acc_code = '1000' if ret_pay.mode == 'cash' else '1010'
+    items = [
+        (acc_code, ret_pay.amount, Decimal('0.00'), f'Retainer payment {ret_pay.retainer.number} from {ret_pay.retainer.customer.name}'),
+        ('2100', Decimal('0.00'), ret_pay.amount, f'Customer Advance / Retainer liability on {ret_pay.retainer.number}')
+    ]
+    return post_journal_entry(ret_pay.date, 'retainer_payment', ret_pay.retainer.number,
+                              f'Payment received for retainer {ret_pay.retainer.number}', items, user)
+
+
+@transaction.atomic
+def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
+    if not date_:
+        date_ = timezone.localdate()
+    check_transaction_lock(date_)
+
+    paid_sum = sum((p.amount for p in retainer.payments.all()), Decimal('0.00'))
+    applied_sum = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
+    available = max(Decimal('0.00'), paid_sum - applied_sum)
+
+    if available <= Decimal('0.00'):
+        raise ApiError(400, 'This retainer invoice has no available balance to apply. Record a payment first.')
+
+    total_to_apply = sum((q2(a.get('amount') or 0) for a in allocations), Decimal('0.00'))
+    if total_to_apply <= Decimal('0.00'):
+        raise ApiError(400, 'Total applied amount must be positive.')
+    if total_to_apply > available:
+        raise ApiError(400, f'Total amount to apply (₹{total_to_apply}) exceeds available retainer balance (₹{available}).')
+
+    created_allocs = []
+    for item in allocations:
+        inv_id = item.get('invoice') or item.get('invoice_id')
+        inv = inv_id if hasattr(inv_id, 'pk') else Invoice.objects.filter(pk=inv_id).first()
+        if not inv:
+            raise ApiError(404, 'Invoice not found.')
+        if inv.customer_id != retainer.customer_id:
+            raise ApiError(400, f'Invoice {inv.number} does not belong to customer {retainer.customer.name}.')
+        if inv.status != 'sent':
+            raise ApiError(400, f'Invoice {inv.number} is {inv.status}; retainers can only be applied to sent invoices.')
+
+        curr_paid = sum((a.amount for a in inv.allocations.all()), Decimal('0.00')) + \
+                    sum((a.amount for a in inv.retainer_allocations.all()), Decimal('0.00'))
+        inv_bal = max(Decimal('0.00'), inv.total - curr_paid)
+        amt = q2(item.get('amount') or 0)
+        if amt <= Decimal('0.00'):
+            continue
+        if amt > inv_bal:
+            raise ApiError(400, f'Amount for {inv.number} (₹{amt}) exceeds the invoice balance due (₹{inv_bal}).')
+
+        alloc = RetainerInvoiceAllocation.objects.create(
+            retainer=retainer, invoice=inv, date=date_, amount=amt,
+            notes=item.get('notes', '')
+        )
+        created_allocs.append(alloc)
+        post_retainer_apply_journal(alloc, user)
+        log_audit(user, 'apply_retainer', 'Invoice', inv.pk,
+                  f'Applied retainer credit of ₹{amt} from {retainer.number} to invoice {inv.number}')
+
+    retainer.applied_amount = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
+    retainer.save(update_fields=['applied_amount', 'updated_at'])
+    return created_allocs
+
+
+def post_retainer_apply_journal(alloc, user):
+    """Debit Customer Advance / Retainer Liability, Credit Accounts Receivable."""
+    items = [
+        ('2100', alloc.amount, Decimal('0.00'), f'Application of Retainer {alloc.retainer.number} to {alloc.invoice.number}'),
+        ('1200', Decimal('0.00'), alloc.amount, f'AR credit from Retainer {alloc.retainer.number} on {alloc.invoice.number}')
+    ]
+    return post_journal_entry(alloc.date, 'retainer_applied', alloc.retainer.number,
+                              f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user)
+
+
+@transaction.atomic
+def delete_retainer_payment(ret_pay, user):
+    retainer = ret_pay.retainer
+    paid_after = sum((p.amount for p in retainer.payments.exclude(pk=ret_pay.pk)), Decimal('0.00'))
+    applied_sum = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
+    if paid_after < applied_sum:
+        raise ApiError(400, 'Cannot delete payment: retainer credits have already been applied to invoices. Remove applications first.')
+    if ret_pay.payment_received:
+        ret_pay.payment_received.delete()
+    amt = ret_pay.amount
+    ret_pay.delete()
+    retainer.status = 'paid' if paid_after >= retainer.total else ('partial' if paid_after > 0 else 'sent')
+    retainer.save(update_fields=['status', 'updated_at'])
+    log_audit(user, 'delete_payment', 'RetainerInvoice', retainer.pk,
+              f'Deleted payment of ₹{amt} on retainer {retainer.number}')
+
+
+@transaction.atomic
+def delete_retainer_allocation(alloc, user):
+    retainer = alloc.retainer
+    inv = alloc.invoice
+    amt = alloc.amount
+    alloc.delete()
+    retainer.applied_amount = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
+    retainer.save(update_fields=['applied_amount', 'updated_at'])
+    log_audit(user, 'delete_allocation', 'RetainerInvoice', retainer.pk,
+              f'Removed retainer application of ₹{amt} from {inv.number}')
 
 
 
@@ -337,6 +521,7 @@ def ensure_default_accounts():
         ('1400', 'Undeposited Funds', 'asset', 'current_asset', 'Payments received awaiting bank clearance'),
         ('1500', 'Office & Computer Equipment', 'asset', 'fixed_asset', 'Tangible capital assets'),
         ('2000', 'Accounts Payable', 'liability', 'accounts_payable', 'Monies owed to suppliers and vendors'),
+        ('2100', 'Customer Advance / Retainer Liability', 'liability', 'current_liability', 'Advance payments and retainers received from clients'),
         ('2210', 'Output CGST', 'liability', 'tax_payable', 'Central GST collected on intra-state sales'),
         ('2220', 'Output SGST', 'liability', 'tax_payable', 'State GST collected on intra-state sales'),
         ('2230', 'Output IGST', 'liability', 'tax_payable', 'Integrated GST collected on inter-state sales'),

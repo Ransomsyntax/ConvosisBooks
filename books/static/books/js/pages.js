@@ -152,10 +152,20 @@ const LISTS = {
     onAction: (a, r) => a === 'edit' ? recurringInvoiceModal(r.id) : deleteRecord('recurring-invoices', r, 'profile'),
   },
   'retainer-invoices': {
-    api: 'retainer-invoices', title: 'Retainer Invoices', bc: 'Sales', newLabel: 'New retainer invoice', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No retainer invoices yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Retainer#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance)) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('retainer-invoices', r, 'retainer invoice'),
+    api: 'retainer-invoices', title: 'Retainer Invoices', bc: 'Sales', newLabel: 'New retainer invoice',
+    onNew: () => docForm('retainer-invoices'), ordering: '-date', empty: 'No retainer invoices yet.',
+    filters: docStatusFilters('Sent'),
+    cols: [
+      { h: 'Date', s: 'date', f: r => fd(r.date) },
+      { h: 'Retainer#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
+      { h: 'Customer', f: r => esc(r.party) },
+      { h: 'Status', f: r => badge(r.status) },
+      { h: 'Total', s: 'total', ...money(r => inr(r.total)) },
+      { h: 'Balance Due', ...money(r => inr(r.balance)) },
+      { h: 'Available Credit', ...money(r => inr(r.available_balance || 0)) },
+    ],
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id) : a === 'edit' ? docForm('retainer-invoices', r.id) : deleteRecord('retainer-invoices', r, 'retainer invoice'),
   },
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
@@ -341,21 +351,24 @@ const kvBox = pairs => `<div class="kv">${pairs.map(([k, v]) => `<div><span>${es
 
 /* ==================== Document Sheet & Template Customizer ==================== */
 function renderDocSheet(d, kind, customOpts = {}) {
-  const inv = kind === 'invoices';
+  const isRetainer = kind === 'retainer-invoices';
+  const isBill = kind === 'bills';
+  const inv = kind === 'invoices' || isRetainer;
   const org = APP.org || {};
-  const theme = customOpts.theme || org.template_theme || (inv ? 'convosis' : 'modern');
+  const theme = customOpts.theme || org.template_theme || (!isBill ? 'convosis' : 'modern');
   const color = customOpts.color || org.template_color || '#1877f2';
   const showLogo = customOpts.show_logo !== false;
   const showSig = customOpts.show_signature !== false;
   const showWords = customOpts.show_words !== false;
   const showHsn = customOpts.show_hsn !== false;
-  const title = customOpts.title || (inv ? 'TAX INVOICE' : 'BILL');
+  const title = customOpts.title || (isRetainer ? 'RETAINER INVOICE' : kind === 'invoices' ? 'TAX INVOICE' : 'BILL');
 
   const isPaid = d.status === 'Paid' || (d.raw_status !== 'draft' && num(d.balance) <= 0);
   const isOverdue = d.status === 'Overdue';
   const isDraft = d.raw_status === 'draft';
-  const ribClass = isPaid ? 'paid' : isOverdue ? 'overdue' : isDraft ? 'draft' : 'open';
-  const ribText = isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDraft ? 'Draft' : (inv ? 'Sent' : 'Open');
+  const isPartial = d.raw_status === 'partial';
+  const ribClass = isPaid ? 'paid' : isOverdue ? 'overdue' : isDraft ? 'draft' : isPartial ? 'open' : 'open';
+  const ribText = isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDraft ? 'Draft' : isPartial ? 'Partially Paid' : (isBill ? 'Open' : 'Sent');
 
   const linesHtml = (d.lines || []).map((l, i) => `
     <tr>
@@ -371,7 +384,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
   `).join('');
 
   const party = d.party_details || {};
-  const partyName = esc(d.party || party.name || (inv ? 'Customer' : 'Vendor'));
+  const partyName = esc(d.party || party.name || (!isBill ? 'Customer' : 'Vendor'));
   const partyAddr = esc(party.billing_address || '');
   const partyGstin = party.gstin ? `<div style="margin-top:2px;">GSTIN <b>${esc(party.gstin)}</b></div>` : '';
   const partyState = party.state ? `<div>State: ${esc(party.state)}</div>` : '';
@@ -411,20 +424,21 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
         <div class="doc-title-box">
           <div class="doc-main-heading" style="color:${color};">${esc(title)}</div>
-          ${!inv ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Bill# ${esc(d.number)}</div><div style="font-size:12px;color:#475569;margin-bottom:8px;">Balance Due <b style="color:${color};font-size:14px;">${inr(d.balance)}</b></div>` : ''}
+          ${isBill ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Bill# ${esc(d.number)}</div><div style="font-size:12px;color:#475569;margin-bottom:8px;">Balance Due <b style="color:${color};font-size:14px;">${inr(d.balance)}</b></div>` : ''}
+          ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
-            ${inv ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
-            ${inv ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
+            ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
+            ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
             <tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
-            ${inv ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
-            ${orderNum ? `<tr><td>Order Number</td><td>: ${esc(orderNum)}</td></tr>` : ''}
+            ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
+            ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
           </table>
         </div>
       </div>
 
       <div class="doc-party-sec">
-        <div class="doc-party-title">${inv ? 'Bill To' : 'Bill From'}</div>
+        <div class="doc-party-title">${!isBill ? 'Bill To' : 'Bill From'}</div>
         <div class="doc-party-name" style="color:${color};">${partyName}</div>
         <div class="doc-party-detail">
           ${partyAddr ? `<div>${partyAddr}</div>` : ''}
@@ -495,6 +509,18 @@ function renderDocSheet(d, kind, customOpts = {}) {
               <span>Balance Due</span>
               <span>${inr(d.balance)}</span>
             </div>
+            ${isRetainer && num(d.applied_amount) > 0 ? `
+              <div class="doc-totals-row" style="margin-top:6px;border-top:1px dashed var(--bd-glass);padding-top:6px;">
+                <span>Retainer Applied</span>
+                <span style="color:#6366f1;font-weight:600;">(-) ${inr(d.applied_amount)}</span>
+              </div>
+            ` : ''}
+            ${isRetainer ? `
+              <div class="doc-totals-row" style="background:rgba(16,185,129,0.08);padding:6px 8px;border-radius:4px;margin-top:4px;">
+                <span style="color:#059669;font-weight:700;">Available Retainer Balance</span>
+                <span style="color:#059669;font-weight:800;font-size:13px;">${inr(d.available_balance || 0)}</span>
+              </div>
+            ` : ''}
           </div>
         </div>
       </div>
@@ -505,6 +531,33 @@ function renderDocSheet(d, kind, customOpts = {}) {
             <div class="doc-sig-line"></div>
             <div class="doc-sig-label">${esc(org.signature_title || 'Authorized Signature')}</div>
           </div>
+        </div>
+      ` : ''}
+
+      ${isRetainer && ((d.payments && d.payments.length) || (d.allocations && d.allocations.length)) ? `
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(0,0,0,0.08);">
+          ${d.payments && d.payments.length ? `
+            <div style="margin-bottom:14px;">
+              <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Payments Received</h4>
+              <table class="lt" style="font-size:12px;">
+                <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th>Account</th><th class="r">Amount</th></tr></thead>
+                <tbody>
+                  ${d.payments.map(p => `<tr><td>${fd(p.date)}</td><td>${esc(p.mode || 'bank_transfer')}</td><td>${esc(p.number || p.reference || '—')}</td><td>${esc(p.account || 'Bank Account')}</td><td class="r" style="font-weight:600;color:#059669;">${inr(p.amount)}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+          ${d.allocations && d.allocations.length ? `
+            <div>
+              <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Applied to Invoices</h4>
+              <table class="lt" style="font-size:12px;">
+                <thead><tr><th>Invoice#</th><th>Date</th><th>Notes</th><th class="r">Amount Applied</th></tr></thead>
+                <tbody>
+                  ${d.allocations.map(a => `<tr><td><b>${esc(a.number)}</b></td><td>${fd(a.date)}</td><td>${esc(a.notes || '—')}</td><td class="r" style="font-weight:600;color:#6366f1;">${inr(a.amount)}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -657,6 +710,8 @@ async function openAttachmentsModal(kind, id, docNumber, onCountChange) {
 }
 
 async function docMasterDetail(root, kind, selectedId) {
+  const isRetainer = kind === 'retainer-invoices';
+  const isBill = kind === 'bills';
   const inv = kind === 'invoices';
   let curFilter = '';
   let searchQuery = '';
@@ -671,9 +726,9 @@ async function docMasterDetail(root, kind, selectedId) {
         <div class="master-col-hd">
           <div style="display:flex;align-items:center;gap:6px;">
             <select class="btn" id="master-filter-sel" style="font-weight:700;font-size:14px;border:none;background:transparent;padding:4px 0;cursor:pointer;">
-              <option value="">All ${inv ? 'Invoices' : 'Bills'}</option>
+              <option value="">All ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}</option>
               <option value="draft">Draft</option>
-              <option value="unpaid">${inv ? 'Sent' : 'Open'}</option>
+              <option value="unpaid">${!isBill ? 'Sent' : 'Open'}</option>
               <option value="overdue">Overdue</option>
               <option value="paid">Paid</option>
             </select>
@@ -684,7 +739,7 @@ async function docMasterDetail(root, kind, selectedId) {
           </div>
         </div>
         <div class="master-search-bar">
-          <input class="in" type="search" id="master-q-in" placeholder="Search ${inv ? 'invoices' : 'bills'}…" style="width:100%;height:32px;font-size:12px;">
+          <input class="in" type="search" id="master-q-in" placeholder="Search ${isRetainer ? 'retainers' : inv ? 'invoices' : 'bills'}…" style="width:100%;height:32px;font-size:12px;">
         </div>
         <div class="master-list-scroll" id="master-list-box">${spinner}</div>
       </div>
@@ -706,7 +761,7 @@ async function docMasterDetail(root, kind, selectedId) {
         const found = selectedId ? docs.find(d => String(d.id) === String(selectedId)) : null;
         loadDetail((found || docs[0]).id);
       } else {
-        $('#detail-col-box', root).innerHTML = `<div class="empty" style="margin:auto;"><div>No ${inv ? 'invoices' : 'bills'} found.<br><button class="btn p" id="empty-new-btn" style="margin-top:10px;">+ New ${inv ? 'Invoice' : 'Bill'}</button></div></div>`;
+        $('#detail-col-box', root).innerHTML = `<div class="empty" style="margin:auto;"><div>No ${isRetainer ? 'retainer invoices' : inv ? 'invoices' : 'bills'} found.<br><button class="btn p" id="empty-new-btn" style="margin-top:10px;">+ New ${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'}</button></div></div>`;
         const eb = $('#empty-new-btn', root);
         if (eb) eb.addEventListener('click', () => docForm(kind));
       }
@@ -767,7 +822,7 @@ async function docMasterDetail(root, kind, selectedId) {
     if (!curDoc) return;
     const d = curDoc;
     const detailBox = $('#detail-col-box', root);
-    const posted = d.raw_status === (inv ? 'sent' : 'open');
+    const posted = isRetainer ? (d.raw_status === 'sent' || d.raw_status === 'partial') : (d.raw_status === (inv ? 'sent' : 'open') || d.raw_status === 'partial');
     const attCount = (d.attachments ? d.attachments.length : (d.attachment_count || 0));
 
     detailBox.innerHTML = `
@@ -776,11 +831,17 @@ async function docMasterDetail(root, kind, selectedId) {
           <h1 class="doc-detail-title">${esc(d.number)}</h1>
           <div class="doc-detail-actions">
             <button class="btn" type="button" data-act="edit">Edit</button>
-            ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${inv ? 'Send' : 'Approve'}</button>` : ''}
+            ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
             <button class="btn" type="button" data-act="print">PDF/Print</button>
-            ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
-            ${inv ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
-            ${inv ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
+            ${isRetainer ? `
+              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
+              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
+            ` : `
+              ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
+              ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
+              ${inv ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
+              ${inv ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
+            `}
             <button class="btn" type="button" data-act="custom">Customize Template</button>
             <button class="btn d" type="button" data-act="delete">Delete</button>
           </div>
@@ -822,6 +883,9 @@ async function docMasterDetail(root, kind, selectedId) {
         return;
       }
       if (act === 'pay') return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance });
+      if (act === 'pay-retainer') return recordRetainerPaymentModal(d, () => loadDetail(d.id));
+      if (act === 'apply-invoices') return applyRetainerModal(d, () => loadDetail(d.id));
+      if (act === 'apply-retainer') return applyRetainerToInvoiceModal(d, () => loadDetail(d.id));
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
         $('#doc-sheet-viewport', root).innerHTML = renderDocSheet(curDoc, kind);
       });
@@ -833,14 +897,15 @@ async function docMasterDetail(root, kind, selectedId) {
       });
       if (act === 'send') {
         try {
-          await api(`${kind}/${d.id}/${inv ? 'send' : 'approve'}/`, { method: 'POST', body: {} });
-          toast(d.number + (inv ? ' sent' : ' approved'));
+          await api(`${kind}/${d.id}/${!isBill ? 'send' : 'approve'}/`, { method: 'POST', body: {} });
+          toast(d.number + (!isBill ? ' sent' : ' approved'));
           loadDetail(d.id);
         } catch (err) { toast(err.message, 'err'); }
         return;
       }
       if (act === 'delete') {
-        if (!(await confirmBox({ title: 'Delete ' + (inv ? 'invoice ' : 'bill ') + d.number + '?', message: 'This will completely remove the document and restore balances. This cannot be undone.', okText: 'Delete', danger: true }))) return;
+        const docLabel = isRetainer ? 'retainer invoice ' : inv ? 'invoice ' : 'bill ';
+        if (!(await confirmBox({ title: 'Delete ' + docLabel + d.number + '?', message: 'This will completely remove the document and restore balances. This cannot be undone.', okText: 'Delete', danger: true }))) return;
         try {
           await api(`${kind}/${d.id}/`, { method: 'DELETE' });
           toast(d.number + ' deleted');
@@ -886,19 +951,24 @@ async function docMasterDetail(root, kind, selectedId) {
 }
 
 async function docDetail(kind, id) {
-  const inv = kind === 'invoices', d = await api(`${kind}/${id}/`), posted = d.raw_status === (inv ? 'sent' : 'open');
+  const isRetainer = kind === 'retainer-invoices', isBill = kind === 'bills', inv = kind === 'invoices';
+  const d = await api(`${kind}/${id}/`);
+  const posted = isRetainer ? (d.raw_status === 'sent' || d.raw_status === 'partial') : (d.raw_status === (inv ? 'sent' : 'open') || d.raw_status === 'partial');
   const attCount = (d.attachments ? d.attachments.length : (d.attachment_count || 0));
 
   const m = Modal.open({
-    title: `${inv ? 'Invoice' : 'Bill'} ${d.number}`, wide: true,
+    title: `${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'} ${d.number}`, wide: true,
     body: `
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
         <button class="btn" type="button" data-do="edit">Edit</button>
         <button class="btn" type="button" data-do="print">PDF/Print</button>
         <button class="btn" type="button" data-do="custom">Customize Template</button>
         <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
-        ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${inv ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
-        ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
+        ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${!isBill ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
+        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
+        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
+        ${!isRetainer && posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
+        ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
         <button class="btn d" type="button" data-do="delete">Delete</button>
       </div>
       <div id="modal-sheet-viewport" style="display:flex;justify-content:center;background:rgba(0,0,0,0.02);padding:14px;border-radius:6px;max-height:75vh;overflow-y:auto;">
@@ -919,13 +989,330 @@ async function docDetail(kind, id) {
       });
       if (act === 'att') return openAttachmentsModal(kind, d.id, d.number);
       if (act === 'pay') { m.close(); return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance }); }
-      if (act === 'post') { await api(`${kind}/${id}/${inv ? 'send' : 'approve'}/`, { method: 'POST', body: {} }); toast(d.number + (inv ? ' sent' : ' approved')); m.close(); refresh(); }
+      if (act === 'pay-retainer') { m.close(); return recordRetainerPaymentModal(d, () => refresh()); }
+      if (act === 'apply-invoices') { m.close(); return applyRetainerModal(d, () => refresh()); }
+      if (act === 'apply-retainer') { m.close(); return applyRetainerToInvoiceModal(d, () => refresh()); }
+      if (act === 'post') { await api(`${kind}/${id}/${!isBill ? 'send' : 'approve'}/`, { method: 'POST', body: {} }); toast(d.number + (!isBill ? ' sent' : ' approved')); m.close(); refresh(); }
       if (act === 'delete') {
-        if (!(await confirmBox({ title: 'Delete ' + (inv ? 'invoice ' : 'bill ') + d.number + '?', message: 'This cannot be undone.', okText: 'Delete', danger: true }))) return;
+        const docLabel = isRetainer ? 'retainer invoice ' : inv ? 'invoice ' : 'bill ';
+        if (!(await confirmBox({ title: 'Delete ' + docLabel + d.number + '?', message: 'This cannot be undone.', okText: 'Delete', danger: true }))) return;
         await api(`${kind}/${id}/`, { method: 'DELETE' });
         toast(d.number + ' deleted'); m.close(); refresh();
       }
     } catch (err) { toast(err.message, 'err'); }
+  });
+}
+
+/* ==================== Retainer Invoices Modals ==================== */
+async function recordRetainerPaymentModal(doc, onDone) {
+  let bankOpts = [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash']];
+  try {
+    const bas = await api('lookup/bank-accounts/');
+    if (bas && bas.length) {
+      bankOpts = bas.map(b => [b.name, `${b.name} (${b.bank_name || 'Bank'})`]);
+      bankOpts.push(['Cash', 'Petty Cash']);
+    }
+  } catch (e) {}
+
+  formModal({
+    title: `Record Payment · Retainer ${doc.number}`,
+    wide: false,
+    submit: 'Record Payment',
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
+        <div><b>Customer:</b> ${esc(doc.party)}</div>
+        <div style="margin-top:2px;"><b>Retainer Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Balance Due:</b> <span style="color:#059669;font-weight:700;">${inr(doc.balance)}</span></div>
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'amount', label: 'Payment Amount (₹)', type: 'number', req: 1, value: doc.balance, attrs: `min="0.01" max="${doc.balance}" step="0.01"` })}
+        ${fld({ name: 'date', label: 'Payment Date', type: 'date', req: 1, value: APP.today })}
+        ${fld({ name: 'mode', label: 'Payment Mode', type: 'select', opts: [['bank_transfer', 'Bank Transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Credit/Debit Card'], ['other', 'Other']], value: 'bank_transfer' })}
+        ${fld({ name: 'account', label: 'Deposit To', type: 'select', opts: bankOpts, value: bankOpts[0][0] })}
+        ${fld({ name: 'reference', label: 'Reference#', col: 'c2', placeholder: 'Transaction ID / Cheque# / UTR' })}
+        ${fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 'c2' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      await api(`retainer-invoices/${doc.id}/pay/`, {
+        method: 'POST',
+        body: {
+          amount: d.amount,
+          date: d.date,
+          mode: d.mode,
+          account: d.account,
+          reference: d.reference,
+          notes: d.notes,
+        }
+      });
+      toast(`Payment of ${inr(d.amount)} recorded successfully`);
+      if (onDone) onDone();
+    }
+  });
+}
+
+async function applyRetainerModal(retainerDoc, onDone) {
+  const avail = num(retainerDoc.available_balance || 0);
+  if (avail <= 0) {
+    toast('No available retainer balance to apply.', 'err');
+    return;
+  }
+  let res;
+  try {
+    res = await api('invoices/?' + qs({ customer: retainerDoc.party_id || retainerDoc.customer_id, status: 'unpaid', page_size: 100 }));
+  } catch (e) {
+    toast(e.message, 'err');
+    return;
+  }
+  const invoices = (res.results || []).filter(inv => inv.raw_status !== 'draft' && inv.raw_status !== 'void' && num(inv.balance) > 0);
+  if (!invoices.length) {
+    toast(`No unpaid invoices found for ${retainerDoc.party || 'this customer'}.`, 'err');
+    return;
+  }
+
+  const m = Modal.open({
+    title: `Apply Retainer ${esc(retainerDoc.number)} to Invoices`,
+    wide: true,
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div><b>Customer:</b> ${esc(retainerDoc.party)}</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:2px;">Apply available retainer credit against outstanding customer invoices.</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--sub);font-weight:600;">Available Retainer Balance</div>
+          <div style="font-size:18px;font-weight:800;color:#059669;" id="m-avail-bal">${inr(avail)}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+        <label style="font-weight:600;font-size:13px;">Allocation Date:</label>
+        <input class="in" type="date" id="m-alloc-date" value="${APP.today}" style="max-width:180px;">
+      </div>
+
+      <table class="lt" style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Invoice#</th>
+            <th>Date</th>
+            <th>Due Date</th>
+            <th class="r">Total</th>
+            <th class="r">Balance Due</th>
+            <th class="r" style="width:180px;">Amount to Apply (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${invoices.map(inv => `
+            <tr data-inv-id="${inv.id}" data-bal="${inv.balance}">
+              <td><b>${esc(inv.number)}</b></td>
+              <td>${fd(inv.date)}</td>
+              <td>${fd(inv.due_date)}</td>
+              <td class="r">${inr(inv.total)}</td>
+              <td class="r" style="font-weight:600;">${inr(inv.balance)}</td>
+              <td class="r">
+                <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;">
+                  <input type="number" class="in r alloc-val" data-id="${inv.id}" step="0.01" min="0" max="${inv.balance}" placeholder="0.00" style="width:110px;padding:4px 6px;">
+                  <button type="button" class="btn btn-sm alloc-max" data-id="${inv.id}" style="padding:2px 8px;font-size:11px;">Max</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <div style="margin-top:14px;padding:10px 14px;background:rgba(0,0,0,0.02);border-radius:6px;display:flex;justify-content:flex-end;gap:24px;font-size:13px;">
+        <div><span>Total Applied:</span> <b id="m-tot-applied" style="color:#6366f1;">₹0.00</b></div>
+        <div><span>Remaining Credit:</span> <b id="m-rem-credit" style="color:#059669;">${inr(avail)}</b></div>
+      </div>
+      <div id="m-alloc-err" style="color:var(--err);font-size:12px;margin-top:8px;font-weight:600;"></div>
+    `,
+    footer: `
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn p" type="button" id="m-submit-apply" style="background:#6366f1;border-color:#6366f1;">Apply Retainer</button>
+    `
+  });
+
+  const updateCalcs = () => {
+    let tot = 0;
+    $$('.alloc-val', m.el).forEach(inp => {
+      tot += num(inp.value);
+    });
+    const rem = avail - tot;
+    $('#m-tot-applied', m.el).textContent = inr(tot);
+    const remEl = $('#m-rem-credit', m.el);
+    remEl.textContent = inr(rem);
+    if (rem < -0.009) {
+      remEl.style.color = 'var(--err)';
+      $('#m-alloc-err', m.el).textContent = `Total applied amount exceeds available balance by ${inr(Math.abs(rem))}`;
+    } else {
+      remEl.style.color = '#059669';
+      $('#m-alloc-err', m.el).textContent = '';
+    }
+  };
+
+  m.el.addEventListener('input', e => {
+    if (e.target.classList.contains('alloc-val')) updateCalcs();
+  });
+
+  m.el.addEventListener('click', async e => {
+    const maxBtn = e.target.closest('.alloc-max');
+    if (maxBtn) {
+      const invId = maxBtn.dataset.id;
+      const row = m.el.querySelector(`tr[data-inv-id="${invId}"]`);
+      const bal = num(row ? row.dataset.bal : 0);
+      const input = m.el.querySelector(`.alloc-val[data-id="${invId}"]`);
+      let otherUsed = 0;
+      $$('.alloc-val', m.el).forEach(inp => {
+        if (inp !== input) otherUsed += num(inp.value);
+      });
+      const remainingAvail = Math.max(0, avail - otherUsed);
+      const toAlloc = Math.min(bal, remainingAvail);
+      input.value = toAlloc > 0 ? toAlloc.toFixed(2) : '';
+      updateCalcs();
+      return;
+    }
+
+    if (e.target.id === 'm-submit-apply') {
+      const dt = $('#m-alloc-date', m.el).value;
+      const allocs = [];
+      $$('.alloc-val', m.el).forEach(inp => {
+        const amt = num(inp.value);
+        if (amt > 0) {
+          allocs.push({ invoice: Number(inp.dataset.id), amount: amt });
+        }
+      });
+      if (!allocs.length) {
+        $('#m-alloc-err', m.el).textContent = 'Please enter an amount to apply to at least one invoice.';
+        return;
+      }
+      let tot = allocs.reduce((a, b) => a + b.amount, 0);
+      if (tot > avail + 0.009) {
+        $('#m-alloc-err', m.el).textContent = 'Total applied amount exceeds available retainer balance.';
+        return;
+      }
+
+      try {
+        await api(`retainer-invoices/${retainerDoc.id}/apply/`, {
+          method: 'POST',
+          body: { allocations: allocs, date: dt }
+        });
+        toast(`Retainer applied successfully to ${allocs.length} invoice(s)`);
+        m.close();
+        if (onDone) onDone();
+      } catch (err) {
+        $('#m-alloc-err', m.el).textContent = err.message;
+      }
+    }
+  });
+}
+
+async function applyRetainerToInvoiceModal(invoiceDoc, onDone) {
+  const invBal = num(invoiceDoc.balance || 0);
+  if (invBal <= 0) {
+    toast('This invoice is already fully paid.', 'err');
+    return;
+  }
+  let res;
+  try {
+    res = await api('retainer-invoices/?' + qs({ customer: invoiceDoc.party_id || invoiceDoc.customer_id, available: 1, page_size: 50 }));
+  } catch (e) {
+    toast(e.message, 'err');
+    return;
+  }
+  const retainers = (res.results || []).filter(r => num(r.available_balance) > 0);
+  if (!retainers.length) {
+    toast(`No available retainer credits found for customer ${invoiceDoc.party || ''}.`, 'err');
+    return;
+  }
+
+  const m = Modal.open({
+    title: `Apply Retainer Credit · Invoice ${esc(invoiceDoc.number)}`,
+    wide: false,
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
+        <div><b>Customer:</b> ${esc(invoiceDoc.party)}</div>
+        <div style="margin-top:2px;"><b>Invoice Total:</b> ${inr(invoiceDoc.total)} &nbsp;|&nbsp; <b>Balance Due:</b> <span style="color:var(--accent);font-weight:700;">${inr(invBal)}</span></div>
+      </div>
+      <div class="fgrid">
+        ${fld({
+          name: 'retainer_id',
+          label: 'Select Retainer Invoice',
+          type: 'select',
+          req: 1,
+          opts: retainers.map(r => [r.id, `${r.number} (Available: ${inr(r.available_balance)})`]),
+          value: retainers[0].id,
+          col: 'c2'
+        })}
+        ${fld({
+          name: 'amount',
+          label: 'Amount to Apply (₹)',
+          type: 'number',
+          req: 1,
+          value: Math.min(invBal, num(retainers[0].available_balance)).toFixed(2),
+          attrs: `min="0.01" step="0.01"`,
+          col: 'c1'
+        })}
+        ${fld({ name: 'date', label: 'Application Date', type: 'date', req: 1, value: APP.today, col: 'c1' })}
+        ${fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 'c2', placeholder: 'Optional notes' })}
+      </div>
+      <div id="m-inv-alloc-err" style="color:var(--err);font-size:12px;margin-top:8px;font-weight:600;"></div>
+    `,
+    footer: `
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn p" type="button" id="m-inv-apply-btn" style="background:#6366f1;border-color:#6366f1;">Apply Credit</button>
+    `
+  });
+
+  const sel = m.el.querySelector('select[name="retainer_id"]');
+  const amtInp = m.el.querySelector('input[name="amount"]');
+  if (sel && amtInp) {
+    sel.addEventListener('change', () => {
+      const chosen = retainers.find(r => String(r.id) === String(sel.value));
+      if (chosen) {
+        amtInp.value = Math.min(invBal, num(chosen.available_balance)).toFixed(2);
+      }
+    });
+  }
+
+  m.el.addEventListener('click', async e => {
+    if (e.target.id === 'm-inv-apply-btn') {
+      const retId = Number(sel.value);
+      const amt = num(amtInp.value);
+      const dt = m.el.querySelector('input[name="date"]').value;
+      const notes = (m.el.querySelector('textarea[name="notes"]') || {}).value || '';
+      const chosen = retainers.find(r => String(r.id) === String(retId));
+
+      if (!chosen) {
+        $('#m-inv-alloc-err', m.el).textContent = 'Please select a retainer invoice.';
+        return;
+      }
+      if (amt <= 0) {
+        $('#m-inv-alloc-err', m.el).textContent = 'Amount must be greater than 0.';
+        return;
+      }
+      if (amt > invBal) {
+        $('#m-inv-alloc-err', m.el).textContent = `Amount cannot exceed invoice balance due (${inr(invBal)}).`;
+        return;
+      }
+      if (amt > num(chosen.available_balance)) {
+        $('#m-inv-alloc-err', m.el).textContent = `Amount cannot exceed available retainer balance (${inr(chosen.available_balance)}).`;
+        return;
+      }
+
+      try {
+        await api(`invoices/${invoiceDoc.id}/apply-retainer/`, {
+          method: 'POST',
+          body: {
+            allocations: [{ retainer_id: retId, amount: amt, notes }],
+            date: dt
+          }
+        });
+        toast(`Applied ${inr(amt)} retainer credit to invoice ${invoiceDoc.number}`);
+        m.close();
+        if (onDone) onDone();
+      } catch (err) {
+        $('#m-inv-alloc-err', m.el).textContent = err.message;
+      }
+    }
   });
 }
 

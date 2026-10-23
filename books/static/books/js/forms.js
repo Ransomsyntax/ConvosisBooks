@@ -1652,9 +1652,10 @@ async function itemForm(id) {
   });
 }
 
-/*  invoices / bills  */
+/*  invoices / bills / retainer invoices  */
 async function docForm(kind, id) {
-  const inv = kind === 'invoices', pk = inv ? 'customer' : 'vendor';
+  const isRetainer = kind === 'retainer-invoices';
+  const inv = kind === 'invoices' || isRetainer, pk = inv ? 'customer' : 'vendor';
   const [parties, items, rec] = await Promise.all([api(`lookup/${inv ? 'customers' : 'vendors'}/`), api('lookup/items/'), id ? api(`${kind}/${id}/`) : null]);
   if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   const itemOpts = [['', '— Custom line —'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])];
@@ -1665,9 +1666,12 @@ async function docForm(kind, id) {
   const due0 = r.due_date || '';
   const pendingFiles = [];
 
+  const docTitle = isRetainer ? 'Retainer Invoice' : (inv ? 'Invoice' : 'Bill');
+  const docTitleLower = isRetainer ? 'retainer invoice' : (inv ? 'invoice' : 'bill');
+
   formModal({
-    title: `${id ? 'Edit' : 'New'} ${inv ? 'invoice' : 'bill'}${id ? ' ' + r.number : ''}`, wide: true,
-    actions: id ? [{ label: 'Update ' + (inv ? 'Invoice' : 'Bill'), value: 'update', primary: true }, { label: 'Save as draft', value: 'draft' }] : [{ label: 'Save as draft', value: 'draft' }, { label: inv ? 'Save & send' : 'Save & approve', value: 'post', primary: true }],
+    title: `${id ? 'Edit' : 'New'} ${docTitleLower}${id ? ' ' + r.number : ''}`, wide: true,
+    actions: id ? [{ label: 'Update ' + docTitle, value: 'update', primary: true }, { label: 'Save as draft', value: 'draft' }] : [{ label: 'Save as draft', value: 'draft' }, { label: inv ? 'Save & send' : 'Save & approve', value: 'post', primary: true }],
     body: `<div class="fgrid">${[
       fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
       fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
@@ -1793,7 +1797,7 @@ async function docForm(kind, id) {
         try {
           await api('attachments/', {
             method: 'POST',
-            body: { entity_type: inv ? 'invoice' : 'bill', entity_id: saved.id, filename: pf.name, file_size: pf.size, mime_type: pf.type, file_data: pf.data }
+            body: { entity_type: isRetainer ? 'retainer_invoice' : (inv ? 'invoice' : 'bill'), entity_id: saved.id, filename: pf.name, file_size: pf.size, mime_type: pf.type, file_data: pf.data }
           });
         } catch (e) { console.error('Attachment upload error:', e); }
       }

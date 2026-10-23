@@ -532,10 +532,50 @@ class RecurringInvoice(models.Model):
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
     applied_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    terms = models.TextField(blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.number
+
+    @property
+    def paid_amount(self):
+        return sum((p.amount for p in self.payments.all()), Decimal('0.00'))
+
+    @property
+    def available_balance(self):
+        return max(Decimal('0.00'), self.paid_amount - self.applied_amount)
 
 
 class RetainerInvoiceLine(Line):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='lines')
+
+
+class RetainerPayment(models.Model):
+    retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='payments')
+    payment_received = models.ForeignKey('books.PaymentReceived', null=True, blank=True, on_delete=models.SET_NULL, related_name='retainer_payments')
+    date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    mode = models.CharField(max_length=20, choices=MODES, default='bank_transfer')
+    account = models.CharField(max_length=60, default='Bank Account')
+    reference = models.CharField(max_length=80, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.retainer.number} - ₹{self.amount}'
+
+
+class RetainerInvoiceAllocation(models.Model):
+    retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='allocations')
+    invoice = models.ForeignKey('books.Invoice', on_delete=models.CASCADE, related_name='retainer_allocations')
+    date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    notes = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.retainer.number} -> {self.invoice.number} (₹{self.amount})'
 
 
 class DeliveryChallan(models.Model):

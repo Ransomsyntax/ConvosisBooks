@@ -5,7 +5,10 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.utils import timezone
 
-from .models import Item, Organization
+from .models import (
+    Item, Organization, RetainerInvoice, RetainerPayment,
+    RetainerInvoiceAllocation, Journal, JournalItem, Account
+)
 
 
 class Base(TestCase):
@@ -750,6 +753,176 @@ class EnterpriseCustomerVendorWorkflowsTest(Base):
         self.assertEqual(res['bank_account_number'], '309988776655')
         self.assertEqual(res['bank_upi_id'], 'kirloskar@sbi')
         self.assertEqual(res['state'], 'Maharashtra')
+
+
+class RetainerInvoiceTests(Base):
+    def test_retainer_lifecycle_and_accounting(self):
+        c = self.customer(name='Global Enterprises')
+        # 1. Create Retainer Invoice
+        ret_data = {
+            'customer': c['id'],
+            'date': self.today,
+            'terms': 'Due on Receipt',
+            'order_number': 'PO-888',
+            'lines': [
+                {'description': 'Project Advance Deposit', 'quantity': '1', 'rate': '10000', 'discount_percent': '0', 'gst_rate': '18'}
+            ]
+        }
+        r = self.post('retainer-invoices/', ret_data)
+        self.assertEqual(r.status_code, 201, r.content)
+        ret = r.json()
+        self.assertEqual(ret['status'], 'Draft')
+        self.assertEqual(ret['total'], '11800.00')
+        self.assertEqual(ret['balance'], '0.00')
+        self.assertEqual(ret['order_number'], 'PO-888')
+
+        # 2. Send Retainer Invoice
+        r = self.post(f"retainer-invoices/{ret['id']}/send/")
+        self.assertEqual(r.status_code, 200, r.content)
+        r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
+        ret = r.json()
+        self.assertEqual(ret['raw_status'], 'sent')
+        self.assertEqual(ret['balance'], '11800.00')
+        self.assertEqual(ret['available_balance'], '0.00')
+
+        # 3. Record Payment on Retainer Invoice
+        r = self.post(f"retainer-invoices/{ret['id']}/pay/", {
+            'amount': '11800.00',
+            'date': self.today,
+            'mode': 'bank_transfer',
+            'account': 'Bank Account',
+            'reference': 'NEFT-12345',
+            'notes': 'Retainer deposit received'
+        })
+        self.assertEqual(r.status_code, 200, r.content)
+
+        # Verify ledger journal created for retainer payment
+        j_lines = JournalItem.objects.filter(journal__reference=ret['number'], journal__entry_type='retainer_payment')
+        self.assertTrue(j_lines.exists())
+        # Check credit to 2100 Customer Advance / Retainer Liability
+        cr_line = j_lines.filter(account__code='2100').first()
+        self.assertIsNotNone(cr_line)
+        self.assertEqual(cr_line.credit, Decimal('11800.00'))
+
+        # Check detail returns paid and available_balance
+        r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
+        ret = r.json()
+        self.assertEqual(ret['status'], 'Paid')
+        self.assertEqual(ret['balance'], '0.00')
+        self.assertEqual(ret['paid'], '11800.00')
+        self.assertEqual(ret['available_balance'], '11800.00')
+        self.assertEqual(len(ret['payments']), 1)
+
+        # 4. Create standard invoice for customer and send it
+        inv = self.invoice(c, lines=[{'description': 'Milestone 1 Delivery', 'quantity': '1', 'rate': '15000', 'discount_percent': '0', 'gst_rate': '18'}])
+        self.send(inv)
+        r = self.client.get(f"/api/invoices/{inv['id']}/")
+        inv_detail = r.json()
+        self.assertEqual(inv_detail['total'], '17700.00')
+        self.assertEqual(inv_detail['balance'], '17700.00')
+
+        # 5. Apply retainer credit to the invoice
+        r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
+            'allocations': [{'invoice': inv['id'], 'amount': '11800.00'}],
+            'date': self.today
+        })
+        self.assertEqual(r.status_code, 200, r.content)
+
+        # Verify ledger journal created for retainer application
+        apply_jlines = JournalItem.objects.filter(journal__reference=ret['number'], journal__entry_type='retainer_applied')
+        self.assertTrue(apply_jlines.exists())
+        # Debit Customer Advance 2100, Credit Accounts Receivable 1200
+        dr_line = apply_jlines.filter(account__code='2100').first()
+        self.assertIsNotNone(dr_line)
+        self.assertEqual(dr_line.debit, Decimal('11800.00'))
+        ar_line = apply_jlines.filter(account__code='1200').first()
+        self.assertIsNotNone(ar_line)
+        self.assertEqual(ar_line.credit, Decimal('11800.00'))
+
+        # Check invoice balance is reduced: 17700.00 - 11800.00 = 5900.00
+        r = self.client.get(f"/api/invoices/{inv['id']}/")
+        inv_detail = r.json()
+        self.assertEqual(inv_detail['balance'], '5900.00')
+        self.assertEqual(inv_detail['paid'], '11800.00')
+
+        # Check retainer available credit is now 0.00
+        r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
+        ret = r.json()
+        self.assertEqual(ret['available_balance'], '0.00')
+        self.assertEqual(ret['applied_amount'], '11800.00')
+        self.assertEqual(len(ret['allocations']), 1)
+
+    def test_apply_retainer_from_invoice_endpoint(self):
+        c = self.customer(name='Beta Tech')
+        r = self.post('retainer-invoices/', {
+            'customer': c['id'], 'date': self.today,
+            'lines': [{'description': 'Advance', 'quantity': '1', 'rate': '5000', 'discount_percent': '0', 'gst_rate': '18'}]
+        })
+        ret = r.json()
+        self.post(f"retainer-invoices/{ret['id']}/send/")
+        self.post(f"retainer-invoices/{ret['id']}/pay/", {
+            'amount': '5900.00', 'date': self.today, 'mode': 'cash'
+        })
+
+        inv = self.invoice(c, lines=[{'description': 'Work', 'quantity': '1', 'rate': '5000', 'discount_percent': '0', 'gst_rate': '18'}])
+        self.send(inv)
+
+        # Apply retainer from the invoice endpoint
+        r = self.post(f"invoices/{inv['id']}/apply-retainer/", {
+            'allocations': [{'retainer_id': ret['id'], 'amount': '5000.00'}],
+            'date': self.today
+        })
+        self.assertEqual(r.status_code, 200, r.content)
+
+        r = self.client.get(f"/api/invoices/{inv['id']}/")
+        inv_detail = r.json()
+        self.assertEqual(inv_detail['balance'], '900.00')
+
+        r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
+        ret_detail = r.json()
+        self.assertEqual(ret_detail['available_balance'], '900.00')
+
+    def test_retainer_validation_and_guards(self):
+        c1 = self.customer(name='Customer One')
+        c2 = self.customer(name='Customer Two')
+
+        r = self.post('retainer-invoices/', {
+            'customer': c1['id'], 'date': self.today,
+            'lines': [{'description': 'Advance', 'quantity': '1', 'rate': '2000', 'discount_percent': '0', 'gst_rate': '18'}]
+        })
+        ret = r.json()
+        self.post(f"retainer-invoices/{ret['id']}/send/")
+
+        # Cannot apply when no payment recorded (0 available balance)
+        inv1 = self.invoice(c1)
+        self.send(inv1)
+        r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
+            'allocations': [{'invoice': inv1['id'], 'amount': '500.00'}]
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('no available balance', r.json()['error'].lower())
+
+        # Pay 2360.00
+        self.post(f"retainer-invoices/{ret['id']}/pay/", {
+            'amount': '2360.00', 'date': self.today, 'mode': 'upi'
+        })
+
+        # Cannot apply more than available balance
+        r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
+            'allocations': [{'invoice': inv1['id'], 'amount': '3000.00'}]
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('exceeds available', r.json()['error'].lower())
+
+        # Cannot apply to customer two's invoice
+        inv2 = self.invoice(c2)
+        self.send(inv2)
+        r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
+            'allocations': [{'invoice': inv2['id'], 'amount': '1000.00'}]
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('does not belong', r.json()['error'].lower())
+
 
 
 

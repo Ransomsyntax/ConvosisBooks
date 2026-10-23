@@ -23,11 +23,11 @@ from .models import (
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTransaction,
     PriceList, Project, PurchaseOrder, PurchaseOrderLine, ReceivedAllocation, RecurringInvoice,
-    RetainerInvoice, RetainerInvoiceLine, SalesOrder, SalesOrderLine, SecurityBackupRecord,
-    StockMovement, TimeLog, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
-    Warehouse, WebhookConfig, WorkflowRule
+    RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, SalesOrder,
+    SalesOrderLine, SecurityBackupRecord, StockMovement, TimeLog, UserProfile, Vendor, VendorCredit,
+    VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
-from .services import bill_qs, invoice_qs, next_number, paid_expr
+from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
 
 Z = Decimal('0.00')
 MODE_KEYS = [m[0] for m in MODES]
@@ -567,7 +567,11 @@ class DocResource(Resource):
         return self.Model
 
     def base_qs(self):
-        return (invoice_qs() if self.Model is Invoice else bill_qs())
+        if self.Model is Invoice:
+            return invoice_qs()
+        if self.Model is RetainerInvoice:
+            return retainer_qs()
+        return bill_qs()
 
     def filter_qs(self, qs, request):
         g, today, P = request.GET, timezone.localdate(), self.posted
@@ -586,6 +590,8 @@ class DocResource(Resource):
             qs = qs.filter(status=P, paid_sum=0, due_date__gte=today)
         if g.get('open') == '1':
             qs = qs.filter(status=P, paid_sum__lt=F('total'))
+        if g.get('available') == '1' and self.Model is RetainerInvoice:
+            qs = qs.filter(status__in=['sent', 'partial', 'paid'], paid_sum__gt=F('applied_sum'))
         pid = g.get(self.party_attr)
         if pid and pid.isdigit():
             qs = qs.filter(**{self.party_attr + '_id': int(pid)})
@@ -601,18 +607,26 @@ class DocResource(Resource):
         return getattr(o, self.party_attr)
 
     def row(self, o):
-        paid = q2(o.paid_sum)
-        etype = 'invoice' if isinstance(o, Invoice) else 'bill'
+        paid = q2(getattr(o, 'paid_sum', 0))
+        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else 'bill')
         att_count = Attachment.objects.filter(entity_type=etype, entity_id=o.pk).count()
-        return {'id': o.pk, 'number': o.number, 'party_id': self.party(o).pk, 'party': self.party(o).name,
-                'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
-                'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
-                'status': display_status(o, self.posted, timezone.localdate()), 'raw_status': o.status,
-                'subtotal': o.subtotal, 'total': o.total, 'paid': paid, 'balance': o.total - paid if o.status == self.posted else Z}
+        r = {'id': o.pk, 'number': o.number, 'party_id': self.party(o).pk, 'party': self.party(o).name,
+             'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
+             'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
+             'status': display_status(o, self.posted, timezone.localdate()), 'raw_status': o.status,
+             'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
+             'balance': o.total - paid if o.status in (self.posted, 'partial', 'paid') else Z}
+        if isinstance(o, RetainerInvoice):
+            applied = q2(getattr(o, 'applied_sum', getattr(o, 'applied_amount', 0)))
+            r['applied_amount'] = applied
+            r['available_balance'] = max(Z, paid - applied)
+            r['customer_id'] = o.customer_id
+            r['customer_name'] = o.customer.name
+        return r
 
     def detail(self, o):
         r = self.row(o)
-        etype = 'invoice' if isinstance(o, Invoice) else 'bill'
+        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else 'bill')
         party = self.party(o)
         attachments = [
             {'id': a.pk, 'filename': a.filename, 'file_size': a.file_size, 'mime_type': a.mime_type,
@@ -626,6 +640,27 @@ class DocResource(Resource):
         }
         if hasattr(party, 'shipping_address'):
             party_info['shipping_address'] = party.shipping_address
+
+        payments = []
+        allocations = []
+        if isinstance(o, Invoice):
+            payments = [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
+                         'amount': a.amount, 'type': 'payment'} for a in o.allocations.select_related('payment')]
+            for ra in o.retainer_allocations.select_related('retainer'):
+                payments.append({'payment_id': None, 'number': f"Retainer {ra.retainer.number}",
+                                 'retainer_id': ra.retainer_id, 'date': ra.date, 'amount': ra.amount,
+                                 'type': 'retainer_credit'})
+        elif isinstance(o, RetainerInvoice):
+            payments = [{'id': p.pk, 'payment_id': p.payment_received_id, 'number': p.reference or f'Payment for {o.number}',
+                         'date': p.date, 'mode': p.mode, 'account': p.account, 'amount': p.amount}
+                        for p in o.payments.all()]
+            allocations = [{'id': a.pk, 'invoice_id': a.invoice_id, 'number': a.invoice.number,
+                            'date': a.date, 'amount': a.amount, 'notes': a.notes}
+                           for a in o.allocations.select_related('invoice')]
+        else:
+            payments = [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
+                         'amount': a.amount} for a in o.allocations.select_related('payment')]
+
         r.update({'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst, 'notes': o.notes,
                   'order_number': getattr(o, 'order_number', '') or '',
                   'intra_state': is_intra_state(o.place_of_supply, Organization.get().state),
@@ -634,8 +669,8 @@ class DocResource(Resource):
                              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
                              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
                              'line_total': l.line_total} for l in o.lines.all()],
-                  'payments': [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
-                                'amount': a.amount} for a in o.allocations.select_related('payment')]})
+                  'payments': payments,
+                  'allocations': allocations})
         r.update(self.extra_detail(o))
         return r
 
@@ -692,19 +727,20 @@ class DocResource(Resource):
     def update(self, obj, data, user):
         services.check_transaction_lock(obj.date)
         is_inv = isinstance(obj, Invoice)
+        is_ret = isinstance(obj, RetainerInvoice)
         if obj.status != 'draft':
             if not data.get('force'):
                 raise ApiError(409, 'Only drafts can be edited. Void this document and create a new one.')
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, +1, 'sale_void', user)
-            elif not is_inv and obj.status == 'open':
+            elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, -1, 'purchase_void', user)
             head, lines = self.parse(data)
             services.check_transaction_lock(head['date'])
             self.write(obj, head, lines)
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, -1, 'sale', user)
-            elif not is_inv and obj.status == 'open':
+            elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, +1, 'purchase', user)
             return
         head, lines = self.parse(data)
@@ -714,6 +750,15 @@ class DocResource(Resource):
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
         is_inv = isinstance(obj, Invoice)
+        is_ret = isinstance(obj, RetainerInvoice)
+        if is_ret:
+            if obj.allocations.exists():
+                raise ApiError(409, 'Cannot delete retainer invoice: it has already been applied to invoices. Remove those applications first.')
+            for p in list(obj.payments.all()):
+                services.delete_retainer_payment(p, None)
+            Attachment.objects.filter(entity_type='retainer_invoice', entity_id=obj.pk).delete()
+            obj.delete()
+            return
         if obj.status != 'draft':
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, +1, 'sale_void', None)
@@ -743,8 +788,71 @@ class InvoiceResource(DocResource):
             services.send_invoice(obj, request.user)
         elif name == 'void':
             services.void_invoice(obj, request.user)
+        elif name == 'apply-retainer':
+            b = body(request)
+            raw_allocs = b.get('allocations', [])
+            dt = Cleaner(b).date('date') or timezone.localdate()
+            if not raw_allocs or not isinstance(raw_allocs, list):
+                raise ApiError(400, 'Expected non-empty allocations list.')
+            for it in raw_allocs:
+                ret_id = it.get('retainer') or it.get('retainer_id')
+                amt = q2(it.get('amount') or 0)
+                ret = RetainerInvoice.objects.filter(pk=ret_id).first()
+                if not ret:
+                    raise ApiError(404, 'Retainer invoice not found.')
+                services.apply_retainer_to_invoices(ret, [{'invoice': obj, 'amount': amt, 'notes': it.get('notes', '')}], request.user, dt)
         else:
             raise ApiError(404, 'Unknown action.')
+
+
+class RetainerInvoiceResource(DocResource):
+    name = 'retainer-invoices'
+    Model, Line, Party = RetainerInvoice, RetainerInvoiceLine, Customer
+    party_attr, line_fk, prefix, posted = 'customer', 'retainer', 'RET', 'sent'
+    search_fields = ('number', 'customer__name')
+    csv_cols = [('Retainer#', 'number'), ('Customer', 'party'), ('Date', 'date'),
+                ('Status', 'status'), ('Taxable', 'subtotal'), ('Total', 'total'),
+                ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
+
+    def extra_clean(self, c):
+        return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
+
+    def extra_detail(self, o):
+        paid = q2(getattr(o, 'paid_sum', o.paid_amount))
+        applied = q2(getattr(o, 'applied_sum', o.applied_amount))
+        return {
+            'terms': getattr(o, 'terms', ''),
+            'order_number': o.order_number,
+            'paid': paid,
+            'applied_amount': applied,
+            'available_balance': max(Z, paid - applied)
+        }
+
+    def action(self, request, obj, name):
+        if name == 'send':
+            services.send_retainer_invoice(obj, request.user)
+        elif name == 'void':
+            services.void_retainer_invoice(obj, request.user)
+        elif name in ('pay', 'record-payment'):
+            c = Cleaner(body(request))
+            amt = c.number('amount', required=True, lo=Decimal('0.01'))
+            dt = c.date('date', required=True)
+            mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
+            account = c.text('account', default='Bank Account', max_len=60)
+            ref = c.text('reference', max_len=80)
+            notes = c.text('notes', max_len=2000)
+            c.done()
+            services.record_retainer_payment(obj, amt, dt, mode, account, ref, notes, request.user)
+        elif name in ('apply', 'apply-to-invoices'):
+            b = body(request)
+            raw_allocs = b.get('allocations', [])
+            dt = Cleaner(b).date('date') or timezone.localdate()
+            if not raw_allocs or not isinstance(raw_allocs, list):
+                raise ApiError(400, 'Expected non-empty allocations list.')
+            services.apply_retainer_to_invoices(obj, raw_allocs, request.user, dt)
+        else:
+            raise ApiError(404, 'Unknown action.')
+
 
 
 class BillResource(DocResource):
@@ -1844,7 +1952,7 @@ class FinancialAnomalyResource(Resource):
 
 
 RESOURCES = {r.name: r for r in (
-    CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), BillResource(),
+    CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
     AccountResource(), JournalResource(), AuditLogResource(), CustomFieldResource(), WorkflowRuleResource(),
     WebhookConfigResource(), BankAccountResource(), BankTransactionResource(), DocumentFolderResource(),

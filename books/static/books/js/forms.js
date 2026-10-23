@@ -612,7 +612,6 @@ async function partyForm(kind, id) {
     wide: true,
     body: formHtml,
     onReady: (form, modal) => {
-      // 1. Tab Switching
       const tabs = $$('.party-tab-btn', modal.el);
       const panes = $$('.party-tab-pane', modal.el);
       tabs.forEach(btn => {
@@ -625,7 +624,6 @@ async function partyForm(kind, id) {
         });
       });
 
-      // 2. Toggle Add More Details
       $('#btn_toggle_add_details', modal.el).addEventListener('click', () => {
         const splitEl = $('#party_details_split', modal.el);
         if (splitEl) {
@@ -639,7 +637,6 @@ async function partyForm(kind, id) {
         }
       });
 
-      // 3. Customer Type Pills
       if (isCust) {
         const pillBiz = $('#pill_type_business', modal.el);
         const pillInd = $('#pill_type_individual', modal.el);
@@ -652,7 +649,6 @@ async function partyForm(kind, id) {
           $('input[name="customer_type"][value="individual"]', modal.el).checked = true;
         });
 
-        // Tax preference toggle
         $$('input[name="tax_preference"]', modal.el).forEach(radio => {
           radio.addEventListener('change', () => {
             const wrap = $('#exemption_reason_wrap', modal.el);
@@ -661,7 +657,6 @@ async function partyForm(kind, id) {
           });
         });
       } else {
-        // Vendor MSME toggle
         const msmeCk = $('#is_msme_registered', modal.el);
         const msmeWrap = $('#msme_fields_wrap', modal.el);
         msmeCk.addEventListener('change', () => {
@@ -669,7 +664,6 @@ async function partyForm(kind, id) {
         });
       }
 
-      // 4. GST Portal Prefill
       const doPrefill = async () => {
         const gstinVal = ($('#gst_prefill_code', modal.el).value || $('#gstin', modal.el).value || '').trim().toUpperCase();
         if (!gstinVal || gstinVal.length < 15) {
@@ -720,7 +714,6 @@ async function partyForm(kind, id) {
 
       $('#btn_trigger_gst_prefill', modal.el).addEventListener('click', doPrefill);
 
-      // Keep both GSTIN inputs in sync
       $('#gstin', modal.el).addEventListener('input', e => {
         $('#gst_prefill_code', modal.el).value = e.target.value;
       });
@@ -728,7 +721,6 @@ async function partyForm(kind, id) {
         $('#gstin', modal.el).value = e.target.value;
       });
 
-      // 5. Display Name Quick Picker
       $('#display_name_picker', modal.el).addEventListener('change', e => {
         const val = e.target.value;
         if (val === 'company') {
@@ -741,7 +733,6 @@ async function partyForm(kind, id) {
         e.target.value = '';
       });
 
-      // 6. Copy Billing Address to Shipping
       if (isCust) {
         $('#btn_copy_billing_addr', modal.el).addEventListener('click', () => {
           $('#shipping_attention', modal.el).value = $('#billing_attention', modal.el).value;
@@ -754,7 +745,6 @@ async function partyForm(kind, id) {
         });
       }
 
-      // 7. Contact Persons Dynamic List
       const contContainer = $('#contact_persons_container', modal.el);
       const renderContacts = () => {
         $('#cnt_badge', modal.el).textContent = contactPersonsList.length;
@@ -800,7 +790,6 @@ async function partyForm(kind, id) {
       });
       renderContacts();
 
-      // 8. Custom Fields Dynamic List
       const cfContainer = $('#custom_fields_container', modal.el);
       const renderCustomFields = () => {
         if (!customFieldsList.length) {
@@ -832,7 +821,6 @@ async function partyForm(kind, id) {
       });
       renderCustomFields();
 
-      // 9. Document Attachments
       const docListEl = $('#uploaded_files_list', modal.el);
       const renderDocs = () => {
         $('#doc_badge', modal.el).textContent = documentsList.length;
@@ -877,7 +865,6 @@ async function partyForm(kind, id) {
       renderDocs();
     },
     onSubmit: async d => {
-      // Validate Bank Account Confirmation for Vendors
       if (!isCust) {
         const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
         const cfAcc = ($('#bank_account_number_confirm', modal.el) ? $('#bank_account_number_confirm', modal.el).value : '').trim();
@@ -886,7 +873,6 @@ async function partyForm(kind, id) {
         }
       }
 
-      // Attach dynamic lists
       d.contact_persons_data = contactPersonsList.filter(c => c.first_name || c.ln_input || c.email);
       const cfMap = {};
       customFieldsList.forEach(cf => {
@@ -895,11 +881,9 @@ async function partyForm(kind, id) {
       d.custom_fields_data = cfMap;
       d.documents_data = documentsList;
 
-      // Sync notes and remarks
       d.notes = (d.notes || d.remarks || '').trim();
       d.remarks = d.notes;
 
-      // Sync state for GST calculations
       if (isCust && d.place_of_supply) {
         const stMatch = d.place_of_supply.replace(/^\[\d+\]\s*/, '').trim();
         if (stMatch) d.state = stMatch;
@@ -946,7 +930,6 @@ async function itemForm(id) {
   const isGoods = (r.type || r.item_type || 'goods') === 'goods';
   const img = r.image_data || '';
 
-  // Units list as specified in requirements
   const ITEM_UNITS = [
     ['box', 'box (Box)'],
     ['cm', 'cm (Centimeter)'],
@@ -1366,7 +1349,6 @@ async function itemForm(id) {
     </div>
     `,
     onReady: (form, m) => {
-      // 1. Picture upload and preview handling
       const fileInput = $('#itemImageFileInput', form);
       const dataInput = $('#itemImageDataInput', form);
       const emptyState = $('#dropzoneEmpty', form);
@@ -1428,7 +1410,6 @@ async function itemForm(id) {
         if (fileInput.files && fileInput.files[0]) processFile(fileInput.files[0]);
       };
 
-      // Drag and drop events
       ['dragenter', 'dragover'].forEach(evt => {
         dropzone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover'); });
       });

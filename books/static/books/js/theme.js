@@ -1,6 +1,3 @@
-// CONVOSIS — Appearance Engine
-// Glassmorphism tuning, accent colours, light / dark / auto mode, and Mist theme backdrop.
-// Applied through CSS variables (see css/glass.css) so changes are live.
 
 (function () {
   'use strict';
@@ -13,7 +10,6 @@
     { id: 'mist', name: 'Mist', css: 'radial-gradient(60% 60% at 15% 10%, #ffffff 0%, transparent 60%), radial-gradient(60% 60% at 90% 90%, #cbd5e1 0%, transparent 65%), linear-gradient(160deg, #e2e8f0, #cbd5e1)' }
   ];
 
-  // k = how much to darken the accent for text on light glass
   const ACCENTS = [
     { id: 'convosis', name: 'Convosis Cyan', base: '#0284c7', k: 0.1 },
     { id: 'blue',     name: 'Classic Blue',  base: '#0a84ff', k: 0.3 },
@@ -34,13 +30,13 @@
   };
 
   const DEFAULTS = {
-    mode: 'light',          // light | dark | auto
+    mode: 'light',
     accent: 'convosis',
-    wallpaper: 'mist',      // Mist theme exclusively
-    wpBlur: 0,              // px
-    wpDim: 0,               // %
+    wallpaper: 'mist',
+    wpBlur: 0,
+    wpDim: 0,
     animate: true,
-    glassPreset: 'frosted', // preset id | custom
+    glassPreset: 'frosted',
     glassBlur: 28,
     glassOpacity: 62,
     glassSat: 180,
@@ -94,11 +90,9 @@
       if (saved) {
         this.state = Object.assign({}, DEFAULTS, saved);
       } else {
-        // First run: check stored dark theme preference
         const legacy = window.convosisStore && window.convosisStore.state && window.convosisStore.state.themeMode;
         this.state = Object.assign({}, DEFAULTS, legacy === 'dark' ? { mode: 'dark' } : {});
       }
-      // Enforce Mist theme exclusively and remove custom wallpapers
       this.state.wallpaper = 'mist';
     },
 
@@ -164,7 +158,6 @@
       const app = document.getElementById('app');
       if (app) app.classList.toggle('sidebar-collapsed', !!s.sidebarHidden && window.innerWidth > 768);
 
-      // Update theme toggle buttons if any exist in DOM
       const themeBtn = document.getElementById('themeToggleBtn');
       if (themeBtn) {
         const isDark = mode === 'dark';
@@ -179,7 +172,6 @@
         }
       }
 
-      // Keep legacy store in sync if present
       const store = window.convosisStore;
       if (store && store.state && store.state.themeMode !== mode) {
         store.state.themeMode = mode;
@@ -205,7 +197,6 @@
       set('--accent-to', to);
       set('--accent-on', a.on || '#ffffff');
 
-      // Global themed variables used across modules and styles
       set('--convosis-cyan', a.base);
       set('--convosis-blue', to);
       set('--convosis-blue-dark', mix(to, '#000000', 0.15));
@@ -254,7 +245,7 @@
       this._wpKey = key;
 
       if (!css) { layers.forEach(l => l.classList.remove('on')); return; }
-      this._wpIdx = 1 - this._wpIdx;                       // cross-fade between two layers
+      this._wpIdx = 1 - this._wpIdx;
       const next = layers[this._wpIdx], prev = layers[1 - this._wpIdx];
       if (next) {
         next.style.background = css;
@@ -287,7 +278,6 @@
       if (app) app.classList.toggle('sidebar-collapsed', !!v);
     },
 
-    // slider changes — no re-render so dragging stays ultra-smooth
     live(key, value) {
       this.state[key] = Number(value);
       if (key.indexOf('glass') === 0) this.state.glassPreset = 'custom';
@@ -396,7 +386,6 @@
 
   window.ThemeEngine = ThemeEngine;
 
-  // Auto initialize on DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => ThemeEngine.init());
   } else {

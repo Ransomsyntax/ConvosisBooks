@@ -16,23 +16,19 @@ const NAV = [
   ['Convosis Payments', 'pay', ['Payment Overview', 'Payment Transactions', 'Payment Settings']],
 ];
 const ROUTES = {
-  // Home
   'home/dashboard': r => renderDashboard(r),
   'home/getting-started': gettingStarted,
   'home/recent-updates': recentUpdates,
 
-  // Items
   'items/items-services': r => listPage(r, LISTS.items),
   'items/item-categories': r => listPage(r, LISTS['item-categories']),
   'items/price-lists': r => listPage(r, LISTS['price-lists']),
 
-  // Inventory
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
   'inventory/stock-movement': r => listPage(r, LISTS.movements),
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
-  // Sales
   'sales/customers': r => listPage(r, LISTS.customers),
   'sales/sales-orders': r => listPage(r, LISTS['sales-orders']),
   'sales/invoices': r => docMasterDetail(r, 'invoices'),
@@ -43,7 +39,6 @@ const ROUTES = {
   'sales/credit-notes': r => listPage(r, LISTS['credit-notes']),
   'sales/e-way-bills': r => listPage(r, LISTS['e-way-bills']),
 
-  // Purchases
   'purchases/vendors': r => listPage(r, LISTS.vendors),
   'purchases/expenses': r => listPage(r, LISTS.expenses),
   'purchases/purchase-orders': r => listPage(r, LISTS['purchase-orders']),
@@ -51,24 +46,20 @@ const ROUTES = {
   'purchases/payments-made': r => listPage(r, LISTS['payments-made']),
   'purchases/vendor-credits': r => listPage(r, LISTS['vendor-credits']),
 
-  // Time Tracking
   'time/projects': r => listPage(r, LISTS.projects),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
 
-  // Banking
   'banking/bank-accounts': r => listPage(r, LISTS['bank-accounts']),
   'banking/transactions': r => listPage(r, LISTS['bank-transactions']),
   'banking/bank-reconciliation': r => bankingReconciliationPage(r),
   'banking/transfers': r => bankTransfersPage(r),
 
-  // Filing & Compliance
   'filing/gst-filing': r => gstFilingPage(r, 'overview'),
   'filing/gstr-1-summary': r => gstFilingPage(r, 'gstr1'),
   'filing/gstr-3b-summary': r => gstFilingPage(r, 'gstr3b'),
   'filing/input-tax-credit-summary': r => gstFilingPage(r, 'itc'),
   'filing/tax-liability-summary': r => gstFilingPage(r, 'tax'),
 
-  // Accountant
   'accountant/manual-journals': r => listPage(r, LISTS['manual-journals']),
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
   'accountant/transaction-locking': r => transactionLockingPage(r),
@@ -76,12 +67,10 @@ const ROUTES = {
   'accountant/tenant-admin': r => tenantAdminPage(r),
   'accountant/security-compliance': r => securityCompliancePage(r),
 
-  // Platform & Settings
   'settings/subscription-billing': r => subscriptionBillingPage(r),
   'settings/tenant-admin': r => tenantAdminPage(r),
   'developer/platform': r => developerPlatformPage(r),
 
-  // Reports
   'reports/reports-center': r => reportsCenterPage(r),
   'reports/business-overview': r => profitAndLossPage(r),
   'reports/sales-reports': r => reportTablePage(r, 'sales-by-customer', 'Sales By Customer Report', 'Sales'),
@@ -93,14 +82,12 @@ const ROUTES = {
   'reports/accounting-reports': r => trialBalancePage(r),
   'reports/cash-flow-reports': r => cashFlowPage(r),
 
-  // Documents
   'documents/all-documents': r => documentsPage(r, 'all'),
   'documents/files': r => documentsPage(r, 'files'),
   'documents/bank-statements': r => documentsPage(r, 'bank_statement'),
   'documents/folders': r => documentsPage(r, 'folders'),
   'documents/trash': r => documentsPage(r, 'trash'),
 
-  // Convosis Payments
   'pay/payment-overview': r => paymentOverviewPage(r),
   'pay/payment-transactions': r => listPage(r, LISTS['payment-transactions']),
   'pay/payment-settings': r => paymentSettingsPage(r),
@@ -183,7 +170,6 @@ const closePops = () => {
   });
 })();
 
-// Mobile touch event support: instant tap outside to close dropdowns
 document.addEventListener('touchstart', e => {
   const t = e.target;
   if (!t.closest('.pop') && !t.closest('#um') && !t.closest('#qc') && !t.closest('#notifBtn') && !t.closest('#orgbtn')) {

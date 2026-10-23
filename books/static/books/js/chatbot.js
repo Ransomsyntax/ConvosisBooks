@@ -911,22 +911,17 @@
     if (!md) return '';
     let out = esc(md);
 
-    // Headers
     out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
     out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
 
-    // Bold & Italics
     out = out.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
     out = out.replace(/\*(.*?)\*/g, '<i>$1</i>');
 
-    // Code blocks & Inline code
     out = out.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-    // Math block / formulas
     out = out.replace(/\$\$(.*?)\$\$/g, '<div class="fingpt-formula-box">$1</div>');
 
-    // Markdown tables
     const tableRegex = /\|(.+)\|[\r\n]+\|[-:| ]+\|[\r\n]+((?:\|.+|[\r\n]*)+)/g;
     out = out.replace(tableRegex, (match, header, rows) => {
       const ths = header.split('|').map(c => c.trim()).filter(Boolean).map(c => `<th>${c}</th>`).join('');
@@ -937,14 +932,11 @@
       return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
     });
 
-    // Unordered lists
     out = out.replace(/^\s*-\s+(.*$)/gim, '<li>$1</li>');
     out = out.replace(/(<li>[\s\S]*<\/li>)/, '<ul>$1</ul>');
 
-    // Numbered lists
     out = out.replace(/^\s*\d+\.\s+(.*$)/gim, '<li>$1</li>');
 
-    // Line breaks
     out = out.replace(/\n\n/g, '<br><br>');
 
     return out;
@@ -961,14 +953,12 @@
 
     const stream = $('#fingpt-messages-stream');
 
-    // Render User Message (Turn white font to orange)
     const userRow = document.createElement('div');
     userRow.className = 'fingpt-msg-row user';
     userRow.innerHTML = `<div class="fingpt-msg-bubble">${esc(q)}</div>`;
     stream.appendChild(userRow);
     stream.scrollTop = stream.scrollHeight;
 
-    // Render Bot Thinking indicator
     const botRow = document.createElement('div');
     botRow.className = 'fingpt-msg-row bot';
     botRow.innerHTML = `
@@ -993,13 +983,11 @@
 
       const res = await api('ai/doubt-clearance/', { method: 'POST', body: payload });
 
-      // Save history
       conversationHistory.push({ role: 'user', content: q });
       conversationHistory.push({ role: 'assistant', content: res.summary || res.answer });
 
       let extraContentHtml = '';
 
-      // Cards if any
       if (res.cards && res.cards.length) {
         extraContentHtml += `
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0;">
@@ -1013,7 +1001,6 @@
         `;
       }
 
-      // Table Data if any
       if (res.data && res.data.length) {
         const keys = Object.keys(res.data[0]);
         extraContentHtml += `
@@ -1036,12 +1023,10 @@
         `;
       }
 
-      // Formula Box if any
       if (res.rule_formula) {
         extraContentHtml += `<div class="fingpt-formula-box"><b style="color:#000000;">Accounting Rule / Formula:</b> <span style="color:#ea580c;">${esc(res.rule_formula)}</span></div>`;
       }
 
-      // Key Takeaways Box
       if (res.key_takeaways && res.key_takeaways.length) {
         extraContentHtml += `
           <div class="fingpt-takeaways">
@@ -1056,7 +1041,6 @@
         `;
       }
 
-      // Quick Deep-Link Actions
       if (res.quick_actions && res.quick_actions.length) {
         extraContentHtml += `
           <div class="fingpt-actions-row">
@@ -1070,7 +1054,6 @@
         `;
       }
 
-      // Follow-up Related Doubts
       if (res.related_doubts && res.related_doubts.length) {
         extraContentHtml += `
           <div style="font-size:11.5px;font-weight:700;color:#ea580c;margin:12px 0 6px;">Related Questions You Can Ask:</div>
@@ -1082,7 +1065,6 @@
         `;
       }
 
-      // Toolbar (Copy + Feedback)
       const toolbarHtml = `
         <div class="fingpt-msg-toolbar">
           <button class="fingpt-copy-btn" type="button">
@@ -1119,7 +1101,6 @@
     }
   }
 
-  // Expose global controller
   window.openFinGptDoubtBot = function (query) {
     toggleDoubtBot(true);
     if (query) {
@@ -1127,12 +1108,10 @@
     }
   };
 
-  // Override legacy Zia modal to launch the ChatGPT Doubt Bot
   window.ziaAiAssistantModal = function (query) {
     window.openFinGptDoubtBot(query);
   };
 
-  // Initialize on DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', createDoubtBotUI);
   } else {

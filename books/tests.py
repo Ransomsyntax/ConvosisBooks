@@ -534,12 +534,10 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertIn('notifications', data)
         self.assertTrue(len(data['notifications']) >= 1)
 
-        # Mark all read
         r_mark = self.client.post('/api/notifications/mark-all-read/')
         self.assertEqual(r_mark.status_code, 200)
         self.assertEqual(r_mark.json()['status'], 'success')
 
-        # Check unread count is now 0
         r_after = self.client.get('/api/notifications/')
         self.assertEqual(r_after.json()['unread_count'], 0)
 
@@ -552,7 +550,6 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertIn('invoices', data['usage'])
         self.assertIn('user_seats', data['usage'])
 
-        # Upgrade plan to enterprise
         r_up = self.client.post('/api/subscription/update/', data=json.dumps({'tier': 'enterprise', 'billing_cycle': 'annual'}), content_type='application/json')
         self.assertEqual(r_up.status_code, 200)
         self.assertEqual(r_up.json()['tier'], 'enterprise')
@@ -565,7 +562,6 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertIn('members', data)
         self.assertIn('metrics', data)
 
-        # Invite user
         r_inv = self.client.post('/api/tenant/admin/invite/', data=json.dumps({
             'username': 'compliance_auditor',
             'email': 'auditor@convosis.com',
@@ -575,13 +571,11 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertEqual(r_inv.status_code, 200)
         uid = r_inv.json()['user_id']
 
-        # Update role
         r_role = self.client.post(f'/api/tenant/admin/users/{uid}/role/', data=json.dumps({'role': 'accountant'}), content_type='application/json')
         self.assertEqual(r_role.status_code, 200)
         self.assertEqual(r_role.json()['role'], 'accountant')
 
     def test_developer_api_keys_and_webhooks(self):
-        # 1. API Keys
         r_keys = self.client.get('/api/developer/keys/')
         self.assertEqual(r_keys.status_code, 200)
         self.assertIn('keys', r_keys.json())
@@ -594,11 +588,9 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertTrue(r_create_key.json()['raw_key'].startswith('sk_live_'))
         key_id = r_create_key.json()['id']
 
-        # Revoke key
         r_revoke = self.client.post(f'/api/developer/keys/{key_id}/revoke/')
         self.assertEqual(r_revoke.status_code, 200)
 
-        # 2. Webhooks
         r_hooks = self.client.get('/api/developer/webhooks/')
         self.assertEqual(r_hooks.status_code, 200)
         self.assertIn('webhooks', r_hooks.json())
@@ -610,14 +602,12 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertEqual(r_create_hook.status_code, 201)
         hook_id = r_create_hook.json()['id']
 
-        # Test ping
         r_ping = self.client.post(f'/api/developer/webhooks/{hook_id}/test/')
         self.assertEqual(r_ping.status_code, 200)
         self.assertEqual(r_ping.json()['status'], 'delivered')
         self.assertEqual(r_ping.json()['status_code'], 200)
 
     def test_ai_assistant_live_accounting_context(self):
-        # Verify context endpoint
         r_ctx = self.client.get('/api/ai/context/')
         self.assertEqual(r_ctx.status_code, 200)
         data = r_ctx.json()
@@ -625,7 +615,6 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertIn('total_receivable', data)
         self.assertIn('month_net_profit', data)
 
-        # Verify query with live context grounding
         r_ai = self.client.post('/api/ai/doubt-clearance/', data=json.dumps({
             'query': 'Give me an executive briefing of our current business health'
         }), content_type='application/json')
@@ -758,7 +747,6 @@ class EnterpriseCustomerVendorWorkflowsTest(Base):
 class RetainerInvoiceTests(Base):
     def test_retainer_lifecycle_and_accounting(self):
         c = self.customer(name='Global Enterprises')
-        # 1. Create Retainer Invoice
         ret_data = {
             'customer': c['id'],
             'date': self.today,
@@ -776,7 +764,6 @@ class RetainerInvoiceTests(Base):
         self.assertEqual(ret['balance'], '0.00')
         self.assertEqual(ret['order_number'], 'PO-888')
 
-        # 2. Send Retainer Invoice
         r = self.post(f"retainer-invoices/{ret['id']}/send/")
         self.assertEqual(r.status_code, 200, r.content)
         r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
@@ -785,7 +772,6 @@ class RetainerInvoiceTests(Base):
         self.assertEqual(ret['balance'], '11800.00')
         self.assertEqual(ret['available_balance'], '0.00')
 
-        # 3. Record Payment on Retainer Invoice
         r = self.post(f"retainer-invoices/{ret['id']}/pay/", {
             'amount': '11800.00',
             'date': self.today,
@@ -796,15 +782,12 @@ class RetainerInvoiceTests(Base):
         })
         self.assertEqual(r.status_code, 200, r.content)
 
-        # Verify ledger journal created for retainer payment
         j_lines = JournalItem.objects.filter(journal__reference=ret['number'], journal__entry_type='retainer_payment')
         self.assertTrue(j_lines.exists())
-        # Check credit to 2100 Customer Advance / Retainer Liability
         cr_line = j_lines.filter(account__code='2100').first()
         self.assertIsNotNone(cr_line)
         self.assertEqual(cr_line.credit, Decimal('11800.00'))
 
-        # Check detail returns paid and available_balance
         r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
         ret = r.json()
         self.assertEqual(ret['status'], 'Paid')
@@ -813,7 +796,6 @@ class RetainerInvoiceTests(Base):
         self.assertEqual(ret['available_balance'], '11800.00')
         self.assertEqual(len(ret['payments']), 1)
 
-        # 4. Create standard invoice for customer and send it
         inv = self.invoice(c, lines=[{'description': 'Milestone 1 Delivery', 'quantity': '1', 'rate': '15000', 'discount_percent': '0', 'gst_rate': '18'}])
         self.send(inv)
         r = self.client.get(f"/api/invoices/{inv['id']}/")
@@ -821,17 +803,14 @@ class RetainerInvoiceTests(Base):
         self.assertEqual(inv_detail['total'], '17700.00')
         self.assertEqual(inv_detail['balance'], '17700.00')
 
-        # 5. Apply retainer credit to the invoice
         r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
             'allocations': [{'invoice': inv['id'], 'amount': '11800.00'}],
             'date': self.today
         })
         self.assertEqual(r.status_code, 200, r.content)
 
-        # Verify ledger journal created for retainer application
         apply_jlines = JournalItem.objects.filter(journal__reference=ret['number'], journal__entry_type='retainer_applied')
         self.assertTrue(apply_jlines.exists())
-        # Debit Customer Advance 2100, Credit Accounts Receivable 1200
         dr_line = apply_jlines.filter(account__code='2100').first()
         self.assertIsNotNone(dr_line)
         self.assertEqual(dr_line.debit, Decimal('11800.00'))
@@ -839,13 +818,11 @@ class RetainerInvoiceTests(Base):
         self.assertIsNotNone(ar_line)
         self.assertEqual(ar_line.credit, Decimal('11800.00'))
 
-        # Check invoice balance is reduced: 17700.00 - 11800.00 = 5900.00
         r = self.client.get(f"/api/invoices/{inv['id']}/")
         inv_detail = r.json()
         self.assertEqual(inv_detail['balance'], '5900.00')
         self.assertEqual(inv_detail['paid'], '11800.00')
 
-        # Check retainer available credit is now 0.00
         r = self.client.get(f"/api/retainer-invoices/{ret['id']}/")
         ret = r.json()
         self.assertEqual(ret['available_balance'], '0.00')
@@ -867,7 +844,6 @@ class RetainerInvoiceTests(Base):
         inv = self.invoice(c, lines=[{'description': 'Work', 'quantity': '1', 'rate': '5000', 'discount_percent': '0', 'gst_rate': '18'}])
         self.send(inv)
 
-        # Apply retainer from the invoice endpoint
         r = self.post(f"invoices/{inv['id']}/apply-retainer/", {
             'allocations': [{'retainer_id': ret['id'], 'amount': '5000.00'}],
             'date': self.today
@@ -893,7 +869,6 @@ class RetainerInvoiceTests(Base):
         ret = r.json()
         self.post(f"retainer-invoices/{ret['id']}/send/")
 
-        # Cannot apply when no payment recorded (0 available balance)
         inv1 = self.invoice(c1)
         self.send(inv1)
         r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
@@ -902,19 +877,16 @@ class RetainerInvoiceTests(Base):
         self.assertEqual(r.status_code, 400)
         self.assertIn('no available balance', r.json()['error'].lower())
 
-        # Pay 2360.00
         self.post(f"retainer-invoices/{ret['id']}/pay/", {
             'amount': '2360.00', 'date': self.today, 'mode': 'upi'
         })
 
-        # Cannot apply more than available balance
         r = self.post(f"retainer-invoices/{ret['id']}/apply/", {
             'allocations': [{'invoice': inv1['id'], 'amount': '3000.00'}]
         })
         self.assertEqual(r.status_code, 400)
         self.assertIn('exceeds available', r.json()['error'].lower())
 
-        # Cannot apply to customer two's invoice
         inv2 = self.invoice(c2)
         self.send(inv2)
         r = self.post(f"retainer-invoices/{ret['id']}/apply/", {

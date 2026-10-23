@@ -32,8 +32,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
-try:  # optional: serve static files in production without extra web-server config
-    import whitenoise  # noqa: F401
+try:
+    import whitenoise
     MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 except ImportError:
     pass

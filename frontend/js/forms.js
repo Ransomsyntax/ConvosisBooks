@@ -2,32 +2,123 @@
 
 const Modal = (() => {
   const stack = [];
-  function open({ title, body, footer = '', wide = false, onClose }) {
+
+  function open({ title, body, footer = '', wide = false, onClose, dialog = false, onScreen = null }) {
+    const pg = $('#pg');
+    const hasFormElements = Boolean(body && (
+      body.includes('<form') ||
+      body.includes('type="submit"') ||
+      body.includes('class="fe"') ||
+      body.includes('party-form-wrap') ||
+      body.includes('convo-item-modal')
+    ));
+    const renderOnScreen = (onScreen === true || (hasFormElements && !dialog && onScreen !== false)) && Boolean(pg);
+
+    if (renderOnScreen && pg) {
+      const prevChildren = Array.from(pg.children);
+      prevChildren.forEach(child => {
+        if (child._origDisplay === undefined) {
+          child._origDisplay = child.style.display;
+        }
+        child.style.display = 'none';
+      });
+
+      const el = document.createElement('div');
+      el.className = 'on-screen-form-view';
+      el.setAttribute('role', 'region');
+      el.setAttribute('aria-label', title || 'Form');
+
+      el.innerHTML = `
+        <div class="on-screen-form-header">
+          <div class="on-screen-header-left">
+            <button type="button" class="btn on-screen-back-btn" data-close title="Back" aria-label="Back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </button>
+            <h1 class="on-screen-form-title">${esc(title)}</h1>
+          </div>
+        </div>
+        <div class="on-screen-form-body-wrap">
+          <div class="mb on-screen-form-content ${wide ? 'wide' : ''}">${body}</div>
+        </div>
+        <div class="on-screen-sticky-footer">
+          ${footer ? footer : '<button type="button" class="btn" data-close>Cancel</button>'}
+        </div>
+      `;
+
+      pg.appendChild(el);
+      window.scrollTo({ top: 0, behavior: 'instant' });
+
+      const m = {
+        el,
+        body: $('.mb', el),
+        beforeClose: null,
+        prev: document.activeElement,
+        onScreen: true,
+        closed: false
+      };
+
+      m.close = () => {
+        if (m.closed) return;
+        m.closed = true;
+        const i = stack.indexOf(m);
+        if (i >= 0) stack.splice(i, 1);
+        el.remove();
+        prevChildren.forEach(child => {
+          child.style.display = child._origDisplay || '';
+        });
+        if (!prevChildren.length && window.PAGE && window.PAGE.reload) {
+          window.PAGE.reload();
+        }
+        if (onClose) onClose();
+        if (m.prev && m.prev.isConnected && m.prev.focus) m.prev.focus();
+      };
+
+      m.request = async () => {
+        if (m.beforeClose && !(await m.beforeClose())) return;
+        m.close();
+      };
+
+      el.addEventListener('click', e => {
+        if (e.target.closest('[data-close]')) {
+          e.preventDefault();
+          m.request();
+        }
+      });
+
+      stack.push(m);
+      const f = el.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
+      if (f) f.focus();
+      return m;
+    }
+
     const el = document.createElement('div');
     el.className = 'mo';
-    el.innerHTML = `<div class="md ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><button type="button" class="x" data-close aria-label="Close">×</button></div><div class="mb">${body}</div>${footer ? `<div class="mf">${footer}</div>` : ''}</div>`;
+    el.innerHTML = `<div class="md ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div><div class="mb">${body}</div>${footer ? `<div class="mf">${footer}</div>` : ''}</div>`;
     $('#modal-root').appendChild(el);
-    const m = { el, body: $('.mb', el), beforeClose: null, prev: document.activeElement };
+    const m = { el, body: $('.mb', el), beforeClose: null, prev: document.activeElement, onScreen: false, closed: false };
     m.close = () => {
+      if (m.closed) return;
+      m.closed = true;
       const i = stack.indexOf(m); if (i >= 0) stack.splice(i, 1);
       el.remove();
-      if (!stack.length) document.body.classList.remove('modal-open');
+      if (!stack.some(x => !x.onScreen)) document.body.classList.remove('modal-open');
       if (onClose) onClose();
       if (m.prev && m.prev.isConnected && m.prev.focus) m.prev.focus();
     };
     m.request = async () => { if (m.beforeClose && !(await m.beforeClose())) return; m.close(); };
-    el.addEventListener('click', e => { if (e.target.closest('[data-close]')) m.request(); });
+    el.addEventListener('click', e => { if (e.target.closest('[data-close]')) { e.preventDefault(); m.request(); } });
     stack.push(m);
     document.body.classList.add('modal-open');
     const f = el.querySelector('input:not([type=hidden]):not([disabled]),select,textarea') || el.querySelector('.mf .p');
     if (f) f.focus();
     return m;
   }
+
   document.addEventListener('keydown', e => {
     if (!stack.length) return;
     const top = stack[stack.length - 1];
     if (e.key === 'Escape') { e.stopImmediatePropagation(); top.request(); }
-    if (e.key === 'Tab') {
+    if (e.key === 'Tab' && !top.onScreen) {
       const f = $$('a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled])', top.el);
       if (!f.length) return;
       const first = f[0], last = f[f.length - 1];
@@ -35,7 +126,8 @@ const Modal = (() => {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
   });
-  return { open, get top() { return stack[stack.length - 1]; }, count: () => stack.length };
+
+  return { open, get top() { return stack[stack.length - 1]; }, count: () => stack.length, stack };
 })();
 
 function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
@@ -89,13 +181,13 @@ function showErrors(form, errors, msg) {
   if (inp) inp.focus();
 }
 
-function formModal({ title, body, submit = 'Save', actions, wide, onSubmit, onReady }) {
+function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmit, onReady, onClose, dialog = false }) {
   const id = 'f' + (++uid);
   const acts = actions || [{ label: submit, value: 'save', primary: true }];
   const m = Modal.open({
-    title, wide,
+    title, wide, dialog, onClose,
     body: `<form id="${id}" novalidate>${body}<div class="fe" data-err="_" role="alert"></div></form>`,
-    footer: `<button type="button" class="btn" data-close>Cancel</button>` + acts.map(a => `<button type="submit" form="${id}" name="action" value="${a.value}" class="btn ${a.primary ? 'p' : ''}">${esc(a.label)}</button>`).join(''),
+    footer: acts.map(a => `<button type="submit" form="${id}" name="action" value="${a.value}" class="btn ${a.primary ? 'p' : ''}">${esc(a.label)}</button>`).join('') + `<button type="button" class="btn" data-close>Cancel</button>`,
   });
   const form = $('#' + id, m.el);
   let dirty = false;

@@ -144,6 +144,13 @@ function drawNav(cur) {
 
 function route() {
   destroyCharts(); PAGE.reload = null;
+  if (window.Modal && Modal.stack) {
+    while (Modal.stack.length) {
+      const topM = Modal.stack.pop();
+      if (topM && topM.el && topM.el.remove) topM.el.remove();
+    }
+  }
+  document.body.classList.remove('modal-open');
   let raw = (location.hash.slice(2) || 'home/dashboard').replace(/\/$/, '');
   let h = DEFAULT_ROUTES[raw] || raw;
   if (!h || h === 'home') h = 'home/dashboard';

@@ -120,6 +120,13 @@ function route() {
   pg.replaceChildren(root);
   drawNav(h);
   document.body.classList.remove('mo');
+  document.body.classList.remove('modal-open');
+  if (window.Modal && Modal.stack) {
+    while (Modal.stack.length) {
+      const topM = Modal.stack.pop();
+      if (topM && topM.el && topM.el.remove) topM.el.remove();
+    }
+  }
   closePops();
   const fn = ROUTES[h];
   if (fn) { Promise.resolve().then(() => fn(root)).catch(e => { root.innerHTML = errBox(e.message); console.error(e); }); }

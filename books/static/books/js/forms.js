@@ -2,170 +2,32 @@
 
 const Modal = (() => {
   const stack = [];
-
-  function open({ title, body, footer = '', wide = false, onClose, dialog = false, onScreen = null }) {
-    const pg = $('#pg');
-    const hasFormElements = Boolean(body && (
-      body.includes('<form') ||
-      body.includes('<input') ||
-      body.includes('<select') ||
-      body.includes('<textarea')
-    ));
-    const renderOnScreen = (onScreen === true || (hasFormElements && !dialog && onScreen !== false)) && Boolean(pg);
-
-    if (renderOnScreen && pg) {
-      const prevChildren = Array.from(pg.children);
-      prevChildren.forEach(child => {
-        if (!child._savedDisplayState) {
-          child._origDisplay = child.style.display;
-          child._savedDisplayState = true;
-        }
-        child.style.display = 'none';
-      });
-
-      const el = document.createElement('div');
-      el.className = 'on-screen-form-view';
-      el.setAttribute('role', 'region');
-      el.setAttribute('aria-label', title || 'Form');
-
-      el.innerHTML = `
-        <div class="doc-detail-bar on-screen-form-bar">
-          <div class="doc-detail-title-grp">
-            <button type="button" class="btn back-btn" data-close title="Go Back">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-              <span>Back</span>
-            </button>
-            <div>
-              <h1 class="doc-detail-title">${esc(title)}</h1>
-              <span class="sub" style="font-size:12px;color:var(--tx-muted);">Fill in details below</span>
-            </div>
-          </div>
-          <div class="doc-detail-actions on-screen-top-actions">
-            ${footer || '<button type="button" class="btn" data-close>Cancel</button>'}
-          </div>
-        </div>
-        <div class="doc-canvas-scroll on-screen-canvas-scroll">
-          <div class="doc-form-card on-screen-form-card ${wide ? 'wide' : ''}">
-            <div class="mb">${body}</div>
-            ${footer ? `<div class="mf on-screen-bottom-actions">${footer}</div>` : ''}
-          </div>
-        </div>
-      `;
-
-      pg.appendChild(el);
-      window.scrollTo({ top: 0, behavior: 'instant' });
-
-      const m = {
-        el,
-        body: $('.mb', el),
-        beforeClose: null,
-        prev: document.activeElement,
-        onScreen: true,
-        closed: false
-      };
-
-      m.close = () => {
-        if (m.closed) return;
-        m.closed = true;
-        const i = stack.indexOf(m);
-        if (i >= 0) stack.splice(i, 1);
-        el.remove();
-        prevChildren.forEach(child => {
-          child.style.display = child._origDisplay || '';
-        });
-        if (!prevChildren.length && window.PAGE && window.PAGE.reload) {
-          window.PAGE.reload();
-        }
-        if (onClose) onClose();
-        if (m.prev && m.prev.isConnected && m.prev.focus) m.prev.focus();
-      };
-
-      m.request = async () => {
-        if (m.beforeClose && !(await m.beforeClose())) return;
-        m.close();
-      };
-
-      el.addEventListener('click', e => {
-        if (e.target.closest('[data-close]')) {
-          e.preventDefault();
-          return m.request();
-        }
-
-        const btn = e.target.closest('button');
-        if (btn && (btn.closest('.on-screen-bottom-actions') || btn.closest('.on-screen-top-actions'))) {
-          if (btn.type === 'submit' && btn.form) return;
-          if (btn.id) {
-            const twins = $$('#' + btn.id, el).filter(b => b !== btn);
-            twins.forEach(twin => {
-              if (!twin._triggeringClick) {
-                twin._triggeringClick = true;
-                twin.click();
-                twin._triggeringClick = false;
-              }
-            });
-          }
-        }
-      });
-
-      stack.push(m);
-      const f = el.querySelector('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])') || el.querySelector('.doc-detail-actions .p');
-      if (f) setTimeout(() => f.focus(), 60);
-      return m;
-    }
-
-    // Modal dialog mode (for confirmBox, quick inspection sheets, etc.)
+  function open({ title, body, footer = '', wide = false, onClose }) {
     const el = document.createElement('div');
     el.className = 'mo';
     el.innerHTML = `<div class="md ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><button type="button" class="x" data-close aria-label="Close">×</button></div><div class="mb">${body}</div>${footer ? `<div class="mf">${footer}</div>` : ''}</div>`;
     $('#modal-root').appendChild(el);
-    const m = {
-      el,
-      body: $('.mb', el),
-      beforeClose: null,
-      prev: document.activeElement,
-      onScreen: false,
-      closed: false
-    };
-
+    const m = { el, body: $('.mb', el), beforeClose: null, prev: document.activeElement };
     m.close = () => {
-      if (m.closed) return;
-      m.closed = true;
-      const i = stack.indexOf(m);
-      if (i >= 0) stack.splice(i, 1);
+      const i = stack.indexOf(m); if (i >= 0) stack.splice(i, 1);
       el.remove();
-      if (!stack.some(x => !x.onScreen)) document.body.classList.remove('modal-open');
+      if (!stack.length) document.body.classList.remove('modal-open');
       if (onClose) onClose();
       if (m.prev && m.prev.isConnected && m.prev.focus) m.prev.focus();
     };
-
-    m.request = async () => {
-      if (m.beforeClose && !(await m.beforeClose())) return;
-      m.close();
-    };
-
-    el.addEventListener('click', e => {
-      if (e.target.closest('[data-close]')) m.request();
-    });
-
+    m.request = async () => { if (m.beforeClose && !(await m.beforeClose())) return; m.close(); };
+    el.addEventListener('click', e => { if (e.target.closest('[data-close]')) m.request(); });
     stack.push(m);
     document.body.classList.add('modal-open');
     const f = el.querySelector('input:not([type=hidden]):not([disabled]),select,textarea') || el.querySelector('.mf .p');
     if (f) f.focus();
     return m;
   }
-
-  function closeTop() {
-    if (stack.length) stack[stack.length - 1].close();
-  }
-
   document.addEventListener('keydown', e => {
     if (!stack.length) return;
     const top = stack[stack.length - 1];
-    if (e.key === 'Escape') {
-      e.stopImmediatePropagation();
-      top.request();
-    }
-    if (e.key === 'Tab' && !top.onScreen) {
+    if (e.key === 'Escape') { e.stopImmediatePropagation(); top.request(); }
+    if (e.key === 'Tab') {
       const f = $$('a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled])', top.el);
       if (!f.length) return;
       const first = f[0], last = f[f.length - 1];
@@ -173,8 +35,7 @@ const Modal = (() => {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
   });
-
-  return { open, close: closeTop, get top() { return stack[stack.length - 1]; }, count: () => stack.length, stack };
+  return { open, get top() { return stack[stack.length - 1]; }, count: () => stack.length };
 })();
 
 function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
@@ -182,7 +43,7 @@ function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
     let done = false;
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const m = Modal.open({
-      title, body: `<p>${esc(message)}</p>`, onClose: () => fin(false), dialog: true,
+      title, body: `<p>${esc(message)}</p>`, onClose: () => fin(false),
       footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn ${danger ? 'd' : 'p'}" type="button" data-ok>${esc(okText)}</button>`,
     });
     $('[data-ok]', m.el).addEventListener('click', () => { fin(true); m.close(); });
@@ -228,11 +89,11 @@ function showErrors(form, errors, msg) {
   if (inp) inp.focus();
 }
 
-function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmit, onReady, onClose }) {
+function formModal({ title, body, submit = 'Save', actions, wide, onSubmit, onReady }) {
   const id = 'f' + (++uid);
   const acts = actions || [{ label: submit, value: 'save', primary: true }];
   const m = Modal.open({
-    title, wide, onScreen: true, onClose,
+    title, wide,
     body: `<form id="${id}" novalidate>${body}<div class="fe" data-err="_" role="alert"></div></form>`,
     footer: `<button type="button" class="btn" data-close>Cancel</button>` + acts.map(a => `<button type="submit" form="${id}" name="action" value="${a.value}" class="btn ${a.primary ? 'p' : ''}">${esc(a.label)}</button>`).join(''),
   });
@@ -1777,12 +1638,12 @@ async function docForm(kind, id, targetEl, onDone) {
   const isBill = kind === 'bills';
   const inv = kind === 'invoices' || isRetainer, pk = inv ? 'customer' : 'vendor';
 
-  let target = targetEl || document.getElementById('detail-col-box') || document.getElementById('pg');
-  if (!target) {
+  let target = targetEl || document.getElementById('detail-col-box');
+  if (!target && !document.getElementById('modal-root')) {
     const route = isRetainer ? 'sales/retainer-invoices' : (inv ? 'sales/invoices' : 'purchases/bills');
     location.hash = '#/' + route;
     setTimeout(() => {
-      const newTarget = document.getElementById('detail-col-box') || document.getElementById('pg');
+      const newTarget = document.getElementById('detail-col-box');
       if (newTarget) docForm(kind, id, newTarget, onDone);
     }, 120);
     return;
@@ -1809,14 +1670,8 @@ async function docForm(kind, id, targetEl, onDone) {
     target.innerHTML = `
       <div class="doc-detail-bar" style="position:sticky; top:0; z-index:20;">
         <div class="doc-detail-title-grp">
-          <button type="button" class="btn back-btn" id="btn-doc-back" title="Go Back">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-            <span>Back</span>
-          </button>
-          <div>
-            <h1 class="doc-detail-title">${id ? 'Edit ' + docTitle + ' ' + esc(r.number || '') : 'New ' + docTitle}</h1>
-            <span class="sub" style="font-size:12px;">Fill in document details below</span>
-          </div>
+          <h1 class="doc-detail-title">${id ? 'Edit ' + docTitle + ' ' + esc(r.number || '') : 'New ' + docTitle}</h1>
+          <span class="sub" style="font-size:12px;">Fill in document details below</span>
         </div>
         <div class="doc-detail-actions">
           <button class="btn" type="button" id="btn-doc-cancel">Cancel</button>
@@ -2015,10 +1870,8 @@ async function docForm(kind, id, targetEl, onDone) {
 
     const cancelBtn1 = $('#btn-doc-cancel', target);
     const cancelBtn2 = $('#btn-doc-cancel-btm', target);
-    const backBtn = $('#btn-doc-back', target);
     if (cancelBtn1) cancelBtn1.addEventListener('click', cancelFn);
     if (cancelBtn2) cancelBtn2.addEventListener('click', cancelFn);
-    if (backBtn) backBtn.addEventListener('click', cancelFn);
 
     const submitFn = async (action) => {
       const btns = $$('#btn-doc-save, #btn-doc-draft, #btn-doc-save-btm, #btn-doc-draft-btm', target);
@@ -2530,7 +2383,7 @@ async function journalForm() {
     }
   });
 
-  const postJournal = async () => {
+  $('#jrn-submit-btn', m.el).addEventListener('click', async () => {
     clearErrors(form);
     const dt = $('input[name="date"]', form).value;
     const ref = $('input[name="reference"]', form).value;
@@ -2555,10 +2408,7 @@ async function journalForm() {
     } catch (err) {
       showErrors(form, err.errors, err.message);
     }
-  };
-
-  $$('#jrn-submit-btn', m.el).forEach(b => b.addEventListener('click', postJournal));
-  form.addEventListener('submit', e => { e.preventDefault(); postJournal(); });
+  });
   updateTotals();
 }
 
@@ -2777,7 +2627,7 @@ async function documentUploadModal(folderId) {
     `
   });
 
-  $$('#doc-upload-btn', m.el).forEach(btn => btn.addEventListener('click', async () => {
+  $('#doc-upload-btn', m.el).addEventListener('click', async () => {
     const title = $('input[name="title"]', m.el).value.trim();
     if (!title) return toast('Document title is required', 'err');
     const category = $('select[name="category"]', m.el).value;
@@ -3099,7 +2949,6 @@ async function viewDocumentOcrModal(doc) {
   const m = Modal.open({
     title: `OCR Data: ${doc.title}`,
     wide: true,
-    dialog: true,
     body: `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:10px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
         <div>
@@ -3335,7 +3184,6 @@ async function fileGstrReturnModal(returnType = 'GSTR1') {
       m.close();
       Modal.open({
         title: 'GSTN Return Filed Successfully!',
-        dialog: true,
         body: `
           <div style="text-align:center;padding:16px;">
             <div style="width:60px;height:60px;border-radius:50%;background:rgba(16,185,129,0.15);color:var(--up);display:grid;place-items:center;font-size:28px;margin:0 auto 12px;">✓</div>

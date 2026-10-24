@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CONVOSIS Books</title>
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<script>try{var a=JSON.parse(localStorage.getItem('convosis_appearance_v1')||'null');var m=(a&&a.mode)||'light';if(m==='auto')m=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',m)}catch(e){}</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/glass.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="wallpaper" class="wallpaper" aria-hidden="true"><div class="wp-image"></div><div class="wp-image"></div><div class="wp-dim"></div></div>
+
+<header id="top">
+  <button class="ib" id="burger" type="button" aria-label="Toggle navigation" title="Toggle Sidebar">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+
+  <a class="logo" href="#/home/dashboard">
+    <img src="img/convosis-logo.png" alt="Convosis">
+    <span class="app">Books</span>
+  </a>
+
+  <div id="gs">
+    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    <input id="q" placeholder="Search customers, vendors, invoices, bills, items…" aria-label="Global search" autocomplete="off">
+    <kbd>/</kbd>
+    <div class="pop" id="qr" role="listbox"></div>
+  </div>
+
+  <div class="sp"></div>
+
+  <button class="org" id="orgbtn" type="button" title="Organization Profile & Settings">
+    <span id="orgname">Convosis Technologies</span>
+    <small id="orgfy"></small>
+  </button>
+
+  <button class="theme-toggle-btn" id="themeToggleBtn" type="button" onclick="ThemeEngine.toggleMode()" title="Toggle Dark / Light Theme">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+    <span>Dark Mode</span>
+  </button>
+
+  <div class="rel">
+    <button class="ib" id="notifBtn" type="button" aria-label="Notifications" title="Live Alerts & Notifications">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+      <span class="notification-dot" id="notifDot" style="display:none;"></span>
+    </button>
+    <div class="pop right" id="notifPop" style="width:380px;padding:0;max-height:480px;overflow:hidden;display:none;flex-direction:column;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,0.18);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bd);background:var(--surface-glass-elevated);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <b style="font-size:13.5px;color:var(--tx);">Live Notifications</b>
+          <span class="pastel-chip chip-rose" id="notifCountChip" style="font-size:11px;padding:1px 7px;">0</span>
+        </div>
+        <button class="btn" id="markAllReadBtn" type="button" style="font-size:11px;padding:3px 8px;">Mark All Read</button>
+      </div>
+      <div id="notifListContainer" style="max-height:390px;overflow-y:auto;display:flex;flex-direction:column;">
+        <div class="spin" style="margin:24px auto;">Checking notifications…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rel">
+    <button class="plus" id="qc" type="button" aria-label="Quick create" aria-haspopup="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      <span>Create</span>
+    </button>
+    <div class="pop right" id="qcm"></div>
+  </div>
+
+  <div class="rel user-menu-wrap" id="userMenuWrapper">
+    <button class="av" id="um" type="button" aria-label="User menu" aria-haspopup="true">A</button>
+    <div class="pop right user-dropdown" id="umm" role="menu">
+      <div class="who" id="who"></div>
+      <div class="umm-divider"></div>
+      <button class="mi" data-a="org" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 21v-4h6v4M7 3h10l2 4H5l2-4z"/></svg>
+        <span>Organization Settings</span>
+      </button>
+      <button class="mi" onclick="location.hash='#/settings/subscription-billing'" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        <span>Subscription & Billing</span>
+      </button>
+      <button class="mi" onclick="location.hash='#/accountant/tenant-admin'" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        <span>SaaS Tenant Administration</span>
+      </button>
+      <button class="mi" onclick="location.hash='#/developer/platform'" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span>API Developer Platform</span>
+      </button>
+      <button class="mi" onclick="location.hash='#/accountant/security-compliance'" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>Security & Compliance</span>
+      </button>
+      <button class="mi" onclick="ThemeEngine.openDrawer()" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Appearance & Glass</span>
+      </button>
+      <div class="umm-divider"></div>
+      <button class="mi umm-logout" data-a="logout" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span>Sign Out</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<nav id="side" aria-label="Main navigation"></nav>
+
+<main><div class="pg" id="pg"></div></main>
+
+<div id="modal-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/theme.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" async></script>
+<script src="js/core.js"></script>
+<script src="js/forms.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/pages.js"></script>
+<script src="js/app.js"></script>
+<script src="js/chatbot.js"></script>
+</body>
+</html>

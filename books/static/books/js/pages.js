@@ -989,7 +989,6 @@ async function docDetail(kind, id) {
 
   const m = Modal.open({
     title: `${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'} ${d.number}`, wide: true,
-    dialog: true,
     body: `
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
         <button class="btn" type="button" data-do="edit">Edit</button>
@@ -1352,7 +1351,6 @@ async function paymentDetail(kind, id) {
   const rec = kind === 'payments-received', d = await api(`${kind}/${id}/`);
   const m = Modal.open({
     title: `Payment ${d.number}`,
-    dialog: true,
     body: `${kvBox([[rec ? 'Customer' : 'Vendor', esc(d.party)], ['Date', fd(d.date)], ['Mode', esc(d.mode_label)], ['Account', esc(d.account)], ['Reference', esc(d.reference || '—')], ['Amount', inr(d.amount)], ['Applied', inr(d.applied)], ['Unapplied', inr(d.unapplied)]])}
 ${d.allocations.length ? `<table><thead><tr><th>${rec ? 'Invoice' : 'Bill'}</th><th class="r">Applied</th></tr></thead><tbody>${d.allocations.map(a => `<tr><td>${esc(a.number)}</td><td class="r">${inr(a.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="sub">Not applied to any document.</p>'}${d.notes ? `<p><span class="sub">Notes:</span> ${esc(d.notes)}</p>` : ''}
 <p class="hp">Deleting a payment restores the balance due on the documents it was applied to.</p>`,
@@ -1372,7 +1370,6 @@ async function partyDetail(kind, id) {
   const [p, dl, pl] = await Promise.all([api(`${kind}/${id}/`), api(`${docs}/?` + qs({ [pk]: id, page_size: 20, ordering: '-date' })), api(`${pay}/?` + qs({ [pk]: id, page_size: 20 }))]);
   const m = Modal.open({
     title: p.name, wide: true,
-    dialog: true,
     body: `${kvBox([['Billed', inr(p.billed)], [cust ? 'Receivable' : 'Payable', inr(p.outstanding)], ['Overdue', `<span class="${num(p.overdue) > 0 ? 'dn' : ''}">${inr(p.overdue)}</span>`], ['Email', esc(p.email || '—')], ['Phone', esc(p.phone || '—')], ['State', esc(p.state || '—')], ['GSTIN', esc(p.gstin || '—')], ['Payment terms', p.payment_terms + ' days']])}
 <h3 style="font-size:14px;margin:12px 0 6px">${cust ? 'Invoices' : 'Bills'}</h3>${dl.results.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Date</th><th>Status</th><th class="r">Total</th><th class="r">Balance</th></tr></thead><tbody>${dl.results.map(d => `<tr><td><button class="lk" type="button" data-open="${d.id}">${esc(d.number)}</button></td><td>${fd(d.date)}</td><td>${badge(d.status)}</td><td class="r">${inr(d.total)}</td><td class="r">${inr(d.balance)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">None yet.</p>'}
 <h3 style="font-size:14px;margin:12px 0 6px">Payments</h3>${pl.results.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Date</th><th>Mode</th><th class="r">Amount</th></tr></thead><tbody>${pl.results.map(x => `<tr><td>${esc(x.number)}</td><td>${fd(x.date)}</td><td>${esc(x.mode_label)}</td><td class="r">${inr(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">None yet.</p>'}`,
@@ -1875,7 +1872,6 @@ async function gstFilingPage(root, tab = 'overview') {
       Modal.open({
         title: 'GSTN Return Filing History & Digital Signatures',
         wide: true,
-        dialog: true,
         body: `
           <div class="tw"><table><thead><tr><th>Return</th><th>Period</th><th>Status</th><th>ARN Acknowledgment</th><th>Filed Date</th><th>Tax Payable</th></tr></thead><tbody>
             ${hist.length ? hist.map(h => `<tr><td><b>${esc(h.return_type)}</b></td><td>${esc(h.tax_period)}</td><td><span class="pastel-chip chip-mint">${esc(h.status)}</span></td><td><code>${esc(h.arn || '—')}</code></td><td>${esc(h.filed_at ? fd(h.filed_at) : '—')}</td><td>${inr(h.total_tax)}</td></tr>`).join('') : '<tr><td colspan="6" class="sub" style="text-align:center;padding:16px;">No filed returns yet. File your first return above.</td></tr>'}
@@ -2613,7 +2609,6 @@ async function securityCompliancePage(root) {
         const res = await api('security/audit-chain/verify/');
         Modal.open({
           title: 'MCA Rule 3 Statutory Audit Hash-Chain Verification',
-          dialog: true,
           body: `
             <div style="text-align:center;padding:14px;">
               <div style="width:50px;height:50px;border-radius:50%;background:rgba(16,185,129,0.15);color:var(--up);display:grid;place-items:center;font-size:24px;margin:0 auto 10px;">✓</div>
@@ -3241,7 +3236,6 @@ async function developerPlatformPage(root, tab = 'keys') {
             const res = await api('developer/keys/', { method: 'POST', body: { name, scopes } });
             Modal.open({
               title: 'API Key Created Successfully',
-              dialog: true,
               body: `
                 <div style="padding:14px;text-align:center;">
                   <div style="font-size:28px;margin-bottom:8px;">🔑</div>
@@ -3301,7 +3295,6 @@ async function developerPlatformPage(root, tab = 'keys') {
           const res = await api(`developer/webhooks/${hookId}/test/`, { method: 'POST' });
           Modal.open({
             title: `Webhook Test Ping: 200 OK (${res.latency_ms}ms)`,
-            dialog: true,
             body: `
               <div style="padding:10px 0;">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">

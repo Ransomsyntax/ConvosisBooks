@@ -15,21 +15,39 @@ const NAV = [
   ['Documents', 'documents', ['All Documents', 'Files', 'Bank Statements', 'Folders', 'Trash']],
   ['Convosis Payments', 'pay', ['Payment Overview', 'Payment Transactions', 'Payment Settings']],
 ];
+const DEFAULT_ROUTES = {
+  home: 'home/dashboard',
+  items: 'items/items',
+  inventory: 'inventory/inventory-summary',
+  sales: 'sales/invoices',
+  purchases: 'purchases/bills',
+  time: 'time/projects',
+  banking: 'banking/bank-accounts',
+  filing: 'filing/gst-filing',
+  accountant: 'accountant/manual-journals',
+  reports: 'reports/reports-center',
+  documents: 'documents/all-documents',
+  pay: 'pay/payment-overview',
+};
 const ROUTES = {
+  'home': r => renderDashboard(r),
   'home/dashboard': r => renderDashboard(r),
   'home/getting-started': gettingStarted,
   'home/recent-updates': recentUpdates,
 
+  'items': r => listPage(r, LISTS.items),
   'items/items': r => listPage(r, LISTS.items),
   'items/items-services': r => listPage(r, LISTS.items),
   'items/item-categories': r => listPage(r, LISTS['item-categories']),
   'items/price-lists': r => listPage(r, LISTS['price-lists']),
 
+  'inventory': r => listPage(r, LISTS.inventory),
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
   'inventory/stock-movement': r => listPage(r, LISTS.movements),
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
+  'sales': r => docMasterDetail(r, 'invoices'),
   'sales/customers': r => listPage(r, LISTS.customers),
   'sales/sales-orders': r => listPage(r, LISTS['sales-orders']),
   'sales/invoices': r => docMasterDetail(r, 'invoices'),
@@ -40,6 +58,7 @@ const ROUTES = {
   'sales/credit-notes': r => listPage(r, LISTS['credit-notes']),
   'sales/e-way-bills': r => listPage(r, LISTS['e-way-bills']),
 
+  'purchases': r => docMasterDetail(r, 'bills'),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
   'purchases/expenses': r => listPage(r, LISTS.expenses),
   'purchases/purchase-orders': r => listPage(r, LISTS['purchase-orders']),
@@ -47,20 +66,24 @@ const ROUTES = {
   'purchases/payments-made': r => listPage(r, LISTS['payments-made']),
   'purchases/vendor-credits': r => listPage(r, LISTS['vendor-credits']),
 
+  'time': r => listPage(r, LISTS.projects),
   'time/projects': r => listPage(r, LISTS.projects),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
 
+  'banking': r => listPage(r, LISTS['bank-accounts']),
   'banking/bank-accounts': r => listPage(r, LISTS['bank-accounts']),
   'banking/transactions': r => listPage(r, LISTS['bank-transactions']),
   'banking/bank-reconciliation': r => bankingReconciliationPage(r),
   'banking/transfers': r => bankTransfersPage(r),
 
+  'filing': r => gstFilingPage(r, 'overview'),
   'filing/gst-filing': r => gstFilingPage(r, 'overview'),
   'filing/gstr-1-summary': r => gstFilingPage(r, 'gstr1'),
   'filing/gstr-3b-summary': r => gstFilingPage(r, 'gstr3b'),
   'filing/input-tax-credit-summary': r => gstFilingPage(r, 'itc'),
   'filing/tax-liability-summary': r => gstFilingPage(r, 'tax'),
 
+  'accountant': r => listPage(r, LISTS['manual-journals']),
   'accountant/manual-journals': r => listPage(r, LISTS['manual-journals']),
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
   'accountant/transaction-locking': r => transactionLockingPage(r),
@@ -73,6 +96,7 @@ const ROUTES = {
   'settings/tenant-admin': r => tenantAdminPage(r),
   'developer/platform': r => developerPlatformPage(r),
 
+  'reports': r => reportsCenterPage(r),
   'reports/reports-center': r => reportsCenterPage(r),
   'reports/business-overview': r => profitAndLossPage(r),
   'reports/sales-reports': r => reportTablePage(r, 'sales-by-customer', 'Sales By Customer Report', 'Sales'),
@@ -84,12 +108,14 @@ const ROUTES = {
   'reports/accounting-reports': r => trialBalancePage(r),
   'reports/cash-flow-reports': r => cashFlowPage(r),
 
+  'documents': r => documentsPage(r, 'all'),
   'documents/all-documents': r => documentsPage(r, 'all'),
   'documents/files': r => documentsPage(r, 'files'),
   'documents/bank-statements': r => documentsPage(r, 'bank_statement'),
   'documents/folders': r => documentsPage(r, 'folders'),
   'documents/trash': r => documentsPage(r, 'trash'),
 
+  'pay': r => paymentOverviewPage(r),
   'pay/payment-overview': r => paymentOverviewPage(r),
   'pay/payment-transactions': r => listPage(r, LISTS['payment-transactions']),
   'pay/payment-settings': r => paymentSettingsPage(r),
@@ -111,26 +137,22 @@ const PASTEL = {
 let openG = pref.get('open', ['home']);
 
 function drawNav(cur) {
-  const items = NAV.map(([l, k, ch], i) => `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button><div class="ch">${ch.map(c => `<a href="#/${k}/${slug(c)}" class="${cur === k + '/' + slug(c) ? 'on' : ''}" ${cur === k + '/' + slug(c) ? 'aria-current="page"' : ''}>${esc(c)}</a>`).join('')}</div></div>`).join('');
+  const items = NAV.map(([l, k, ch], i) => `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => `<a href="#/${k}/${slug(c)}" class="${cur === k + '/' + slug(c) ? 'on' : ''}" ${cur === k + '/' + slug(c) ? 'aria-current="page"' : ''}>${esc(c)}</a>`).join('')}</div></div>`).join('');
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span>Owner / Admin</span></span></div></div></div>`;
   $('#side').innerHTML = items + footer;
 }
 
 function route() {
   destroyCharts(); PAGE.reload = null;
-  const h = location.hash.slice(2) || 'home/dashboard', pg = $('#pg'), root = document.createElement('div');
+  let raw = (location.hash.slice(2) || 'home/dashboard').replace(/\/$/, '');
+  let h = DEFAULT_ROUTES[raw] || raw;
+  if (!h || h === 'home') h = 'home/dashboard';
+  const pg = $('#pg'), root = document.createElement('div');
   pg.replaceChildren(root);
   drawNav(h);
   document.body.classList.remove('mo');
-  document.body.classList.remove('modal-open');
-  if (window.Modal && Modal.stack) {
-    while (Modal.stack.length) {
-      const topM = Modal.stack.pop();
-      if (topM && topM.el && topM.el.remove) topM.el.remove();
-    }
-  }
   closePops();
-  const fn = ROUTES[h];
+  const fn = ROUTES[h] || ROUTES[raw];
   if (fn) { Promise.resolve().then(() => fn(root)).catch(e => { root.innerHTML = errBox(e.message); console.error(e); }); }
   else { const g = NAV.find(n => h.startsWith(n[1] + '/')), nm = g && g[2].find(c => slug(c) === h.split('/')[1]); plannedPage(root, g && g[0], nm); }
   window.scrollTo(0, 0);
@@ -323,8 +345,33 @@ document.addEventListener('click', async e => {
     closePops();
     const np = $('#notifPop'); if (np) np.style.display = 'none';
   }
+    const togG = t.closest('[data-toggle-g]');
+  if (togG) {
+    const k = togG.dataset.toggleG;
+    openG = openG.includes(k) ? openG.filter(x => x !== k) : [...openG, k];
+    pref.set('open', openG);
+    drawNav(location.hash.slice(2) || 'home/dashboard');
+    return;
+  }
   const g = t.closest('[data-g]');
-  if (g) { const k = g.dataset.g; openG = openG.includes(k) ? openG.filter(x => x !== k) : [...openG, k]; pref.set('open', openG); document.body.classList.remove('col'); drawNav(location.hash.slice(2) || 'home/dashboard'); return; }
+  if (g) {
+    const k = g.dataset.g;
+    if (!openG.includes(k)) {
+      openG = [...openG, k];
+      pref.set('open', openG);
+    }
+    document.body.classList.remove('col');
+    const navG = NAV.find(n => n[1] === k);
+    const firstSlug = navG && navG[2] && navG[2][0] ? slug(navG[2][0]) : '';
+    const dest = DEFAULT_ROUTES[k] || (k + '/' + firstSlug);
+    if (location.hash === '#/' + dest) {
+      drawNav(dest);
+      route();
+    } else {
+      location.hash = '#/' + dest;
+    }
+    return;
+  }
   if (t.closest('#burger')) { innerWidth <= 900 ? document.body.classList.toggle('mo') : document.body.classList.toggle('col'); return; }
   if (t.closest('#orgbtn')) orgForm();
   if (t.closest('[data-retry]') && PAGE.reload) PAGE.reload();

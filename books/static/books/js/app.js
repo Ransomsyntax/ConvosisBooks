@@ -20,6 +20,7 @@ const ROUTES = {
   'home/getting-started': gettingStarted,
   'home/recent-updates': recentUpdates,
 
+  'items/items': r => listPage(r, LISTS.items),
   'items/items-services': r => listPage(r, LISTS.items),
   'items/item-categories': r => listPage(r, LISTS['item-categories']),
   'items/price-lists': r => listPage(r, LISTS['price-lists']),
@@ -65,6 +66,7 @@ const ROUTES = {
   'accountant/transaction-locking': r => transactionLockingPage(r),
   'accountant/statutory-audit-logs': r => listPage(r, LISTS['audit-logs']),
   'accountant/tenant-admin': r => tenantAdminPage(r),
+  'accountant/tenant-administration': r => tenantAdminPage(r),
   'accountant/security-compliance': r => securityCompliancePage(r),
 
   'settings/subscription-billing': r => subscriptionBillingPage(r),

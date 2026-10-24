@@ -1086,10 +1086,10 @@ async function itemForm(id) {
     title: id ? 'Edit Item' : 'New Item',
     wide: true,
     body: `
-    <div class="zoho-item-modal">
+    <div class="convo-item-modal">
 
-      <div class="zoho-top-grid">
-        <div class="zoho-left-fields">
+      <div class="convo-top-grid">
+        <div class="convo-left-fields">
 
           <div class="fg">
             <label for="item_name" class="req-label">Name<span class="rq">*</span></label>
@@ -1098,8 +1098,8 @@ async function itemForm(id) {
           </div>
 
           <div class="fg">
-            <label class="zoho-label">Type <span class="help-tip" title="Goods have physical inventory, services do not.">?</span></label>
-            <div class="zoho-radio-group">
+            <label class="convo-label">Type <span class="help-tip" title="Goods have physical inventory, services do not.">?</span></label>
+            <div class="convo-radio-group">
               <label class="radio-label">
                 <input type="radio" name="item_type" value="goods" ${isGoods ? 'checked' : ''}>
                 <span>Goods</span>
@@ -1113,7 +1113,7 @@ async function itemForm(id) {
           </div>
 
           <div class="fg">
-            <label for="item_unit_select" class="zoho-label">Unit <span class="help-tip" title="Choose from dropdown or enter custom measuring unit for GST & billing.">?</span></label>
+            <label for="item_unit_select" class="convo-label">Unit <span class="help-tip" title="Choose from dropdown or enter custom measuring unit for GST & billing.">?</span></label>
             <div class="unit-combo-group">
               <select class="in" id="item_unit_select">
                 <option value="">Select Unit…</option>
@@ -1133,7 +1133,7 @@ async function itemForm(id) {
           </div>
 
           <div class="fg">
-            <label for="item_hsn" class="zoho-label">HSN / SAC Code</label>
+            <label for="item_hsn" class="convo-label">HSN / SAC Code</label>
             <div class="hsn-search-wrap">
               <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="Type to add or search HSN/SAC" maxlength="10">
               <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -1162,7 +1162,7 @@ async function itemForm(id) {
             </div>
 
             <div class="fg" id="gstIntraWrap">
-              <label for="item_gst_intra" class="zoho-label">Intra-State Tax Rate</label>
+              <label for="item_gst_intra" class="convo-label">Intra-State Tax Rate</label>
               <select class="in" id="item_gst_intra" name="gst_rate">
                 ${intraOptionsHtml}
               </select>
@@ -1170,21 +1170,21 @@ async function itemForm(id) {
           </div>
 
           <div class="fg" id="gstInterWrap">
-            <label for="item_gst_inter" class="zoho-label">Inter-State Tax Rate (IGST)</label>
+            <label for="item_gst_inter" class="convo-label">Inter-State Tax Rate (IGST)</label>
             <select class="in" id="item_gst_inter">
               ${interOptionsHtml}
             </select>
           </div>
 
           <div class="fg">
-            <label for="item_category" class="zoho-label">Category</label>
+            <label for="item_category" class="convo-label">Category</label>
             <input class="in" type="text" id="item_category" name="category" value="${esc(r.category || '')}" placeholder="e.g. Hardware, Software, Services" maxlength="100">
           </div>
         </div>
 
-        <div class="zoho-right-image">
-          <label class="zoho-label">Item Image</label>
-          <div class="zoho-image-dropzone" id="itemImageDropzone">
+        <div class="convo-right-image">
+          <label class="convo-label">Item Image</label>
+          <div class="convo-image-dropzone" id="itemImageDropzone">
             <input type="file" id="itemImageFileInput" accept="image/*" style="display:none;">
             <input type="hidden" name="image_data" id="itemImageDataInput" value="${esc(img)}">
 
@@ -1210,11 +1210,11 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <hr class="zoho-divider">
+      <hr class="convo-divider">
 
-      <div class="zoho-split-grid">
+      <div class="convo-split-grid">
 
-        <div class="zoho-card-section" id="salesSection">
+        <div class="convo-card-section" id="salesSection">
           <div class="section-header-title">
             <h3 class="section-title">Sales Information</h3>
           </div>
@@ -1239,13 +1239,13 @@ async function itemForm(id) {
             </div>
 
             <div class="fg">
-              <label for="item_sales_desc" class="zoho-label">Description</label>
+              <label for="item_sales_desc" class="convo-label">Description</label>
               <textarea class="in" id="item_sales_desc" name="description" rows="3" placeholder="Sales description for customer invoices…">${esc(r.description || '')}</textarea>
             </div>
           </div>
         </div>
 
-        <div class="zoho-card-section" id="purchaseSection">
+        <div class="convo-card-section" id="purchaseSection">
           <div class="section-header-title">
             <h3 class="section-title">Purchase Information</h3>
           </div>
@@ -1270,7 +1270,7 @@ async function itemForm(id) {
             </div>
 
             <div class="fg">
-              <label for="item_preferred_vendor" class="zoho-label">Preferred Vendor <span class="help-tip" title="Choose or add default vendor for bills & purchase orders.">?</span></label>
+              <label for="item_preferred_vendor" class="convo-label">Preferred Vendor <span class="help-tip" title="Choose or add default vendor for bills & purchase orders.">?</span></label>
               <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
                 <option value="">Select a vendor…</option>
                 ${vendorOptsHtml}
@@ -1280,14 +1280,14 @@ async function itemForm(id) {
             </div>
 
             <div class="fg">
-              <label for="item_purchase_desc" class="zoho-label">Description</label>
+              <label for="item_purchase_desc" class="convo-label">Description</label>
               <textarea class="in" id="item_purchase_desc" rows="3" placeholder="Purchase description for vendor bills…"></textarea>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="zoho-card-section" id="inventorySection">
+      <div class="convo-card-section" id="inventorySection">
         <div class="section-header-check">
           <label class="ck-section">
             <input type="checkbox" id="chkTrackInventory" name="track_inventory" ${r.track_inventory ? 'checked' : ''}>
@@ -1297,16 +1297,16 @@ async function itemForm(id) {
         <div class="section-body" id="inventoryBody" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-top:10px;">
           ${id ? '' : `
           <div class="fg" id="openingStockWrap">
-            <label class="zoho-label">Opening Stock</label>
+            <label class="convo-label">Opening Stock</label>
             <input class="in" type="number" step="0.001" min="0" name="opening_stock" placeholder="0.000">
           </div>
           `}
           <div class="fg">
-            <label class="zoho-label">Reorder Point / Level</label>
+            <label class="convo-label">Reorder Point / Level</label>
             <input class="in" type="number" step="0.001" min="0" name="reorder_level" value="${r.reorder_level == null ? '' : r.reorder_level}" placeholder="0.000">
           </div>
           <div class="fg">
-            <label for="item_inventory_account" class="zoho-label">Inventory Account</label>
+            <label for="item_inventory_account" class="convo-label">Inventory Account</label>
             <select class="in" id="item_inventory_account" name="inventory_account">
               ${inventoryAccountsHtml}
               ${extraInvOpt}
@@ -3376,9 +3376,9 @@ function zohoMigrationModal() {
             <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Export to Zoho Books Format</div>
             <div class="sub" style="font-size:12px;margin-bottom:14px;">Download standard Zoho Books CSV schemas ready for instant import into Zoho Books.</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
-              <button type="button" class="btn" id="btn-exp-zoho-inv">Export Invoices (Zoho Schema)</button>
-              <button type="button" class="btn" id="btn-exp-zoho-cust">Export Customers (Zoho Schema)</button>
-              <button type="button" class="btn" id="btn-exp-zoho-items">Export Items & Price Lists</button>
+              <button type="button" class="btn" id="btn-exp-convo-inv">Export Invoices (Zoho Schema)</button>
+              <button type="button" class="btn" id="btn-exp-convo-cust">Export Customers (Zoho Schema)</button>
+              <button type="button" class="btn" id="btn-exp-convo-items">Export Items & Price Lists</button>
             </div>
           </div>
         </div>
@@ -3390,12 +3390,12 @@ function zohoMigrationModal() {
             <div class="sub" style="font-size:12px;margin-bottom:14px;">Migrate customer master, vendor list, or item catalog from your existing Zoho Books account.</div>
             <div class="fg" style="margin-bottom:10px;">
               <label style="font-size:11px;">Target Master Entity</label>
-              <select class="in" id="zoho-imp-entity">
+              <select class="in" id="convo-imp-entity">
                 <option value="customers">Customers Master</option>
                 <option value="items">Items & Services Catalog</option>
               </select>
             </div>
-            <button type="button" class="btn p" id="btn-demo-zoho-imp" style="width:100%;">Migrate Sample Zoho Dataset</button>
+            <button type="button" class="btn p" id="btn-demo-convo-imp" style="width:100%;">Migrate Sample Zoho Dataset</button>
           </div>
         </div>
       </div>
@@ -3403,41 +3403,41 @@ function zohoMigrationModal() {
     footer: `<button type="button" class="btn" data-close>Close</button>`
   });
 
-  $('#btn-exp-zoho-inv', m.el).addEventListener('click', async () => {
+  $('#btn-exp-convo-inv', m.el).addEventListener('click', async () => {
     try {
       const data = await api('interop/zoho/export/invoices/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = `zoho_invoices_export_${iso(new Date())}.json`;
       a.click();
-      toast('Zoho-compatible invoices exported successfully!');
+      toast('Convo-compatible invoices exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
   });
 
-  $('#btn-exp-zoho-cust', m.el).addEventListener('click', async () => {
+  $('#btn-exp-convo-cust', m.el).addEventListener('click', async () => {
     try {
       const data = await api('interop/zoho/export/customers/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = `zoho_customers_export_${iso(new Date())}.json`;
       a.click();
-      toast('Zoho-compatible customers exported successfully!');
+      toast('Convo-compatible customers exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
   });
 
-  $('#btn-exp-zoho-items', m.el).addEventListener('click', async () => {
+  $('#btn-exp-convo-items', m.el).addEventListener('click', async () => {
     try {
       const data = await api('interop/zoho/export/items/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
       a.download = `zoho_items_export_${iso(new Date())}.json`;
       a.click();
-      toast('Zoho-compatible items exported successfully!');
+      toast('Convo-compatible items exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
   });
 
-  $('#btn-demo-zoho-imp', m.el).addEventListener('click', async () => {
-    const entity = $('#zoho-imp-entity', m.el).value;
+  $('#btn-demo-convo-imp', m.el).addEventListener('click', async () => {
+    const entity = $('#convo-imp-entity', m.el).value;
     const sample = entity === 'customers' ? [
       { 'Customer Name': 'Apex Industrial Supplies', 'Company Name': 'Apex Corp', 'Email': 'finance@apexcorp.in', 'Phone': '+91-9840012345', 'GSTIN': '33AABCA1234A1Z5' },
       { 'Customer Name': 'Zenith Cloud Labs', 'Company Name': 'Zenith Labs', 'Email': 'accounts@zenithlabs.io', 'Phone': '+91-9884054321', 'GSTIN': '29AABCZ9876A1Z2' }

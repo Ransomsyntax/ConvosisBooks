@@ -529,7 +529,7 @@ class ScalableBackgroundJobsAndPortalsTest(Base):
         self.assertIn('data', r_exp.json())
 
         zoho_items = [
-            {'Item Name': 'Zoho Imported Widget', 'SKU': 'ZOHO-WIDGET-01', 'Rate': '750.00', 'Tax Percentage': '18', 'Usage unit': 'pcs'}
+            {'Item Name': 'Zoho Imported Widget', 'SKU': 'CONVO-WIDGET-01', 'Rate': '750.00', 'Tax Percentage': '18', 'Usage unit': 'pcs'}
         ]
         r_imp = self.client.post('/api/interop/zoho/import/items/', data=json.dumps({'records': zoho_items}), content_type='application/json')
         self.assertEqual(r_imp.status_code, 200)

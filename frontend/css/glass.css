@@ -1653,26 +1653,26 @@ body.login {
   }
 }
 
-.zoho-item-modal {
+.convo-item-modal {
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
-.zoho-top-grid {
+.convo-top-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
   gap: 24px;
   align-items: start;
 }
 
-.zoho-left-fields {
+.convo-left-fields {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.zoho-label {
+.convo-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1711,7 +1711,7 @@ body.login {
   user-select: none;
 }
 
-.zoho-radio-group {
+.convo-radio-group {
   display: flex;
   align-items: center;
   gap: 20px;
@@ -1767,12 +1767,12 @@ body.login {
   pointer-events: none;
 }
 
-.zoho-right-image {
+.convo-right-image {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
-.zoho-image-dropzone {
+.convo-image-dropzone {
   min-height: 230px;
   height: 100%;
   border: 2px dashed rgba(var(--accent-rgb), 0.4);
@@ -1792,7 +1792,7 @@ body.login {
   overflow: hidden;
   box-shadow: var(--specular-sheen);
 }
-.zoho-image-dropzone:hover, .zoho-image-dropzone.dragover {
+.convo-image-dropzone:hover, .convo-image-dropzone.dragover {
   border-color: var(--accent);
   background: var(--surface-glass-elevated);
   box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.25), var(--specular-sheen);
@@ -1808,7 +1808,7 @@ body.login {
   color: var(--tx-muted);
   transition: transform 0.2s, color 0.2s;
 }
-.zoho-image-dropzone:hover .dropzone-icon {
+.convo-image-dropzone:hover .dropzone-icon {
   transform: translateY(-2px);
   color: var(--accent);
 }
@@ -1870,25 +1870,25 @@ body.login {
   color: var(--bad);
 }
 
-.zoho-divider {
+.convo-divider {
   border: 0;
   height: 1px;
   background: var(--bd-glass-subtle);
   margin: 4px 0 8px;
 }
 
-.zoho-split-grid {
+.convo-split-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
 }
 @media (max-width: 768px) {
-  .zoho-top-grid, .zoho-split-grid {
+  .convo-top-grid, .convo-split-grid {
     grid-template-columns: 1fr;
   }
 }
 
-.zoho-card-section {
+.convo-card-section {
   background: var(--surface-glass-subtle);
   border: 1px solid var(--bd-glass-subtle);
   border-radius: 14px;
@@ -1899,12 +1899,12 @@ body.login {
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: var(--specular-sheen);
 }
-.zoho-card-section.dimmed {
+.convo-card-section.dimmed {
   opacity: 0.5;
 }
-.zoho-card-section.dimmed input,
-.zoho-card-section.dimmed select,
-.zoho-card-section.dimmed textarea {
+.convo-card-section.dimmed input,
+.convo-card-section.dimmed select,
+.convo-card-section.dimmed textarea {
   pointer-events: none;
 }
 

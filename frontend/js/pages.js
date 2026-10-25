@@ -1659,8 +1659,13 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
       return;
     }
 
+    let savedAccId = parseInt(sessionStorage.getItem('active_bank_account_id'), 10);
+    if (!selectedAccountId && savedAccId && accounts.some(a => a.id == savedAccId)) {
+      selectedAccountId = savedAccId;
+    }
     let activeAccount = accounts.find(a => a.id == selectedAccountId) || accounts.find(a => (a.name || '').toLowerCase().includes('kotak')) || accounts[0];
     selectedAccountId = activeAccount.id;
+    sessionStorage.setItem('active_bank_account_id', selectedAccountId);
 
     let currentPage = 1;
     let pageSize = 25;
@@ -1901,6 +1906,7 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
     $$('[data-switch-acc]', root).forEach(btn => {
       btn.addEventListener('click', () => {
         const targetId = Number(btn.dataset.switchAcc);
+        sessionStorage.setItem('active_bank_account_id', targetId);
         bankingMainPage(root, activeFilter, targetId);
       });
     });
@@ -2274,7 +2280,8 @@ async function bankingDashboardPage(root) {
 
   try {
     const summary = await api('banking/dashboard-summary/');
-    const accounts = summary.accounts || [];
+    const accounts = summary.accounts || summary.all_accounts || [];
+    const recentTxns = summary.recent_transactions || [];
 
     root.innerHTML = `
       <div class="banking-page-container">
@@ -2289,6 +2296,7 @@ async function bankingDashboardPage(root) {
             <button class="btn" onclick="statementImportWizardModal()">Import Statement</button>
             <button class="btn" onclick="recordDepositModal()">Record Deposit</button>
             <button class="btn" onclick="transferForm()">Transfer Funds</button>
+            <button class="btn" onclick="location.hash='#/banking/bank-reconciliation'">Reconciliation Cockpit</button>
           </div>
         </div>
 
@@ -2298,6 +2306,7 @@ async function bankingDashboardPage(root) {
             <div class="banking-card-info">
               <div class="banking-card-label">Total Books Balance</div>
               <div class="banking-card-value">${inr(summary.total_books_balance || 0)}</div>
+              <div class="sub" style="font-size:11px;margin-top:2px;">ConvosisBooks General Ledger</div>
             </div>
           </div>
           <div class="banking-card">
@@ -2305,13 +2314,15 @@ async function bankingDashboardPage(root) {
             <div class="banking-card-info">
               <div class="banking-card-label">Total Bank Balance</div>
               <div class="banking-card-value">${inr(summary.total_bank_balance || 0)}</div>
+              <div class="sub" style="font-size:11px;margin-top:2px;">Per Connected Bank Feeds</div>
             </div>
           </div>
-          <div class="banking-card">
+          <div class="banking-card" style="cursor:pointer;" onclick="location.hash='#/banking/uncategorized-transactions'" title="View uncategorized transactions">
             <div class="banking-card-icon-box calendar">⚡</div>
             <div class="banking-card-info">
               <div class="banking-card-label">Pending Uncategorized</div>
-              <div class="banking-card-value" style="color:#ef4444;">${summary.total_unrec_count || 0}</div>
+              <div class="banking-card-value" style="color:${(summary.total_unrec_count || 0) > 0 ? '#ef4444' : 'var(--tx)'};">${summary.total_unrec_count || 0}</div>
+              <div class="sub" style="font-size:11px;margin-top:2px;color:${(summary.total_unrec_count || 0) > 0 ? '#ef4444' : 'var(--tx-muted)'};font-weight:500;">Review pending feeds ›</div>
             </div>
           </div>
           <div class="banking-card">
@@ -2319,13 +2330,22 @@ async function bankingDashboardPage(root) {
             <div class="banking-card-info">
               <div class="banking-card-label">Active Bank Accounts</div>
               <div class="banking-card-value">${accounts.length}</div>
+              <div class="sub" style="font-size:11px;margin-top:2px;">Connected live accounts</div>
             </div>
           </div>
         </div>
 
-        <h3 style="margin:24px 0 12px;font-size:16px;">Connected Bank Accounts</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 12px;">
+          <h3 style="font-size:16px;margin:0;">Connected Bank Accounts (${accounts.length})</h3>
+          <a href="#/banking/bank-accounts" class="sub" style="font-size:12.5px;color:var(--accent);font-weight:600;text-decoration:none;">Manage Bank Accounts ›</a>
+        </div>
+
         <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:16px;">
-          ${accounts.map(a => `
+          ${accounts.map(a => {
+            const currentBal = parseFloat(a.current_balance || 0);
+            const bankBal = parseFloat(a.bank_balance || a.current_balance || 0);
+            const diff = Math.abs(currentBal - bankBal);
+            return `
             <div class="card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:14px;">
               <div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
@@ -2347,14 +2367,88 @@ async function bankingDashboardPage(root) {
                 </div>
               </div>
 
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span style="font-size:11.5px;color:${a.unrec_count > 0 ? '#ef4444' : 'var(--tx-muted)'};font-weight:600;">
-                  ${a.unrec_count > 0 ? `${a.unrec_count} pending categorization` : 'Fully reconciled'}
+              ${diff > 0.01 ? `<div style="font-size:11.5px;color:var(--tx-muted);display:flex;justify-content:space-between;"><span>Reconciliation Variance</span><span style="font-weight:600;color:#f59e0b;">${inr(diff)}</span></div>` : ''}
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--bd-glass);padding-top:12px;">
+                <span style="font-size:11.5px;color:${a.unrec_count > 0 ? '#ef4444' : '#059669'};font-weight:600;">
+                  ${a.unrec_count > 0 ? `⚡ ${a.unrec_count} pending` : '✓ Fully reconciled'}
                 </span>
-                <button type="button" class="btn p" onclick="location.hash='#/banking/all-transactions'" style="font-size:12px;padding:4px 12px;">View Account ›</button>
+                <div style="display:flex;gap:6px;">
+                  <button type="button" class="btn" onclick="statementImportWizardModal(${a.id})" style="font-size:12px;padding:4px 8px;" title="Import Statement">Import</button>
+                  <button type="button" class="btn" onclick="sessionStorage.setItem('active_bank_account_id', '${a.id}'); location.hash='#/banking/bank-reconciliation';" style="font-size:12px;padding:4px 8px;" title="Reconcile Account">Reconcile</button>
+                  <button type="button" class="btn p" onclick="sessionStorage.setItem('active_bank_account_id', '${a.id}'); location.hash='#/banking/all-transactions';" style="font-size:12px;padding:4px 10px;">View Account ›</button>
+                </div>
               </div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
+        </div>
+
+        <!-- RECENT BANKING ACTIVITY TABLE -->
+        <div style="margin-top:28px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <h3 style="font-size:16px;margin:0;">Recent Bank Feed Activity</h3>
+              <div class="sub" style="font-size:12px;">Latest statement feed transactions across connected accounts</div>
+            </div>
+            <button class="btn" onclick="location.hash='#/banking/all-transactions'" style="font-size:12px;">View All Feed Transactions ›</button>
+          </div>
+
+          <div class="card" style="overflow-x:auto;">
+            <table class="tbl" style="width:100%;margin:0;">
+              <thead>
+                <tr>
+                  <th style="width:90px;">Date</th>
+                  <th style="width:140px;">Bank Account</th>
+                  <th>Description / Payee</th>
+                  <th style="width:110px;">Ref #</th>
+                  <th style="width:120px;text-align:right;">Withdrawal (Dr)</th>
+                  <th style="width:120px;text-align:right;">Deposit (Cr)</th>
+                  <th style="width:110px;text-align:center;">Status</th>
+                  <th style="width:90px;text-align:center;">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recentTxns.length ? recentTxns.map(tx => {
+                  const dr = parseFloat(tx.withdrawal || 0);
+                  const cr = parseFloat(tx.deposit || 0);
+                  const isUnmatched = tx.status === 'unmatched' || tx.status === 'unreconciled';
+                  const chipClass = tx.status === 'matched' ? 'chip-mint' :
+                                    tx.status === 'categorized' ? 'chip-sky' :
+                                    tx.status === 'manually_added' ? 'chip-lavender' :
+                                    'chip-rose';
+                  const statusLabel = tx.status === 'unmatched' ? 'Uncategorized' :
+                                      tx.status === 'matched' ? 'Matched' :
+                                      tx.status === 'categorized' ? 'Categorized' :
+                                      tx.status === 'manually_added' ? 'Manual' :
+                                      (tx.status || 'Pending');
+                  return `
+                    <tr>
+                      <td style="white-space:nowrap;font-size:12px;">${fmtBankDate(tx.date)}</td>
+                      <td style="font-size:12px;font-weight:600;color:var(--tx);">${esc(tx.bank_account_name || 'Bank')}</td>
+                      <td>
+                        <div style="font-weight:500;font-size:13px;color:var(--tx);">${esc(tx.payee || tx.description || 'Transaction')}</div>
+                        ${tx.payee && tx.description && tx.payee !== tx.description ? `<div class="sub" style="font-size:11px;">${esc(tx.description)}</div>` : ''}
+                      </td>
+                      <td class="sub" style="font-size:11.5px;font-family:monospace;">${esc(tx.reference || '—')}</td>
+                      <td style="text-align:right;font-weight:600;font-size:12.5px;color:${dr > 0 ? '#ef4444' : 'var(--tx-muted)'};">${dr > 0 ? inr(dr) : '—'}</td>
+                      <td style="text-align:right;font-weight:600;font-size:12.5px;color:${cr > 0 ? '#059669' : 'var(--tx-muted)'};">${cr > 0 ? inr(cr) : '—'}</td>
+                      <td style="text-align:center;"><span class="pastel-chip ${chipClass}">${statusLabel}</span></td>
+                      <td style="text-align:center;">
+                        <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="location.hash='#/banking/all-transactions'">${isUnmatched ? 'Review' : 'View'}</button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('') : `
+                  <tr>
+                    <td colspan="8" style="text-align:center;padding:32px;" class="sub">
+                      No feed transactions recorded yet. <button class="btn p" style="margin-left:8px;" onclick="statementImportWizardModal()">Import First Statement</button>
+                    </td>
+                  </tr>
+                `}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     `;
@@ -2696,7 +2790,8 @@ async function bankingReconciliationPage(root) {
     return;
   }
 
-  let selectedAccId = bankAccs[0].id;
+  let savedAccId = parseInt(sessionStorage.getItem('active_bank_account_id'), 10);
+  let selectedAccId = (savedAccId && bankAccs.some(a => a.id === savedAccId)) ? savedAccId : bankAccs[0].id;
 
   root.innerHTML = `
     <div class="banking-page-container">
@@ -2755,6 +2850,7 @@ async function bankingReconciliationPage(root) {
   $('#bnk-rec-xfer', root).addEventListener('click', () => transferForm());
   $('#bnk-sel-acc', root).addEventListener('change', e => {
     selectedAccId = Number(e.target.value);
+    sessionStorage.setItem('active_bank_account_id', selectedAccId);
     loadReconciliation();
   });
 

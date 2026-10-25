@@ -38,7 +38,7 @@ const DEFAULT_ROUTES = {
   sales: 'sales/invoices',
   purchases: 'purchases/bills',
   time: 'time/projects',
-  banking: 'banking/all-transactions',
+  banking: 'banking/banking-dashboard',
   filing: 'filing/gst-filing',
   accountant: 'accountant/manual-journals',
   reports: 'reports/reports-center',
@@ -86,7 +86,8 @@ const ROUTES = {
   'time/projects': r => listPage(r, LISTS.projects),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
 
-  'banking': r => bankingMainPage(r, 'all'),
+  'banking': r => bankingDashboardPage(r),
+  'banking/dashboard': r => bankingDashboardPage(r),
   'banking/banking-dashboard': r => bankingDashboardPage(r),
   'banking/bank-accounts': r => bankingAccountsPage(r),
   'banking/bank-statements': r => bankStatementsListPage(r),
@@ -196,9 +197,18 @@ function route() {
     }
   }
   document.body.classList.remove('modal-open');
-  let raw = (location.hash.slice(2) || 'home/dashboard').replace(/\/$/, '');
+  let rawFull = (location.hash.slice(2) || 'home/dashboard').replace(/\/$/, '');
+  let raw = rawFull.split('?')[0];
   let h = DEFAULT_ROUTES[raw] || raw;
   if (!h || h === 'home') h = 'home/dashboard';
+
+  // Ensure only one dropdown is open; previously opened dropdowns collapse to normal
+  const curGroup = h.split('/')[0];
+  if (curGroup) {
+    openG = [curGroup];
+    pref.set('open', openG);
+  }
+
   const pg = $('#pg'), root = document.createElement('div');
   pg.replaceChildren(root);
   drawNav(h);
@@ -419,7 +429,7 @@ document.addEventListener('click', async e => {
   const togG = t.closest('[data-toggle-g]');
   if (togG) {
     const k = togG.dataset.toggleG;
-    openG = openG.includes(k) ? openG.filter(x => x !== k) : [...openG, k];
+    openG = openG.includes(k) ? [] : [k];
     pref.set('open', openG);
     drawNav(location.hash.slice(2) || 'home/dashboard');
     return;
@@ -427,10 +437,8 @@ document.addEventListener('click', async e => {
   const g = t.closest('[data-g]');
   if (g) {
     const k = g.dataset.g;
-    if (!openG.includes(k)) {
-      openG = [...openG, k];
-      pref.set('open', openG);
-    }
+    openG = [k];
+    pref.set('open', openG);
     document.body.classList.remove('col');
     const navG = NAV.find(n => n[1] === k);
     const firstSlug = navG && navG[2] && navG[2][0] ? slug(navG[2][0]) : '';

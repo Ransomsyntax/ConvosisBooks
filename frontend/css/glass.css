@@ -403,14 +403,14 @@ html, body {
   top: 48px;
   bottom: 0;
   left: 0;
-  width: 260px;
+  width: 218px;
   background: var(--surface-glass);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   border-right: 1px solid var(--bd-glass);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 14px 12px 24px;
+  padding: 12px 8px 24px;
   z-index: 40;
   transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease;
   box-shadow: 4px 0 30px rgba(0, 0, 0, 0.04), var(--specular-sheen);
@@ -434,15 +434,15 @@ html, body {
 .ni > button, .nav-dropdown-trigger {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6.5px 8px;
   border: 1px solid transparent;
   background: transparent;
   border-radius: 9px;
   cursor: pointer;
   color: var(--tx);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   text-align: left;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -490,7 +490,7 @@ html, body {
 
 .ch, .nav-dropdown-menu {
   display: none;
-  padding: 4px 0 6px 36px;
+  padding: 3px 0 5px 16px;
 }
 .ni.open .ch, .nav-dropdown.open .nav-dropdown-menu {
   display: block;
@@ -499,11 +499,11 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px 6px 12px;
+  gap: 6px;
+  padding: 5px 8px 5px 8px;
   border-radius: 7px;
   color: var(--tx2);
-  font-size: 13px;
+  font-size: 12.5px;
   border: 1px solid transparent;
   transition: all 0.18s ease;
   margin-bottom: 2px;
@@ -681,7 +681,7 @@ body.col main, #app.sidebar-collapsed .main-wrapper {
 }
 
 main, .main-wrapper {
-  margin-left: 260px;
+  margin-left: 218px;
   padding-top: 48px;
   min-height: 100vh;
   transition: margin 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1616,7 +1616,7 @@ body.login {
   }
   #side, aside.sidebar {
     transform: translateX(-100%);
-    width: 260px;
+    width: 218px;
   }
   body.mo #side, #app.mobile-sidebar-open aside.sidebar {
     transform: none;

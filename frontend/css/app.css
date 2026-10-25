@@ -938,7 +938,7 @@ body.modal-open {
   .s3 { grid-column: span 6; }
 }
 @media (max-width: 900px) {
-  #side { transform: translateX(-100%); width: 260px; }
+  #side { transform: translateX(-100%); width: 218px; }
   body.mo #side { transform: none; box-shadow: 0 0 40px rgba(0,0,0,0.4); }
   main, body.col main { margin-left: 0; }
   .org, .app { display: none; }

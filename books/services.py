@@ -2771,17 +2771,48 @@ def get_bank_dashboard_summary(bank_account_id=None):
     today = timezone.localdate()
     feed_last_fetched = acc.last_feed_date.strftime('%d/%m/%Y') if acc.last_feed_date else today.strftime('%d/%m/%Y')
 
-    all_accs = [
-        {
+    all_active = BankAccount.objects.filter(active=True).order_by('name')
+    total_books_balance = Decimal('0.00')
+    total_bank_balance = Decimal('0.00')
+    total_unrec_count = 0
+
+    all_accs = []
+    for a in all_active:
+        total_books_balance += a.current_balance
+        bank_bal = a.bank_balance if a.bank_balance != 0 else a.current_balance
+        total_bank_balance += bank_bal
+        a_unrec = a.transactions.filter(status__in=['unmatched', 'unreconciled']).count()
+        total_unrec_count += a_unrec
+        all_accs.append({
             'id': a.pk,
             'name': a.name,
             'bank_name': a.bank_name,
+            'account_number': a.account_number,
             'masked_account_number': f"xxxx{a.account_number[-4:] if len(a.account_number) >= 4 else a.account_number}",
             'current_balance': str(a.current_balance),
-            'bank_balance': str(a.bank_balance),
+            'bank_balance': str(bank_bal),
             'branch_name': a.branch_name or 'HO Kottayam',
+            'unrec_count': a_unrec,
+            'account_type': a.account_type,
+            'currency': a.currency,
+            'last_feed_date': a.last_feed_date.strftime('%d/%m/%Y') if a.last_feed_date else '20/10/2026'
+        })
+
+    recent_txns = [
+        {
+            'id': t.pk,
+            'date': t.date.isoformat(),
+            'description': t.description,
+            'reference': t.reference,
+            'transaction_type': t.transaction_type,
+            'payee': t.payee,
+            'bank_account_name': t.bank_account.name if t.bank_account else '',
+            'withdrawal': str(t.withdrawal),
+            'deposit': str(t.deposit),
+            'balance': str(t.balance),
+            'status': t.status
         }
-        for a in BankAccount.objects.filter(active=True).order_by('name')
+        for t in BankTransaction.objects.all().order_by('-date', '-id')[:8]
     ]
 
     return {
@@ -2795,7 +2826,7 @@ def get_bank_dashboard_summary(bank_account_id=None):
             'currency': acc.currency,
             'branch_name': acc.branch_name or 'HO Kottayam',
             'amount_in_books': str(acc.current_balance),
-            'amount_in_bank': str(acc.bank_balance),
+            'amount_in_bank': str(acc.bank_balance if acc.bank_balance != 0 else acc.current_balance),
             'last_feed_date': acc.last_feed_date.strftime('%d/%m/%Y') if acc.last_feed_date else '20/10/2026',
             'feed_last_fetched': feed_last_fetched,
         },
@@ -2807,7 +2838,12 @@ def get_bank_dashboard_summary(bank_account_id=None):
             'manually_added': manually_added,
             'excluded': excluded
         },
-        'all_accounts': all_accs
+        'total_books_balance': str(total_books_balance),
+        'total_bank_balance': str(total_bank_balance),
+        'total_unrec_count': total_unrec_count,
+        'accounts': all_accs,
+        'all_accounts': all_accs,
+        'recent_transactions': recent_txns
     }
 
 

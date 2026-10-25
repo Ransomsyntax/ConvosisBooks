@@ -29,23 +29,22 @@
 </div>
 
 <form action="index.html" method="get" class="lcard" id="loginForm" novalidate>
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;">
     <img src="img/convosis-logo.png" alt="Convosis" class="llogo" style="margin-bottom:0;">
     <span class="app" style="font-size:20px;">Books</span>
   </div>
 
   <h1>Sign in to Convosis Books</h1>
-  <p class="sub" style="font-size:13px; margin:-8px 0 22px; color:var(--tx-muted);">Enterprise Financial Operating System &amp; GST Automation</p>
 
   <div class="login-field-group">
     <label for="id_username" class="login-label">Username</label>
-    <input class="login-input in" type="text" name="username" id="id_username" placeholder="Enter username…" autocomplete="username" required>
+    <input class="login-input in" type="text" name="username" id="id_username" value="admin" placeholder="Enter username…" autocomplete="username" required>
   </div>
 
   <div class="login-field-group">
     <label for="id_password" class="login-label">Password</label>
     <div class="login-password-wrapper">
-      <input class="login-input in" type="password" name="password" id="id_password" placeholder="••••••••" autocomplete="current-password" required>
+      <input class="login-input in" type="password" name="password" id="id_password" value="admin123" placeholder="••••••••" autocomplete="current-password" required>
       <button type="button" id="togglePasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
         <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -53,13 +52,6 @@
         </svg>
       </button>
     </div>
-  </div>
-
-  <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; margin-bottom:18px; font-size:12.5px;">
-    <label style="display:inline-flex; align-items:center; gap:8px; color:var(--tx-muted); cursor:pointer; user-select:none;">
-      <input type="checkbox" id="rememberMe" checked style="accent-color:var(--accent); width:15px; height:15px; cursor:pointer;">
-      <span>Remember on this device</span>
-    </label>
   </div>
 
   <button class="btn p login-btn-submit" id="submitLoginBtn" type="submit" autofocus>

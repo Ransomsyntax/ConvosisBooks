@@ -138,73 +138,22 @@ let openG = pref.get('open', ['home']);
 
 const NAV_NEW_ACTIONS = {
   'items/items': () => itemForm(),
-  'items/item-categories': () => (typeof categoryModal === 'function' ? categoryModal() : null),
-  'items/price-lists': () => (typeof priceListModal === 'function' ? priceListModal() : null),
-
-  'inventory/stock-adjustments': () => adjustForm(),
-  'inventory/warehouses': () => (typeof warehouseModal === 'function' ? warehouseModal() : null),
-
   'sales/customers': () => partyForm('customers'),
-  'sales/sales-orders': () => docForm('invoices'),
-  'sales/invoices': () => { location.hash = '#/sales/invoices'; docMasterDetail($('#pg'), 'invoices', 'new'); },
-  'sales/recurring-invoices': () => (typeof recurringInvoiceModal === 'function' ? recurringInvoiceModal() : null),
-  'sales/retainer-invoices': () => { location.hash = '#/sales/retainer-invoices'; docMasterDetail($('#pg'), 'retainer-invoices', 'new'); },
-  'sales/delivery-challans': () => (typeof challanModal === 'function' ? challanModal() : null),
-  'sales/payments-received': () => paymentForm('payments-received'),
-  'sales/credit-notes': () => docForm('invoices'),
-  'sales/e-way-bills': () => (typeof ewayBillModal === 'function' ? ewayBillModal() : null),
-
-  'purchases/vendors': () => partyForm('vendors'),
-  'purchases/expenses': () => expenseForm(),
-  'purchases/purchase-orders': () => docForm('bills'),
-  'purchases/bills': () => { location.hash = '#/purchases/bills'; docMasterDetail($('#pg'), 'bills', 'new'); },
-  'purchases/payments-made': () => paymentForm('payments-made'),
-  'purchases/vendor-credits': () => docForm('bills'),
-
-  'time/projects': () => (typeof projectModal === 'function' ? projectModal() : null),
-  'time/timesheets': () => (typeof timelogModal === 'function' ? timelogModal() : null),
-
-  'banking/bank-accounts': () => bankAccountForm(),
-  'banking/transfers': () => transferForm(),
-
-  'filing/gst-filing': () => (typeof fileGstrReturnModal === 'function' ? fileGstrReturnModal('GSTR1') : null),
-
-  'accountant/manual-journals': () => journalForm(),
-  'accountant/chart-of-accounts': () => accountForm(),
-
-  'documents/all-documents': () => (typeof documentUploadModal === 'function' ? documentUploadModal() : null),
-  'documents/files': () => (typeof documentUploadModal === 'function' ? documentUploadModal() : null),
-  'documents/folders': () => (typeof documentUploadModal === 'function' ? documentUploadModal() : null)
-};
-
-const GROUP_ADD_ACTIONS = {
-  items: () => itemForm(),
-  sales: () => partyForm('customers'),
-  purchases: () => partyForm('vendors'),
-  inventory: () => adjustForm(),
-  time: () => (typeof projectModal === 'function' ? projectModal() : null),
-  banking: () => bankAccountForm(),
-  accountant: () => journalForm(),
-  documents: () => (typeof documentUploadModal === 'function' ? documentUploadModal() : null)
+  'purchases/vendors': () => partyForm('vendors')
 };
 
 function getNavAddAction(k, c) {
   const s = slug(c);
   const target = k + '/' + s;
-  if (NAV_NEW_ACTIONS[target]) return NAV_NEW_ACTIONS[target];
-  if (window.LISTS && LISTS[s] && LISTS[s].onNew) return LISTS[s].onNew;
-  return null;
+  return NAV_NEW_ACTIONS[target] || null;
 }
 
 function drawNav(cur) {
-  const items = NAV.map(([l, k, ch], i) => {
-    const hasGrpAdd = Boolean(GROUP_ADD_ACTIONS[k]);
-    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${hasGrpAdd ? `<span class="nav-group-add-btn" data-nav-group-add="${k}" title="New ${esc(l)}" aria-label="New ${esc(l)}">+</span>` : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => {
-      const target = k + '/' + slug(c);
-      const hasAdd = Boolean(getNavAddAction(k, c));
-      return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
-    }).join('')}</div></div>`;
-  }).join('');
+  const items = NAV.map(([l, k, ch], i) => `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => {
+    const target = k + '/' + slug(c);
+    const hasAdd = Boolean(getNavAddAction(k, c));
+    return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
+  }).join('')}</div></div>`).join('');
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span>Owner / Admin</span></span></div></div></div>`;
   $('#side').innerHTML = items + footer;
 }
@@ -427,23 +376,6 @@ document.addEventListener('click', async e => {
     const target = navAdd.dataset.navAdd;
     const parts = target.split('/');
     const action = getNavAddAction(parts[0], parts[1]);
-    if (action) {
-      try {
-        const res = action();
-        if (res && res.catch) res.catch(err => toast(err.message, 'err'));
-      } catch (err) {
-        toast(err.message, 'err');
-      }
-    }
-    return;
-  }
-
-  const grpAdd = t.closest('[data-nav-group-add]');
-  if (grpAdd) {
-    e.preventDefault();
-    e.stopPropagation();
-    const gKey = grpAdd.dataset.navGroupAdd;
-    const action = GROUP_ADD_ACTIONS[gKey];
     if (action) {
       try {
         const res = action();

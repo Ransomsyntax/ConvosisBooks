@@ -583,41 +583,6 @@ html, body {
   transform: scale(1.15);
 }
 
-.nav-group-add-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--tx2);
-  opacity: 0;
-  transform: scale(0.8);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
-  margin-left: auto;
-  margin-right: 4px;
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  padding: 0;
-  user-select: none;
-}
-.ni > button:hover .nav-group-add-btn,
-.ni.act > button .nav-group-add-btn {
-  opacity: 1;
-  transform: scale(1);
-}
-.nav-group-add-btn:hover {
-  background: var(--surface-glass);
-  color: var(--accent);
-  transform: scale(1.15);
-}
-.nav-group-add-btn + .ar-btn {
-  margin-left: 0;
-}
 
 .nav-pastel-icon {
   width: 28px;

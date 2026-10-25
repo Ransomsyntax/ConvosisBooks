@@ -17,7 +17,8 @@ from .calc import GST_SLABS, compute, is_intra_state, q2
 from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
-    BankRule, BankStatementBatch, BankTransaction, Bill, BillAllocation, BillLine,
+    BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
+    Bill, BillAllocation, BillLine,
     CreditNote, CreditNoteLine, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
     DeliveryChallanLine, DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
@@ -1275,17 +1276,38 @@ class WebhookConfigResource(Resource):
 class BankAccountResource(Resource):
     name = 'bank-accounts'
     model = BankAccount
-    search_fields = ('name', 'bank_name', 'account_number', 'ifsc')
+    search_fields = ('name', 'bank_name', 'account_number', 'ifsc', 'branch_name')
     default_ordering = ('name',)
 
     def row(self, o):
-        unrec = o.transactions.filter(status='unreconciled').count()
+        unrec = o.transactions.filter(status__in=['unmatched', 'unreconciled']).count()
+        matched = o.transactions.filter(status='matched').count()
+        categorized = o.transactions.filter(status='categorized').count()
+        all_count = o.transactions.count()
+        masked = f"xxxx{o.account_number[-4:] if len(o.account_number) >= 4 else o.account_number}"
         return {
             'id': o.pk, 'name': o.name, 'bank_name': o.bank_name,
-            'account_number': o.account_number, 'ifsc': o.ifsc,
-            'account_type': o.account_type, 'currency': o.currency,
-            'opening_balance': o.opening_balance, 'current_balance': o.current_balance,
-            'unreconciled_count': unrec, 'active': o.active
+            'account_number': o.account_number,
+            'masked_account_number': masked,
+            'ifsc': o.ifsc,
+            'account_type': o.account_type,
+            'currency': o.currency,
+            'opening_balance': o.opening_balance,
+            'opening_balance_date': o.opening_balance_date,
+            'current_balance': o.current_balance,
+            'bank_balance': o.bank_balance,
+            'branch_name': o.branch_name or 'HO Kottayam',
+            'last_feed_date': o.last_feed_date,
+            'gl_account_id': o.gl_account_id,
+            'gl_account_name': o.gl_account.name if o.gl_account else '',
+            'unreconciled_count': unrec,
+            'uncategorized_count': unrec,
+            'matched_count': matched,
+            'categorized_count': categorized,
+            'all_count': all_count,
+            'description': o.description,
+            'active': o.active,
+            'is_archived': o.is_archived
         }
 
     def clean(self, data):
@@ -1298,8 +1320,15 @@ class BankAccountResource(Resource):
             'account_type': c.text('account_type', default='current', max_len=20),
             'currency': c.text('currency', default='INR', max_len=10),
             'opening_balance': c.number('opening_balance', default=Decimal('0.00')),
+            'opening_balance_date': c.date('opening_balance_date'),
             'current_balance': c.number('current_balance', default=Decimal('0.00')),
-            'active': c.boolean('active', True)
+            'bank_balance': c.number('bank_balance', default=Decimal('0.00')),
+            'branch_name': c.text('branch_name', default='HO Kottayam', max_len=100),
+            'last_feed_date': c.date('last_feed_date'),
+            'gl_account_id': c.integer('gl_account'),
+            'description': c.text('description', max_len=500),
+            'active': c.boolean('active', True),
+            'is_archived': c.boolean('is_archived', False),
         }
         c.done()
         return out
@@ -1308,6 +1337,8 @@ class BankAccountResource(Resource):
         c = self.clean(data)
         if c['current_balance'] == 0 and c['opening_balance'] != 0:
             c['current_balance'] = c['opening_balance']
+        if c['bank_balance'] == 0 and c['current_balance'] != 0:
+            c['bank_balance'] = c['current_balance']
         ba = BankAccount.objects.create(**c)
         services.log_audit(user, 'create', 'BankAccount', ba.pk, f"Created bank account {ba.name} ({ba.bank_name})")
         return ba
@@ -1316,12 +1347,13 @@ class BankAccountResource(Resource):
         for k, v in self.clean(data).items():
             setattr(obj, k, v)
         obj.save()
+        services.log_audit(user, 'update', 'BankAccount', obj.pk, f"Updated bank account {obj.name}")
 
 
 class BankTransactionResource(Resource):
     name = 'bank-transactions'
     model = BankTransaction
-    search_fields = ('description', 'reference')
+    search_fields = ('description', 'reference', 'payee', 'transaction_type', 'location')
     default_ordering = ('-date', '-id')
 
     def filter_qs(self, qs, request):
@@ -1330,18 +1362,165 @@ class BankTransactionResource(Resource):
             qs = qs.filter(bank_account_id=int(ba))
         st = request.GET.get('status')
         if st:
-            qs = qs.filter(status=st)
+            st = st.lower().strip()
+            if st in ('uncategorized', 'pending'):
+                qs = qs.filter(status__in=['unmatched', 'unreconciled'])
+            elif st != 'all':
+                qs = qs.filter(status=st)
+        q = request.GET.get('q')
+        if q:
+            qs = qs.filter(
+                Q(description__icontains=q) |
+                Q(reference__icontains=q) |
+                Q(payee__icontains=q) |
+                Q(transaction_type__icontains=q) |
+                Q(location__icontains=q)
+            )
         return qs
 
     def row(self, o):
         return {
             'id': o.pk, 'bank_account_id': o.bank_account_id,
             'bank_account_name': o.bank_account.name if o.bank_account else '',
-            'date': o.date, 'description': o.description, 'reference': o.reference,
-            'withdrawal': o.withdrawal, 'deposit': o.deposit, 'balance': o.balance,
-            'status': o.status, 'matched_entity_type': o.matched_entity_type,
-            'matched_entity_id': o.matched_entity_id, 'reconciled_at': o.reconciled_at
+            'date': o.date,
+            'description': o.description,
+            'reference': o.reference,
+            'transaction_type': o.transaction_type or 'Bank Transaction',
+            'payee': o.payee or '',
+            'location': o.location or (o.bank_account.branch_name if o.bank_account else 'HO Kottayam'),
+            'withdrawal': o.withdrawal,
+            'deposit': o.deposit,
+            'balance': o.balance,
+            'status': o.status,
+            'is_cleared': o.is_cleared,
+            'category_account_id': o.category_account_id,
+            'category_account_name': o.category_account.name if o.category_account else '',
+            'matched_entity_type': o.matched_entity_type,
+            'matched_entity_id': o.matched_entity_id,
+            'match_metadata': o.match_metadata or {},
+            'notes': o.notes or '',
+            'reconciled_at': o.reconciled_at
         }
+
+
+class BankDepositResource(Resource):
+    name = 'bank-deposits'
+    model = BankDeposit
+    search_fields = ('number', 'party_name', 'reference', 'description')
+    default_ordering = ('-date', '-id')
+
+    def filter_qs(self, qs, request):
+        ba = request.GET.get('bank_account')
+        if ba and ba.isdigit():
+            qs = qs.filter(bank_account_id=int(ba))
+        return qs
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'number': o.number,
+            'bank_account_id': o.bank_account_id,
+            'bank_account_name': o.bank_account.name if o.bank_account else '',
+            'date': o.date, 'amount': o.amount,
+            'deposit_type': o.deposit_type,
+            'party_name': o.party_name,
+            'offset_account_id': o.offset_account_id,
+            'offset_account_name': o.offset_account.name if o.offset_account else '',
+            'reference': o.reference,
+            'description': o.description,
+            'location': o.location,
+            'status': o.status,
+            'created_at': o.created_at
+        }
+
+    def create(self, data, user):
+        res = services.record_bank_deposit(data, user)
+        return BankDeposit.objects.get(pk=res['id'])
+
+
+class BankTransferResource(Resource):
+    name = 'bank-transfers'
+    model = BankTransfer
+    search_fields = ('number', 'reference', 'description', 'from_account__name', 'to_account__name')
+    default_ordering = ('-date', '-id')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'number': o.number,
+            'from_account_id': o.from_account_id,
+            'from_account_name': o.from_account.name if o.from_account else '',
+            'to_account_id': o.to_account_id,
+            'to_account_name': o.to_account.name if o.to_account else '',
+            'date': o.date, 'amount': o.amount,
+            'reference': o.reference,
+            'description': o.description,
+            'notes': o.notes,
+            'status': o.status,
+            'created_at': o.created_at
+        }
+
+    def create(self, data, user):
+        res = services.record_bank_transfer(data, user)
+        return BankTransfer.objects.get(pk=res['id'])
+
+
+class BankReconciliationResource(Resource):
+    name = 'bank-reconciliations'
+    model = BankReconciliation
+    search_fields = ('reconciliation_number', 'bank_account__name', 'notes')
+    default_ordering = ('-statement_date', '-id')
+
+    def filter_qs(self, qs, request):
+        ba = request.GET.get('bank_account')
+        if ba and ba.isdigit():
+            qs = qs.filter(bank_account_id=int(ba))
+        return qs
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'reconciliation_number': o.reconciliation_number,
+            'bank_account_id': o.bank_account_id,
+            'bank_account_name': o.bank_account.name if o.bank_account else '',
+            'statement_date': o.statement_date,
+            'statement_ending_balance': o.statement_ending_balance,
+            'cleared_deposits': o.cleared_deposits,
+            'cleared_withdrawals': o.cleared_withdrawals,
+            'cleared_balance': o.cleared_balance,
+            'book_balance': o.book_balance,
+            'difference': o.difference,
+            'cleared_count': o.cleared_count,
+            'status': o.status,
+            'notes': o.notes,
+            'created_at': o.created_at
+        }
+
+
+class BankStatementBatchResource(Resource):
+    name = 'statement-batches'
+    model = BankStatementBatch
+    search_fields = ('batch_number', 'filename', 'bank_account__name')
+    default_ordering = ('-imported_at', '-id')
+
+    def filter_qs(self, qs, request):
+        ba = request.GET.get('bank_account')
+        if ba and ba.isdigit():
+            qs = qs.filter(bank_account_id=int(ba))
+        return qs
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'batch_number': o.batch_number,
+            'bank_account_id': o.bank_account_id,
+            'bank_account_name': o.bank_account.name if o.bank_account else '',
+            'filename': o.filename,
+            'source': o.source,
+            'imported_at': o.imported_at,
+            'total_rows': o.total_rows,
+            'imported_count': o.imported_count,
+            'duplicate_count': o.duplicate_count,
+            'status': o.status,
+            'reconciled_count': o.reconciled_count
+        }
+
 
 
 class DocumentFolderResource(Resource):
@@ -1955,7 +2134,8 @@ RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
     AccountResource(), JournalResource(), AuditLogResource(), CustomFieldResource(), WorkflowRuleResource(),
-    WebhookConfigResource(), BankAccountResource(), BankTransactionResource(), DocumentFolderResource(),
+    WebhookConfigResource(), BankAccountResource(), BankTransactionResource(), BankDepositResource(),
+    BankTransferResource(), BankReconciliationResource(), BankStatementBatchResource(), DocumentFolderResource(),
     ManagedDocumentResource(), SalesOrderResource(), PurchaseOrderResource(), ExpenseResource(),
     CreditNoteResource(), VendorCreditResource(), RecurringInvoiceResource(), DeliveryChallanResource(),
     EWayBillResource(), ProjectResource(), TimeLogResource(), ItemCategoryResource(), PriceListResource(),
@@ -2359,11 +2539,67 @@ def banking_import_view(request):
 
 @api_view
 def banking_match_suggestions_view(request, txn_id):
-    txn = BankTransaction.objects.filter(pk=txn_id).first()
-    if not txn:
-        raise ApiError(404, 'Transaction not found.')
-    matches = services.match_bank_transaction(txn)
+    matches = services.get_advanced_bank_match_suggestions(txn_id)
     return j(matches)
+
+
+@api_view
+def banking_match_action_view(request, txn_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    etype = d.get('entity_type', '')
+    eid = d.get('entity_id')
+    fee = Decimal(str(d.get('fee', '0.00') or '0.00'))
+    notes = d.get('notes', '')
+    res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_unmatch_action_view(request, txn_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.unmatch_bank_transaction_action(txn_id, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_quick_categorize_view(request, txn_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    res = services.quick_categorize_bank_transaction(txn_id, d, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_bulk_categorize_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    txn_ids = d.get('transaction_ids', [])
+    res = services.bulk_categorize_bank_transactions(txn_ids, d, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_exclude_view(request, txn_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.toggle_exclude_bank_transaction(txn_id, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_dashboard_summary_view(request):
+    ba_id = request.GET.get('bank_account')
+    if ba_id and ba_id.isdigit():
+        ba_id = int(ba_id)
+    else:
+        ba_id = None
+    res = services.get_bank_dashboard_summary(ba_id)
+    return j(res)
 
 
 @api_view
@@ -2373,8 +2609,19 @@ def banking_reconcile_view(request, txn_id):
     d = body(request)
     etype = d.get('entity_type', '')
     eid = d.get('entity_id')
-    txn = services.reconcile_bank_transaction(txn_id, etype, eid, request.user)
-    return j({'status': 'reconciled', 'id': txn.pk})
+    fee = Decimal(str(d.get('fee', '0.00') or '0.00'))
+    notes = d.get('notes', '')
+    res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_reconcile_complete_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    res = services.complete_bank_reconciliation(d, user=request.user)
+    return j(res)
 
 
 @api_view
@@ -2382,29 +2629,8 @@ def banking_transfer_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
-    c = Cleaner(d)
-    from_id = c.integer('from_account', required=True, lo=1)
-    to_id = c.integer('to_account', required=True, lo=1)
-    if from_id == to_id:
-        raise ApiError(400, 'Source and destination accounts must be different.')
-    from_acc = BankAccount.objects.filter(pk=from_id).first()
-    to_acc = BankAccount.objects.filter(pk=to_id).first()
-    if not from_acc or not to_acc:
-        raise ApiError(404, 'Bank account not found.')
-    amt = c.number('amount', required=True, lo=Decimal('0.01'))
-    dt = c.date('date', required=True)
-    ref = c.text('reference', max_len=80) or f'TXF-{from_acc.name}->{to_acc.name}'
-    c.done()
-
-    from_acc.current_balance -= amt
-    from_acc.save(update_fields=['current_balance'])
-    to_acc.current_balance += amt
-    to_acc.save(update_fields=['current_balance'])
-
-    BankTransaction.objects.create(bank_account=from_acc, date=dt, description=f'Transfer to {to_acc.name}', reference=ref, withdrawal=amt, balance=from_acc.current_balance, status='reconciled')
-    BankTransaction.objects.create(bank_account=to_acc, date=dt, description=f'Transfer from {from_acc.name}', reference=ref, deposit=amt, balance=to_acc.current_balance, status='reconciled')
-    services.post_bank_transfer(from_acc.name, to_acc.name, amt, dt, ref, request.user)
-    return j({'success': True, 'from_balance': from_acc.current_balance, 'to_balance': to_acc.current_balance})
+    res = services.record_bank_transfer(d, user=request.user)
+    return j(res)
 
 
 @api_view

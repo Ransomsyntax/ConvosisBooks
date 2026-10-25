@@ -1619,17 +1619,1078 @@ async function documentsPage(root, mode = 'all') {
   loadDocs();
 }
 
+/* ==========================================================================
+   BANKING MODULE PAGES (MATCHING REFERENCE ACCOUNTING DESIGN)
+   ========================================================================== */
+
+function fmtBankDate(dStr) {
+  if (!dStr) return '—';
+  if (dStr.includes('/')) return dStr;
+  const parts = dStr.split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return dStr;
+}
+
+async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null) {
+  PAGE.reload = () => bankingMainPage(root, filterTab, selectedAccountId);
+
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Banking Workspace...</div></div>`;
+
+  try {
+    const [accountsRes, summaryRes] = await Promise.all([
+      api('bank-accounts/?page_size=50'),
+      api(`banking/dashboard-summary/${selectedAccountId ? '?bank_account=' + selectedAccountId : ''}`)
+    ]);
+
+    const accounts = accountsRes.results || [];
+    if (!accounts.length) {
+      root.innerHTML = `
+        <div class="banking-page-container">
+          <div class="bc">Home / Banking</div>
+          <div class="hd"><h1>Banking</h1></div>
+          <div class="card" style="margin-top:20px;padding:40px;text-align:center;">
+            <div style="font-size:36px;margin-bottom:8px;">🏦</div>
+            <h3>No Bank Accounts Set Up</h3>
+            <p class="sub" style="margin-bottom:16px;">Add your business bank account to track feeds, categorize transactions, and reconcile books.</p>
+            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let activeAccount = accounts.find(a => a.id == selectedAccountId) || accounts.find(a => (a.name || '').toLowerCase().includes('kotak')) || accounts[0];
+    selectedAccountId = activeAccount.id;
+
+    let currentPage = 1;
+    let pageSize = 25;
+    let currentSearch = '';
+    let sortDirection = 'desc';
+    let activeFilter = filterTab || 'all';
+
+    const maskedAccNum = activeAccount.masked_account_number || `xxxx${(activeAccount.account_number || '').slice(-4)}`;
+    const feedDateDisplay = activeAccount.last_feed_date ? fmtBankDate(activeAccount.last_feed_date) : '20/10/2026';
+    const lastSyncDisplay = '23/10/2026';
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <!-- TOP ACCOUNT HEADER -->
+        <div class="banking-top-header">
+          <div class="banking-account-title-wrap">
+            <div class="banking-account-title-row">
+              <div class="rel">
+                <button type="button" class="banking-account-name-btn" id="bnk-acc-picker-btn">
+                  <span>${esc(activeAccount.name)}</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <div class="pop" id="bnk-acc-picker-pop" style="min-width:240px;top:100%;left:0;margin-top:6px;z-index:90;">
+                  <div style="padding:8px 12px;font-size:11px;font-weight:700;color:var(--tx-muted);text-transform:uppercase;border-bottom:1px solid var(--bd-glass);">Switch Bank Account</div>
+                  ${accounts.map(a => `
+                    <button class="mi ${a.id == activeAccount.id ? 'act' : ''}" type="button" data-switch-acc="${a.id}">
+                      <div style="font-weight:600;font-size:13px;color:var(--tx);">${esc(a.name)}</div>
+                      <div class="sub" style="font-size:11px;">${esc(a.bank_name || 'Bank')} · ${esc(a.masked_account_number || 'xxxx' + (a.account_number || '').slice(-4))}</div>
+                    </button>
+                  `).join('')}
+                  <div style="border-top:1px solid var(--bd-glass);padding:6px;">
+                    <button class="btn" type="button" style="width:100%;font-size:12px;" onclick="bankAccountForm()">+ Add Another Account</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Green WiFi Live Feed Icon -->
+              <span class="banking-feed-active-badge" title="Live Bank Feed Connected">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+              </span>
+            </div>
+            <div class="banking-account-number-sub">Account Number: ${esc(maskedAccNum)}</div>
+          </div>
+
+          <!-- Top Right Action Buttons -->
+          <div class="banking-header-actions">
+            <button type="button" class="banking-action-link-btn" id="bnk-act-statements">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg>
+              <span>Bank Statements</span>
+            </button>
+
+            <button type="button" class="banking-btn-quick-cat" id="bnk-act-quick-cat">
+              <span>Quick Categorize</span>
+            </button>
+
+            <!-- Add Transaction Dropdown -->
+            <div class="rel">
+              <button type="button" class="banking-btn-pill" id="bnk-add-txn-btn">
+                <span>Add Transaction</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="pop" id="bnk-add-txn-pop" style="min-width:200px;top:100%;right:0;margin-top:6px;z-index:90;">
+                <button class="mi" type="button" data-add-type="expense">Expense</button>
+                <button class="mi" type="button" data-add-type="payment_received">Customer Payment</button>
+                <button class="mi" type="button" data-add-type="payment_made">Vendor Payment</button>
+                <button class="mi" type="button" data-add-type="transfer">Transfer</button>
+                <div style="border-top:1px solid var(--bd-glass);margin:4px 0;"></div>
+                <button class="mi" type="button" data-add-type="bank_charge">Bank Charge</button>
+                <button class="mi" type="button" data-add-type="interest_income">Interest Income</button>
+                <button class="mi" type="button" data-add-type="refund">Refund</button>
+                <button class="mi" type="button" data-add-type="adjustment">Adjustment</button>
+              </div>
+            </div>
+
+            <button type="button" class="banking-btn-pill" id="bnk-act-record-deposit">
+              <span>Record Deposit</span>
+            </button>
+
+            <button type="button" class="banking-btn-icon-square" id="bnk-act-settings" title="Bank Account Settings" aria-label="Settings">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+
+            <button type="button" class="banking-btn-icon-close" id="bnk-act-close" title="Close" aria-label="Close">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 ACCOUNT SUMMARY CARDS -->
+        <div class="banking-summary-cards-grid">
+          <!-- 1. Amount in Books -->
+          <div class="banking-card">
+            <div class="banking-card-icon-box blue">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z"/><path d="M8 7h8M8 11h8"/></svg>
+            </div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Amount in Books</div>
+              <div class="banking-card-value">${inr(activeAccount.current_balance)}</div>
+            </div>
+          </div>
+
+          <!-- 2. Amount in Bank -->
+          <div class="banking-card">
+            <div class="banking-card-icon-box teal">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg>
+            </div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Amount in Bank</div>
+              <div class="banking-card-value">${inr(activeAccount.bank_balance || activeAccount.current_balance)}</div>
+            </div>
+          </div>
+
+          <!-- 3. Last Feed Date -->
+          <div class="banking-card">
+            <div class="banking-card-icon-box calendar">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Last Feed Date</div>
+              <div class="banking-card-value">${feedDateDisplay}</div>
+            </div>
+          </div>
+
+          <!-- 4. Associated Locations -->
+          <div class="banking-card">
+            <div class="banking-card-icon-box location">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+            </div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Associated Locations</div>
+              <div class="banking-card-value">${esc(activeAccount.branch_name || 'HO Kottayam')}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Right Feed Update Indicator -->
+        <div class="banking-sync-bar">
+          <span>Bank feeds last fetched on <b>${lastSyncDisplay}</b></span>
+          <button type="button" class="banking-refresh-btn" id="bnk-act-refresh-feeds">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Refresh Feeds</span>
+          </button>
+        </div>
+
+        <!-- 3 TRANSACTION SUMMARY TABS -->
+        <div class="banking-tabs-row">
+          <!-- Tab 1: Dashboard / Account Summary -->
+          <a href="#/banking/banking-dashboard" class="banking-tab-item">
+            <div class="banking-tab-main-title">Dashboard</div>
+            <div class="banking-tab-subtitle">Account Summary</div>
+          </a>
+
+          <!-- Tab 2: 2 Uncategorized Transactions / From Bank Statements -->
+          <button type="button" class="banking-tab-item ${activeFilter === 'uncategorized' ? 'active' : ''}" id="bnk-tab-uncat">
+            <div class="banking-tab-main-title">
+              <span class="banking-tab-badge-red" id="bnk-uncat-badge">${activeAccount.uncategorized_count || 2}</span>
+              <span>Uncategorized Transactions</span>
+            </div>
+            <div class="banking-tab-subtitle">From Bank Statements</div>
+          </button>
+
+          <!-- Tab 3: All Transactions ▾ / In Books -->
+          <div class="rel" style="display:inline-flex;">
+            <button type="button" class="banking-tab-item ${activeFilter !== 'uncategorized' ? 'active' : ''}" id="bnk-tab-all-btn">
+              <div class="banking-tab-main-title">
+                <span id="bnk-active-tab-title">All Transactions</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+              <div class="banking-tab-subtitle">In Books</div>
+            </button>
+            <div class="pop" id="bnk-all-dropdown-pop" style="min-width:210px;top:100%;left:0;margin-top:2px;z-index:90;">
+              <button class="mi ${activeFilter === 'all' ? 'act' : ''}" type="button" data-filter="all">All Transactions</button>
+              <button class="mi ${activeFilter === 'matched' ? 'act' : ''}" type="button" data-filter="matched">Matched Transactions</button>
+              <button class="mi ${activeFilter === 'unmatched' ? 'act' : ''}" type="button" data-filter="unmatched">Unmatched Transactions</button>
+              <button class="mi ${activeFilter === 'categorized' ? 'act' : ''}" type="button" data-filter="categorized">Categorized Transactions</button>
+              <button class="mi ${activeFilter === 'manually_added' ? 'act' : ''}" type="button" data-filter="manually_added">Manually Added Transactions</button>
+              <button class="mi ${activeFilter === 'excluded' ? 'act' : ''}" type="button" data-filter="excluded">Excluded Transactions</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- BANKING TRANSACTION TABLE CONTAINER -->
+        <div class="banking-table-container">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--bd-glass);background:var(--surface-glass-subtle);">
+            <div id="bnk-active-filter-label" style="font-size:13px;font-weight:600;color:var(--tx);">Showing All Transactions</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="rel" style="display:flex;align-items:center;">
+                <input type="text" id="bnk-search-input" class="in" placeholder="Search narration, ref, payee..." style="padding:5px 28px 5px 10px;font-size:12px;width:220px;border-radius:6px;">
+                <span style="position:absolute;right:8px;pointer-events:none;color:var(--tx-muted);font-size:12px;">🔍</span>
+              </div>
+              <button type="button" class="btn" id="bnk-bulk-cat-btn" style="font-size:12px;padding:5px 10px;display:none;">Bulk Categorize</button>
+            </div>
+          </div>
+
+          <div class="tw" id="bnk-txns-table-wrap">${spinner}</div>
+
+          <!-- BOTTOM PAGINATION BAR -->
+          <div class="banking-pagination-bar">
+            <div>
+              <span id="bnk-total-count-label">Total Count: </span>
+              <a class="banking-view-total-link" id="bnk-view-total-btn">View</a>
+            </div>
+
+            <div class="banking-pagination-controls">
+              <div class="rel">
+                <button type="button" class="banking-rows-per-page" id="bnk-rows-picker-btn">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                  <span id="bnk-rows-txt">25 per page</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <div class="pop" id="bnk-rows-pop" style="min-width:120px;bottom:100%;right:0;margin-bottom:6px;z-index:90;">
+                  <button class="mi" type="button" data-size="10">10 per page</button>
+                  <button class="mi" type="button" data-size="25">25 per page</button>
+                  <button class="mi" type="button" data-size="50">50 per page</button>
+                  <button class="mi" type="button" data-size="100">100 per page</button>
+                </div>
+              </div>
+
+              <div class="banking-page-nav-btns">
+                <button type="button" id="bnk-page-prev" title="Previous Page" aria-label="Previous Page">‹</button>
+                <span id="bnk-page-range-txt">1 - 25</span>
+                <button type="button" id="bnk-page-next" title="Next Page" aria-label="Next Page">›</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Hook Up Header Events
+    const accPickerBtn = $('#bnk-acc-picker-btn', root);
+    const accPickerPop = $('#bnk-acc-picker-pop', root);
+    accPickerBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      accPickerPop.classList.toggle('on');
+    });
+
+    $$('[data-switch-acc]', root).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = Number(btn.dataset.switchAcc);
+        bankingMainPage(root, activeFilter, targetId);
+      });
+    });
+
+    $('#bnk-act-statements', root).addEventListener('click', () => {
+      statementImportWizardModal(selectedAccountId);
+    });
+
+    $('#bnk-act-quick-cat', root).addEventListener('click', async () => {
+      // Find first uncategorized transaction
+      try {
+        const res = await api(`bank-transactions/?bank_account=${selectedAccountId}&status=unmatched&page_size=1`);
+        if (res.results && res.results.length) {
+          quickCategorizeModal(res.results[0].id, () => loadTransactions());
+        } else {
+          toast('No pending uncategorized transactions for this account', 'ok');
+        }
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    });
+
+    const addTxnBtn = $('#bnk-add-txn-btn', root);
+    const addTxnPop = $('#bnk-add-txn-pop', root);
+    addTxnBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      addTxnPop.classList.toggle('on');
+    });
+
+    $$('[data-add-type]', root).forEach(btn => {
+      btn.addEventListener('click', () => {
+        addTxnPop.classList.remove('on');
+        addBankTransactionModal(btn.dataset.addType, selectedAccountId);
+      });
+    });
+
+    $('#bnk-act-record-deposit', root).addEventListener('click', () => {
+      recordDepositModal(selectedAccountId);
+    });
+
+    $('#bnk-act-settings', root).addEventListener('click', () => {
+      bankAccountForm(selectedAccountId);
+    });
+
+    $('#bnk-act-close', root).addEventListener('click', () => {
+      location.hash = '#/home/dashboard';
+    });
+
+    $('#bnk-act-refresh-feeds', root).addEventListener('click', async () => {
+      const btn = $('#bnk-act-refresh-feeds', root);
+      btn.style.opacity = '0.5';
+      toast('Syncing bank feed updates...');
+      try {
+        await api(`banking/feed-sync/${selectedAccountId}/`, { method: 'POST', body: {} });
+        toast('Feeds successfully refreshed');
+        loadTransactions();
+      } catch (e) {
+        toast(e.message, 'err');
+      } finally {
+        btn.style.opacity = '1';
+      }
+    });
+
+    // Tab Bar Events
+    $('#bnk-tab-uncat', root).addEventListener('click', () => {
+      activeFilter = 'uncategorized';
+      $('#bnk-tab-uncat', root).classList.add('active');
+      $('#bnk-tab-all-btn', root).classList.remove('active');
+      $('#bnk-active-filter-label', root).textContent = 'Showing Uncategorized Transactions';
+      currentPage = 1;
+      loadTransactions();
+    });
+
+    const allDropdownBtn = $('#bnk-tab-all-btn', root);
+    const allDropdownPop = $('#bnk-all-dropdown-pop', root);
+    allDropdownBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      allDropdownPop.classList.toggle('on');
+    });
+
+    $$('[data-filter]', root).forEach(btn => {
+      btn.addEventListener('click', () => {
+        allDropdownPop.classList.remove('on');
+        activeFilter = btn.dataset.filter;
+        $('#bnk-tab-uncat', root).classList.remove('active');
+        $('#bnk-tab-all-btn', root).classList.add('active');
+        $('#bnk-active-tab-title', root).textContent = btn.textContent;
+        $('#bnk-active-filter-label', root).textContent = `Showing ${btn.textContent}`;
+        currentPage = 1;
+        loadTransactions();
+      });
+    });
+
+    // Search input
+    let searchTimer = null;
+    $('#bnk-search-input', root).addEventListener('input', e => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        currentSearch = e.target.value.trim();
+        currentPage = 1;
+        loadTransactions();
+      }, 250);
+    });
+
+    // Rows per page picker
+    const rowsBtn = $('#bnk-rows-picker-btn', root);
+    const rowsPop = $('#bnk-rows-pop', root);
+    rowsBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      rowsPop.classList.toggle('on');
+    });
+
+    $$('[data-size]', root).forEach(btn => {
+      btn.addEventListener('click', () => {
+        rowsPop.classList.remove('on');
+        pageSize = Number(btn.dataset.size);
+        $('#bnk-rows-txt', root).textContent = `${pageSize} per page`;
+        currentPage = 1;
+        loadTransactions();
+      });
+    });
+
+    // Pagination nav
+    $('#bnk-page-prev', root).addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        loadTransactions();
+      }
+    });
+
+    $('#bnk-page-next', root).addEventListener('click', () => {
+      currentPage++;
+      loadTransactions();
+    });
+
+    // Load Transactions function
+    async function loadTransactions() {
+      const tableWrap = $('#bnk-txns-table-wrap', root);
+      if (!tableWrap) return;
+      tableWrap.innerHTML = spinner;
+
+      let url = `bank-transactions/?bank_account=${selectedAccountId}&page=${currentPage}&page_size=${pageSize}&ordering=${sortDirection === 'desc' ? '-date' : 'date'}`;
+      if (activeFilter && activeFilter !== 'all') {
+        url += `&status=${activeFilter}`;
+      }
+      if (currentSearch) {
+        url += `&q=${encodeURIComponent(currentSearch)}`;
+      }
+
+      try {
+        const res = await api(url);
+        const txns = res.results || [];
+        const total = res.count || 0;
+
+        // Update pagination labels
+        const startIdx = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+        const endIdx = Math.min(currentPage * pageSize, total);
+        $('#bnk-page-range-txt', root).textContent = total === 0 ? '0 - 0' : `${startIdx} - ${endIdx}`;
+        $('#bnk-page-prev', root).disabled = (currentPage <= 1);
+        $('#bnk-page-next', root).disabled = (endIdx >= total);
+
+        $('#bnk-view-total-btn', root).onclick = () => {
+          $('#bnk-total-count-label', root).innerHTML = `Total Count: <b style="color:var(--tx);">${total}</b>`;
+        };
+
+        if (!txns.length) {
+          tableWrap.innerHTML = `
+            <div style="padding:50px 20px;text-align:center;color:var(--tx-muted);">
+              <div style="font-size:28px;margin-bottom:8px;">📄</div>
+              <div style="font-weight:600;font-size:14px;color:var(--tx);">No transactions match the selected filter</div>
+              <div style="font-size:12px;margin-top:4px;">Try switching views or import a statement batch.</div>
+            </div>
+          `;
+          return;
+        }
+
+        tableWrap.innerHTML = `
+          <table class="banking-table">
+            <thead>
+              <tr>
+                <th style="width:40px;text-align:center;">
+                  <input type="checkbox" id="bnk-select-all" style="cursor:pointer;">
+                </th>
+                <th style="cursor:pointer;" id="bnk-sort-date-col" title="Click to sort">DATE ↕</th>
+                <th>REFERENCE#</th>
+                <th>TYPE</th>
+                <th>STATUS</th>
+                <th>LOCATION</th>
+                <th class="r">DEPOSITS</th>
+                <th class="r">WITHDRAWALS</th>
+                <th class="r">RUNNING BALANCE</th>
+                <th class="r" style="width:110px;">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${txns.map(t => {
+                const statusClass = (t.status === 'matched') ? 'status-matched' :
+                  (t.status === 'categorized') ? 'status-categorized' :
+                  (t.status === 'manually_added') ? 'status-manually-added' :
+                  (t.status === 'unmatched') ? 'status-unmatched' : 'status-excluded';
+
+                const statusLabel = (t.status === 'matched') ? 'Matched' :
+                  (t.status === 'categorized') ? 'Categorized' :
+                  (t.status === 'manually_added') ? 'Manually Added' :
+                  (t.status === 'unmatched') ? 'Unmatched' :
+                  (t.status === 'excluded') ? 'Excluded' : esc(t.status);
+
+                const depVal = num(t.deposit) > 0 ? inr(t.deposit) : '';
+                const withVal = num(t.withdrawal) > 0 ? inr(t.withdrawal) : '';
+                const balVal = inr(t.balance || 0);
+
+                return `
+                  <tr data-txn-id="${t.id}" style="cursor:pointer;">
+                    <td style="text-align:center;" onclick="event.stopPropagation();">
+                      <input type="checkbox" class="bnk-row-check" value="${t.id}" style="cursor:pointer;">
+                    </td>
+                    <td>${fmtBankDate(t.date)}</td>
+                    <td><code>${esc(t.reference || '—')}</code></td>
+                    <td>
+                      <div class="banking-type-title">${esc(t.transaction_type || 'Bank Transaction')}</div>
+                      ${t.payee ? `<div class="banking-type-subtext">Vendor: ${esc(t.payee)}</div>` : ''}
+                    </td>
+                    <td><span class="${statusClass}">${statusLabel}</span></td>
+                    <td>${esc(t.location || 'HO Kottayam')}</td>
+                    <td class="r" style="font-weight:600;color:#059669;">${depVal}</td>
+                    <td class="r" style="font-weight:600;color:var(--tx);">${withVal}</td>
+                    <td class="r" style="font-weight:700;color:var(--tx);">${balVal}</td>
+                    <td class="r" onclick="event.stopPropagation();">
+                      <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
+                        ${t.status === 'unmatched' ? `
+                          <button type="button" class="btn p" data-act-match="${t.id}" style="padding:3px 8px;font-size:11.5px;">Match</button>
+                          <button type="button" class="btn" data-act-quick-cat="${t.id}" style="padding:3px 8px;font-size:11.5px;">Categorize</button>
+                        ` : t.status === 'matched' ? `
+                          <button type="button" class="btn" data-act-unmatch="${t.id}" style="padding:3px 8px;font-size:11.5px;color:#dc2626;">Unmatch</button>
+                        ` : t.status === 'categorized' ? `
+                          <button type="button" class="btn" data-act-quick-cat="${t.id}" style="padding:3px 8px;font-size:11.5px;">Edit</button>
+                          <button type="button" class="btn" data-act-unmatch="${t.id}" style="padding:3px 8px;font-size:11.5px;color:#dc2626;">Unmatch</button>
+                        ` : `
+                          <button type="button" class="btn" data-act-detail="${t.id}" style="padding:3px 8px;font-size:11.5px;">Details</button>
+                        `}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr id="bnk-drawer-${t.id}" style="display:none;">
+                    <td colspan="10" style="padding:0;">
+                      <div class="banking-detail-panel">
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+                          <div>
+                            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">${esc(t.description)}</div>
+                            <div style="font-size:12px;color:var(--tx-muted);line-height:1.6;">
+                              <div>Reference: <b>${esc(t.reference || 'None')}</b> · Location: <b>${esc(t.location || 'HO Kottayam')}</b></div>
+                              <div>Payee / Merchant: <b>${esc(t.payee || 'Direct Ledger Posting')}</b></div>
+                              <div>Accounting Category: <b>${esc(t.category_account_name || 'General Cash & Bank')}</b></div>
+                              ${t.notes ? `<div>Notes: <i>${esc(t.notes)}</i></div>` : ''}
+                            </div>
+                          </div>
+                          <div style="text-align:right;">
+                            <div style="font-size:11.5px;color:var(--tx-muted);">Transaction Status</div>
+                            <div style="font-weight:700;font-size:13px;margin:2px 0 8px;"><span class="${statusClass}">${statusLabel}</span></div>
+                            <div style="display:flex;gap:6px;justify-content:flex-end;">
+                              <button type="button" class="btn" data-toggle-exclude="${t.id}" style="font-size:11px;padding:3px 8px;">
+                                ${t.status === 'excluded' ? 'Restore Transaction' : 'Exclude from Feeds'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+
+        // Row expand events
+        $$('tr[data-txn-id]', tableWrap).forEach(tr => {
+          tr.addEventListener('click', () => {
+            const tid = tr.dataset.txnId;
+            const drawer = $(`#bnk-drawer-${tid}`, tableWrap);
+            if (drawer) {
+              drawer.style.display = (drawer.style.display === 'none') ? 'table-row' : 'none';
+            }
+          });
+        });
+
+        // Contextual buttons
+        $$('[data-act-match]', tableWrap).forEach(btn => {
+          btn.addEventListener('click', () => {
+            matchBankTransactionModal(btn.dataset.actMatch, () => loadTransactions());
+          });
+        });
+
+        $$('[data-act-unmatch]', tableWrap).forEach(btn => {
+          btn.addEventListener('click', () => {
+            unmatchBankTransactionModal(btn.dataset.actUnmatch, () => loadTransactions());
+          });
+        });
+
+        $$('[data-act-quick-cat]', tableWrap).forEach(btn => {
+          btn.addEventListener('click', () => {
+            quickCategorizeModal(btn.dataset.actQuickCat, () => loadTransactions());
+          });
+        });
+
+        $$('[data-toggle-exclude]', tableWrap).forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              await api(`banking/exclude/${btn.dataset.toggleExclude}/`, { method: 'POST' });
+              toast('Transaction status updated');
+              loadTransactions();
+            } catch (e) {
+              toast(e.message, 'err');
+            }
+          });
+        });
+
+        // Sorting by date
+        const sortCol = $('#bnk-sort-date-col', tableWrap);
+        if (sortCol) {
+          sortCol.addEventListener('click', () => {
+            sortDirection = (sortDirection === 'desc') ? 'asc' : 'desc';
+            loadTransactions();
+          });
+        }
+
+        // Selection checkbox handling
+        const selectAllBox = $('#bnk-select-all', tableWrap);
+        const rowChecks = $$('.bnk-row-check', tableWrap);
+        const bulkCatBtn = $('#bnk-bulk-cat-btn', root);
+
+        const updateBulkBar = () => {
+          const checked = Array.from(rowChecks).filter(c => c.checked).map(c => Number(c.value));
+          if (checked.length > 0) {
+            bulkCatBtn.style.display = 'inline-flex';
+            bulkCatBtn.textContent = `Categorize Selected (${checked.length})`;
+          } else {
+            bulkCatBtn.style.display = 'none';
+          }
+        };
+
+        if (selectAllBox) {
+          selectAllBox.addEventListener('change', () => {
+            rowChecks.forEach(c => c.checked = selectAllBox.checked);
+            updateBulkBar();
+          });
+        }
+
+        rowChecks.forEach(c => c.addEventListener('change', updateBulkBar));
+
+        bulkCatBtn.onclick = () => {
+          const checked = Array.from(rowChecks).filter(c => c.checked).map(c => Number(c.value));
+          bulkCategorizeModal(checked, () => loadTransactions());
+        };
+
+      } catch (err) {
+        tableWrap.innerHTML = errBox(err.message, true);
+      }
+    }
+
+    loadTransactions();
+
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankingDashboardPage(root) {
+  PAGE.reload = () => bankingDashboardPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Banking Dashboard...</div></div>`;
+
+  try {
+    const summary = await api('banking/dashboard-summary/');
+    const accounts = summary.accounts || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Dashboard</div>
+        <div class="hd">
+          <div>
+            <h1>Banking Dashboard</h1>
+            <div class="sub">Cash, current &amp; credit card balances, statement feed health, and pending reconciliations</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
+            <button class="btn" onclick="statementImportWizardModal()">Import Statement</button>
+            <button class="btn" onclick="recordDepositModal()">Record Deposit</button>
+            <button class="btn" onclick="transferForm()">Transfer Funds</button>
+          </div>
+        </div>
+
+        <div class="banking-summary-cards-grid" style="margin-top:16px;">
+          <div class="banking-card">
+            <div class="banking-card-icon-box blue">🏦</div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Total Books Balance</div>
+              <div class="banking-card-value">${inr(summary.total_books_balance || 0)}</div>
+            </div>
+          </div>
+          <div class="banking-card">
+            <div class="banking-card-icon-box teal">🏛️</div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Total Bank Balance</div>
+              <div class="banking-card-value">${inr(summary.total_bank_balance || 0)}</div>
+            </div>
+          </div>
+          <div class="banking-card">
+            <div class="banking-card-icon-box calendar">⚡</div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Pending Uncategorized</div>
+              <div class="banking-card-value" style="color:#ef4444;">${summary.total_unrec_count || 0}</div>
+            </div>
+          </div>
+          <div class="banking-card">
+            <div class="banking-card-icon-box location">🏢</div>
+            <div class="banking-card-info">
+              <div class="banking-card-label">Active Bank Accounts</div>
+              <div class="banking-card-value">${accounts.length}</div>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin:24px 0 12px;font-size:16px;">Connected Bank Accounts</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:16px;">
+          ${accounts.map(a => `
+            <div class="card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:14px;">
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                  <b style="font-size:15px;color:var(--tx);">${esc(a.name)}</b>
+                  <span class="pastel-chip chip-mint">Active</span>
+                </div>
+                <div class="sub" style="font-size:12px;">${esc(a.bank_name || 'Bank')} · ${esc(a.masked_account_number || a.account_number)}</div>
+                <div class="sub" style="font-size:11px;margin-top:2px;">Location: <b>${esc(a.branch_name || 'HO Kottayam')}</b></div>
+              </div>
+
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
+                <div>
+                  <div style="font-size:11px;color:var(--tx-muted);">In Books</div>
+                  <div style="font-weight:700;font-size:14px;color:var(--tx);">${inr(a.current_balance)}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-size:11px;color:var(--tx-muted);">In Bank</div>
+                  <div style="font-weight:700;font-size:14px;color:#059669;">${inr(a.bank_balance || a.current_balance)}</div>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:11.5px;color:${a.unrec_count > 0 ? '#ef4444' : 'var(--tx-muted)'};font-weight:600;">
+                  ${a.unrec_count > 0 ? `${a.unrec_count} pending categorization` : 'Fully reconciled'}
+                </span>
+                <button type="button" class="btn p" onclick="location.hash='#/banking/all-transactions'" style="font-size:12px;padding:4px 12px;">View Account ›</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankingAccountsPage(root) {
+  PAGE.reload = () => bankingAccountsPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Accounts...</div></div>`;
+
+  try {
+    const res = await api('bank-accounts/?page_size=50');
+    const accounts = res.results || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Bank Accounts</div>
+        <div class="hd">
+          <div>
+            <h1>Bank Accounts</h1>
+            <div class="sub">Manage corporate checking, savings, current accounts, and credit cards</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account Name</th>
+                  <th>Bank Name</th>
+                  <th>Account Number</th>
+                  <th>Type</th>
+                  <th>Branch</th>
+                  <th class="r">Book Balance</th>
+                  <th class="r">Bank Balance</th>
+                  <th class="r">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${accounts.map(a => `
+                  <tr>
+                    <td><b>${esc(a.name)}</b></td>
+                    <td>${esc(a.bank_name || '—')}</td>
+                    <td><code>${esc(a.masked_account_number || a.account_number)}</code></td>
+                    <td><span class="pastel-chip chip-sky">${esc(a.account_type || 'Current')}</span></td>
+                    <td>${esc(a.branch_name || 'HO Kottayam')}</td>
+                    <td class="r" style="font-weight:700;">${inr(a.current_balance)}</td>
+                    <td class="r" style="font-weight:700;color:#059669;">${inr(a.bank_balance || a.current_balance)}</td>
+                    <td class="r">
+                      <div style="display:flex;gap:6px;justify-content:flex-end;">
+                        <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="location.hash='#/banking/all-transactions'">Transactions</button>
+                        <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="bankAccountForm(${a.id})">Edit</button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankStatementsListPage(root) {
+  PAGE.reload = () => bankStatementsListPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Statements...</div></div>`;
+
+  try {
+    const res = await api('statement-batches/?page_size=50');
+    const batches = res.results || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Bank Statements</div>
+        <div class="hd">
+          <div>
+            <h1>Bank Statements &amp; Import Batches</h1>
+            <div class="sub">Import history, statement reconciliations, and rollback audit trail</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="statementImportWizardModal()">+ Import Statement</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Batch Number</th>
+                  <th>Bank Account</th>
+                  <th>Filename</th>
+                  <th>Import Date</th>
+                  <th class="r">Total Rows</th>
+                  <th class="r">Imported</th>
+                  <th class="r">Duplicates</th>
+                  <th>Status</th>
+                  <th class="r">Rollback</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${batches.length ? batches.map(b => `
+                  <tr>
+                    <td><b>${esc(b.batch_number)}</b></td>
+                    <td>${esc(b.bank_account_name || 'Bank Account')}</td>
+                    <td><code>${esc(b.filename || 'statement.csv')}</code></td>
+                    <td>${fmtBankDate(b.imported_at ? b.imported_at.slice(0, 10) : '')}</td>
+                    <td class="r">${b.total_rows}</td>
+                    <td class="r" style="font-weight:700;color:#059669;">${b.imported_count}</td>
+                    <td class="r">${b.duplicate_count}</td>
+                    <td><span class="pastel-chip chip-mint">${esc(b.status || 'Imported')}</span></td>
+                    <td class="r">
+                      <button class="btn" style="padding:4px 8px;font-size:11px;color:#dc2626;" onclick="rollbackBatchModal(${b.bank_account_id})">Rollback</button>
+                    </td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--tx-muted);">No statement batches imported yet. Click "Import Statement" to upload your first bank statement.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankDepositsPage(root) {
+  PAGE.reload = () => bankDepositsPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Deposits...</div></div>`;
+
+  try {
+    const res = await api('bank-deposits/?page_size=50');
+    const deposits = res.results || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Deposits</div>
+        <div class="hd">
+          <div>
+            <h1>Recorded Bank Deposits</h1>
+            <div class="sub">Cash, cheque, and electronic receipts credited directly to bank accounts</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="recordDepositModal()">+ Record Deposit</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deposit #</th>
+                  <th>Date</th>
+                  <th>Bank Account</th>
+                  <th>Party / Received From</th>
+                  <th>Deposit Type</th>
+                  <th>Reference</th>
+                  <th class="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${deposits.length ? deposits.map(d => `
+                  <tr>
+                    <td><b>${esc(d.number)}</b></td>
+                    <td>${fmtBankDate(d.date)}</td>
+                    <td>${esc(d.bank_account_name || 'Bank Account')}</td>
+                    <td>${esc(d.party_name || 'Direct Receipt')}</td>
+                    <td><span class="pastel-chip chip-sky">${esc(d.deposit_type)}</span></td>
+                    <td><code>${esc(d.reference || '—')}</code></td>
+                    <td class="r" style="font-weight:700;color:#059669;">+${inr(d.amount)}</td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--tx-muted);">No deposits recorded yet. Click "Record Deposit" to create one.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankTransfersPage(root) {
+  PAGE.reload = () => bankTransfersPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Transfers...</div></div>`;
+
+  try {
+    const res = await api('bank-transfers/?page_size=50');
+    const transfers = res.results || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Transfers Between Accounts</div>
+        <div class="hd">
+          <div>
+            <h1>Transfers Between Accounts</h1>
+            <div class="sub">Inter-account fund movements with double-entry journal postings</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="transferForm()">+ Record Transfer</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Transfer #</th>
+                  <th>Date</th>
+                  <th>From Account</th>
+                  <th>To Account</th>
+                  <th>Reference</th>
+                  <th>Description</th>
+                  <th class="r">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${transfers.length ? transfers.map(x => `
+                  <tr>
+                    <td><b>${esc(x.number)}</b></td>
+                    <td>${fmtBankDate(x.date)}</td>
+                    <td>${esc(x.from_account_name)}</td>
+                    <td>${esc(x.to_account_name)}</td>
+                    <td><code>${esc(x.reference || '—')}</code></td>
+                    <td>${esc(x.description || 'Inter-account transfer')}</td>
+                    <td class="r" style="font-weight:700;">${inr(x.amount)}</td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--tx-muted);">No transfers recorded yet. Click "Record Transfer" to move funds between accounts.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankRulesPage(root) {
+  PAGE.reload = () => bankRulesPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Rules...</div></div>`;
+
+  try {
+    const rules = await api('banking/rules/');
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Bank Rules</div>
+        <div class="hd">
+          <div>
+            <h1>Automated Bank Categorization Rules</h1>
+            <div class="sub">Auto-assign transaction types, accounting GL accounts, and payees based on narration text</div>
+          </div>
+          <div class="act">
+            <button class="btn p" onclick="bankRulesModal()">+ Create Rule</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Rule Name</th>
+                  <th>Condition</th>
+                  <th>Action</th>
+                  <th>Auto-Reconcile</th>
+                  <th class="r">Delete</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rules.length ? rules.map(r => `
+                  <tr>
+                    <td><b>#${r.priority}</b></td>
+                    <td><b>${esc(r.name)}</b></td>
+                    <td><code>${esc(r.field)}</code> ${esc(r.operator)} "<b>${esc(r.value)}</b>"</td>
+                    <td>Assign GL Account &amp; Payee</td>
+                    <td><span class="pastel-chip ${r.auto_reconcile ? 'chip-mint' : 'chip-sky'}">${r.auto_reconcile ? 'Yes · Auto Reconcile' : 'Suggest Only'}</span></td>
+                    <td class="r">
+                      <button class="btn dn" onclick="deleteRecord('banking/rules', {id: ${r.id}, name: '${esc(r.name)}'}, 'bank rule')" style="padding:2px 8px;font-size:11px;">✕</button>
+                    </td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--tx-muted);">No categorization rules created yet. Click "Create Rule" to automate matching.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+function importBankStatementWizard(root) {
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">Opening Statement Import Wizard...</div></div>`;
+  statementImportWizardModal();
+}
+
 async function bankingReconciliationPage(root) {
   PAGE.reload = () => bankingReconciliationPage(root);
   const bankAccs = await api('lookup/bank-accounts/');
 
   if (!bankAccs.length) {
     root.innerHTML = `
-      <div class="bc">Home / Banking</div>
-      <div class="hd"><h1>Bank Reconciliation Cockpit</h1></div>
-      <div class="card" style="margin-top:14px;padding:30px;text-align:center;">
-        <p>No bank accounts set up yet.</p>
-        <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking</div>
+        <div class="hd"><h1>Bank Reconciliation Cockpit</h1></div>
+        <div class="card" style="margin-top:14px;padding:30px;text-align:center;">
+          <p>No bank accounts set up yet.</p>
+          <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
+        </div>
       </div>
     `;
     return;
@@ -1638,59 +2699,59 @@ async function bankingReconciliationPage(root) {
   let selectedAccId = bankAccs[0].id;
 
   root.innerHTML = `
-    <div class="bc">Home / Banking / Reconciliation</div>
-    <div class="hd">
-      <div>
-        <h1>Bank Reconciliation Cockpit</h1>
-        <div class="sub" style="margin-top:2px;">Automated bank feed synchronization, SHA-256 duplicate detection & ML transaction matching engine</div>
-      </div>
-      <div class="act">
-        <button class="btn p" id="bnk-rec-live-sync" type="button">⚡ Sync Live Feed</button>
-        <button class="btn" id="bnk-rec-rules" type="button">⚙️ Bank Rules</button>
-        <button class="btn" id="bnk-rec-rollback" type="button">↺ Rollback Batch</button>
-        <button class="btn" id="bnk-rec-imp" type="button">Import Statement</button>
-        <button class="btn" id="bnk-rec-xfer" type="button">Transfer Funds</button>
-      </div>
-    </div>
-
-    <div class="card" style="margin:14px 0;padding:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <label style="font-weight:600;">Bank Account:</label>
-          <select class="in" id="bnk-sel-acc" style="min-width:260px;">
-            ${bankAccs.map(a => `<option value="${a.id}" ${a.id === selectedAccId ? 'selected' : ''}>${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
-          </select>
+    <div class="banking-page-container">
+      <div class="bc">Home / Banking / Reconciliation</div>
+      <div class="hd">
+        <div>
+          <h1>Bank Reconciliation Cockpit</h1>
+          <div class="sub" style="margin-top:2px;">Compare statement balance with books, mark cleared transactions, and verify zero difference</div>
         </div>
-        <div id="bnk-kpi-strip" style="display:flex;gap:16px;">
-          <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
-            <div class="sub" style="font-size:11px;">Current Ledger Balance</div>
-            <div style="font-weight:700;font-size:16px;color:var(--accent);" id="bnk-cur-bal">₹0.00</div>
-          </div>
-          <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
-            <div class="sub" style="font-size:11px;">Statement Balance</div>
-            <div style="font-weight:700;font-size:16px;" id="bnk-stmt-bal">₹0.00</div>
-          </div>
-          <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
-            <div class="sub" style="font-size:11px;">Reconciliation Status</div>
-            <div style="font-weight:700;font-size:16px;color:var(--up);" id="bnk-rec-stat">Balanced</div>
-          </div>
+        <div class="act">
+          <button class="btn p" id="bnk-rec-live-sync" type="button">⚡ Sync Live Feed</button>
+          <button class="btn" id="bnk-rec-rules" type="button">⚙️ Bank Rules</button>
+          <button class="btn" id="bnk-rec-imp" type="button">Import Statement</button>
+          <button class="btn" id="bnk-rec-xfer" type="button">Transfer Funds</button>
         </div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="tb">
-        <h3 style="font-size:14px;margin:0;">Unreconciled Bank Feed Transactions</h3>
-        <span class="sub" id="bnk-txn-cnt"></span>
+      <div class="card" style="margin:14px 0;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <label style="font-weight:600;">Bank Account:</label>
+            <select class="in" id="bnk-sel-acc" style="min-width:260px;">
+              ${bankAccs.map(a => `<option value="${a.id}" ${a.id === selectedAccId ? 'selected' : ''}>${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
+            </select>
+          </div>
+          <div id="bnk-kpi-strip" style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
+              <div class="sub" style="font-size:11px;">Current Book Balance</div>
+              <div style="font-weight:700;font-size:16px;color:var(--accent);" id="bnk-cur-bal">₹0.00</div>
+            </div>
+            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
+              <div class="sub" style="font-size:11px;">Statement Ending Balance</div>
+              <div style="font-weight:700;font-size:16px;" id="bnk-stmt-bal">₹0.00</div>
+            </div>
+            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
+              <div class="sub" style="font-size:11px;">Difference Remaining</div>
+              <div style="font-weight:700;font-size:16px;color:#059669;" id="bnk-rec-diff">₹0.00</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="tw" id="bnk-rec-table">${spinner}</div>
+
+      <div class="card">
+        <div class="tb">
+          <h3 style="font-size:14px;margin:0;">Pending Reconciliation Lines</h3>
+          <span class="sub" id="bnk-txn-cnt"></span>
+        </div>
+        <div class="tw" id="bnk-rec-table">${spinner}</div>
+      </div>
     </div>
   `;
 
-  $('#bnk-rec-live-sync', root).addEventListener('click', () => importStatementModal(selectedAccId));
+  $('#bnk-rec-live-sync', root).addEventListener('click', () => statementImportWizardModal(selectedAccId));
   $('#bnk-rec-rules', root).addEventListener('click', () => bankRulesModal());
-  $('#bnk-rec-rollback', root).addEventListener('click', () => rollbackBatchModal(selectedAccId));
-  $('#bnk-rec-imp', root).addEventListener('click', () => importStatementModal(selectedAccId));
+  $('#bnk-rec-imp', root).addEventListener('click', () => statementImportWizardModal(selectedAccId));
   $('#bnk-rec-xfer', root).addEventListener('click', () => transferForm());
   $('#bnk-sel-acc', root).addEventListener('change', e => {
     selectedAccId = Number(e.target.value);
@@ -1702,16 +2763,25 @@ async function bankingReconciliationPage(root) {
     try {
       const acc = await api(`bank-accounts/${selectedAccId}/`);
       $('#bnk-cur-bal', root).textContent = inr(acc.current_balance);
-      $('#bnk-stmt-bal', root).textContent = inr(acc.current_balance);
+      $('#bnk-stmt-bal', root).textContent = inr(acc.bank_balance || acc.current_balance);
 
-      const txns = await api(`bank-transactions/?bank_account=${selectedAccId}&status=unreconciled&page_size=50`);
+      const diff = Math.abs(num(acc.current_balance) - num(acc.bank_balance || acc.current_balance));
+      $('#bnk-rec-diff', root).textContent = inr(diff);
+      $('#bnk-rec-diff', root).style.color = (diff === 0) ? '#059669' : '#dc2626';
+
+      const txns = await api(`bank-transactions/?bank_account=${selectedAccId}&status=unmatched&page_size=50`);
       if (!root.isConnected) return;
       $('#bnk-txn-cnt', root).textContent = `${txns.count} pending match`;
 
       if (!txns.results.length) {
-        $('#bnk-rec-table', root).innerHTML = `<div class="empty" style="padding:40px;">All transactions for this account are fully reconciled!<br><button class="btn p" style="margin-top:10px;" id="sync-new-feed">+ Sync Live Bank Feed</button></div>`;
+        $('#bnk-rec-table', root).innerHTML = `
+          <div class="empty" style="padding:40px;">
+            All transactions for this account are fully matched and reconciled!<br>
+            <button class="btn p" style="margin-top:10px;" id="sync-new-feed">+ Sync Bank Feed</button>
+          </div>
+        `;
         const sb = $('#sync-new-feed', root);
-        if (sb) sb.addEventListener('click', () => importStatementModal(selectedAccId));
+        if (sb) sb.addEventListener('click', () => statementImportWizardModal(selectedAccId));
         return;
       }
 
@@ -1723,30 +2793,28 @@ async function bankingReconciliationPage(root) {
               <th>Bank Statement Line</th>
               <th class="r">Withdrawal</th>
               <th class="r">Deposit</th>
-              <th>ML Match Suggestion</th>
-              <th class="r">Reconcile</th>
+              <th>Suggested Match</th>
+              <th class="r">Action</th>
             </tr>
           </thead>
           <tbody>
-            ${txns.results.map(t => {
-              return `
-                <tr id="bnk-row-${t.id}">
-                  <td>${fd(t.date)}</td>
-                  <td>
-                    <div style="font-weight:600;">${esc(t.description)}</div>
-                    ${t.reference ? `<div class="sub" style="font-size:11px;">Ref: ${esc(t.reference)}</div>` : ''}
-                  </td>
-                  <td class="r">${num(t.withdrawal) > 0 ? `<span class="dn">${inr(t.withdrawal)}</span>` : '—'}</td>
-                  <td class="r">${num(t.deposit) > 0 ? `<span class="up">+${inr(t.deposit)}</span>` : '—'}</td>
-                  <td id="match-cell-${t.id}">
-                    <span class="sub">${spinner} Finding matches...</span>
-                  </td>
-                  <td class="r">
-                    <button class="btn p" type="button" data-rec-txn="${t.id}" style="padding:4px 12px;font-size:12px;">Reconcile</button>
-                  </td>
-                </tr>
-              `;
-            }).join('')}
+            ${txns.results.map(t => `
+              <tr id="bnk-row-${t.id}">
+                <td>${fmtBankDate(t.date)}</td>
+                <td>
+                  <div style="font-weight:600;">${esc(t.description)}</div>
+                  ${t.reference ? `<div class="sub" style="font-size:11px;">Ref: ${esc(t.reference)}</div>` : ''}
+                </td>
+                <td class="r">${num(t.withdrawal) > 0 ? `<span class="dn">${inr(t.withdrawal)}</span>` : '—'}</td>
+                <td class="r">${num(t.deposit) > 0 ? `<span class="up">+${inr(t.deposit)}</span>` : '—'}</td>
+                <td id="match-cell-${t.id}">
+                  <span class="sub">${spinner} Checking match candidates...</span>
+                </td>
+                <td class="r">
+                  <button class="btn p" type="button" data-match-txn="${t.id}" style="padding:4px 12px;font-size:12px;">Match</button>
+                </td>
+              </tr>
+            `).join('')}
           </tbody>
         </table>
       `;
@@ -1757,32 +2825,23 @@ async function bankingReconciliationPage(root) {
           if (!cell) return;
           if (res.suggestions && res.suggestions.length) {
             const best = res.suggestions[0];
-            const confPct = Math.round(best.confidence * 100);
+            const confPct = best.confidence_score || Math.round((best.confidence || 0.8) * 100);
             const chipClass = confPct >= 90 ? 'chip-mint' : 'chip-sky';
             cell.innerHTML = `
               <div style="display:flex;align-items:center;gap:8px;">
                 <span class="pastel-chip ${chipClass}">${confPct}% Match</span>
-                <span style="font-size:12px;color:var(--tx);font-weight:500;">${esc(best.description)}</span>
+                <span style="font-size:12px;color:var(--tx);font-weight:500;">${esc(best.party_name || best.number || 'Entry')}</span>
               </div>
             `;
           } else {
-            cell.innerHTML = `<span class="sub" style="font-size:12px;">Auto-create payment entry</span>`;
+            cell.innerHTML = `<span class="sub" style="font-size:12px;">No exact match · Quick Categorize</span>`;
           }
         }).catch(() => {});
       }
 
-      $$('[data-rec-txn]', root).forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const tid = btn.dataset.recTxn;
-          btn.disabled = true;
-          try {
-            await api(`banking/reconcile/${tid}/`, { method: 'POST', body: {} });
-            toast('Transaction reconciled with general ledger');
-            loadReconciliation();
-          } catch (e) {
-            toast(e.message, 'err');
-            btn.disabled = false;
-          }
+      $$('[data-match-txn]', root).forEach(btn => {
+        btn.addEventListener('click', () => {
+          matchBankTransactionModal(btn.dataset.matchTxn, () => loadReconciliation());
         });
       });
 
@@ -1794,33 +2853,113 @@ async function bankingReconciliationPage(root) {
   loadReconciliation();
 }
 
-function bankTransfersPage(root) {
+async function reconciliationHistoryPage(root) {
+  PAGE.reload = () => reconciliationHistoryPage(root);
+  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Reconciliation History...</div></div>`;
+
+  try {
+    const res = await api('bank-reconciliations/?page_size=50');
+    const recs = res.results || [];
+
+    root.innerHTML = `
+      <div class="banking-page-container">
+        <div class="bc">Home / Banking / Reconciliation History</div>
+        <div class="hd">
+          <div>
+            <h1>Reconciliation History</h1>
+            <div class="sub">Log of completed and locked statement reconciliation periods</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Reconciliation #</th>
+                  <th>Bank Account</th>
+                  <th>Statement Date</th>
+                  <th class="r">Ending Balance</th>
+                  <th class="r">Book Balance</th>
+                  <th class="r">Difference</th>
+                  <th class="r">Cleared Items</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recs.length ? recs.map(r => `
+                  <tr>
+                    <td><b>${esc(r.reconciliation_number)}</b></td>
+                    <td>${esc(r.bank_account_name || 'Bank Account')}</td>
+                    <td>${fmtBankDate(r.statement_date)}</td>
+                    <td class="r" style="font-weight:700;">${inr(r.statement_ending_balance)}</td>
+                    <td class="r" style="font-weight:700;">${inr(r.book_balance)}</td>
+                    <td class="r" style="font-weight:700;color:${r.difference == 0 ? '#059669' : '#dc2626'};">${inr(r.difference)}</td>
+                    <td class="r">${r.cleared_count}</td>
+                    <td><span class="pastel-chip chip-mint">${esc(r.status || 'Reconciled')}</span></td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--tx-muted);">No completed reconciliation periods yet. Open Bank Reconciliation to reconcile.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
+  }
+}
+
+async function bankingReportsPage(root) {
+  PAGE.reload = () => bankingReportsPage(root);
   root.innerHTML = `
-    <div class="bc">Home / Banking / Transfers</div>
-    <div class="hd">
-      <h1>Bank Account Transfers</h1>
-      <div class="act">
-        <button class="btn p" id="btn-new-xfer" type="button">+ Record Transfer</button>
+    <div class="banking-page-container">
+      <div class="bc">Home / Banking / Banking Reports</div>
+      <div class="hd">
+        <div>
+          <h1>Banking Reports</h1>
+          <div class="sub">Audit-compliant bank books, cash flow statements, and reconciliation certificates</div>
+        </div>
+      </div>
+
+      <div class="g" style="margin-top:16px;">
+        <div class="s4">
+          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="font-size:24px;margin-bottom:8px;">📖</div>
+              <h3 style="margin:0 0 4px;font-size:15px;">Bank Book Report</h3>
+              <p class="sub" style="font-size:12px;">Chronological transaction journal for all receipts and disbursements per bank account.</p>
+            </div>
+            <button class="btn p" onclick="reportTablePage($('#pg'), 'bank-book', 'Bank Book Journal Report', 'Banking')" style="margin-top:14px;width:100%;">Run Bank Book Report</button>
+          </div>
+        </div>
+
+        <div class="s4">
+          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="font-size:24px;margin-bottom:8px;">⚖️</div>
+              <h3 style="margin:0 0 4px;font-size:15px;">Bank Reconciliation Statement</h3>
+              <p class="sub" style="font-size:12px;">Summary of differences between bank statement balance and book ledger balance.</p>
+            </div>
+            <button class="btn p" onclick="location.hash='#/banking/bank-reconciliation'" style="margin-top:14px;width:100%;">Open Reconciliation</button>
+          </div>
+        </div>
+
+        <div class="s4">
+          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="font-size:24px;margin-bottom:8px;">💵</div>
+              <h3 style="margin:0 0 4px;font-size:15px;">Cash &amp; Bank Balances Summary</h3>
+              <p class="sub" style="font-size:12px;">Real-time cash position breakdown across all bank accounts and petty cash funds.</p>
+            </div>
+            <button class="btn p" onclick="cashFlowPage($('#pg'))" style="margin-top:14px;width:100%;">View Cash Flow</button>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="card" style="margin-top:14px;" id="xfer-list-container">
-      <div class="tb"><h3 style="margin:0;font-size:14px;">Transfer History</h3></div>
-      <div class="tw" id="xfer-table">${spinner}</div>
-    </div>
   `;
-  $('#btn-new-xfer', root).addEventListener('click', () => transferForm());
-  api('manual-journals/?q=transfer&ordering=-date').then(res => {
-    if (!root.isConnected) return;
-    if (!res.results.length) {
-      $('#xfer-table', root).innerHTML = `<div class="empty">No bank transfers recorded yet.<br><button class="btn p" style="margin-top:8px;" onclick="transferForm()">+ Record Transfer</button></div>`;
-      return;
-    }
-    $('#xfer-table', root).innerHTML = `
-      <table><thead><tr><th>Date</th><th>Transfer#</th><th>Reference</th><th>Notes</th><th class="r">Amount</th></tr></thead><tbody>
-        ${res.results.map(j => `<tr><td>${fd(j.date)}</td><td><b>${esc(j.number)}</b></td><td>${esc(j.reference || '—')}</td><td>${esc(j.notes || '—')}</td><td class="r"><b>${inr(j.total_debit)}</b></td></tr>`).join('')}
-      </tbody></table>
-    `;
-  }).catch(e => { if (root.isConnected) $('#xfer-table', root).innerHTML = errBox(e.message); });
 }
 
 async function gstFilingPage(root, tab = 'overview') {

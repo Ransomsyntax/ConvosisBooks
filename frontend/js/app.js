@@ -8,7 +8,23 @@ const NAV = [
   ['Sales', 'sales', ['Customers', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
-  ['Banking', 'banking', ['Bank Accounts', 'Transactions', 'Bank Reconciliation', 'Transfers']],
+  ['Banking', 'banking', [
+    'Banking Dashboard',
+    'Bank Accounts',
+    'Bank Statements',
+    'All Transactions',
+    'Uncategorized Transactions',
+    'Matched Transactions',
+    'Categorized Transactions',
+    'Unmatched Transactions',
+    'Bank Reconciliation',
+    'Transfers Between Accounts',
+    'Deposits',
+    'Bank Rules',
+    'Import Bank Statements',
+    'Banking Reports',
+    'Reconciliation History'
+  ]],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
   ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
   ['Reports', 'reports', ['Reports Center', 'Business Overview', 'Sales Reports', 'Purchase Reports', 'Inventory Reports', 'Receivables', 'Payables', 'Tax Reports', 'Accounting Reports', 'Cash Flow Reports']],
@@ -22,7 +38,7 @@ const DEFAULT_ROUTES = {
   sales: 'sales/invoices',
   purchases: 'purchases/bills',
   time: 'time/projects',
-  banking: 'banking/bank-accounts',
+  banking: 'banking/all-transactions',
   filing: 'filing/gst-filing',
   accountant: 'accountant/manual-journals',
   reports: 'reports/reports-center',
@@ -38,65 +54,56 @@ const ROUTES = {
   'items': r => listPage(r, LISTS.items),
   'items/items': r => listPage(r, LISTS.items),
   'items/items-services': r => listPage(r, LISTS.items),
-  'items/items/new': r => { listPage(r, LISTS.items); itemForm(); },
-  'items/new': r => { listPage(r, LISTS.items); itemForm(); },
   'items/item-categories': r => listPage(r, LISTS['item-categories']),
   'items/price-lists': r => listPage(r, LISTS['price-lists']),
 
   'inventory': r => listPage(r, LISTS.inventory),
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
-  'inventory/stock-adjustments/new': r => { listPage(r, LISTS.adjustments); adjustForm(); },
-  'inventory/adjustments/new': r => { listPage(r, LISTS.adjustments); adjustForm(); },
   'inventory/stock-movement': r => listPage(r, LISTS.movements),
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
   'sales': r => docMasterDetail(r, 'invoices'),
   'sales/customers': r => listPage(r, LISTS.customers),
-  'sales/customers/new': r => { listPage(r, LISTS.customers); partyForm('customers'); },
   'sales/sales-orders': r => listPage(r, LISTS['sales-orders']),
-  'sales/sales-orders/new': r => docMasterDetail(r, 'invoices', 'new'),
   'sales/invoices': r => docMasterDetail(r, 'invoices'),
-  'sales/invoices/new': r => docMasterDetail(r, 'invoices', 'new'),
-  'sales/invoices/create': r => docMasterDetail(r, 'invoices', 'new'),
   'sales/recurring-invoices': r => listPage(r, LISTS['recurring-invoices']),
-  'sales/recurring-invoices/new': r => { listPage(r, LISTS['recurring-invoices']); recurringInvoiceModal(); },
   'sales/retainer-invoices': r => docMasterDetail(r, 'retainer-invoices'),
-  'sales/retainer-invoices/new': r => docMasterDetail(r, 'retainer-invoices', 'new'),
   'sales/delivery-challans': r => listPage(r, LISTS['delivery-challans']),
-  'sales/delivery-challans/new': r => { listPage(r, LISTS['delivery-challans']); challanModal(); },
   'sales/payments-received': r => listPage(r, LISTS['payments-received']),
-  'sales/payments-received/new': r => { listPage(r, LISTS['payments-received']); paymentForm('payments-received'); },
   'sales/credit-notes': r => listPage(r, LISTS['credit-notes']),
-  'sales/credit-notes/new': r => docMasterDetail(r, 'invoices', 'new'),
   'sales/e-way-bills': r => listPage(r, LISTS['e-way-bills']),
-  'sales/e-way-bills/new': r => { listPage(r, LISTS['e-way-bills']); ewayBillModal(); },
 
   'purchases': r => docMasterDetail(r, 'bills'),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
-  'purchases/vendors/new': r => { listPage(r, LISTS.vendors); partyForm('vendors'); },
   'purchases/expenses': r => listPage(r, LISTS.expenses),
-  'purchases/expenses/new': r => { listPage(r, LISTS.expenses); expenseForm(); },
   'purchases/purchase-orders': r => listPage(r, LISTS['purchase-orders']),
-  'purchases/purchase-orders/new': r => docMasterDetail(r, 'bills', 'new'),
   'purchases/bills': r => docMasterDetail(r, 'bills'),
-  'purchases/bills/new': r => docMasterDetail(r, 'bills', 'new'),
-  'purchases/bills/create': r => docMasterDetail(r, 'bills', 'new'),
   'purchases/payments-made': r => listPage(r, LISTS['payments-made']),
-  'purchases/payments-made/new': r => { listPage(r, LISTS['payments-made']); paymentForm('payments-made'); },
   'purchases/vendor-credits': r => listPage(r, LISTS['vendor-credits']),
-  'purchases/vendor-credits/new': r => docMasterDetail(r, 'bills', 'new'),
 
   'time': r => listPage(r, LISTS.projects),
   'time/projects': r => listPage(r, LISTS.projects),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
 
-  'banking': r => listPage(r, LISTS['bank-accounts']),
-  'banking/bank-accounts': r => listPage(r, LISTS['bank-accounts']),
-  'banking/bank-accounts/new': r => { listPage(r, LISTS['bank-accounts']); bankAccountForm(); },
-  'banking/transactions': r => listPage(r, LISTS['bank-transactions']),
+  'banking': r => bankingMainPage(r, 'all'),
+  'banking/banking-dashboard': r => bankingDashboardPage(r),
+  'banking/bank-accounts': r => bankingAccountsPage(r),
+  'banking/bank-statements': r => bankStatementsListPage(r),
+  'banking/all-transactions': r => bankingMainPage(r, 'all'),
+  'banking/uncategorized-transactions': r => bankingMainPage(r, 'uncategorized'),
+  'banking/matched-transactions': r => bankingMainPage(r, 'matched'),
+  'banking/categorized-transactions': r => bankingMainPage(r, 'categorized'),
+  'banking/unmatched-transactions': r => bankingMainPage(r, 'unmatched'),
   'banking/bank-reconciliation': r => bankingReconciliationPage(r),
+  'banking/transfers-between-accounts': r => bankTransfersPage(r),
   'banking/transfers': r => bankTransfersPage(r),
+  'banking/transactions': r => bankingMainPage(r, 'all'),
+  'banking/deposits': r => bankDepositsPage(r),
+  'banking/bank-rules': r => bankRulesPage(r),
+  'banking/import-bank-statements': r => importBankStatementWizard(r),
+  'banking/banking-reports': r => bankingReportsPage(r),
+  'banking/reconciliation-history': r => reconciliationHistoryPage(r),
 
   'filing': r => gstFilingPage(r, 'overview'),
   'filing/gst-filing': r => gstFilingPage(r, 'overview'),
@@ -107,7 +114,6 @@ const ROUTES = {
 
   'accountant': r => listPage(r, LISTS['manual-journals']),
   'accountant/manual-journals': r => listPage(r, LISTS['manual-journals']),
-  'accountant/manual-journals/new': r => { listPage(r, LISTS['manual-journals']); journalForm(); },
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
   'accountant/transaction-locking': r => transactionLockingPage(r),
   'accountant/statutory-audit-logs': r => listPage(r, LISTS['audit-logs']),
@@ -159,18 +165,24 @@ const PASTEL = {
 };
 let openG = pref.get('open', ['home']);
 
+const NAV_NEW_ACTIONS = {
+  'items/items': () => itemForm(),
+  'sales/customers': () => partyForm('customers'),
+  'purchases/vendors': () => partyForm('vendors')
+};
+
+function getNavAddAction(k, c) {
+  const s = slug(c);
+  const target = k + '/' + s;
+  return NAV_NEW_ACTIONS[target] || null;
+}
+
 function drawNav(cur) {
-  const norm = (cur || 'home/dashboard').replace(/^\//, '');
-  const items = NAV.map(([l, k, ch], i) => {
-    const isCurGroup = norm === k || norm.startsWith(k + '/');
-    const isOpen = openG.includes(k);
-    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isCurGroup ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => {
-      const s = slug(c);
-      const full = k + '/' + s;
-      const on = norm === full || (norm.startsWith(full + '/') && !full.endsWith('/overview')) || (s === 'overview' && (norm === k || norm === k + '/overview'));
-      return `<a href="#/${full}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${esc(c)}</a>`;
-    }).join('')}</div></div>`;
-  }).join('');
+  const items = NAV.map(([l, k, ch], i) => `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => {
+    const target = k + '/' + slug(c);
+    const hasAdd = Boolean(getNavAddAction(k, c));
+    return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
+  }).join('')}</div></div>`).join('');
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span>Owner / Admin</span></span></div></div></div>`;
   $('#side').innerHTML = items + footer;
 }
@@ -194,14 +206,10 @@ function route() {
   closePops();
   const fn = ROUTES[h] || ROUTES[raw];
   if (fn) { Promise.resolve().then(() => fn(root)).catch(e => { root.innerHTML = errBox(e.message); console.error(e); }); }
-  else {
-    const g = NAV.find(n => h === n[1] || h.startsWith(n[1] + '/'));
-    const nm = g && g[2].find(c => slug(c) === (h.includes('/') ? h.split('/')[1] : ''));
-    plannedPage(root, g && g[0], nm);
-  }
+  else { const g = NAV.find(n => h.startsWith(n[1] + '/')), nm = g && g[2].find(c => slug(c) === h.split('/')[1]); plannedPage(root, g && g[0], nm); }
   window.scrollTo(0, 0);
 }
-async function refresh() { try { await loadMe(); } catch (e) {  } if (PAGE.reload) PAGE.reload(); else route(); }
+async function refresh() { try { await loadMe(); } catch (e) { } if (PAGE.reload) PAGE.reload(); else route(); }
 
 async function loadMe() {
   const me = await api('me/');
@@ -253,8 +261,8 @@ document.addEventListener('touchstart', e => {
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
-  ['Invoice', () => { location.hash = '#/sales/invoices/new'; }],
-  ['Bill', () => { location.hash = '#/purchases/bills/new'; }],
+  ['Invoice', () => { location.hash = '#/sales/invoices'; docMasterDetail($('#pg'), 'invoices', 'new'); }],
+  ['Bill', () => { location.hash = '#/purchases/bills'; docMasterDetail($('#pg'), 'bills', 'new'); }],
   ['Expense', () => expenseForm()],
   ['Journal Entry', () => journalForm()],
   ['Upload Document', () => documentUploadModal()],
@@ -312,7 +320,6 @@ const NotificationCenter = {
         </div>
       `).join('');
     } catch (e) {
-
     }
   },
 
@@ -381,7 +388,7 @@ document.addEventListener('click', async e => {
         }
         await fetch('/accounts/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrf() }, credentials: 'same-origin' });
       } finally {
-        location.href = 'login.html';
+        location.href = '/accounts/login/';
       }
     }
     return;
@@ -390,6 +397,25 @@ document.addEventListener('click', async e => {
     closePops();
     const np = $('#notifPop'); if (np) np.style.display = 'none';
   }
+
+  const navAdd = t.closest('[data-nav-add]');
+  if (navAdd) {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = navAdd.dataset.navAdd;
+    const parts = target.split('/');
+    const action = getNavAddAction(parts[0], parts[1]);
+    if (action) {
+      try {
+        const res = action();
+        if (res && res.catch) res.catch(err => toast(err.message, 'err'));
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    }
+    return;
+  }
+
   const togG = t.closest('[data-toggle-g]');
   if (togG) {
     const k = togG.dataset.toggleG;
@@ -435,7 +461,7 @@ $('#q').addEventListener('input', e => {
       if ($('#q').value.trim() !== v) return;
       box.innerHTML = r.length ? r.map(x => `<button class="mi" type="button" data-t="${esc(x.type)}" data-id="${esc(x.id)}"><b>${esc(x.label)}</b> <span class="sub">${esc(x.sub)}</span></button>`).join('') : '<div class="sub" style="padding:8px">No results</div>';
       box.classList.add('on');
-    } catch (err) {  }
+    } catch (err) { }
   }, 220);
 });
 document.addEventListener('keydown', e => {

@@ -22,8 +22,8 @@ from django.utils import timezone
 from .calc import q2
 from .cleaning import ApiError
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
-                     BankRule, BankStatementBatch, BankTransaction, Bill, BillAllocation,
-                     BillLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
+                     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
+                     Bill, BillAllocation, BillLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
                      EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, GSTRReturn, Invoice,
                      InvoiceLine, Item, Journal, JournalItem, LockDate, ManagedDocument,
                      Notification, Organization, PaymentMade, PaymentReceived, PurchaseOrder,
@@ -2503,11 +2503,11 @@ def apply_bank_rules_to_transaction(txn):
 
 def get_advanced_bank_match_suggestions(txn_id):
     """
-    3-Way auto-match reconciliation suggestions with confidence score:
+    Multi-way auto-match reconciliation suggestions with confidence score:
     - Tier 1 (100% confidence): Exact amount + reference/UTR match with payment/invoice/bill.
     - Tier 2 (85-95% confidence): Exact amount match within ±3 days window with party name in description.
     - Tier 3 (75% confidence): Exact amount match within ±5 days window.
-    - Tier 4 (Split Matching): Multi-invoice split match suggestions (e.g. 1 payment covering 2 open invoices).
+    - Tier 4 (Split Matching): Multi-invoice split match suggestions.
     """
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
@@ -2518,84 +2518,193 @@ def get_advanced_bank_match_suggestions(txn_id):
     ref_clean = txn.reference.strip().upper()
 
     if txn.deposit > Decimal('0.00'):
-        open_invoices = Invoice.objects.filter(status__in=['sent', 'draft']).order_by('-date')
+        # 1. Customer Payments Received
+        for pay in PaymentReceived.objects.all().order_by('-date')[:40]:
+            confidence = 0
+            reasons = []
+            if abs(pay.amount - txn.deposit) < Decimal('0.01'):
+                confidence += 70
+                reasons.append(f'Exact amount match (₹{pay.amount})')
+            if pay.reference and (pay.reference.upper() in ref_clean or pay.reference.upper() in desc_clean.upper()):
+                confidence += 30
+                reasons.append(f'Payment reference {pay.reference} in bank narration')
+            cname = pay.customer.name.lower() if pay.customer else ''
+            if cname and any(p in desc_clean for p in cname.split() if len(p) > 2):
+                confidence += 20
+                reasons.append(f'Customer "{pay.customer.name}" in narration')
+            diff_days = abs((txn.date - pay.date).days)
+            if diff_days <= 3:
+                confidence += 10
+                reasons.append(f'Date proximity within {diff_days} days')
+            confidence = min(confidence, 100)
+            if confidence >= 50:
+                suggestions.append({
+                    'type': 'payment_received',
+                    'id': pay.pk,
+                    'number': pay.number,
+                    'party_name': pay.customer.name if pay.customer else 'Customer',
+                    'date': pay.date.isoformat(),
+                    'amount': str(pay.amount),
+                    'confidence_score': confidence,
+                    'reasons': reasons
+                })
+
+        # 2. Open Invoices
+        open_invoices = Invoice.objects.filter(status__in=['sent', 'draft', 'partial']).order_by('-date')[:40]
         for inv in open_invoices:
             confidence = 0
             reasons = []
-
             if abs(inv.total - txn.deposit) < Decimal('0.01'):
                 confidence += 70
                 reasons.append(f'Exact amount match (₹{inv.total})')
             elif inv.total > txn.deposit and abs(inv.total - txn.deposit) <= Decimal('500.00'):
                 confidence += 40
                 reasons.append('Probable partial payment or TDS deduction')
-
             if inv.number.upper() in desc_clean.upper() or (ref_clean and ref_clean in inv.number.upper()):
                 confidence += 30
                 reasons.append(f'Invoice number {inv.number} in narration')
-
-            cust_name = inv.customer.name.lower()
+            cust_name = inv.customer.name.lower() if inv.customer else ''
             if cust_name and any(part in desc_clean for part in cust_name.split() if len(part) > 2):
                 confidence += 20
                 reasons.append(f'Customer "{inv.customer.name}" in narration')
-
             days_diff = abs((txn.date - inv.date).days)
             if days_diff <= 3:
                 confidence += 10
                 reasons.append(f'Date proximity within {days_diff} days')
-
             confidence = min(confidence, 100)
             if confidence >= 50:
                 suggestions.append({
                     'type': 'invoice',
                     'id': inv.pk,
                     'number': inv.number,
-                    'party_name': inv.customer.name,
+                    'party_name': inv.customer.name if inv.customer else 'Customer',
                     'date': inv.date.isoformat(),
                     'amount': str(inv.total),
                     'confidence_score': confidence,
                     'reasons': reasons
                 })
 
+        # 3. Bank Deposits
+        for dep in BankDeposit.objects.filter(bank_account=txn.bank_account).order_by('-date')[:20]:
+            confidence = 0
+            reasons = []
+            if abs(dep.amount - txn.deposit) < Decimal('0.01'):
+                confidence += 70
+                reasons.append(f'Exact deposit match (₹{dep.amount})')
+            if dep.party_name and dep.party_name.lower() in desc_clean:
+                confidence += 25
+                reasons.append(f'Party "{dep.party_name}" matches deposit')
+            diff_days = abs((txn.date - dep.date).days)
+            if diff_days <= 3:
+                confidence += 10
+                reasons.append(f'Date within {diff_days} days')
+            confidence = min(confidence, 100)
+            if confidence >= 50:
+                suggestions.append({
+                    'type': 'deposit',
+                    'id': dep.pk,
+                    'number': dep.number,
+                    'party_name': dep.party_name or 'Bank Deposit',
+                    'date': dep.date.isoformat(),
+                    'amount': str(dep.amount),
+                    'confidence_score': confidence,
+                    'reasons': reasons
+                })
+
     elif txn.withdrawal > Decimal('0.00'):
-        open_bills = Bill.objects.filter(status__in=['open', 'draft']).order_by('-date')
+        # 1. Vendor Payments Made
+        for pay in PaymentMade.objects.all().order_by('-date')[:40]:
+            confidence = 0
+            reasons = []
+            if abs(pay.amount - txn.withdrawal) < Decimal('0.01'):
+                confidence += 70
+                reasons.append(f'Exact amount match (₹{pay.amount})')
+            if pay.reference and (pay.reference.upper() in ref_clean or pay.reference.upper() in desc_clean.upper()):
+                confidence += 30
+                reasons.append(f'Payment reference {pay.reference} in bank narration')
+            vname = pay.vendor.name.lower() if pay.vendor else ''
+            if vname and any(p in desc_clean for p in vname.split() if len(p) > 2):
+                confidence += 20
+                reasons.append(f'Vendor "{pay.vendor.name}" in narration')
+            diff_days = abs((txn.date - pay.date).days)
+            if diff_days <= 3:
+                confidence += 10
+                reasons.append(f'Date proximity within {diff_days} days')
+            confidence = min(confidence, 100)
+            if confidence >= 50:
+                suggestions.append({
+                    'type': 'payment_made',
+                    'id': pay.pk,
+                    'number': pay.number,
+                    'party_name': pay.vendor.name if pay.vendor else 'Vendor',
+                    'date': pay.date.isoformat(),
+                    'amount': str(pay.amount),
+                    'confidence_score': confidence,
+                    'reasons': reasons
+                })
+
+        # 2. Open Bills
+        open_bills = Bill.objects.filter(status__in=['open', 'draft', 'partial']).order_by('-date')[:40]
         for b in open_bills:
             confidence = 0
             reasons = []
-
             if abs(b.total - txn.withdrawal) < Decimal('0.01'):
                 confidence += 70
                 reasons.append(f'Exact amount match (₹{b.total})')
-
             if b.number.upper() in desc_clean.upper() or (b.vendor_ref and b.vendor_ref.upper() in desc_clean.upper()):
                 confidence += 30
                 reasons.append(f'Bill ref {b.number} in narration')
-
-            vend_name = b.vendor.name.lower()
+            vend_name = b.vendor.name.lower() if b.vendor else ''
             if vend_name and any(part in desc_clean for part in vend_name.split() if len(part) > 2):
                 confidence += 20
                 reasons.append(f'Vendor "{b.vendor.name}" in narration')
-
             days_diff = abs((txn.date - b.date).days)
             if days_diff <= 3:
                 confidence += 10
                 reasons.append(f'Date proximity within {days_diff} days')
-
             confidence = min(confidence, 100)
             if confidence >= 50:
                 suggestions.append({
                     'type': 'bill',
                     'id': b.pk,
                     'number': b.number,
-                    'party_name': b.vendor.name,
+                    'party_name': b.vendor.name if b.vendor else 'Vendor',
                     'date': b.date.isoformat(),
                     'amount': str(b.total),
                     'confidence_score': confidence,
                     'reasons': reasons
                 })
 
+        # 3. Expenses
+        for exp in Expense.objects.all().order_by('-date')[:40]:
+            confidence = 0
+            reasons = []
+            if abs(exp.total - txn.withdrawal) < Decimal('0.01'):
+                confidence += 70
+                reasons.append(f'Exact expense match (₹{exp.total})')
+            if exp.vendor and exp.vendor.name.lower() in desc_clean:
+                confidence += 25
+                reasons.append(f'Vendor "{exp.vendor.name}" in narration')
+            diff_days = abs((txn.date - exp.date).days)
+            if diff_days <= 3:
+                confidence += 10
+                reasons.append(f'Date within {diff_days} days')
+            confidence = min(confidence, 100)
+            if confidence >= 50:
+                suggestions.append({
+                    'type': 'expense',
+                    'id': exp.pk,
+                    'number': exp.number,
+                    'party_name': exp.vendor.name if exp.vendor else (exp.expense_account.name if exp.expense_account else 'Expense'),
+                    'date': exp.date.isoformat(),
+                    'amount': str(exp.total),
+                    'confidence_score': confidence,
+                    'reasons': reasons
+                })
+
     suggestions.sort(key=lambda s: s['confidence_score'], reverse=True)
     return suggestions
+
 
 
 def rollback_statement_batch(batch_id, user=None):
@@ -2639,9 +2748,426 @@ def rollback_statement_batch(batch_id, user=None):
     }
 
 
+def get_bank_dashboard_summary(bank_account_id=None):
+    acc = None
+    if bank_account_id:
+        acc = BankAccount.objects.filter(pk=bank_account_id).first()
+    if not acc:
+        acc = BankAccount.objects.filter(name='Kotak1').first() or BankAccount.objects.filter(active=True).first()
+    if not acc:
+        acc = BankAccount.objects.first()
+    if not acc:
+        raise ApiError(404, 'No bank accounts available.')
+
+    all_txns = BankTransaction.objects.filter(bank_account=acc)
+    uncategorized = all_txns.filter(status__in=['unmatched', 'unreconciled']).count()
+    matched = all_txns.filter(status='matched').count()
+    categorized = all_txns.filter(status='categorized').count()
+    manually_added = all_txns.filter(status='manually_added').count()
+    excluded = all_txns.filter(status='excluded').count()
+    total = all_txns.count()
+
+    masked = f"xxxx{acc.account_number[-4:] if len(acc.account_number) >= 4 else acc.account_number}"
+    today = timezone.localdate()
+    feed_last_fetched = acc.last_feed_date.strftime('%d/%m/%Y') if acc.last_feed_date else today.strftime('%d/%m/%Y')
+
+    all_accs = [
+        {
+            'id': a.pk,
+            'name': a.name,
+            'bank_name': a.bank_name,
+            'masked_account_number': f"xxxx{a.account_number[-4:] if len(a.account_number) >= 4 else a.account_number}",
+            'current_balance': str(a.current_balance),
+            'bank_balance': str(a.bank_balance),
+            'branch_name': a.branch_name or 'HO Kottayam',
+        }
+        for a in BankAccount.objects.filter(active=True).order_by('name')
+    ]
+
+    return {
+        'account': {
+            'id': acc.pk,
+            'name': acc.name,
+            'bank_name': acc.bank_name,
+            'account_number': acc.account_number,
+            'masked_account_number': masked,
+            'account_type': acc.account_type,
+            'currency': acc.currency,
+            'branch_name': acc.branch_name or 'HO Kottayam',
+            'amount_in_books': str(acc.current_balance),
+            'amount_in_bank': str(acc.bank_balance),
+            'last_feed_date': acc.last_feed_date.strftime('%d/%m/%Y') if acc.last_feed_date else '20/10/2026',
+            'feed_last_fetched': feed_last_fetched,
+        },
+        'counts': {
+            'all': total,
+            'uncategorized': uncategorized,
+            'matched': matched,
+            'categorized': categorized,
+            'manually_added': manually_added,
+            'excluded': excluded
+        },
+        'all_accounts': all_accs
+    }
+
+
+@transaction.atomic
+def record_bank_deposit(data, user=None):
+    acc_id = data.get('bank_account') or data.get('bank_account_id')
+    acc = BankAccount.objects.filter(pk=acc_id).first()
+    if not acc:
+        raise ApiError(404, 'Target bank account not found.')
+
+    amount = Decimal(str(data.get('amount', 0)))
+    if amount <= Decimal('0.00'):
+        raise ApiError(400, 'Deposit amount must be greater than zero.')
+
+    dt = data.get('date') or timezone.localdate()
+    dep_type = data.get('deposit_type', 'cash_deposit')
+    party_name = data.get('party_name', '')
+    offset_acc_id = data.get('offset_account') or data.get('offset_account_id')
+    offset_acc = Account.objects.filter(pk=offset_acc_id).first() if offset_acc_id else None
+    ref = data.get('reference', '')
+    desc = data.get('description', '')
+    location = data.get('location', acc.branch_name or 'HO Kottayam')
+
+    dep_num = next_number('DEP')
+    deposit = BankDeposit.objects.create(
+        number=dep_num,
+        bank_account=acc,
+        date=dt,
+        amount=amount,
+        deposit_type=dep_type,
+        party_name=party_name,
+        offset_account=offset_acc,
+        reference=ref,
+        description=desc,
+        location=location,
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+
+    acc.current_balance += amount
+    acc.save(update_fields=['current_balance'])
+
+    BankTransaction.objects.create(
+        bank_account=acc,
+        date=dt,
+        description=f"Deposit: {party_name or dep_type.replace('_', ' ').title()}{' - ' + desc if desc else ''}",
+        reference=ref or dep_num,
+        transaction_type='Deposit',
+        payee=party_name,
+        location=location,
+        deposit=amount,
+        withdrawal=Decimal('0.00'),
+        balance=acc.current_balance,
+        status='manually_added'
+    )
+
+    if offset_acc:
+        bank_gl = acc.gl_account or Account.objects.filter(code='1010').first()
+        if bank_gl:
+            j_num = next_number('JRN')
+            jnl = Journal.objects.create(
+                number=j_num,
+                date=dt,
+                reference=f"DEP {dep_num}",
+                entry_type='deposit',
+                notes=f"Bank Deposit {dep_num} to {acc.name} ({desc})",
+                total_debit=amount,
+                total_credit=amount,
+                created_by=user if getattr(user, 'pk', None) else None
+            )
+            JournalItem.objects.create(journal=jnl, account=bank_gl, debit=amount, credit=Decimal('0.00'), description=f"Deposit to {acc.name}")
+            JournalItem.objects.create(journal=jnl, account=offset_acc, debit=Decimal('0.00'), credit=amount, description=f"Deposit offset {party_name}")
+
+    log_audit(user, 'create', 'BankDeposit', deposit.pk, f"Recorded deposit {deposit.number} of ₹{deposit.amount} into {acc.name}")
+    return {
+        'id': deposit.pk,
+        'number': deposit.number,
+        'amount': str(deposit.amount),
+        'new_balance': str(acc.current_balance),
+        'message': f"Deposit {deposit.number} recorded successfully."
+    }
+
+
+@transaction.atomic
+def record_bank_transfer(data, user=None):
+    from_id = data.get('from_account') or data.get('from_account_id')
+    to_id = data.get('to_account') or data.get('to_account_id')
+    if from_id == to_id:
+        raise ApiError(400, 'Source and destination bank accounts must be different.')
+
+    from_acc = BankAccount.objects.filter(pk=from_id).first()
+    to_acc = BankAccount.objects.filter(pk=to_id).first()
+    if not from_acc or not to_acc:
+        raise ApiError(404, 'Bank account not found.')
+
+    amount = Decimal(str(data.get('amount', 0)))
+    if amount <= Decimal('0.00'):
+        raise ApiError(400, 'Transfer amount must be greater than zero.')
+
+    dt = data.get('date') or timezone.localdate()
+    ref = data.get('reference', '')
+    desc = data.get('description', '')
+    notes = data.get('notes', '')
+
+    from_acc.current_balance -= amount
+    from_acc.save(update_fields=['current_balance'])
+    to_acc.current_balance += amount
+    to_acc.save(update_fields=['current_balance'])
+
+    xfer_num = next_number('TXF')
+    transfer = BankTransfer.objects.create(
+        number=xfer_num,
+        from_account=from_acc,
+        to_account=to_acc,
+        date=dt,
+        amount=amount,
+        reference=ref,
+        description=desc,
+        notes=notes,
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+
+    BankTransaction.objects.create(
+        bank_account=from_acc,
+        date=dt,
+        description=f"Transfer to {to_acc.name}{' - ' + desc if desc else ''}",
+        reference=ref or xfer_num,
+        transaction_type='Transfer',
+        location=from_acc.branch_name or 'HO Kottayam',
+        withdrawal=amount,
+        deposit=Decimal('0.00'),
+        balance=from_acc.current_balance,
+        status='manually_added'
+    )
+    BankTransaction.objects.create(
+        bank_account=to_acc,
+        date=dt,
+        description=f"Transfer from {from_acc.name}{' - ' + desc if desc else ''}",
+        reference=ref or xfer_num,
+        transaction_type='Transfer',
+        location=to_acc.branch_name or 'HO Kottayam',
+        withdrawal=Decimal('0.00'),
+        deposit=amount,
+        balance=to_acc.current_balance,
+        status='manually_added'
+    )
+
+    from_gl = from_acc.gl_account or Account.objects.filter(code='1010').first()
+    to_gl = to_acc.gl_account or Account.objects.filter(code='1010').first()
+    if from_gl and to_gl:
+        j_num = next_number('JRN')
+        jnl = Journal.objects.create(
+            number=j_num,
+            date=dt,
+            reference=f"TXF {xfer_num}",
+            entry_type='transfer',
+            notes=f"Bank Transfer from {from_acc.name} to {to_acc.name}",
+            total_debit=amount,
+            total_credit=amount,
+            created_by=user if getattr(user, 'pk', None) else None
+        )
+        JournalItem.objects.create(journal=jnl, account=to_gl, debit=amount, credit=Decimal('0.00'), description=f"Transfer into {to_acc.name}")
+        JournalItem.objects.create(journal=jnl, account=from_gl, debit=Decimal('0.00'), credit=amount, description=f"Transfer out of {from_acc.name}")
+
+    log_audit(user, 'create', 'BankTransfer', transfer.pk, f"Recorded transfer {transfer.number} of ₹{transfer.amount} from {from_acc.name} to {to_acc.name}")
+    return {
+        'id': transfer.pk,
+        'number': transfer.number,
+        'amount': str(transfer.amount),
+        'from_balance': str(from_acc.current_balance),
+        'to_balance': str(to_acc.current_balance),
+        'message': f"Transfer {transfer.number} completed successfully."
+    }
+
+
+def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0.00'), notes='', user=None):
+    txn = BankTransaction.objects.filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+
+    entity_label = f"{entity_type.replace('_', ' ').title()} #{entity_id}"
+    if entity_type == 'invoice':
+        inv = Invoice.objects.filter(pk=entity_id).first()
+        if inv:
+            entity_label = f"Invoice {inv.number} ({inv.customer.name})"
+    elif entity_type == 'bill':
+        b = Bill.objects.filter(pk=entity_id).first()
+        if b:
+            entity_label = f"Bill {b.number} ({b.vendor.name})"
+    elif entity_type == 'payment_received':
+        p = PaymentReceived.objects.filter(pk=entity_id).first()
+        if p:
+            entity_label = f"Customer Payment {p.number} ({p.customer.name})"
+    elif entity_type == 'payment_made':
+        p = PaymentMade.objects.filter(pk=entity_id).first()
+        if p:
+            entity_label = f"Vendor Payment {p.number} ({p.vendor.name})"
+    elif entity_type == 'expense':
+        e = Expense.objects.filter(pk=entity_id).first()
+        if e:
+            entity_label = f"Expense {e.number} ({e.vendor.name if e.vendor else 'Direct'})"
+
+    txn.status = 'matched'
+    txn.matched_entity_type = entity_type
+    txn.matched_entity_id = entity_id
+    txn.match_metadata = {
+        'matched_at': timezone.now().isoformat(),
+        'matched_by': user.get_username() if user and getattr(user, 'get_username', None) else 'admin',
+        'entity_type': entity_type,
+        'entity_id': entity_id,
+        'entity_label': entity_label,
+        'fee_adjustment': str(fee),
+        'notes': notes
+    }
+    txn.save(update_fields=['status', 'matched_entity_type', 'matched_entity_id', 'match_metadata'])
+
+    log_audit(user, 'match', 'BankTransaction', txn.pk, f"Matched bank txn {txn.reference or txn.id} to {entity_label}")
+    return {
+        'id': txn.pk,
+        'status': txn.status,
+        'matched_entity_type': txn.matched_entity_type,
+        'matched_entity_id': txn.matched_entity_id,
+        'entity_label': entity_label,
+        'message': f"Transaction matched to {entity_label}"
+    }
+
+
+def unmatch_bank_transaction_action(txn_id, user=None):
+    txn = BankTransaction.objects.filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+
+    prev_label = (txn.match_metadata or {}).get('entity_label') or f"{txn.matched_entity_type} #{txn.matched_entity_id}"
+    txn.status = 'unmatched'
+    txn.matched_entity_type = ''
+    txn.matched_entity_id = None
+    if not txn.match_metadata:
+        txn.match_metadata = {}
+    txn.match_metadata['unmatched_at'] = timezone.now().isoformat()
+    txn.match_metadata['unmatched_by'] = user.get_username() if user and getattr(user, 'get_username', None) else 'admin'
+    txn.save(update_fields=['status', 'matched_entity_type', 'matched_entity_id', 'match_metadata'])
+
+    log_audit(user, 'unmatch', 'BankTransaction', txn.pk, f"Unmatched bank transaction {txn.reference or txn.id} (previously linked to {prev_label})")
+    return {
+        'id': txn.pk,
+        'status': txn.status,
+        'message': f"Transaction unmatched from {prev_label}"
+    }
+
+
+def quick_categorize_bank_transaction(txn_id, data, user=None):
+    txn = BankTransaction.objects.filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+
+    ttype = data.get('transaction_type', 'Expense')
+    acc_id = data.get('category_account_id') or data.get('account_id')
+    cat_acc = Account.objects.filter(pk=acc_id).first() if acc_id else None
+    payee = data.get('payee', txn.payee)
+    notes = data.get('notes', txn.notes)
+    location = data.get('location', txn.location or 'HO Kottayam')
+
+    txn.transaction_type = ttype
+    txn.category_account = cat_acc
+    txn.payee = payee
+    txn.notes = notes
+    txn.location = location
+    txn.status = 'categorized'
+    txn.save(update_fields=['transaction_type', 'category_account', 'payee', 'notes', 'location', 'status'])
+
+    log_audit(user, 'categorize', 'BankTransaction', txn.pk, f"Categorized bank txn {txn.reference or txn.id} as {ttype} ({cat_acc.name if cat_acc else 'Direct'})")
+    return {
+        'id': txn.pk,
+        'status': txn.status,
+        'transaction_type': txn.transaction_type,
+        'payee': txn.payee,
+        'category_account_name': cat_acc.name if cat_acc else '',
+        'message': f"Transaction categorized as {ttype}"
+    }
+
+
+def bulk_categorize_bank_transactions(txn_ids, data, user=None):
+    results = []
+    for tid in txn_ids:
+        try:
+            r = quick_categorize_bank_transaction(tid, data, user)
+            results.append(r)
+        except Exception:
+            pass
+    return {'count': len(results), 'message': f"Categorized {len(results)} transactions"}
+
+
+def toggle_exclude_bank_transaction(txn_id, user=None):
+    txn = BankTransaction.objects.filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+
+    if txn.status == 'excluded':
+        txn.status = 'unmatched'
+        msg = 'Transaction restored to unmatched'
+    else:
+        txn.status = 'excluded'
+        msg = 'Transaction marked as excluded'
+    txn.save(update_fields=['status'])
+    log_audit(user, 'exclude', 'BankTransaction', txn.pk, f"{msg} ({txn.reference or txn.id})")
+    return {'id': txn.pk, 'status': txn.status, 'message': msg}
+
+
+def complete_bank_reconciliation(data, user=None):
+    acc_id = data.get('bank_account_id') or data.get('bank_account')
+    acc = BankAccount.objects.filter(pk=acc_id).first()
+    if not acc:
+        raise ApiError(404, 'Bank account not found.')
+
+    stmt_date = data.get('statement_date') or timezone.localdate()
+    ending_bal = Decimal(str(data.get('statement_ending_balance', 0)))
+    cleared_ids = data.get('cleared_transaction_ids', [])
+    notes = data.get('notes', '')
+
+    cleared_txns = BankTransaction.objects.filter(bank_account=acc, pk__in=cleared_ids)
+    cleared_dep = sum((t.deposit for t in cleared_txns), Decimal('0.00'))
+    cleared_wd = sum((t.withdrawal for t in cleared_txns), Decimal('0.00'))
+    cleared_bal = acc.opening_balance + cleared_dep - cleared_wd
+    diff = ending_bal - cleared_bal
+
+    cleared_txns.update(is_cleared=True, cleared_date=stmt_date, status='reconciled')
+
+    rec_num = next_number('REC')
+    rec = BankReconciliation.objects.create(
+        bank_account=acc,
+        reconciliation_number=rec_num,
+        statement_date=stmt_date,
+        statement_ending_balance=ending_bal,
+        cleared_deposits=cleared_dep,
+        cleared_withdrawals=cleared_wd,
+        cleared_balance=cleared_bal,
+        book_balance=acc.current_balance,
+        difference=diff,
+        cleared_count=len(cleared_ids),
+        status='completed',
+        notes=notes,
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+
+    acc.bank_balance = ending_bal
+    acc.last_feed_date = stmt_date
+    acc.save(update_fields=['bank_balance', 'last_feed_date'])
+
+    log_audit(user, 'reconcile', 'BankReconciliation', rec.pk, f"Completed reconciliation {rec.reconciliation_number} for {acc.name}: cleared {len(cleared_ids)} transactions, ending balance ₹{ending_bal}")
+    return {
+        'id': rec.pk,
+        'number': rec.reconciliation_number,
+        'status': 'completed',
+        'difference': str(diff),
+        'cleared_count': len(cleared_ids),
+        'message': f"Reconciliation {rec.reconciliation_number} completed."
+    }
 
 
 def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
+
     """
     Generate statutory GSTN-compliant GSTR-1 JSON payload strictly adhering
     to official Goods and Services Tax Network schemas (B2B, B2CL, B2CS, CDNR, HSN).

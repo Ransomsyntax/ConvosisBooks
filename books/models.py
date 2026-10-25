@@ -413,8 +413,15 @@ class WebhookConfig(models.Model):
     active = models.BooleanField(default=True)
 
 class BankAccount(models.Model):
-    SAVINGS, CURRENT, CREDIT_CARD = 'savings', 'current', 'credit_card'
-    TYPES = [(SAVINGS, 'Savings Account'), (CURRENT, 'Current Account'), (CREDIT_CARD, 'Credit Card')]
+    SAVINGS, CURRENT, CREDIT_CARD, CASH, CHECKING, OTHER = 'savings', 'current', 'credit_card', 'cash', 'checking', 'other'
+    TYPES = [
+        (CURRENT, 'Current Account'),
+        (SAVINGS, 'Savings Account'),
+        (CHECKING, 'Checking Account'),
+        (CASH, 'Cash Account'),
+        (CREDIT_CARD, 'Credit Card'),
+        (OTHER, 'Other')
+    ]
 
     name = models.CharField(max_length=150)
     bank_name = models.CharField(max_length=100)
@@ -423,9 +430,15 @@ class BankAccount(models.Model):
     account_type = models.CharField(max_length=20, choices=TYPES, default=CURRENT)
     currency = models.CharField(max_length=10, default='INR')
     opening_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    opening_balance_date = models.DateField(null=True, blank=True)
     current_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    bank_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    branch_name = models.CharField(max_length=100, default='HO Kottayam', blank=True)
+    last_feed_date = models.DateField(null=True, blank=True)
+    description = models.TextField(blank=True)
     gl_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='bank_accounts')
     active = models.BooleanField(default=True)
+    is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -440,13 +453,21 @@ class BankTransaction(models.Model):
     date = models.DateField()
     description = models.CharField(max_length=300)
     reference = models.CharField(max_length=100, blank=True)
+    transaction_type = models.CharField(max_length=60, default='Bank Transaction', blank=True)
+    payee = models.CharField(max_length=200, blank=True)
+    location = models.CharField(max_length=100, default='HO Kottayam', blank=True)
     withdrawal = models.DecimalField(default=Decimal('0.00'), **MONEY) 
     deposit = models.DecimalField(default=Decimal('0.00'), **MONEY)     
     balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
-    status = models.CharField(max_length=20, default='unreconciled')   
+    status = models.CharField(max_length=30, default='unreconciled')   
+    category_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='categorized_bank_txns')
     matched_entity_type = models.CharField(max_length=40, blank=True)   
     matched_entity_id = models.PositiveIntegerField(null=True, blank=True)
     reconciled_at = models.DateTimeField(null=True, blank=True)
+    is_cleared = models.BooleanField(default=False)
+    cleared_date = models.DateField(null=True, blank=True)
+    match_metadata = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True)
     transaction_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
     batch = models.ForeignKey('BankStatementBatch', null=True, blank=True, on_delete=models.SET_NULL, related_name='transactions')
     is_live_feed = models.BooleanField(default=False)
@@ -854,6 +875,8 @@ class BankRule(models.Model):
     assign_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     assign_party_type = models.CharField(max_length=20, blank=True)
     assign_party_id = models.PositiveIntegerField(null=True, blank=True)
+    assign_transaction_type = models.CharField(max_length=50, blank=True, default='')
+    assign_payee = models.CharField(max_length=200, blank=True, default='')
     auto_reconcile = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -863,6 +886,71 @@ class BankRule(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.field} {self.operator} "{self.value}")'
+
+
+class BankReconciliation(models.Model):
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='reconciliations')
+    reconciliation_number = models.CharField(max_length=50, unique=True)
+    statement_date = models.DateField()
+    statement_ending_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    cleared_deposits = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    cleared_withdrawals = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    cleared_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    book_balance = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    difference = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    cleared_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=30, default='completed')
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ['-statement_date', '-created_at']
+
+    def __str__(self):
+        return f'{self.reconciliation_number} - {self.bank_account.name} ({self.statement_date})'
+
+
+class BankDeposit(models.Model):
+    number = models.CharField(max_length=40, unique=True)
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits')
+    date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    deposit_type = models.CharField(max_length=40, default='cash_deposit')
+    party_name = models.CharField(max_length=200, blank=True)
+    offset_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reference = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+    location = models.CharField(max_length=100, default='HO Kottayam', blank=True)
+    status = models.CharField(max_length=30, default='posted')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.number} (₹{self.amount}) -> {self.bank_account.name}'
+
+
+class BankTransfer(models.Model):
+    number = models.CharField(max_length=40, unique=True)
+    from_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='outgoing_transfers')
+    to_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='incoming_transfers')
+    date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    reference = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=30, default='completed')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.number} ({self.from_account.name} -> {self.to_account.name}: ₹{self.amount})'
 
 
 

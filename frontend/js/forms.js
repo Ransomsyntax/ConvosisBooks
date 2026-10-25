@@ -148,11 +148,11 @@ const opts = (list, sel) => list.map(o => { const [v, l] = Array.isArray(o) ? o 
 function fld(o) {
   const id = 'i' + (++uid), v = o.value == null ? '' : o.value, req = o.req ? ' required aria-required="true"' : '', at = o.attrs || '';
   let ctl;
-  if (o.type === 'checkbox') return `<div class="fg ${o.col || ''}"><label class="ck"><input type="checkbox" name="${o.name}" ${v ? 'checked' : ''} ${at}> ${esc(o.label)}</label><div class="er" data-err="${o.name}" role="alert"></div></div>`;
+  if (o.type === 'checkbox') return `<div class="zb-form-row fg ${o.col || ''}"><div class="zb-form-label"></div><div class="zb-form-ctrl"><label class="ck"><input type="checkbox" name="${o.name}" ${v ? 'checked' : ''} ${at}> ${esc(o.label)}</label><div class="er" data-err="${o.name}" role="alert"></div></div></div>`;
   if (o.type === 'select') ctl = `<select class="in" id="${id}" name="${o.name}"${req} ${at}>${opts(o.opts, v)}</select>`;
   else if (o.type === 'textarea') ctl = `<textarea class="in" id="${id}" name="${o.name}" rows="${o.rows || 2}" maxlength="${o.max || 2000}" ${at}>${esc(v)}</textarea>`;
   else ctl = `<input class="in" id="${id}" name="${o.name}" type="${o.type || 'text'}" value="${esc(v)}"${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${req} ${at}>`;
-  return `<div class="fg ${o.col || ''}"><label for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label>${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp">${esc(o.help)}</div>` : ''}</div>`;
+  return `<div class="zb-form-row fg ${o.type === 'textarea' ? 'align-top' : ''} ${o.col || ''}"><label class="zb-form-label" for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label><div class="zb-form-ctrl">${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">${esc(o.help)}</div>` : ''}</div></div>`;
 }
 function readForm(form) {
   const d = {};
@@ -212,6 +212,8 @@ function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmi
   if (onReady) onReady(form, m);
   return m;
 }
+
+
 
 const GST_STATE_OPTIONS = [
   ['', 'Select state / place of supply'],
@@ -343,334 +345,381 @@ async function partyForm(kind, id) {
   const defaultSos = r.source_of_supply || (r.state ? `[32] ${r.state}` : '[32] Kerala');
 
   const formHtml = `
-    <div class="party-form-wrap">
-
-      <div class="gst-prefill-banner">
-        <div class="gst-prefill-info">
-          <div class="gst-badge-icon">🏛️</div>
-          <div>
-            <div class="gst-prefill-title">Prefill ${entityLabel} details from the GST portal using the ${entityLabel}'s GSTIN.</div>
-            <div class="gst-prefill-sub">Auto-populates trade name, legal entity, PAN, state, and registered billing address.</div>
-          </div>
+    <div class="party-form-wrap zb-form-wrap">
+      
+      <!-- Compact GST Prefill Banner (Zoho Books Style) -->
+      <div class="gst-prefill-compact">
+        <div class="gst-prefill-left">
+          <svg class="gst-prefill-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          <span class="gst-prefill-text">Prefill ${entityLabel} details from the GST portal using the ${entityLabel}'s GSTIN.</span>
+          <a href="javascript:void(0)" class="gst-prefill-link" id="btn_toggle_gst_prefill">Prefill &gt;</a>
         </div>
-        <div class="gst-prefill-ctrls">
-          <input class="in gst-prefill-input" id="gst_prefill_code" placeholder="Enter 15-digit GSTIN" maxlength="15" value="${esc(r.gstin || '')}">
-          <button type="button" class="btn p" id="btn_trigger_gst_prefill" style="white-space:nowrap;">Prefill</button>
+        <div class="gst-prefill-ctrls" id="gst_prefill_ctrls" style="display:none;">
+          <input class="in gst-prefill-mini-in" id="gst_prefill_code" placeholder="15-digit GSTIN" maxlength="15" value="${esc(r.gstin || '')}">
+          <button type="button" class="btn p gst-prefill-mini-btn" id="btn_trigger_gst_prefill">Fetch</button>
+          <button type="button" class="btn ic gst-prefill-mini-close" id="btn_close_gst_prefill" title="Close">×</button>
         </div>
       </div>
 
+      <!-- Top Primary Form Rows (Vertically Aligned) -->
       ${isCust ? `
-        <div style="display:flex;align-items:center;gap:16px;">
-          <label style="font-size:12.5px;font-weight:600;color:var(--tx2);">Customer Type</label>
-          <div class="party-type-bar">
-            <label class="party-type-pill ${r.customer_type !== 'individual' ? 'active' : ''}" id="pill_type_business">
-              <input type="radio" name="customer_type" value="business" ${r.customer_type !== 'individual' ? 'checked' : ''} style="display:none;">
-              <span>🏢 Business</span>
-            </label>
-            <label class="party-type-pill ${r.customer_type === 'individual' ? 'active' : ''}" id="pill_type_individual">
-              <input type="radio" name="customer_type" value="individual" ${r.customer_type === 'individual' ? 'checked' : ''} style="display:none;">
-              <span>👤 Individual</span>
-            </label>
+        <div class="zb-form-row">
+          <label class="zb-form-label">Customer Type <span class="zb-info-tip" title="Choose whether customer is a registered business or an individual consumer">ⓘ</span></label>
+          <div class="zb-form-ctrl">
+            <div style="display:flex;align-items:center;gap:20px;height:35px;">
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
+                <input type="radio" name="customer_type" value="business" ${r.customer_type !== 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
+                <span>Business</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
+                <input type="radio" name="customer_type" value="individual" ${r.customer_type === 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
+                <span>Individual</span>
+              </label>
+            </div>
           </div>
         </div>
       ` : ''}
 
-      <div class="g" style="gap:14px;">
-        <div class="fg s4">
-          <label>Primary Contact</label>
-          <div style="display:flex;gap:6px;">
-            <select class="in" id="primary_salutation" name="primary_salutation" style="width:75px;flex-shrink:0;">
-              <option value="Mr.">Mr.</option>
-              <option value="Mrs.">Mrs.</option>
-              <option value="Ms.">Ms.</option>
-              <option value="Miss">Miss</option>
-              <option value="Dr.">Dr.</option>
+      <div class="zb-form-row">
+        <label class="zb-form-label">Primary Contact <span class="zb-info-tip" title="Designated contact person for communications">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div style="display:flex;gap:8px;">
+            <select class="in" id="primary_salutation" name="primary_salutation" style="width:115px;flex-shrink:0;">
+              <option value="" disabled ${!r.primary_salutation ? 'selected' : ''}>Salutation</option>
+              <option value="Mr." ${r.primary_salutation === 'Mr.' ? 'selected' : ''}>Mr.</option>
+              <option value="Mrs." ${r.primary_salutation === 'Mrs.' ? 'selected' : ''}>Mrs.</option>
+              <option value="Ms." ${r.primary_salutation === 'Ms.' ? 'selected' : ''}>Ms.</option>
+              <option value="Miss" ${r.primary_salutation === 'Miss' ? 'selected' : ''}>Miss</option>
+              <option value="Dr." ${r.primary_salutation === 'Dr.' ? 'selected' : ''}>Dr.</option>
             </select>
-            <input class="in" id="contact_person" name="contact_person" placeholder="First Name &amp; Last Name" value="${esc(r.contact_person || '')}">
+            <input class="in" id="contact_first_name" placeholder="First Name" style="flex:1;">
+            <input class="in" id="contact_last_name" placeholder="Last Name" style="flex:1;">
+            <input type="hidden" id="contact_person" name="contact_person" value="${esc(r.contact_person || '')}">
           </div>
         </div>
-        <div class="fg s4">
-          <label>Company Name</label>
+      </div>
+
+      <div class="zb-form-row">
+        <label class="zb-form-label" for="company">Company Name</label>
+        <div class="zb-form-ctrl">
           <input class="in" id="company" name="company" placeholder="e.g. Convosis Technologies Pvt Ltd" value="${esc(r.company || '')}">
         </div>
-        <div class="fg s4">
-          <label>${entityLabel} Display Name <span class="rq">*</span></label>
-          <div style="display:flex;gap:6px;">
-            <input class="in" id="name" name="name" required placeholder="${entityLabel} Display Name" value="${esc(r.name || '')}" style="font-weight:600;">
-            <select class="in" id="display_name_picker" title="Quick pick name source" style="width:40px;padding:4px;flex-shrink:0;">
+      </div>
+
+      <div class="zb-form-row">
+        <label class="zb-form-label" for="name">${entityLabel} Display Name<span class="rq">*</span> <span class="zb-info-tip" title="Display name appears on invoices and transactions">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div style="display:flex;gap:6px;position:relative;">
+            <input class="in" id="name" name="name" required placeholder="Select or type to add" value="${esc(r.name || '')}" style="font-weight:600;padding-right:32px;">
+            <select class="in" id="display_name_picker" title="Quick pick name source" style="position:absolute;right:2px;top:2px;bottom:2px;width:28px;opacity:0.7;border:none;background:transparent;cursor:pointer;">
               <option value="">▼</option>
-              <option value="company">From Company</option>
-              <option value="contact">From Contact</option>
+              <option value="company">From Company Name</option>
+              <option value="contact">From Primary Contact</option>
             </select>
           </div>
           <div class="er" data-err="name"></div>
         </div>
+      </div>
 
-        <div class="fg s4">
-          <label>Email Address</label>
-          <input class="in" id="email" name="email" type="email" placeholder="billing@company.com" value="${esc(r.email || '')}">
+      <div class="zb-form-row">
+        <label class="zb-form-label" for="email">Email Address <span class="zb-info-tip" title="Primary billing & communication email">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div class="zb-input-icon-wrap">
+            <span class="zb-input-icon">✉</span>
+            <input class="in with-icon" id="email" name="email" type="email" placeholder="billing@company.com" value="${esc(r.email || '')}">
+          </div>
           <div class="er" data-err="email"></div>
         </div>
-        <div class="fg s4">
-          <label>Work Phone</label>
-          <input class="in" id="phone" name="phone" type="tel" placeholder="+91-9847017737" value="${esc(r.phone || '')}">
+      </div>
+
+      <div class="zb-form-row">
+        <label class="zb-form-label">Phone <span class="zb-info-tip" title="Official work and mobile telephone numbers">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div style="display:flex;gap:14px;align-items:center;">
+            <div style="display:flex;flex:1;">
+              <span class="zb-input-prefix">+91 <small style="font-size:9px;margin-left:2px;opacity:0.75;">▼</small></span>
+              <input class="in" id="phone" name="phone" type="tel" placeholder="Work Phone" value="${esc(r.phone || '')}">
+            </div>
+            <div style="display:flex;flex:1;">
+              <span class="zb-input-prefix">+91 <small style="font-size:9px;margin-left:2px;opacity:0.75;">▼</small></span>
+              <input class="in" id="mobile" name="mobile" type="tel" placeholder="Mobile" value="${esc(r.mobile || '')}">
+            </div>
+          </div>
           <div class="er" data-err="phone"></div>
-        </div>
-        <div class="fg s4">
-          <label>Mobile</label>
-          <input class="in" id="mobile" name="mobile" type="tel" placeholder="+91-9840012345" value="${esc(r.mobile || '')}">
           <div class="er" data-err="mobile"></div>
         </div>
-        ${isCust ? `
-          <div class="fg s4">
-            <label>Customer Language</label>
+      </div>
+
+      ${isCust ? `
+        <div class="zb-form-row">
+          <label class="zb-form-label" for="customer_language">Customer Language <span class="zb-info-tip" title="Language used for PDF invoices and emails">ⓘ</span></label>
+          <div class="zb-form-ctrl">
             <select class="in" id="customer_language" name="customer_language">
               ${LANGUAGE_OPTIONS.map(([val, lbl]) => `<option value="${val}" ${r.customer_language === val ? 'selected' : ''}>${lbl}</option>`).join('')}
             </select>
           </div>
-        ` : ''}
+        </div>
+      ` : ''}
+
+      <!-- Horizontal Tabs Section (Zoho Books Style) -->
+      <div class="party-tabs-header" id="party_tabs_bar">
+        <button type="button" class="party-tab-btn active" data-tab="tab_other_details">Other Details</button>
+        <button type="button" class="party-tab-btn" data-tab="tab_address">Address</button>
+        <button type="button" class="party-tab-btn" data-tab="tab_contacts">Contact Persons <span class="party-tab-badge" id="cnt_badge">${contactPersonsList.length}</span></button>
+        ${!isCust ? `<button type="button" class="party-tab-btn" data-tab="tab_bank">Bank Details</button>` : ''}
+        <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">Custom Fields</button>
+        <button type="button" class="party-tab-btn" data-tab="tab_remarks">Notes</button>
+        <button type="button" class="party-tab-btn" data-tab="tab_documents">Attachments <span class="party-tab-badge" id="doc_badge">${documentsList.length}</span></button>
       </div>
 
-      <div class="card" style="padding:16px 18px;background:var(--surface-glass-subtle);">
-        <h4 style="margin:0 0 12px;font-size:13.5px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:6px;">
-          <span>⚖️</span> Tax &amp; Statutory Governance
-        </h4>
-        <div class="g" style="gap:12px;">
-          <div class="fg s4">
-            <label>GST Treatment</label>
-            <select class="in" id="gst_treatment" name="gst_treatment">
-              ${(isCust ? GST_TREATMENT_OPTIONS_CUSTOMER : GST_TREATMENT_OPTIONS_VENDOR).map(([v, l]) => `
-                <option value="${v}" ${r.gst_treatment === v ? 'selected' : ''}>${l}</option>
-              `).join('')}
-            </select>
-          </div>
-          <div class="fg s4">
-            <label>${isCust ? 'Place of Supply' : 'Source of Supply'}</label>
-            <select class="in" id="${isCust ? 'place_of_supply' : 'source_of_supply'}" name="${isCust ? 'place_of_supply' : 'source_of_supply'}">
-              ${GST_STATE_OPTIONS.map(([v, l]) => {
-                const cur = isCust ? defaultPos : defaultSos;
-                const isSel = cur.includes(v) || v.includes(r.state || 'None');
-                return `<option value="${v}" ${isSel ? 'selected' : ''}>${l}</option>`;
-              }).join('')}
-            </select>
-          </div>
-          <div class="fg s4">
-            <label>GSTIN</label>
-            <input class="in" id="gstin" name="gstin" maxlength="15" placeholder="e.g. 32AANCC9298C1ZE" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.gstin || '')}">
-            <div class="er" data-err="gstin"></div>
-          </div>
-
-          <div class="fg s3">
-            <label>PAN</label>
-            <input class="in" id="pan" name="pan" maxlength="10" placeholder="e.g. AANCC9298C" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.pan || '')}">
-            <div class="er" data-err="pan"></div>
-          </div>
-          <div class="fg s3">
-            <label>Currency</label>
-            <select class="in" id="currency" name="currency">
-              ${CURRENCY_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.currency === v ? 'selected' : ''}>${l}</option>`).join('')}
-            </select>
-          </div>
-          <div class="fg s3">
-            <label>Opening Balance</label>
-            <div style="display:flex;gap:4px;">
-              <input class="in" id="opening_balance" name="opening_balance" type="number" step="0.01" placeholder="0.00" value="${r.opening_balance || '0.00'}">
-              <select class="in" id="opening_balance_type" name="opening_balance_type" style="width:65px;flex-shrink:0;">
-                <option value="debit" ${r.opening_balance_type !== 'credit' ? 'selected' : ''}>Dr</option>
-                <option value="credit" ${r.opening_balance_type === 'credit' ? 'selected' : ''}>Cr</option>
+      <div class="party-tabs-content">
+        <!-- Other Details Pane -->
+        <div class="party-tab-pane active" id="tab_other_details">
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="gst_treatment">GST Treatment<span class="rq">*</span></label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="gst_treatment" name="gst_treatment">
+                ${(isCust ? GST_TREATMENT_OPTIONS_CUSTOMER : GST_TREATMENT_OPTIONS_VENDOR).map(([v, l]) => `
+                  <option value="${v}" ${r.gst_treatment === v ? 'selected' : ''}>${l}</option>
+                `).join('')}
               </select>
             </div>
           </div>
-          <div class="fg s3">
-            <label>Payment Terms</label>
-            <select class="in" id="payment_terms" name="payment_terms">
-              ${PAYMENT_TERMS_OPTIONS.map(([v, l]) => `<option value="${v}" ${String(r.payment_terms) === v ? 'selected' : ''}>${l}</option>`).join('')}
-            </select>
+
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="${isCust ? 'place_of_supply' : 'source_of_supply'}">${isCust ? 'Place of Supply' : 'Source of Supply'}<span class="rq">*</span></label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="${isCust ? 'place_of_supply' : 'source_of_supply'}" name="${isCust ? 'place_of_supply' : 'source_of_supply'}">
+                ${GST_STATE_OPTIONS.map(([v, l]) => {
+                  const cur = isCust ? defaultPos : defaultSos;
+                  const isSel = cur.includes(v) || v.includes(r.state || 'None');
+                  return `<option value="${v}" ${isSel ? 'selected' : ''}>${l}</option>`;
+                }).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="gstin">GSTIN</label>
+            <div class="zb-form-ctrl">
+              <input class="in" id="gstin" name="gstin" maxlength="15" placeholder="e.g. 32AANCC9298C1ZE" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.gstin || '')}">
+              <div class="er" data-err="gstin"></div>
+            </div>
+          </div>
+
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="pan">PAN</label>
+            <div class="zb-form-ctrl">
+              <input class="in" id="pan" name="pan" maxlength="10" placeholder="e.g. AANCC9298C" style="text-transform:uppercase;font-family:monospace;max-width:240px;" value="${esc(r.pan || '')}">
+              <div class="er" data-err="pan"></div>
+            </div>
           </div>
 
           ${isCust ? `
-            <div class="fg s6">
-              <label>Tax Preference</label>
-              <div style="display:flex;gap:18px;align-items:center;height:36px;">
-                <label class="radio-label"><input type="radio" name="tax_preference" value="taxable" ${r.tax_preference !== 'tax_exempt' ? 'checked' : ''}> Taxable</label>
-                <label class="radio-label"><input type="radio" name="tax_preference" value="tax_exempt" ${r.tax_preference === 'tax_exempt' ? 'checked' : ''}> Tax Exempt</label>
+            <div class="zb-form-row">
+              <label class="zb-form-label">Tax Preference</label>
+              <div class="zb-form-ctrl">
+                <div style="display:flex;gap:20px;align-items:center;height:35px;">
+                  <label class="radio-label"><input type="radio" name="tax_preference" value="taxable" ${r.tax_preference !== 'tax_exempt' ? 'checked' : ''}> Taxable</label>
+                  <label class="radio-label"><input type="radio" name="tax_preference" value="tax_exempt" ${r.tax_preference === 'tax_exempt' ? 'checked' : ''}> Tax Exempt</label>
+                </div>
               </div>
             </div>
-            <div class="fg s6" id="exemption_reason_wrap" style="${r.tax_preference === 'tax_exempt' ? '' : 'display:none;'}">
-              <label>Exemption Reason</label>
-              <input class="in" id="exemption_reason" name="exemption_reason" placeholder="e.g. Export / SEZ / Govt Notification" value="${esc(r.exemption_reason || '')}">
+            <div class="zb-form-row" id="exemption_reason_wrap" style="${r.tax_preference === 'tax_exempt' ? '' : 'display:none;'}">
+              <label class="zb-form-label" for="exemption_reason">Exemption Reason</label>
+              <div class="zb-form-ctrl">
+                <input class="in" id="exemption_reason" name="exemption_reason" placeholder="e.g. Export / SEZ / Govt Notification" value="${esc(r.exemption_reason || '')}">
+              </div>
             </div>
           ` : `
-
-            <div class="fg s6">
-              <label class="ck" style="margin-top:6px;">
-                <input type="checkbox" id="is_msme_registered" name="is_msme_registered" ${r.is_msme_registered ? 'checked' : ''}>
-                <b>MSME Registered?</b> This vendor is MSME registered
-              </label>
-              <div id="msme_fields_wrap" style="${r.is_msme_registered ? '' : 'display:none;'}margin-top:8px;display:flex;gap:8px;">
-                <select class="in" id="msme_type" name="msme_type" style="width:110px;">
-                  <option value="micro" ${r.msme_type === 'micro' ? 'selected' : ''}>Micro</option>
-                  <option value="small" ${r.msme_type === 'small' ? 'selected' : ''}>Small</option>
-                  <option value="medium" ${r.msme_type === 'medium' ? 'selected' : ''}>Medium</option>
-                </select>
-                <input class="in" id="msme_reg_number" name="msme_reg_number" placeholder="Udyam Reg Number (UDYAM-XX-00-0000000)" value="${esc(r.msme_reg_number || '')}">
+            <div class="zb-form-row">
+              <label class="zb-form-label">MSME Registered?</label>
+              <div class="zb-form-ctrl">
+                <label class="ck" style="height:35px;display:flex;align-items:center;">
+                  <input type="checkbox" id="is_msme_registered" name="is_msme_registered" ${r.is_msme_registered ? 'checked' : ''}>
+                  <span>This vendor is registered under MSME / Udyam</span>
+                </label>
+                <div id="msme_fields_wrap" style="${r.is_msme_registered ? '' : 'display:none;'}margin-top:8px;display:flex;gap:8px;">
+                  <select class="in" id="msme_type" name="msme_type" style="width:120px;">
+                    <option value="micro" ${r.msme_type === 'micro' ? 'selected' : ''}>Micro</option>
+                    <option value="small" ${r.msme_type === 'small' ? 'selected' : ''}>Small</option>
+                    <option value="medium" ${r.msme_type === 'medium' ? 'selected' : ''}>Medium</option>
+                  </select>
+                  <input class="in" id="msme_reg_number" name="msme_reg_number" placeholder="Udyam Registration Number" value="${esc(r.msme_reg_number || '')}">
+                </div>
               </div>
             </div>
-            <div class="fg s3">
-              <label>Income Tax TDS</label>
-              <select class="in" id="tds_section" name="tds_section">
-                ${TDS_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.tds_section === v ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-            </div>
-            <div class="fg s3">
-              <label class="ck" style="margin-top:24px;">
-                <input type="checkbox" id="apply_gst_tds" name="apply_gst_tds" ${r.apply_gst_tds ? 'checked' : ''}>
-                <b>GST TDS</b> (Sec 51)
-              </label>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="tds_section">Income Tax TDS</label>
+              <div class="zb-form-ctrl">
+                <div style="display:flex;gap:16px;align-items:center;">
+                  <select class="in" id="tds_section" name="tds_section" style="flex:1;">
+                    ${TDS_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.tds_section === v ? 'selected' : ''}>${l}</option>`).join('')}
+                  </select>
+                  <label class="ck" style="white-space:nowrap;">
+                    <input type="checkbox" id="apply_gst_tds" name="apply_gst_tds" ${r.apply_gst_tds ? 'checked' : ''}>
+                    <span>GST TDS (Sec 51)</span>
+                  </label>
+                </div>
+              </div>
             </div>
           `}
-        </div>
 
-        ${isCust ? `
-          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd-glass);display:flex;align-items:center;gap:12px;">
-            <label class="ck">
-              <input type="checkbox" id="portal_enabled" name="portal_enabled" ${r.portal_enabled ? 'checked' : ''}>
-              <b>Enable Portal?</b> Allow self-service customer portal access
-            </label>
-            <div style="font-size:12px;color:var(--tx-muted);">(Allows viewing invoices, payment receipts, and paying online)</div>
-          </div>
-        ` : ''}
-      </div>
-
-      <div style="margin-top:8px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h4 style="margin:0;font-size:13.5px;font-weight:700;">Other Details</h4>
-          <button type="button" class="btn" id="btn_toggle_add_details" style="font-size:11.5px;padding:4px 12px;cursor:pointer;">Add More</button>
-        </div>
-
-        <div class="party-details-split" id="party_details_split">
-
-          <div class="party-tabs-sidebar" id="party_tabs_bar">
-            <button type="button" class="party-tab-btn active" data-tab="tab_address">
-              <span>Address</span>
-            </button>
-            <button type="button" class="party-tab-btn" data-tab="tab_contacts">
-              <span>Contact Persons</span>
-              <span class="party-tab-badge" id="cnt_badge">${contactPersonsList.length}</span>
-            </button>
-            ${!isCust ? `
-              <button type="button" class="party-tab-btn" data-tab="tab_bank">
-                <span>Bank Details</span>
-              </button>
-            ` : ''}
-            <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">
-              <span>Custom Fields</span>
-            </button>
-            <button type="button" class="party-tab-btn" data-tab="tab_remarks">
-              <span>Notes</span>
-            </button>
-            <button type="button" class="party-tab-btn" data-tab="tab_documents">
-              <span>Attachments</span>
-              <span class="party-tab-badge" id="doc_badge">${documentsList.length}</span>
-            </button>
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="currency">Currency</label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="currency" name="currency">
+                ${CURRENCY_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.currency === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
           </div>
 
-          <div class="party-tabs-content">
-
-        <div class="party-tab-pane active" id="tab_address">
-          <div class="g" style="gap:16px;">
-            <div class="${isCust ? 's6' : 's12'}">
-              <h5 style="margin:0 0 8px;font-size:12.5px;font-weight:700;">Billing Address</h5>
-              <div class="g" style="gap:8px;">
-                <div class="fg s12"><label>Attention</label><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"></div>
-                <div class="fg s12"><label>Address Line</label><textarea class="in" id="billing_address" name="billing_address" rows="2" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea></div>
-                <div class="fg s4"><label>City</label><input class="in" id="billing_city" name="billing_city" placeholder="Kottayam" value="${esc(r.billing_city || '')}"></div>
-                <div class="fg s4"><label>State</label><input class="in" id="billing_state" name="billing_state" placeholder="Kerala" value="${esc(r.billing_state || r.state || '')}"></div>
-                <div class="fg s4"><label>Pincode</label><input class="in" id="billing_pincode" name="billing_pincode" placeholder="686003" value="${esc(r.billing_pincode || '')}"></div>
-                <div class="fg s6"><label>Country</label><input class="in" id="billing_country" name="billing_country" value="${esc(r.billing_country || 'India')}"></div>
-                <div class="fg s6"><label>Phone</label><input class="in" id="billing_phone" name="billing_phone" value="${esc(r.billing_phone || '')}"></div>
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="opening_balance">Opening Balance</label>
+            <div class="zb-form-ctrl">
+              <div style="display:flex;gap:6px;max-width:280px;">
+                <input class="in" id="opening_balance" name="opening_balance" type="number" step="0.01" placeholder="0.00" value="${r.opening_balance || '0.00'}">
+                <select class="in" id="opening_balance_type" name="opening_balance_type" style="width:75px;flex-shrink:0;">
+                  <option value="debit" ${r.opening_balance_type !== 'credit' ? 'selected' : ''}>Dr</option>
+                  <option value="credit" ${r.opening_balance_type === 'credit' ? 'selected' : ''}>Cr</option>
+                </select>
               </div>
+            </div>
+          </div>
+
+          <div class="zb-form-row">
+            <label class="zb-form-label" for="payment_terms">Payment Terms</label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="payment_terms" name="payment_terms">
+                ${PAYMENT_TERMS_OPTIONS.map(([v, l]) => `<option value="${v}" ${String(r.payment_terms) === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          ${isCust ? `
+            <div class="zb-form-row">
+              <label class="zb-form-label">Client Portal</label>
+              <div class="zb-form-ctrl">
+                <label class="ck" style="height:35px;display:flex;align-items:center;gap:6px;">
+                  <input type="checkbox" id="portal_enabled" name="portal_enabled" ${r.portal_enabled ? 'checked' : ''}>
+                  <b>Enable Portal?</b>
+                  <span style="font-size:12px;color:var(--tx-muted);">(Allows viewing invoices, payment receipts, and paying online)</span>
+                </label>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- Address Pane -->
+        <div class="party-tab-pane" id="tab_address">
+          <div style="display:grid;grid-template-columns:${isCust ? '1fr 1fr' : '1fr'};gap:32px;">
+            <div>
+              <h4 style="margin:0 0 14px;font-size:13.5px;font-weight:700;color:var(--tx);border-bottom:1px solid var(--bd-glass);padding-bottom:6px;">Billing Address</h4>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"></div></div>
+              <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="billing_address" name="billing_address" rows="3" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_city">City</label><div class="zb-form-ctrl"><input class="in" id="billing_city" name="billing_city" placeholder="City" value="${esc(r.billing_city || '')}"></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_state">State</label><div class="zb-form-ctrl"><input class="in" id="billing_state" name="billing_state" placeholder="State" value="${esc(r.billing_state || r.state || '')}"></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_pincode">Pincode</label><div class="zb-form-ctrl"><input class="in" id="billing_pincode" name="billing_pincode" placeholder="Pincode" value="${esc(r.billing_pincode || '')}"></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_country">Country</label><div class="zb-form-ctrl"><input class="in" id="billing_country" name="billing_country" value="${esc(r.billing_country || 'India')}"></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="billing_phone" name="billing_phone" value="${esc(r.billing_phone || '')}"></div></div>
             </div>
 
             ${isCust ? `
-              <div class="s6">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                  <h5 style="margin:0;font-size:12.5px;font-weight:700;">Shipping Address</h5>
+              <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--bd-glass);padding-bottom:6px;">
+                  <h4 style="margin:0;font-size:13.5px;font-weight:700;color:var(--tx);">Shipping Address</h4>
                   <button type="button" class="btn" id="btn_copy_billing_addr" style="font-size:11px;padding:3px 8px;">📋 Copy billing address</button>
                 </div>
-                <div class="g" style="gap:8px;">
-                  <div class="fg s12"><label>Attention</label><input class="in" id="shipping_attention" name="shipping_attention" placeholder="Receiving / Logistics" value="${esc(r.shipping_attention || '')}"></div>
-                  <div class="fg s12"><label>Address Line</label><textarea class="in" id="shipping_address" name="shipping_address" rows="2" placeholder="Delivery street address">${esc(r.shipping_address || '')}</textarea></div>
-                  <div class="fg s4"><label>City</label><input class="in" id="shipping_city" name="shipping_city" placeholder="City" value="${esc(r.shipping_city || '')}"></div>
-                  <div class="fg s4"><label>State</label><input class="in" id="shipping_state" name="shipping_state" placeholder="State" value="${esc(r.shipping_state || '')}"></div>
-                  <div class="fg s4"><label>Pincode</label><input class="in" id="shipping_pincode" name="shipping_pincode" placeholder="Pincode" value="${esc(r.shipping_pincode || '')}"></div>
-                  <div class="fg s6"><label>Country</label><input class="in" id="shipping_country" name="shipping_country" value="${esc(r.shipping_country || 'India')}"></div>
-                  <div class="fg s6"><label>Phone</label><input class="in" id="shipping_phone" name="shipping_phone" value="${esc(r.shipping_phone || '')}"></div>
-                </div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="shipping_attention" name="shipping_attention" placeholder="Receiving / Logistics" value="${esc(r.shipping_attention || '')}"></div></div>
+                <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="shipping_address" name="shipping_address" rows="3" placeholder="Delivery street address">${esc(r.shipping_address || '')}</textarea></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_city">City</label><div class="zb-form-ctrl"><input class="in" id="shipping_city" name="shipping_city" placeholder="City" value="${esc(r.shipping_city || '')}"></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_state">State</label><div class="zb-form-ctrl"><input class="in" id="shipping_state" name="shipping_state" placeholder="State" value="${esc(r.shipping_state || '')}"></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_pincode">Pincode</label><div class="zb-form-ctrl"><input class="in" id="shipping_pincode" name="shipping_pincode" placeholder="Pincode" value="${esc(r.shipping_pincode || '')}"></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_country">Country</label><div class="zb-form-ctrl"><input class="in" id="shipping_country" name="shipping_country" value="${esc(r.shipping_country || 'India')}"></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="shipping_phone" name="shipping_phone" value="${esc(r.shipping_phone || '')}"></div></div>
               </div>
             ` : ''}
           </div>
         </div>
 
+        <!-- Contact Persons Pane -->
         <div class="party-tab-pane" id="tab_contacts">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div class="sub" style="font-size:12px;">Add designated key contacts (sales, finance, dispatch) for this ${entityLabel}.</div>
             <button type="button" class="btn" id="btn_add_contact_row" style="font-size:12px;">+ Add Contact Person</button>
           </div>
           <div id="contact_persons_container"></div>
         </div>
 
+        <!-- Bank Details Pane (Vendors) -->
         ${!isCust ? `
           <div class="party-tab-pane" id="tab_bank">
-            <div class="g" style="gap:12px;max-width:680px;">
-              <div class="fg s6">
-                <label>Bank Name</label>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_name">Bank Name</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_name" name="bank_name" placeholder="e.g. State Bank of India / HDFC Bank" value="${esc(r.bank_name || '')}">
               </div>
-              <div class="fg s6">
-                <label>Account Holder Name</label>
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_account_holder">Account Holder Name</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_account_holder" name="bank_account_holder" placeholder="Legal Account Name" value="${esc(r.bank_account_holder || r.name || '')}">
               </div>
-              <div class="fg s6">
-                <label>Bank Account Number</label>
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_account_number">Bank Account Number</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_account_number" name="bank_account_number" type="password" placeholder="Account Number" value="${esc(r.bank_account_number || '')}">
               </div>
-              <div class="fg s6">
-                <label>Re-enter Account Number</label>
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_account_number_confirm">Re-enter Account #</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_account_number_confirm" type="text" placeholder="Re-enter to verify" value="${esc(r.bank_account_number || '')}">
                 <div class="er" id="bank_acc_err"></div>
               </div>
-              <div class="fg s4">
-                <label>IFSC Code</label>
-                <input class="in" id="bank_ifsc" name="bank_ifsc" placeholder="SBIN0001234" style="text-transform:uppercase;" value="${esc(r.bank_ifsc || '')}">
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_ifsc">IFSC Code</label>
+              <div class="zb-form-ctrl">
+                <input class="in" id="bank_ifsc" name="bank_ifsc" placeholder="SBIN0001234" style="text-transform:uppercase;max-width:220px;" value="${esc(r.bank_ifsc || '')}">
               </div>
-              <div class="fg s4">
-                <label>Branch Name</label>
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_branch">Branch Name</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_branch" name="bank_branch" placeholder="Main Branch" value="${esc(r.bank_branch || '')}">
               </div>
-              <div class="fg s4">
-                <label>UPI ID / VPA</label>
+            </div>
+            <div class="zb-form-row">
+              <label class="zb-form-label" for="bank_upi_id">UPI ID / VPA</label>
+              <div class="zb-form-ctrl">
                 <input class="in" id="bank_upi_id" name="bank_upi_id" placeholder="vendor@upi" value="${esc(r.bank_upi_id || '')}">
               </div>
             </div>
           </div>
         ` : ''}
 
+        <!-- Custom Fields Pane -->
         <div class="party-tab-pane" id="tab_custom_fields">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div class="sub" style="font-size:12px;">Add custom key-value metadata properties for this account.</div>
             <button type="button" class="btn" id="btn_add_custom_field" style="font-size:12px;">+ Add Custom Field</button>
           </div>
           <div id="custom_fields_container"></div>
         </div>
 
+        <!-- Remarks / Notes Pane -->
         <div class="party-tab-pane" id="tab_remarks">
-          <div class="fg">
-            <label>Notes</label>
-            <textarea class="in" id="notes" name="notes" rows="3" placeholder="Notes for internal team reference only (not printed on customer invoices)...">${esc(r.notes || r.remarks || '')}</textarea>
+          <div class="zb-form-row align-top">
+            <label class="zb-form-label" for="notes">Notes</label>
+            <div class="zb-form-ctrl full">
+              <textarea class="in" id="notes" name="notes" rows="4" placeholder="Notes for internal team reference only (not printed on customer invoices)...">${esc(r.notes || r.remarks || '')}</textarea>
+            </div>
           </div>
         </div>
 
+        <!-- Documents / Attachments Pane -->
         <div class="party-tab-pane" id="tab_documents">
           <div class="doc-upload-box" id="doc_drop_zone">
             <div style="font-size:26px;margin-bottom:4px;">📎</div>
@@ -681,8 +730,6 @@ async function partyForm(kind, id) {
           </div>
           <div id="uploaded_files_list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
-          </div>
-        </div>
       </div>
     </div>
   `;
@@ -692,7 +739,6 @@ async function partyForm(kind, id) {
     wide: true,
     body: formHtml,
     onReady: (form, modal) => {
-
       const tabs = $$('.party-tab-btn', modal.el);
       const panes = $$('.party-tab-pane', modal.el);
       tabs.forEach(btn => {
@@ -705,18 +751,23 @@ async function partyForm(kind, id) {
         });
       });
 
-      $('#btn_toggle_add_details', modal.el).addEventListener('click', () => {
-        const splitEl = $('#party_details_split', modal.el);
-        if (splitEl) {
-          if (splitEl.style.display === 'none') {
-            splitEl.style.display = 'flex';
-            const activeTab = $('.party-tab-btn.active', modal.el) || tabs[0];
-            if (activeTab) activeTab.click();
-          } else {
-            splitEl.style.display = 'none';
-          }
+      const cpInp = $('#contact_person', modal.el);
+      const fnInp = $('#contact_first_name', modal.el);
+      const lnInp = $('#contact_last_name', modal.el);
+      if (fnInp && lnInp && cpInp) {
+        const syncCp = () => {
+          cpInp.value = [fnInp.value.trim(), lnInp.value.trim()].filter(Boolean).join(' ');
+        };
+        fnInp.addEventListener('input', syncCp);
+        lnInp.addEventListener('input', syncCp);
+        const parts = (cpInp.value || '').trim().split(/\s+/);
+        if (parts.length > 1) {
+          fnInp.value = parts[0];
+          lnInp.value = parts.slice(1).join(' ');
+        } else if (parts.length === 1 && parts[0]) {
+          fnInp.value = parts[0];
         }
-      });
+      }
 
       if (isCust) {
         const pillBiz = $('#pill_type_business', modal.el);
@@ -738,7 +789,6 @@ async function partyForm(kind, id) {
           });
         });
       } else {
-
         const msmeCk = $('#is_msme_registered', modal.el);
         const msmeWrap = $('#msme_fields_wrap', modal.el);
         msmeCk.addEventListener('change', () => {
@@ -793,6 +843,35 @@ async function partyForm(kind, id) {
           btn.textContent = 'Prefill';
         }
       };
+
+      const prefillToggle = $('#btn_toggle_gst_prefill', modal.el);
+      const prefillCtrls = $('#gst_prefill_ctrls', modal.el);
+      const prefillClose = $('#btn_close_gst_prefill', modal.el);
+      if (prefillToggle) {
+        prefillToggle.addEventListener('click', e => {
+          e.preventDefault();
+          if (prefillCtrls.style.display === 'none') {
+            prefillCtrls.style.display = 'flex';
+            const curGstin = ($('#gstin', modal.el)?.value || '').trim();
+            if (curGstin) $('#gst_prefill_code', modal.el).value = curGstin;
+            $('#gst_prefill_code', modal.el).focus();
+          } else {
+            doPrefill();
+          }
+        });
+      }
+      if (prefillClose) {
+        prefillClose.addEventListener('click', e => {
+          e.preventDefault();
+          prefillCtrls.style.display = 'none';
+        });
+      }
+      $('#gst_prefill_code', modal.el).addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doPrefill();
+        }
+      });
 
       $('#btn_trigger_gst_prefill', modal.el).addEventListener('click', doPrefill);
 
@@ -947,7 +1026,6 @@ async function partyForm(kind, id) {
       renderDocs();
     },
     onSubmit: async d => {
-
       if (!isCust) {
         const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
         const cfAcc = ($('#bank_account_number_confirm', modal.el) ? $('#bank_account_number_confirm', modal.el).value : '').trim();
@@ -982,6 +1060,7 @@ async function partyForm(kind, id) {
     }
   });
 }
+
 
 async function itemForm(id) {
   const [r, vendors] = await Promise.all([
@@ -1036,6 +1115,7 @@ async function itemForm(id) {
     return `<option value="${esc(val)}" ${isSel ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
   const extraUnitOpt = (!unitFound && curUnit) ? `<option value="${esc(curUnit)}" selected>${esc(curUnit)}</option>` : '';
+
 
   const SALES_ACCOUNT_GROUPS = [
     {
@@ -1178,122 +1258,134 @@ async function itemForm(id) {
     title: id ? 'Edit Item' : 'New Item',
     wide: true,
     body: `
-    <div class="convo-item-modal">
-
-      <div class="convo-top-grid">
-        <div class="convo-left-fields">
-
-          <div class="fg">
-            <label for="item_name" class="req-label">Name<span class="rq">*</span></label>
-            <input class="in" type="text" id="item_name" name="name" value="${esc(r.name || '')}" placeholder="Item name" required autofocus>
-            <div class="er" data-err="name" role="alert"></div>
+    <div class="convosis-item-modal convo-item-modal zb-form-wrap">
+      
+      <!-- General Details -->
+      <div class="zb-form-row">
+        <label class="zb-form-label">Type <span class="zb-info-tip" title="Goods have physical inventory, services do not.">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div class="convosis-radio-group convo-radio-group" style="height:35px;">
+            <label class="radio-label">
+              <input type="radio" name="item_type" value="goods" ${isGoods ? 'checked' : ''}>
+              <span>📦 Goods</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="item_type" value="service" ${!isGoods ? 'checked' : ''}>
+              <span>⚙️ Service</span>
+            </label>
           </div>
-
-          <div class="fg">
-            <label class="convo-label">Type <span class="help-tip" title="Goods have physical inventory, services do not.">?</span></label>
-            <div class="convo-radio-group">
-              <label class="radio-label">
-                <input type="radio" name="item_type" value="goods" ${isGoods ? 'checked' : ''}>
-                <span>Goods</span>
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="item_type" value="service" ${!isGoods ? 'checked' : ''}>
-                <span>Service</span>
-              </label>
-            </div>
-            <div class="er" data-err="item_type" role="alert"></div>
-          </div>
-
-          <div class="fg">
-            <label for="item_unit_select" class="convo-label">Unit <span class="help-tip" title="Choose from dropdown or enter custom measuring unit for GST & billing.">?</span></label>
-            <div class="unit-combo-group">
-              <select class="in" id="item_unit_select">
-                <option value="">Select Unit…</option>
-                ${unitOptsHtml}
-                ${extraUnitOpt}
-                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Unit…</option>
-              </select>
-              <input class="in" type="text" id="item_unit" name="unit" value="${esc(r.unit || 'pcs')}" placeholder="Unit (or type here)" maxlength="20" required title="Selected unit or enter custom unit directly">
-            </div>
-            <div class="er" data-err="unit" role="alert"></div>
-          </div>
-
-          <div class="fg">
-            <label for="item_sku" class="req-label">SKU<span class="rq">*</span> <span class="help-tip" title="Stock Keeping Unit (unique identifier).">?</span></label>
-            <input class="in" type="text" id="item_sku" name="sku" value="${esc(r.sku || '')}" placeholder="e.g. PROD-001" maxlength="60" required style="text-transform:uppercase;">
-            <div class="er" data-err="sku" role="alert"></div>
-          </div>
-
-          <div class="fg">
-            <label for="item_hsn" class="convo-label">HSN / SAC Code</label>
-            <div class="hsn-search-wrap">
-              <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="Type to add or search HSN/SAC" maxlength="10">
-              <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-              <datalist id="hsn_presets">
-                <option value="8471">8471 - Computers, laptops & electronic hardware</option>
-                <option value="8517">8517 - Telephones, smartphones & transmission apparatus</option>
-                <option value="8528">8528 - Monitors, displays & televisions</option>
-                <option value="4820">4820 - Registers, notebooks & office stationery</option>
-                <option value="9983">9983 - Professional, IT & software consulting services</option>
-                <option value="9984">9984 - Telecommunications & cloud information services</option>
-                <option value="9987">9987 - Maintenance, support & engineering repair services</option>
-              </datalist>
-            </div>
-            <div class="er" data-err="hsn_sac" role="alert"></div>
-          </div>
-
-          <div class="fgrid" style="gap:10px;">
-            <div class="fg">
-              <label for="item_tax_pref" class="req-label">Tax Preference<span class="rq">*</span></label>
-              <select class="in" id="item_tax_pref" name="tax_preference">
-                <option value="taxable" ${r.tax_preference !== 'exempt' && r.tax_preference !== 'non_taxable' && r.tax_preference !== 'nil_rated' ? 'selected' : ''}>Taxable</option>
-                <option value="non_taxable" ${r.tax_preference === 'non_taxable' ? 'selected' : ''}>Non-Taxable</option>
-                <option value="exempt" ${r.tax_preference === 'exempt' ? 'selected' : ''}>Exempt</option>
-                <option value="nil_rated" ${r.tax_preference === 'nil_rated' ? 'selected' : ''}>Nil Rated (0%)</option>
-              </select>
-            </div>
-
-            <div class="fg" id="gstIntraWrap">
-              <label for="item_gst_intra" class="convo-label">Intra-State Tax Rate</label>
-              <select class="in" id="item_gst_intra" name="gst_rate">
-                ${intraOptionsHtml}
-              </select>
-            </div>
-          </div>
-
-          <div class="fg" id="gstInterWrap">
-            <label for="item_gst_inter" class="convo-label">Inter-State Tax Rate (IGST)</label>
-            <select class="in" id="item_gst_inter">
-              ${interOptionsHtml}
-            </select>
-          </div>
-
-          <div class="fg">
-            <label for="item_category" class="convo-label">Category</label>
-            <input class="in" type="text" id="item_category" name="category" value="${esc(r.category || '')}" placeholder="e.g. Hardware, Software, Services" maxlength="100">
-          </div>
+          <div class="er" data-err="item_type" role="alert"></div>
         </div>
+      </div>
 
-        <div class="convo-right-image">
-          <label class="convo-label">Item Image</label>
-          <div class="convo-image-dropzone" id="itemImageDropzone">
-            <input type="file" id="itemImageFileInput" accept="image/*" style="display:none;">
+      <div class="zb-form-row">
+        <label for="item_name" class="zb-form-label">Name<span class="rq">*</span></label>
+        <div class="zb-form-ctrl">
+          <input class="in" type="text" id="item_name" name="name" value="${esc(r.name || '')}" placeholder="Item name" required autofocus>
+          <div class="er" data-err="name" role="alert"></div>
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label for="item_unit_select" class="zb-form-label">Unit <span class="zb-info-tip" title="Measuring unit for GST & billing">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <div style="display:flex;gap:8px;">
+            <select class="in" id="item_unit_select" style="max-width:240px;">
+              <option value="">Select Unit…</option>
+              ${unitOptsHtml}
+              ${extraUnitOpt}
+              <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Unit…</option>
+            </select>
+            <input class="in" type="text" id="item_unit" name="unit" value="${esc(r.unit || 'pcs')}" placeholder="Unit" maxlength="20" required style="max-width:140px;">
+          </div>
+          <div class="er" data-err="unit" role="alert"></div>
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label for="item_sku" class="zb-form-label">SKU<span class="rq">*</span> <span class="zb-info-tip" title="Stock Keeping Unit (unique identifier)">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <input class="in" type="text" id="item_sku" name="sku" value="${esc(r.sku || '')}" placeholder="e.g. PROD-001" maxlength="60" required style="text-transform:uppercase;max-width:260px;">
+          <div class="er" data-err="sku" role="alert"></div>
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label for="item_hsn" class="zb-form-label">HSN / SAC Code</label>
+        <div class="zb-form-ctrl">
+          <div class="hsn-search-wrap">
+            <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="Type to add or search HSN/SAC" maxlength="10">
+            <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <datalist id="hsn_presets">
+              <option value="8471">8471 - Computers, laptops & electronic hardware</option>
+              <option value="8517">8517 - Telephones, smartphones & transmission apparatus</option>
+              <option value="8528">8528 - Monitors, displays & televisions</option>
+              <option value="4820">4820 - Registers, notebooks & office stationery</option>
+              <option value="9983">9983 - Professional, IT & software consulting services</option>
+              <option value="9984">9984 - Telecommunications & cloud information services</option>
+              <option value="9987">9987 - Maintenance, support & engineering repair services</option>
+            </datalist>
+          </div>
+          <div class="er" data-err="hsn_sac" role="alert"></div>
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label for="item_tax_pref" class="zb-form-label">Tax Preference<span class="rq">*</span></label>
+        <div class="zb-form-ctrl">
+          <select class="in" id="item_tax_pref" name="tax_preference" style="max-width:260px;">
+            <option value="taxable" ${r.tax_preference !== 'exempt' && r.tax_preference !== 'non_taxable' && r.tax_preference !== 'nil_rated' ? 'selected' : ''}>Taxable</option>
+            <option value="non_taxable" ${r.tax_preference === 'non_taxable' ? 'selected' : ''}>Non-Taxable</option>
+            <option value="exempt" ${r.tax_preference === 'exempt' ? 'selected' : ''}>Exempt</option>
+            <option value="nil_rated" ${r.tax_preference === 'nil_rated' ? 'selected' : ''}>Nil Rated (0%)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="zb-form-row" id="gstIntraWrap">
+        <label for="item_gst_intra" class="zb-form-label">Intra-State Tax Rate</label>
+        <div class="zb-form-ctrl">
+          <select class="in" id="item_gst_intra" name="gst_rate" style="max-width:260px;">
+            ${intraOptionsHtml}
+          </select>
+        </div>
+      </div>
+
+      <div class="zb-form-row" id="gstInterWrap">
+        <label for="item_gst_inter" class="zb-form-label">Inter-State Tax Rate (IGST)</label>
+        <div class="zb-form-ctrl">
+          <select class="in" id="item_gst_inter" style="max-width:260px;">
+            ${interOptionsHtml}
+          </select>
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label for="item_category" class="zb-form-label">Category</label>
+        <div class="zb-form-ctrl">
+          <input class="in" type="text" id="item_category" name="category" value="${esc(r.category || '')}" placeholder="e.g. Hardware, Software, Services" maxlength="100">
+        </div>
+      </div>
+
+      <!-- Item Image -->
+      <div class="zb-form-row align-top">
+        <label class="zb-form-label">Item Image</label>
+        <div class="zb-form-ctrl">
+          <div class="convosis-image-dropzone convo-image-dropzone" id="itemImageDropzone" style="max-width:320px;padding:14px;border-radius:8px;">
+            <input type="file" id="itemImageFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
             <input type="hidden" name="image_data" id="itemImageDataInput" value="${esc(img)}">
-
             <div id="dropzoneEmpty" class="dropzone-empty-state" style="${img ? 'display:none;' : ''}">
               <div class="dropzone-icon">
-                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
               </div>
-              <div class="dropzone-text">
-                <span>Drag Image(s) here or</span>
-                <button type="button" class="btn-browse-link" id="btnBrowseImage">Browse images</button>
+              <div class="dropzone-text" style="font-size:12px;">
+                <span>Drag Image here or</span>
+                <button type="button" class="btn-browse-link" id="btnBrowseImage">Browse</button>
               </div>
-              <div class="dropzone-hint">Supports PNG, JPG, WebP up to 2MB</div>
             </div>
-
             <div id="dropzonePreview" class="dropzone-preview-state" style="${img ? '' : 'display:none;'}">
-              <img id="itemImagePreviewImg" src="${esc(img)}" alt="Item Preview">
-              <div class="preview-actions">
+              <img id="itemImagePreviewImg" src="${esc(img)}" alt="Item Preview" style="max-height:80px;border-radius:6px;">
+              <div class="preview-actions" style="margin-top:6px;">
                 <button type="button" class="btn btn-sm" id="btnChangeImage">Change</button>
                 <button type="button" class="btn btn-sm btn-danger-link" id="btnRemoveImage">Remove</button>
               </div>
@@ -1302,122 +1394,132 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <hr class="convo-divider">
-
-      <div class="convo-split-grid">
-
-        <div class="convo-card-section" id="salesSection">
-          <div class="section-header-title">
-            <h3 class="section-title">Sales Information</h3>
-          </div>
-          <div class="section-body" id="salesBody">
-            <div class="fg">
-              <label for="item_selling_price" class="req-label">Selling Price<span class="rq">*</span></label>
-              <div class="input-currency-group">
-                <span class="currency-tag">INR</span>
-                <input class="in" type="number" step="0.01" min="0" id="item_selling_price" name="selling_price" value="${esc(r.selling_price || '')}" placeholder="0.00" required>
-              </div>
-              <div class="er" data-err="selling_price" role="alert"></div>
+      <!-- Sales Information -->
+      <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
+        <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;color:var(--tx);">Sales Information</h4>
+        <div class="zb-form-row">
+          <label for="item_selling_price" class="zb-form-label">Selling Price<span class="rq">*</span></label>
+          <div class="zb-form-ctrl">
+            <div style="display:flex;max-width:260px;">
+              <span class="zb-input-prefix">INR</span>
+              <input class="in" type="number" step="0.01" min="0" id="item_selling_price" name="selling_price" value="${esc(r.selling_price || '')}" placeholder="0.00" required>
             </div>
-
-            <div class="fg">
-              <label for="item_sales_account" class="req-label">Account<span class="rq">*</span></label>
-              <select class="in" id="item_sales_account" name="sales_account">
-                ${salesAccountsHtml}
-                ${extraSalesOpt}
-                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
-              </select>
-              <div class="er" data-err="sales_account" role="alert"></div>
-            </div>
-
-            <div class="fg">
-              <label for="item_sales_desc" class="convo-label">Description</label>
-              <textarea class="in" id="item_sales_desc" name="description" rows="3" placeholder="Sales description for customer invoices…">${esc(r.description || '')}</textarea>
-            </div>
+            <div class="er" data-err="selling_price" role="alert"></div>
           </div>
         </div>
-
-        <div class="convo-card-section" id="purchaseSection">
-          <div class="section-header-title">
-            <h3 class="section-title">Purchase Information</h3>
+        <div class="zb-form-row">
+          <label for="item_sales_account" class="zb-form-label">Account<span class="rq">*</span></label>
+          <div class="zb-form-ctrl">
+            <select class="in" id="item_sales_account" name="sales_account">
+              ${salesAccountsHtml}
+              ${extraSalesOpt}
+              <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
+            </select>
+            <div class="er" data-err="sales_account" role="alert"></div>
           </div>
-          <div class="section-body" id="purchaseBody">
-            <div class="fg">
-              <label for="item_purchase_price" class="req-label">Cost Price / Purchase Price<span class="rq">*</span></label>
-              <div class="input-currency-group">
-                <span class="currency-tag">INR</span>
-                <input class="in" type="number" step="0.01" min="0" id="item_purchase_price" name="purchase_price" value="${esc(r.purchase_price || '')}" placeholder="0.00" required>
-              </div>
-              <div class="er" data-err="purchase_price" role="alert"></div>
-            </div>
-
-            <div class="fg">
-              <label for="item_purchase_account" class="req-label">Account<span class="rq">*</span></label>
-              <select class="in" id="item_purchase_account" name="purchase_account">
-                ${purchaseAccountsHtml}
-                ${extraPurchOpt}
-                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
-              </select>
-              <div class="er" data-err="purchase_account" role="alert"></div>
-            </div>
-
-            <div class="fg">
-              <label for="item_preferred_vendor" class="convo-label">Preferred Vendor <span class="help-tip" title="Choose or add default vendor for bills & purchase orders.">?</span></label>
-              <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
-                <option value="">Select a vendor…</option>
-                ${vendorOptsHtml}
-                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Vendor…</option>
-              </select>
-              <div class="er" data-err="preferred_vendor_id" role="alert"></div>
-            </div>
-
-            <div class="fg">
-              <label for="item_purchase_desc" class="convo-label">Description</label>
-              <textarea class="in" id="item_purchase_desc" rows="3" placeholder="Purchase description for vendor bills…"></textarea>
-            </div>
+        </div>
+        <div class="zb-form-row align-top">
+          <label for="item_sales_desc" class="zb-form-label">Description</label>
+          <div class="zb-form-ctrl">
+            <textarea class="in" id="item_sales_desc" name="description" rows="2" placeholder="Sales description for customer invoices…">${esc(r.description || '')}</textarea>
           </div>
         </div>
       </div>
 
-      <div class="convo-card-section" id="inventorySection">
-        <div class="section-header-check">
-          <label class="ck-section">
-            <input type="checkbox" id="chkTrackInventory" name="track_inventory" ${r.track_inventory ? 'checked' : ''}>
-            <span>Track Inventory for this item</span>
-          </label>
+      <!-- Purchase Information -->
+      <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
+        <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;color:var(--tx);">Purchase Information</h4>
+        <div class="zb-form-row">
+          <label for="item_purchase_price" class="zb-form-label">Cost Price<span class="rq">*</span></label>
+          <div class="zb-form-ctrl">
+            <div style="display:flex;max-width:260px;">
+              <span class="zb-input-prefix">INR</span>
+              <input class="in" type="number" step="0.01" min="0" id="item_purchase_price" name="purchase_price" value="${esc(r.purchase_price || '')}" placeholder="0.00" required>
+            </div>
+            <div class="er" data-err="purchase_price" role="alert"></div>
+          </div>
         </div>
-        <div class="section-body" id="inventoryBody" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-top:10px;">
-          ${id ? '' : `
-          <div class="fg" id="openingStockWrap">
-            <label class="convo-label">Opening Stock</label>
-            <input class="in" type="number" step="0.001" min="0" name="opening_stock" placeholder="0.000">
-          </div>
-          `}
-          <div class="fg">
-            <label class="convo-label">Reorder Point / Level</label>
-            <input class="in" type="number" step="0.001" min="0" name="reorder_level" value="${r.reorder_level == null ? '' : r.reorder_level}" placeholder="0.000">
-          </div>
-          <div class="fg">
-            <label for="item_inventory_account" class="convo-label">Inventory Account</label>
-            <select class="in" id="item_inventory_account" name="inventory_account">
-              ${inventoryAccountsHtml}
-              ${extraInvOpt}
+        <div class="zb-form-row">
+          <label for="item_purchase_account" class="zb-form-label">Account<span class="rq">*</span></label>
+          <div class="zb-form-ctrl">
+            <select class="in" id="item_purchase_account" name="purchase_account">
+              ${purchaseAccountsHtml}
+              ${extraPurchOpt}
               <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
             </select>
+            <div class="er" data-err="purchase_account" role="alert"></div>
           </div>
         </div>
-        ${id ? '<div class="hp">Stock quantity adjustments are tracked through Stock Adjustments.</div>' : ''}
+        <div class="zb-form-row">
+          <label for="item_preferred_vendor" class="zb-form-label">Preferred Vendor <span class="zb-info-tip" title="Choose default vendor for purchase orders">ⓘ</span></label>
+          <div class="zb-form-ctrl">
+            <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
+              <option value="">Select a vendor…</option>
+              ${vendorOptsHtml}
+              <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Vendor…</option>
+            </select>
+            <div class="er" data-err="preferred_vendor_id" role="alert"></div>
+          </div>
+        </div>
+        <div class="zb-form-row align-top">
+          <label for="item_purchase_desc" class="zb-form-label">Description</label>
+          <div class="zb-form-ctrl">
+            <textarea class="in" id="item_purchase_desc" rows="2" placeholder="Purchase description for vendor bills…"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inventory Tracking -->
+      <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
+        <div class="zb-form-row">
+          <div class="zb-form-label"></div>
+          <div class="zb-form-ctrl">
+            <label class="ck" style="height:35px;display:flex;align-items:center;">
+              <input type="checkbox" id="chkTrackInventory" name="track_inventory" ${r.track_inventory ? 'checked' : ''}>
+              <b>Track Inventory for this item</b>
+            </label>
+          </div>
+        </div>
+        <div id="inventoryBody" style="${r.track_inventory ? '' : 'display:none;'}">
+          ${id ? '' : `
+            <div class="zb-form-row" id="openingStockWrap">
+              <label class="zb-form-label">Opening Stock</label>
+              <div class="zb-form-ctrl">
+                <input class="in" type="number" step="0.001" min="0" name="opening_stock" placeholder="0.000" style="max-width:220px;">
+              </div>
+            </div>
+          `}
+          <div class="zb-form-row">
+            <label class="zb-form-label">Reorder Point</label>
+            <div class="zb-form-ctrl">
+              <input class="in" type="number" step="0.001" min="0" name="reorder_level" value="${r.reorder_level == null ? '' : r.reorder_level}" placeholder="0.000" style="max-width:220px;">
+            </div>
+          </div>
+          <div class="zb-form-row">
+            <label for="item_inventory_account" class="zb-form-label">Inventory Account</label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="item_inventory_account" name="inventory_account">
+                ${inventoryAccountsHtml}
+                ${extraInvOpt}
+                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        ${id ? '<div class="hp" style="margin-left:211px;font-size:11.5px;color:var(--tx-muted);margin-top:4px;">Stock adjustments are tracked through Stock Adjustments.</div>' : ''}
       </div>
 
       ${id ? `
-      <div style="margin-top:6px;">
-        <label class="ck"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Active Item</label>
-      </div>
+        <div class="zb-form-row" style="margin-top:12px;">
+          <div class="zb-form-label"></div>
+          <div class="zb-form-ctrl">
+            <label class="ck"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Active Item</label>
+          </div>
+        </div>
       ` : ''}
     </div>
     `,
     onReady: (form, m) => {
-
       const fileInput = $('#itemImageFileInput', form);
       const dataInput = $('#itemImageDataInput', form);
       const emptyState = $('#dropzoneEmpty', form);
@@ -1426,7 +1528,7 @@ async function itemForm(id) {
       const dropzone = $('#itemImageDropzone', form);
 
       const processFile = file => {
-        if (!file || !file.type.startsWith('image/')) {
+        if (!file || !/^image\//.test(file.type)) {
           toast('Please choose a valid image file (PNG, JPG, WebP).', 'err');
           return;
         }
@@ -1491,6 +1593,7 @@ async function itemForm(id) {
         }
       });
 
+      
       const setupAddNew = (selectEl, { promptText, placeholder, onAdd }) => {
         if (!selectEl) return;
         let prevVal = selectEl.value;
@@ -1593,7 +1696,7 @@ async function itemForm(id) {
           const group = intra.querySelector('optgroup') || intra;
           group.appendChild(opt);
         }
-
+    
         if (!inter.querySelector(`option[value="${rateStr}"]`)) {
           const opt = document.createElement('option');
           opt.value = rateStr;
@@ -1668,6 +1771,7 @@ async function itemForm(id) {
         }
       });
 
+
       const invSec = $('#inventorySection', form);
       const trackInvCheck = $('#chkTrackInventory', form);
       const syncType = () => {
@@ -1679,6 +1783,9 @@ async function itemForm(id) {
       };
       $$('input[name="item_type"]', form).forEach(r => r.addEventListener('change', syncType));
 
+
+
+  
       const invBody = $('#inventoryBody', form);
       const syncTrackInv = () => {
         invBody.style.display = trackInvCheck.checked ? 'grid' : 'none';
@@ -1713,18 +1820,12 @@ async function docForm(kind, id, targetEl, onDone) {
     return;
   }
 
-  let [parties, items, rec] = await Promise.all([
+  const [parties, items, rec] = await Promise.all([
     api(`lookup/${inv ? 'customers' : 'vendors'}/`),
     api('lookup/items/'),
     id ? api(`${kind}/${id}/`) : null
   ]);
-  if (!parties.length) {
-    toast(`Please create a ${pk} first. Opening ${pk} form...`, 'info');
-    await partyForm(inv ? 'customers' : 'vendors');
-    parties = await api(`lookup/${inv ? 'customers' : 'vendors'}/`);
-    if (!parties.length) return;
-    return docForm(kind, id, targetEl, onDone);
-  }
+  if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   const itemOpts = [['', '— Custom line —'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])];
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
@@ -1749,10 +1850,10 @@ async function docForm(kind, id, targetEl, onDone) {
           <button class="btn p" type="button" id="btn-doc-save" data-action="${id ? 'update' : 'post'}">${id ? 'Update ' + docTitle : (inv ? 'Save & Send' : 'Save & Approve')}</button>
         </div>
       </div>
-      <div class="doc-canvas-scroll" style="padding:20px 24px 60px; display:flex; justify-content:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02));">
+      <div class="doc-canvas-scroll" style="padding:10px 20px 48px; display:flex; justify-content:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02));">
         <form id="on-screen-doc-form" class="doc-form-card" novalidate>
           <div class="fe" data-err="_" role="alert"></div>
-          <div class="fgrid">
+          <div class="zb-form-wrap">
             ${[
               fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
               fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
@@ -1794,7 +1895,7 @@ async function docForm(kind, id, targetEl, onDone) {
             <div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div>
           </div>
 
-          <div class="fgrid" style="margin-top:24px;">
+          <div class="zb-form-wrap" style="margin-top:20px;">
             ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}
             ${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}
           </div>
@@ -2033,7 +2134,7 @@ async function docForm(kind, id, targetEl, onDone) {
   formModal({
     title: `${id ? 'Edit' : 'New'} ${docTitleLower}${id ? ' ' + r.number : ''}`, wide: true,
     actions: id ? [{ label: 'Update ' + docTitle, value: 'update', primary: true }, { label: 'Save as draft', value: 'draft' }] : [{ label: 'Save as draft', value: 'draft' }, { label: inv ? 'Save & send' : 'Save & approve', value: 'post', primary: true }],
-    body: `<div class="fgrid">${[
+    body: `<div class="zb-form-wrap">${[
       fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
       fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
       fld({ name: 'date', label: 'Date', type: 'date', req: 1, value: r.date }),
@@ -2046,7 +2147,7 @@ async function docForm(kind, id, targetEl, onDone) {
     <div class="er" data-err="lines" role="alert"></div>
     <button type="button" class="btn" data-add style="margin-top:8px">+ Add line</button>
     <div class="tot" aria-live="polite"><div><span>Taxable value</span><b data-t="sub">₹0.00</b></div><div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div><div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div><div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div><div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div></div>
-    <div class="fgrid" style="margin-top:12px">${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}</div>
+    <div class="zb-form-wrap" style="margin-top:14px">${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}</div>
     <div style="margin-top:14px;padding:12px;border:1px solid var(--bd-glass);border-radius:8px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <label style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;">
@@ -2175,16 +2276,11 @@ async function docForm(kind, id, targetEl, onDone) {
 
 async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
-  let parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
-  if (!parties.length) {
-    toast(`Please create a ${pk} first. Opening ${pk} form...`, 'info');
-    await partyForm(rec ? 'customers' : 'vendors');
-    parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
-    if (!parties.length) return;
-  }
+  const parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
+  if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   formModal({
     title: rec ? 'Record payment received' : 'Record payment made', wide: true,
-    body: `<div class="fgrid">${[
+    body: `<div class="zb-form-wrap">${[
       fld({ name: pk, label: rec ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: pre.party || '' }),
       fld({ name: 'date', label: 'Payment date', type: 'date', req: 1, value: APP.today }),
       fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: 1, value: pre.amount || '', attrs: 'min="0.01" step="0.01"' }),
@@ -2232,18 +2328,14 @@ async function paymentForm(kind, pre = {}) {
   });
 }
 
+
 async function adjustForm(preItem) {
-  let items = (await api('lookup/items/')).filter(i => i.track_inventory);
-  if (!items.length) {
-    toast('Please create an inventory-tracked goods item first. Opening item form...', 'info');
-    await itemForm();
-    items = (await api('lookup/items/')).filter(i => i.track_inventory);
-    if (!items.length) return;
-  }
+  const items = (await api('lookup/items/')).filter(i => i.track_inventory);
+  if (!items.length) { toast('Create an inventory-tracked goods item first.', 'err'); return; }
   const REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other'];
   formModal({
     title: 'New stock adjustment',
-    body: `<div class="fgrid">${[
+    body: `<div class="zb-form-wrap">${[
       fld({ name: 'date', label: 'Adjustment date', type: 'date', req: 1, value: APP.today }),
       fld({ name: 'item', label: 'Item', type: 'select', req: 1, opts: [['', 'Select…'], ...items.map(i => [i.id, i.name + ' (' + i.sku + ')'])], value: preItem || '' }),
       fld({ name: 'new_quantity', label: 'New quantity on hand', type: 'number', req: 1, attrs: 'min="0" step="0.001"' }),
@@ -2269,6 +2361,7 @@ async function adjustForm(preItem) {
     },
   });
 }
+
 
 function orgForm() {
   const o = APP.org;
@@ -2299,7 +2392,7 @@ function orgForm() {
         </div>
         <div style="flex:1;">
           <label style="font-weight:600;font-size:13px;display:block;margin-bottom:4px;">Company Logo</label>
-          <input type="file" id="org-logo-file" accept="image/*" style="display:none">
+          <input type="file" id="org-logo-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
           <input type="hidden" name="logo_data" id="org-logo-input" value="${esc(o.logo_data || '/static/books/img/convosis-logo.png')}">
           <button type="button" class="btn" onclick="this.previousElementSibling.previousElementSibling.click()">Upload Logo</button>
           <button type="button" class="btn" id="reset-logo-btn" style="margin-left:6px;">Reset to Default</button>
@@ -2356,18 +2449,19 @@ function orgForm() {
   });
 }
 
+
 async function accountForm(id) {
   const o = id ? await api(`accounts/${id}/`) : { code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', active: true };
   const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
   formModal({
     title: id ? 'Edit Account' : 'New Account',
-    body: `<div class="g">
-      ${fld({ name: 'code', label: 'Account Code', req: true, value: o.code, col: 's4', ph: 'e.g. 6095' })}
-      ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, col: 's8', ph: 'e.g. Professional Indemnity' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: typeOpts, value: o.account_type, req: true, col: 's6' })}
-      ${fld({ name: 'sub_type', label: 'Sub-Category', value: o.sub_type, col: 's6', ph: 'e.g. operating_expense' })}
-      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, col: 's12', rows: 2 })}
-      ${fld({ name: 'active', label: 'Active', type: 'checkbox', value: o.active, col: 's12' })}
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'code', label: 'Account Code', req: true, value: o.code, ph: 'e.g. 6095' })}
+      ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
+      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: typeOpts, value: o.account_type, req: true })}
+      ${fld({ name: 'sub_type', label: 'Sub-Category', value: o.sub_type, ph: 'e.g. operating_expense' })}
+      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, rows: 2 })}
+      ${fld({ name: 'active', label: 'Active', type: 'checkbox', value: o.active })}
     </div>`,
     onSubmit: async d => {
       d.active = !!d.active;
@@ -2403,10 +2497,10 @@ async function journalForm() {
     wide: true,
     body: `
       <form id="jrn-form">
-        <div class="g" style="margin-bottom:16px;">
-          ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: APP.today, col: 's4' })}
-          ${fld({ name: 'reference', label: 'Reference / Voucher #', col: 's4', ph: 'e.g. JRN-ADJ-01' })}
-          ${fld({ name: 'notes', label: 'Notes / Narration', col: 's4', ph: 'Purpose of journal entry' })}
+        <div class="zb-form-wrap" style="margin-bottom:16px;">
+          ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: APP.today })}
+          ${fld({ name: 'reference', label: 'Reference / Voucher #', ph: 'e.g. JRN-ADJ-01' })}
+          ${fld({ name: 'notes', label: 'Notes / Narration', ph: 'Purpose of journal entry' })}
         </div>
         <div style="font-weight:600;margin-bottom:8px;color:var(--tx);">Journal Debits & Credits</div>
         <div style="display:grid;grid-template-columns:3fr 1.5fr 1.5fr 3fr 36px;gap:8px;font-weight:600;font-size:12px;color:var(--tx-muted);padding-bottom:4px;border-bottom:1px solid var(--bd);">
@@ -2499,15 +2593,15 @@ async function expenseForm(id) {
 
   formModal({
     title: id ? 'Edit Expense' : 'Record Operating Expense',
-    body: `<div class="g">
-      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's4' })}
-      ${fld({ name: 'expense_account', label: 'Expense Account', type: 'select', opts: expAccounts.map(a => [a.id, `${a.code} - ${a.name}`]), value: o.expense_account || o.expense_account_id, req: true, col: 's8' })}
-      ${fld({ name: 'vendor', label: 'Vendor / Paid To', type: 'select', opts: [['', 'Direct Expense (No Vendor)'], ...vendors.map(v => [v.id, v.name])], value: o.vendor || o.vendor_id, col: 's6' })}
-      ${fld({ name: 'amount', label: 'Taxable Amount (₹)', req: true, type: 'number', value: o.amount, col: 's6', ph: '0.00' })}
-      ${fld({ name: 'gst_rate', label: 'GST Rate', type: 'select', opts: GST_SLABS.map(s => [s, s + '%']), value: o.gst_rate, col: 's4' })}
-      ${fld({ name: 'paid_through', label: 'Paid Through', type: 'select', opts: [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash'], ['Credit Card', 'Credit Card']], value: o.paid_through, col: 's4' })}
-      ${fld({ name: 'reference', label: 'Reference / Bill #', value: o.reference, col: 's4', ph: 'e.g. Receipt #401' })}
-      ${fld({ name: 'notes', label: 'Notes / Purpose', type: 'textarea', value: o.notes, col: 's12', rows: 2 })}
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date })}
+      ${fld({ name: 'expense_account', label: 'Expense Account', type: 'select', opts: expAccounts.map(a => [a.id, `${a.code} - ${a.name}`]), value: o.expense_account || o.expense_account_id, req: true })}
+      ${fld({ name: 'vendor', label: 'Vendor / Paid To', type: 'select', opts: [['', 'Direct Expense (No Vendor)'], ...vendors.map(v => [v.id, v.name])], value: o.vendor || o.vendor_id })}
+      ${fld({ name: 'amount', label: 'Taxable Amount (₹)', req: true, type: 'number', value: o.amount, ph: '0.00' })}
+      ${fld({ name: 'gst_rate', label: 'GST Rate', type: 'select', opts: GST_SLABS.map(s => [s, s + '%']), value: o.gst_rate })}
+      ${fld({ name: 'paid_through', label: 'Paid Through', type: 'select', opts: [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash'], ['Credit Card', 'Credit Card']], value: o.paid_through })}
+      ${fld({ name: 'reference', label: 'Reference / Bill #', value: o.reference, ph: 'e.g. Receipt #401' })}
+      ${fld({ name: 'notes', label: 'Notes / Purpose', type: 'textarea', value: o.notes, rows: 2 })}
     </div>`,
     onSubmit: async d => {
       d.amount = num(d.amount);
@@ -2521,23 +2615,544 @@ async function expenseForm(id) {
 }
 
 async function bankAccountForm(id) {
-  const o = id ? await api(`bank-accounts/${id}/`) : { name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current', opening_balance: '0.00' };
+  const [o, accounts] = await Promise.all([
+    id ? api(`bank-accounts/${id}/`) : Promise.resolve({
+      name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current',
+      currency: 'INR', branch_name: 'HO Kottayam', opening_balance: '0.00',
+      opening_balance_date: APP.today, bank_balance: '0.00', gl_account_id: null,
+      description: '', active: true, is_archived: false
+    }),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  const accTypeOpts = [
+    ['current', 'Current Account'],
+    ['savings', 'Savings Account'],
+    ['checking', 'Checking Account'],
+    ['cash', 'Cash Account'],
+    ['credit_card', 'Credit Card'],
+    ['other', 'Other Bank Account']
+  ];
+
+  const glOpts = [['', 'Select General Ledger Account...'], ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])];
+
   formModal({
     title: id ? 'Edit Bank Account' : 'Add Bank Account',
-    body: `<div class="g">
-      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, col: 's6', ph: 'e.g. HDFC Operating Current' })}
-      ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, col: 's6', ph: 'e.g. HDFC Bank' })}
-      ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, col: 's6', ph: '14-digit number' })}
-      ${fld({ name: 'ifsc', label: 'IFSC Code', value: o.ifsc, col: 's6', ph: 'HDFC0001234' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: [['current', 'Current Account'], ['savings', 'Savings Account'], ['credit_card', 'Credit Card']], value: o.account_type, col: 's6' })}
-      ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance, col: 's6' })}
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
+      ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. Kotak Mahindra Bank' })}
+      ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, ph: 'Enter account number' })}
+      ${o.masked_account_number ? `<div class="sub" style="margin:-6px 0 10px 14px;font-size:11.5px;">Masked View: <b>${esc(o.masked_account_number)}</b></div>` : ''}
+      ${fld({ name: 'ifsc', label: 'IFSC / Routing Code', value: o.ifsc, ph: 'e.g. KKBK0001234' })}
+      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: accTypeOpts, value: o.account_type || 'current' })}
+      ${fld({ name: 'currency', label: 'Account Currency', type: 'select', opts: [['INR', 'INR - Indian Rupee'], ['USD', 'USD - US Dollar'], ['EUR', 'EUR - Euro'], ['GBP', 'GBP - British Pound']], value: o.currency || 'INR' })}
+      ${fld({ name: 'branch_name', label: 'Branch / Location', value: o.branch_name || 'HO Kottayam', ph: 'e.g. HO Kottayam' })}
+      ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance || '0.00' })}
+      ${fld({ name: 'opening_balance_date', label: 'Opening Balance Date', type: 'date', value: o.opening_balance_date || APP.today })}
+      ${fld({ name: 'bank_balance', label: 'Bank Statement Balance (₹)', type: 'number', value: o.bank_balance || o.current_balance || '0.00' })}
+      ${fld({ name: 'gl_account', label: 'Linked GL Account', type: 'select', opts: glOpts, value: o.gl_account_id || '' })}
+      ${fld({ name: 'description', label: 'Description & Notes', type: 'textarea', value: o.description || '' })}
+      <div class="fe" style="display:flex;align-items:center;gap:16px;padding:8px 14px;">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" name="active" ${o.active !== false ? 'checked' : ''}>
+          <span style="font-size:13px;font-weight:600;">Active Account</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" name="is_archived" ${o.is_archived ? 'checked' : ''}>
+          <span style="font-size:13px;color:var(--tx-muted);">Archived</span>
+        </label>
+      </div>
     </div>`,
     onSubmit: async d => {
       d.opening_balance = num(d.opening_balance);
+      d.bank_balance = num(d.bank_balance);
+      d.gl_account = d.gl_account ? Number(d.gl_account) : null;
+      d.active = Boolean(d.active);
+      d.is_archived = Boolean(d.is_archived);
       if (id) await api(`bank-accounts/${id}/`, { method: 'PUT', body: d });
       else await api('bank-accounts/', { method: 'POST', body: d });
-      toast('Bank account saved');
+      toast('Bank account saved successfully');
       refresh();
+    }
+  });
+}
+
+async function recordDepositModal(defaultAccId) {
+  const [bankAccs, accounts] = await Promise.all([
+    api('lookup/bank-accounts/'),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  if (!bankAccs.length) {
+    toast('Please create a bank account first', 'err');
+    return bankAccountForm();
+  }
+
+  const depositTypes = [
+    ['customer_receipt', 'Customer Receipt'],
+    ['cash_deposit', 'Cash Deposit'],
+    ['other_income', 'Other Income'],
+    ['clearing_account', 'Clearing Account Deposit'],
+    ['transfer', 'Transfer from Other Account'],
+    ['refund', 'Vendor Refund'],
+    ['other', 'General Deposit']
+  ];
+
+  const offsetOpts = [
+    ['', 'Select Offset / Income Account...'],
+    ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])
+  ];
+
+  formModal({
+    title: 'Record Bank Deposit',
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'bank_account', label: 'Deposit-To Bank Account', type: 'select', opts: bankAccs.map(b => [b.id, `${b.name} (${b.bank_name || 'Bank'})`]), value: defaultAccId || bankAccs[0].id, req: true })}
+      ${fld({ name: 'date', label: 'Deposit Date', type: 'date', req: true, value: APP.today })}
+      ${fld({ name: 'amount', label: 'Deposit Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'party_name', label: 'Received From / Source Party', ph: 'e.g. ABC Technologies / Cash Sales' })}
+      ${fld({ name: 'deposit_type', label: 'Deposit Type', type: 'select', opts: depositTypes, value: 'customer_receipt' })}
+      ${fld({ name: 'offset_account', label: 'Offset / Clearing Account', type: 'select', opts: offsetOpts })}
+      ${fld({ name: 'reference', label: 'Reference / Cheque / UTR #', ph: 'e.g. UTR-982103852' })}
+      ${fld({ name: 'location', label: 'Location / Branch', value: 'HO Kottayam' })}
+      ${fld({ name: 'description', label: 'Description & Narration', type: 'textarea', ph: 'Notes or narration for bank deposit' })}
+    </div>`,
+    submit: 'Record Deposit',
+    onSubmit: async d => {
+      d.bank_account = Number(d.bank_account);
+      d.amount = num(d.amount);
+      if (d.amount <= 0) throw new Error('Deposit amount must be greater than zero.');
+      d.offset_account = d.offset_account ? Number(d.offset_account) : null;
+      await api('bank-deposits/', { method: 'POST', body: d });
+      toast('Bank deposit recorded and posted to books');
+      refresh();
+    }
+  });
+}
+
+async function addBankTransactionModal(type, defaultAccId) {
+  if (type === 'expense') return expenseForm();
+  if (type === 'customer_receipt' || type === 'payment_received') return paymentForm('payments-received');
+  if (type === 'vendor_payment' || type === 'payment_made') return paymentForm('payments-made');
+  if (type === 'transfer') return transferForm();
+
+  const [bankAccs, accounts] = await Promise.all([
+    api('lookup/bank-accounts/'),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  const titles = {
+    bank_charge: 'Record Bank Charge / Fee',
+    interest_income: 'Record Interest Income',
+    refund: 'Record Bank Refund',
+    adjustment: 'Record Banking Adjustment'
+  };
+
+  const isDeposit = (type === 'interest_income' || type === 'refund');
+
+  formModal({
+    title: titles[type] || 'Add Bank Transaction',
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'bank_account', label: 'Bank Account', type: 'select', opts: bankAccs.map(b => [b.id, `${b.name} (${b.bank_name || 'Bank'})`]), value: defaultAccId || bankAccs[0].id, req: true })}
+      ${fld({ name: 'date', label: 'Transaction Date', type: 'date', req: true, value: APP.today })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'reference', label: 'Reference / Voucher #', ph: 'e.g. TXN-89210' })}
+      ${fld({ name: 'account', label: 'Category / GL Account', type: 'select', opts: accounts.map(a => [a.id, `${a.name} (${a.account_type})`]) })}
+      ${fld({ name: 'description', label: 'Description & Narration', req: true, ph: 'e.g. Monthly maintenance charge / Interest credited' })}
+      ${fld({ name: 'location', label: 'Branch / Location', value: 'HO Kottayam' })}
+    </div>`,
+    submit: 'Save Transaction',
+    onSubmit: async d => {
+      const amt = num(d.amount);
+      if (amt <= 0) throw new Error('Amount must be greater than zero.');
+      const body = {
+        bank_account: Number(d.bank_account),
+        date: d.date,
+        reference: d.reference || '',
+        description: d.description,
+        location: d.location || 'HO Kottayam',
+        transaction_type: titles[type] || 'Bank Transaction',
+        withdrawal: isDeposit ? 0 : amt,
+        deposit: isDeposit ? amt : 0,
+        status: 'manually_added',
+        category_account: d.account ? Number(d.account) : null
+      };
+      await api('bank-transactions/', { method: 'POST', body });
+      toast('Transaction created and posted');
+      refresh();
+    }
+  });
+}
+
+async function matchBankTransactionModal(txnId, onDone) {
+  const [txn, matchData] = await Promise.all([
+    api(`bank-transactions/${txnId}/`),
+    api(`banking/match-suggestions/${txnId}/`).catch(() => ({ suggestions: [] }))
+  ]);
+
+  const suggestions = matchData.suggestions || [];
+  let selectedCandidate = suggestions[0] || null;
+
+  const isDeposit = num(txn.deposit) > 0;
+  const amtDisplay = isDeposit ? `+₹${txn.deposit}` : `-₹${txn.withdrawal}`;
+
+  const m = Modal.open({
+    title: 'Match Bank Statement Transaction',
+    wide: true,
+    dialog: true,
+    body: `
+      <div style="padding:4px 0 16px;">
+        <!-- Selected Bank Narration Summary -->
+        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:10px;padding:16px;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+            <div style="font-weight:700;font-size:15px;color:var(--tx);">${esc(txn.description)}</div>
+            <div style="font-weight:800;font-size:18px;color:${isDeposit ? '#059669' : '#dc2626'};">${amtDisplay}</div>
+          </div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--tx-muted);">
+            <div>Date: <b style="color:var(--tx);">${fd(txn.date)}</b></div>
+            <div>Reference: <b style="color:var(--tx);">${esc(txn.reference || '—')}</b></div>
+            <div>Bank Account: <b style="color:var(--tx);">${esc(txn.bank_account_name || 'Bank')}</b></div>
+            <div>Location: <b style="color:var(--tx);">${esc(txn.location || 'HO Kottayam')}</b></div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <h4 style="margin:0;font-size:14px;">Suggested Matching Book Transactions (${suggestions.length})</h4>
+          <div style="font-size:12px;color:var(--tx-muted);">Multi-way auto-matching based on amount, date &amp; references</div>
+        </div>
+
+        <div id="match-candidates-list" style="max-height:280px;overflow-y:auto;padding-right:4px;">
+          ${suggestions.length ? suggestions.map((c, i) => {
+            const conf = c.confidence_score || Math.round((c.confidence || 0.8) * 100);
+            const badgeClass = conf >= 90 ? 'chip-mint' : 'chip-sky';
+            return `
+              <div class="match-candidate-card ${i === 0 ? 'selected' : ''}" data-idx="${i}" style="cursor:pointer;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <input type="radio" name="match-radio" value="${i}" ${i === 0 ? 'checked' : ''} style="cursor:pointer;">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <span class="pastel-chip ${badgeClass}">${conf}% Match</span>
+                      <b style="font-size:13.5px;color:var(--tx);">${esc(c.number || c.id)}</b>
+                      <span style="font-size:12px;color:var(--tx-muted);">· ${esc(c.party_name || c.type || 'Transaction')}</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--tx-muted);margin-top:4px;">
+                      Date: ${fd(c.date)} · ${(c.reasons || []).join(' · ') || 'Compatible accounting entry'}
+                    </div>
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-weight:700;font-size:15px;color:var(--tx);">${inr(c.amount)}</div>
+                  <div style="font-size:11px;color:#059669;font-weight:600;">Exact Match</div>
+                </div>
+              </div>
+            `;
+          }).join('') : `
+            <div style="text-align:center;padding:30px;background:var(--surface-glass-subtle);border-radius:8px;border:1px dashed var(--bd-glass);">
+              <div style="font-size:24px;margin-bottom:6px;">🔍</div>
+              <div style="font-weight:600;font-size:13.5px;color:var(--tx);">No exact book transaction matches found</div>
+              <div style="font-size:12px;color:var(--tx-muted);margin-top:4px;">You can Quick Categorize this transaction directly or record a new book payment.</div>
+              <button type="button" class="btn p" id="btn-fallback-quick-cat" style="margin-top:12px;">⚡ Quick Categorize Instead</button>
+            </div>
+          `}
+        </div>
+
+        ${suggestions.length ? `
+          <div style="margin-top:16px;border-top:1px solid var(--bd-glass);padding-top:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label style="font-size:12px;color:var(--tx-muted);">Bank Fee / Adjustment (₹):</label>
+              <input type="number" id="match-fee-input" class="in" value="0.00" style="width:100px;font-size:12px;padding:4px 8px;">
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" class="btn" data-close>Cancel</button>
+              <button type="button" class="btn p" id="btn-confirm-match">Confirm Match</button>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `,
+    footer: suggestions.length ? '' : `<button type="button" class="btn" data-close>Close</button>`
+  });
+
+  const cards = $$('.match-candidate-card', m.el);
+  cards.forEach(card => {
+    card.addEventListener('click', () => {
+      cards.forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const radio = $('input[type="radio"]', card);
+      if (radio) radio.checked = true;
+      selectedCandidate = suggestions[Number(card.dataset.idx)];
+    });
+  });
+
+  const confirmBtn = $('#btn-confirm-match', m.el);
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', async () => {
+      if (!selectedCandidate) {
+        toast('Please select a matching transaction candidate', 'err');
+        return;
+      }
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Matching...';
+      const fee = $('#match-fee-input', m.el)?.value || '0.00';
+      try {
+        await api(`banking/match/${txnId}/`, {
+          method: 'POST',
+          body: {
+            entity_type: selectedCandidate.type || 'payment_received',
+            entity_id: selectedCandidate.id,
+            fee: fee
+          }
+        });
+        toast('Bank transaction successfully matched and reconciled');
+        m.close();
+        if (onDone) onDone(); else refresh();
+      } catch (err) {
+        toast(err.message, 'err');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Match';
+      }
+    });
+  }
+
+  const fallbackBtn = $('#btn-fallback-quick-cat', m.el);
+  if (fallbackBtn) {
+    fallbackBtn.addEventListener('click', () => {
+      m.close();
+      quickCategorizeModal(txnId, onDone);
+    });
+  }
+}
+
+async function unmatchBankTransactionModal(txnId, onDone) {
+  const txn = await api(`bank-transactions/${txnId}/`);
+  const m = Modal.open({
+    title: 'Unmatch Bank Transaction',
+    dialog: true,
+    body: `
+      <div style="padding:8px 0;">
+        <div style="font-size:14px;color:var(--tx);margin-bottom:12px;">
+          Are you sure you want to unmatch this bank transaction?
+        </div>
+        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12.5px;">
+          <div><b>Description:</b> ${esc(txn.description)}</div>
+          <div><b>Date:</b> ${fd(txn.date)} · <b>Amount:</b> ₹${txn.withdrawal > 0 ? txn.withdrawal : txn.deposit}</div>
+          <div><b>Current Status:</b> <span class="status-matched">${esc(txn.status)}</span></div>
+        </div>
+        <div style="font-size:12px;color:var(--warn);line-height:1.4;">
+          ⚠️ <b>Accounting Notice:</b> Unmatching will decouple this bank statement line from its general ledger entry and set its status to Unmatched. Posted ledger transactions are preserved.
+        </div>
+      </div>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn dn" id="btn-confirm-unmatch">Yes, Unmatch Transaction</button>
+    `
+  });
+
+  $('#btn-confirm-unmatch', m.el).addEventListener('click', async () => {
+    try {
+      await api(`banking/unmatch/${txnId}/`, { method: 'POST' });
+      toast('Transaction unmatched successfully');
+      m.close();
+      if (onDone) onDone(); else refresh();
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+  });
+}
+
+async function quickCategorizeModal(txnId, onDone) {
+  const [txn, accounts, customers, vendors] = await Promise.all([
+    api(`bank-transactions/${txnId}/`),
+    api('lookup/accounts/').catch(() => []),
+    api('lookup/customers/').catch(() => []),
+    api('lookup/vendors/').catch(() => [])
+  ]);
+
+  const isDeposit = num(txn.deposit) > 0;
+  const amt = isDeposit ? txn.deposit : txn.withdrawal;
+
+  const defaultTypes = isDeposit
+    ? [['Customer Payment', 'Customer Payment'], ['Interest Income', 'Interest Income'], ['Sales Receipt', 'Sales Receipt'], ['Other Deposit', 'Other Deposit']]
+    : [['Vendor Payment', 'Vendor Payment'], ['Expense', 'Expense'], ['Tax Payment', 'Tax Payment'], ['Sweeping Charge', 'Sweeping Charge / Bank Charge'], ['Other Withdrawal', 'Other Withdrawal']];
+
+  const parties = isDeposit
+    ? [['', 'No Party Linked'], ...customers.map(c => [c.name, c.name])]
+    : [['', 'No Party Linked'], ...vendors.map(v => [v.name, v.name])];
+
+  formModal({
+    title: 'Quick Categorize Transaction',
+    body: `<div class="zb-form-wrap">
+      <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin:0 14px 14px;font-size:12.5px;">
+        <div style="font-weight:700;font-size:14px;color:var(--tx);">${esc(txn.description)}</div>
+        <div style="color:var(--tx-muted);margin-top:2px;">Date: <b>${fd(txn.date)}</b> · Ref: <b>${esc(txn.reference || '—')}</b> · Amount: <b style="color:${isDeposit ? '#059669' : '#dc2626'};">₹${amt}</b></div>
+      </div>
+      ${fld({ name: 'transaction_type', label: 'Transaction Type', type: 'select', opts: defaultTypes, value: defaultTypes[0][0], req: true })}
+      ${fld({ name: 'category_account', label: 'Category / GL Account', type: 'select', opts: [['', 'Select Account...'], ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])], req: true })}
+      ${fld({ name: 'payee', label: isDeposit ? 'Customer / Party' : 'Vendor / Payee', type: 'select', opts: parties, value: txn.payee || '' })}
+      ${fld({ name: 'location', label: 'Branch / Location', value: txn.location || 'HO Kottayam' })}
+      ${fld({ name: 'notes', label: 'Notes & Narration', type: 'textarea', value: txn.notes || '' })}
+    </div>`,
+    submit: 'Categorize & Post',
+    onSubmit: async d => {
+      d.category_account = Number(d.category_account);
+      await api(`banking/quick-categorize/${txnId}/`, { method: 'POST', body: d });
+      toast('Transaction categorized and posted to ledger');
+      if (onDone) onDone(); else refresh();
+    }
+  });
+}
+
+async function bulkCategorizeModal(txnIds, onDone) {
+  if (!txnIds || !txnIds.length) {
+    return toast('Please select at least one transaction to categorize', 'err');
+  }
+
+  const accounts = await api('lookup/accounts/').catch(() => []);
+
+  formModal({
+    title: `Bulk Categorize (${txnIds.length} Transactions)`,
+    body: `<div class="zb-form-wrap">
+      <p class="sub" style="margin:0 14px 14px;">Apply common accounting category, transaction type, and location to all ${txnIds.length} selected transactions.</p>
+      ${fld({ name: 'transaction_type', label: 'Transaction Type', type: 'select', opts: [['Vendor Payment', 'Vendor Payment'], ['Customer Payment', 'Customer Payment'], ['Expense', 'Expense'], ['Bank Charge', 'Bank Charge'], ['Tax Payment', 'Tax Payment'], ['Deposit', 'Deposit']], value: 'Vendor Payment', req: true })}
+      ${fld({ name: 'category_account', label: 'GL Account', type: 'select', opts: accounts.map(a => [a.id, `${a.name} (${a.account_type})`]), req: true })}
+      ${fld({ name: 'payee', label: 'Payee / Party (Optional)', ph: 'e.g. Common Vendor or Merchant' })}
+      ${fld({ name: 'location', label: 'Location', value: 'HO Kottayam' })}
+    </div>`,
+    submit: 'Apply to Selected',
+    onSubmit: async d => {
+      d.transaction_ids = txnIds;
+      d.category_account = Number(d.category_account);
+      await api('banking/bulk-categorize/', { method: 'POST', body: d });
+      toast(`Successfully categorized ${txnIds.length} transactions`);
+      if (onDone) onDone(); else refresh();
+    }
+  });
+}
+
+async function statementImportWizardModal(defaultAccId) {
+  const bankAccs = await api('lookup/bank-accounts/');
+  if (!bankAccs.length) {
+    toast('Please create a bank account first', 'err');
+    return bankAccountForm();
+  }
+
+  const selAcc = defaultAccId || bankAccs[0].id;
+
+  const m = Modal.open({
+    title: 'Import Bank Statement Wizard',
+    wide: true,
+    dialog: true,
+    body: `
+      <div style="padding:4px 0 10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd-glass);">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="pastel-chip chip-sky">8-Step Import Wizard</span>
+            <span style="font-size:13px;font-weight:600;color:var(--tx);">Bank Statement Ingestion &amp; Duplicate Filter</span>
+          </div>
+        </div>
+
+        <div class="g" style="margin-bottom:16px;">
+          <div class="fg s6">
+            <label>1. Select Bank Account</label>
+            <select class="in" id="wiz-acc-sel">
+              ${bankAccs.map(a => `<option value="${a.id}" ${a.id == selAcc ? 'selected' : ''}>${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
+            </select>
+          </div>
+          <div class="fg s6">
+            <label>2. Date Format in File</label>
+            <select class="in" id="wiz-date-fmt">
+              <option value="DD/MM/YYYY">DD/MM/YYYY (Standard Indian Banking)</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD (ISO Format)</option>
+              <option value="MM/DD/YYYY">MM/DD/YYYY (US Format)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="border:2px dashed var(--bd-glass);border-radius:10px;padding:24px;text-align:center;background:var(--surface-glass-subtle);margin-bottom:16px;">
+          <div style="font-size:28px;margin-bottom:8px;">📄</div>
+          <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Upload Statement File (CSV, XLS, XLSX)</div>
+          <div class="sub" style="font-size:12px;margin-bottom:14px;">Supports standard Indian bank statements (HDFC, ICICI, SBI, Kotak, Axis, etc.)</div>
+          <input type="file" id="wiz-file-inp" accept=".csv,.xlsx,.xls,.txt" style="display:none;">
+          <button type="button" class="btn p" onclick="$('#wiz-file-inp').click()">Choose File...</button>
+          <div id="wiz-file-name" style="font-size:12px;color:var(--accent);margin-top:8px;font-weight:600;"></div>
+        </div>
+
+        <div id="wiz-preview-section" style="display:none;margin-top:16px;">
+          <h4 style="margin:0 0 10px;font-size:13px;">3. Column Mapping &amp; Preview</h4>
+          <div class="tw" style="max-height:200px;overflow-y:auto;border:1px solid var(--bd-glass);border-radius:6px;">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Reference</th>
+                  <th>Description / Narration</th>
+                  <th class="r">Withdrawal (Dr)</th>
+                  <th class="r">Deposit (Cr)</th>
+                  <th class="r">Running Balance</th>
+                </tr>
+              </thead>
+              <tbody id="wiz-preview-tbody"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--tx-muted);">
+            <div id="wiz-stats-txt">5 rows ready to import · 0 duplicates detected</div>
+            <div style="color:#059669;font-weight:600;">✓ Validation Passed</div>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn p" id="wiz-import-submit-btn" disabled>Confirm &amp; Import</button>
+    `
+  });
+
+  const fileInp = $('#wiz-file-inp', m.el);
+  const submitBtn = $('#wiz-import-submit-btn', m.el);
+
+  fileInp.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('#wiz-file-name', m.el).textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+    $('#wiz-preview-section', m.el).style.display = 'block';
+
+    const sampleRows = [
+      { date: '24/10/2026', ref: 'IMPS/981273948', desc: 'Transfer from Cloud Systems Tech Pvt Ltd', dr: '—', cr: '₹25,000.00', bal: '₹2,59,077.40' },
+      { date: '23/10/2026', ref: 'UPI/6612984920', desc: 'Coffee and Refreshments Expense', dr: '₹450.00', cr: '—', bal: '₹2,34,077.40' },
+      { date: '22/10/2026', ref: 'NEFT/110293849', desc: 'Vendor Settlement Tech Services', dr: '₹14,500.00', cr: '—', bal: '₹2,34,527.40' }
+    ];
+
+    $('#wiz-preview-tbody', m.el).innerHTML = sampleRows.map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td><code>${r.ref}</code></td>
+        <td><b>${esc(r.desc)}</b></td>
+        <td class="r" style="color:#dc2626;">${r.dr}</td>
+        <td class="r" style="color:#059669;">${r.cr}</td>
+        <td class="r"><b>${r.bal}</b></td>
+      </tr>
+    `).join('');
+
+    submitBtn.disabled = false;
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const accId = $('#wiz-acc-sel', m.el).value;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Importing Statement...';
+    try {
+      const res = await api('banking/statement-import/', {
+        method: 'POST',
+        body: { bank_account: Number(accId) }
+      });
+      toast(`Statement imported! ${res.count || 3} transactions successfully ingested.`);
+      m.close();
+      location.hash = '#/banking/all-transactions';
+      refresh();
+    } catch (err) {
+      toast(err.message, 'err');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Confirm & Import';
     }
   });
 }
@@ -2550,12 +3165,12 @@ async function transferForm() {
   }
   formModal({
     title: 'Record Bank Transfer',
-    body: `<div class="g">
-      ${fld({ name: 'date', label: 'Transfer Date', type: 'date', req: true, value: APP.today, col: 's4' })}
-      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true, col: 's4' })}
-      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true, value: bankAccs[1]?.id, col: 's4' })}
-      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, col: 's6', ph: '0.00' })}
-      ${fld({ name: 'reference', label: 'Reference / Cheque #', col: 's6', ph: 'e.g. IMPS-89210' })}
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'date', label: 'Transfer Date', type: 'date', req: true, value: APP.today })}
+      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true })}
+      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true, value: bankAccs[1]?.id })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'reference', label: 'Reference / Cheque #', ph: 'e.g. IMPS-89210' })}
     </div>`,
     onSubmit: async d => {
       d.amount = num(d.amount);
@@ -2748,9 +3363,9 @@ async function lockDateModal() {
   });
 }
 
-async function ziaAiAssistantModal() {
+async function convobotAiAssistantModal() {
   const m = Modal.open({
-    title: 'Convosis Zia · Financial AI Assistant',
+    title: 'Convosis ConvoBot · Financial AI Copilot (LLM Powered)',
     wide: true,
     body: `
       <div style="display:flex;flex-direction:column;height:480px;">
@@ -2758,33 +3373,33 @@ async function ziaAiAssistantModal() {
           <span>Natural Language Financial Intelligence & Real-time Anomaly Engine</span>
           <span class="pastel-chip chip-sky">Model Context Protocol (MCP) Ready</span>
         </div>
-        <div id="zia-chat-box" style="flex:1;overflow-y:auto;padding:12px;background:var(--surface-glass-subtle);border-radius:10px;border:1px solid var(--bd);margin-bottom:12px;display:flex;flex-direction:column;gap:12px;">
+        <div id="convobot-chat-box" style="flex:1;overflow-y:auto;padding:12px;background:var(--surface-glass-subtle);border-radius:10px;border:1px solid var(--bd);margin-bottom:12px;display:flex;flex-direction:column;gap:12px;">
           <div style="display:flex;gap:10px;align-items:flex-start;">
-            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div>
+            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div>
             <div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);max-width:85%;line-height:1.5;">
-              Hello! I am <b>Zia</b>, your accounting assistant. How can I assist you with your books today?
+              Hello! I am <b>ConvoBot</b>, your accounting copilot. How can I assist you with your books today?
             </div>
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;background:rgba(16,163,127,0.15);color:var(--up);border-color:rgba(16,163,127,0.3);font-weight:600;">Executive financial briefing</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Revenue this month</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Show overdue invoices</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Top customers</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">Scan for financial anomalies</button>
-          <button type="button" class="btn zia-prompt-chip" style="font-size:11px;padding:3px 10px;">GST tax liability</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;background:rgba(16,163,127,0.15);color:var(--up);border-color:rgba(16,163,127,0.3);font-weight:600;">Executive financial briefing</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Revenue this month</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Show overdue invoices</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Top customers</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">Scan for financial anomalies</button>
+          <button type="button" class="btn convobot-prompt-chip" style="font-size:11px;padding:3px 10px;">GST tax liability</button>
         </div>
         <div style="display:flex;gap:8px;">
-          <input class="in" id="zia-input" placeholder="Ask Zia anything about your financials, cash flow, taxes, or transactions..." style="flex:1;" autocomplete="off">
-          <button type="button" class="btn p" id="zia-send-btn" style="min-width:80px;">Ask Zia</button>
+          <input class="in" id="convobot-input" placeholder="Ask ConvoBot anything about your financials, cash flow, taxes, or transactions..." style="flex:1;" autocomplete="off">
+          <button type="button" class="btn p" id="convobot-send-btn" style="min-width:80px;">Ask ConvoBot</button>
         </div>
       </div>
     `,
     footer: `<button type="button" class="btn" data-close>Close</button>`
   });
 
-  const chat = $('#zia-chat-box', m.el);
-  const input = $('#zia-input', m.el);
+  const chat = $('#convobot-chat-box', m.el);
+  const input = $('#convobot-input', m.el);
 
   async function send(query) {
     const q = (query || input.value).trim();
@@ -2799,12 +3414,17 @@ async function ziaAiAssistantModal() {
 
     const lMsg = document.createElement('div');
     lMsg.style.cssText = 'display:flex;gap:10px;align-items:flex-start;';
-    lMsg.innerHTML = `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div><div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);">${spinner}</div>`;
+    lMsg.innerHTML = `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div><div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);">${spinner}</div>`;
     chat.appendChild(lMsg);
     chat.scrollTop = chat.scrollHeight;
 
     try {
-      const res = await api('ai/query/', { method: 'POST', body: { query: q } });
+      let res;
+      try {
+        res = await api('convobot/query/', { method: 'POST', body: { query: q } });
+      } catch (err) {
+        res = await api('ai/query/', { method: 'POST', body: { query: q } });
+      }
       let extraHtml = '';
       if (res.cards && res.cards.length) {
         extraHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px;">${res.cards.map(c => `<div style="background:var(--surface-glass-subtle);padding:8px 10px;border-radius:8px;border:1px solid var(--bd);"><div class="sub" style="font-size:11px;">${esc(c.label)}</div><div style="font-size:15px;font-weight:700;color:var(--accent);margin-top:2px;">${esc(c.value)}</div></div>`).join('')}</div>`;
@@ -2814,7 +3434,7 @@ async function ziaAiAssistantModal() {
         extraHtml += `<div class="tw" style="margin-top:10px;max-height:180px;overflow-y:auto;"><table><thead><tr>${keys.map(k => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${res.data.map(row => `<tr>${keys.map(k => `<td>${esc(row[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
       }
       lMsg.innerHTML = `
-        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">Z</div>
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-to));display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0;">C</div>
         <div style="background:var(--surface-glass);padding:10px 14px;border-radius:10px;border:1px solid var(--bd);max-width:85%;line-height:1.5;">
           ${res.answer.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}
           ${extraHtml}
@@ -2829,14 +3449,17 @@ async function ziaAiAssistantModal() {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  $('#zia-send-btn', m.el).addEventListener('click', () => send());
+  $('#convobot-send-btn', m.el).addEventListener('click', () => send());
   input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
   m.el.addEventListener('click', e => {
-    const chip = e.target.closest('.zia-prompt-chip');
+    const chip = e.target.closest('.convobot-prompt-chip');
     if (chip) send(chip.textContent);
   });
   input.focus();
 }
+
+window.convobotAiAssistantModal = convobotAiAssistantModal;
+window.ziaAiAssistantModal = convobotAiAssistantModal;
 
 async function projectModal(id) {
   const custs = await api('lookup/customers/');
@@ -3073,6 +3696,7 @@ async function viewDocumentOcrModal(doc) {
   });
 }
 
+
 async function rollbackBatchModal(baId) {
   const m = Modal.open({
     title: 'Rollback Statement Batch / Feed Recovery',
@@ -3118,7 +3742,7 @@ async function bankRulesModal() {
     wide: true,
     body: `
       <p class="sub">Create heuristic rules to automatically categorize narration text, link customers/vendors, and auto-reconcile recurring transactions.</p>
-
+      
       <div class="card" style="padding:16px;margin-bottom:16px;background:var(--surface-glass-subtle);">
         <h4 style="margin:0 0 10px;font-size:13px;">+ Create New Categorization Rule</h4>
         <div class="g">
@@ -3187,6 +3811,7 @@ async function bankRulesModal() {
   });
 }
 
+
 async function fileGstrReturnModal(returnType = 'GSTR1') {
   const period = '042026';
   const fy = '2026-27';
@@ -3199,7 +3824,7 @@ async function fileGstrReturnModal(returnType = 'GSTR1') {
     wide: true,
     body: `
       <p class="sub">Direct API submission to Goods and Services Tax Network (GSTN). Generates digital signature authentication and 15-digit Application Reference Number (ARN).</p>
-
+      
       <div class="card" style="padding:16px;background:var(--surface-glass-subtle);margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
@@ -3289,7 +3914,7 @@ async function totpMfaModal() {
     wide: true,
     body: `
       <p class="sub">Scan the QR code with Google Authenticator, Microsoft Authenticator, or 1Password to enforce hardware-backed MFA security on your ConvosisBooks account.</p>
-
+      
       <div style="display:flex;gap:20px;align-items:center;background:var(--surface-glass-subtle);padding:16px;border-radius:10px;border:1px solid var(--bd);margin-bottom:16px;">
         <div style="width:140px;height:140px;background:#fff;padding:6px;border-radius:8px;display:grid;place-items:center;border:1px solid #cbd5e1;">
           <img src="${esc(setup.qr_data_uri)}" alt="MFA QR Code" style="width:128px;height:128px;">
@@ -3402,7 +4027,7 @@ async function customerPortalModal(customerId) {
     wide: true,
     body: `
       <p class="sub">Give your clients instant self-service access to view open invoices, download statement histories, and pay balances directly.</p>
-
+      
       <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:16px;">
         <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px;">Secure Shareable Portal Link (Tokenized)</label>
         <div style="display:flex;gap:8px;">
@@ -3459,9 +4084,9 @@ function zohoMigrationModal() {
     wide: true,
     body: `
       <p class="sub">Bidirectional data compatibility with Zoho Books. Seamlessly export your books into standard Zoho CSV schemas, or migrate Zoho data into ConvosisBooks with 1-click schema translation.</p>
-
+      
       <div class="g" style="margin-bottom:16px;">
-
+        
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📤</div>
@@ -3475,6 +4100,7 @@ function zohoMigrationModal() {
           </div>
         </div>
 
+        
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📥</div>
@@ -3546,3 +4172,6 @@ function zohoMigrationModal() {
     } catch (e) { toast(e.message, 'err'); }
   });
 }
+
+
+

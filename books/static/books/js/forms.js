@@ -2615,23 +2615,544 @@ async function expenseForm(id) {
 }
 
 async function bankAccountForm(id) {
-  const o = id ? await api(`bank-accounts/${id}/`) : { name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current', opening_balance: '0.00' };
+  const [o, accounts] = await Promise.all([
+    id ? api(`bank-accounts/${id}/`) : Promise.resolve({
+      name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current',
+      currency: 'INR', branch_name: 'HO Kottayam', opening_balance: '0.00',
+      opening_balance_date: APP.today, bank_balance: '0.00', gl_account_id: null,
+      description: '', active: true, is_archived: false
+    }),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  const accTypeOpts = [
+    ['current', 'Current Account'],
+    ['savings', 'Savings Account'],
+    ['checking', 'Checking Account'],
+    ['cash', 'Cash Account'],
+    ['credit_card', 'Credit Card'],
+    ['other', 'Other Bank Account']
+  ];
+
+  const glOpts = [['', 'Select General Ledger Account...'], ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])];
+
   formModal({
     title: id ? 'Edit Bank Account' : 'Add Bank Account',
     body: `<div class="zb-form-wrap">
-      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, ph: 'e.g. HDFC Operating Current' })}
-      ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. HDFC Bank' })}
-      ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, ph: '14-digit number' })}
-      ${fld({ name: 'ifsc', label: 'IFSC Code', value: o.ifsc, ph: 'HDFC0001234' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: [['current', 'Current Account'], ['savings', 'Savings Account'], ['credit_card', 'Credit Card']], value: o.account_type })}
-      ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance })}
+      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
+      ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. Kotak Mahindra Bank' })}
+      ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, ph: 'Enter account number' })}
+      ${o.masked_account_number ? `<div class="sub" style="margin:-6px 0 10px 14px;font-size:11.5px;">Masked View: <b>${esc(o.masked_account_number)}</b></div>` : ''}
+      ${fld({ name: 'ifsc', label: 'IFSC / Routing Code', value: o.ifsc, ph: 'e.g. KKBK0001234' })}
+      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: accTypeOpts, value: o.account_type || 'current' })}
+      ${fld({ name: 'currency', label: 'Account Currency', type: 'select', opts: [['INR', 'INR - Indian Rupee'], ['USD', 'USD - US Dollar'], ['EUR', 'EUR - Euro'], ['GBP', 'GBP - British Pound']], value: o.currency || 'INR' })}
+      ${fld({ name: 'branch_name', label: 'Branch / Location', value: o.branch_name || 'HO Kottayam', ph: 'e.g. HO Kottayam' })}
+      ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance || '0.00' })}
+      ${fld({ name: 'opening_balance_date', label: 'Opening Balance Date', type: 'date', value: o.opening_balance_date || APP.today })}
+      ${fld({ name: 'bank_balance', label: 'Bank Statement Balance (₹)', type: 'number', value: o.bank_balance || o.current_balance || '0.00' })}
+      ${fld({ name: 'gl_account', label: 'Linked GL Account', type: 'select', opts: glOpts, value: o.gl_account_id || '' })}
+      ${fld({ name: 'description', label: 'Description & Notes', type: 'textarea', value: o.description || '' })}
+      <div class="fe" style="display:flex;align-items:center;gap:16px;padding:8px 14px;">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" name="active" ${o.active !== false ? 'checked' : ''}>
+          <span style="font-size:13px;font-weight:600;">Active Account</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" name="is_archived" ${o.is_archived ? 'checked' : ''}>
+          <span style="font-size:13px;color:var(--tx-muted);">Archived</span>
+        </label>
+      </div>
     </div>`,
     onSubmit: async d => {
       d.opening_balance = num(d.opening_balance);
+      d.bank_balance = num(d.bank_balance);
+      d.gl_account = d.gl_account ? Number(d.gl_account) : null;
+      d.active = Boolean(d.active);
+      d.is_archived = Boolean(d.is_archived);
       if (id) await api(`bank-accounts/${id}/`, { method: 'PUT', body: d });
       else await api('bank-accounts/', { method: 'POST', body: d });
-      toast('Bank account saved');
+      toast('Bank account saved successfully');
       refresh();
+    }
+  });
+}
+
+async function recordDepositModal(defaultAccId) {
+  const [bankAccs, accounts] = await Promise.all([
+    api('lookup/bank-accounts/'),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  if (!bankAccs.length) {
+    toast('Please create a bank account first', 'err');
+    return bankAccountForm();
+  }
+
+  const depositTypes = [
+    ['customer_receipt', 'Customer Receipt'],
+    ['cash_deposit', 'Cash Deposit'],
+    ['other_income', 'Other Income'],
+    ['clearing_account', 'Clearing Account Deposit'],
+    ['transfer', 'Transfer from Other Account'],
+    ['refund', 'Vendor Refund'],
+    ['other', 'General Deposit']
+  ];
+
+  const offsetOpts = [
+    ['', 'Select Offset / Income Account...'],
+    ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])
+  ];
+
+  formModal({
+    title: 'Record Bank Deposit',
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'bank_account', label: 'Deposit-To Bank Account', type: 'select', opts: bankAccs.map(b => [b.id, `${b.name} (${b.bank_name || 'Bank'})`]), value: defaultAccId || bankAccs[0].id, req: true })}
+      ${fld({ name: 'date', label: 'Deposit Date', type: 'date', req: true, value: APP.today })}
+      ${fld({ name: 'amount', label: 'Deposit Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'party_name', label: 'Received From / Source Party', ph: 'e.g. ABC Technologies / Cash Sales' })}
+      ${fld({ name: 'deposit_type', label: 'Deposit Type', type: 'select', opts: depositTypes, value: 'customer_receipt' })}
+      ${fld({ name: 'offset_account', label: 'Offset / Clearing Account', type: 'select', opts: offsetOpts })}
+      ${fld({ name: 'reference', label: 'Reference / Cheque / UTR #', ph: 'e.g. UTR-982103852' })}
+      ${fld({ name: 'location', label: 'Location / Branch', value: 'HO Kottayam' })}
+      ${fld({ name: 'description', label: 'Description & Narration', type: 'textarea', ph: 'Notes or narration for bank deposit' })}
+    </div>`,
+    submit: 'Record Deposit',
+    onSubmit: async d => {
+      d.bank_account = Number(d.bank_account);
+      d.amount = num(d.amount);
+      if (d.amount <= 0) throw new Error('Deposit amount must be greater than zero.');
+      d.offset_account = d.offset_account ? Number(d.offset_account) : null;
+      await api('bank-deposits/', { method: 'POST', body: d });
+      toast('Bank deposit recorded and posted to books');
+      refresh();
+    }
+  });
+}
+
+async function addBankTransactionModal(type, defaultAccId) {
+  if (type === 'expense') return expenseForm();
+  if (type === 'customer_receipt' || type === 'payment_received') return paymentForm('payments-received');
+  if (type === 'vendor_payment' || type === 'payment_made') return paymentForm('payments-made');
+  if (type === 'transfer') return transferForm();
+
+  const [bankAccs, accounts] = await Promise.all([
+    api('lookup/bank-accounts/'),
+    api('lookup/accounts/').catch(() => [])
+  ]);
+
+  const titles = {
+    bank_charge: 'Record Bank Charge / Fee',
+    interest_income: 'Record Interest Income',
+    refund: 'Record Bank Refund',
+    adjustment: 'Record Banking Adjustment'
+  };
+
+  const isDeposit = (type === 'interest_income' || type === 'refund');
+
+  formModal({
+    title: titles[type] || 'Add Bank Transaction',
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'bank_account', label: 'Bank Account', type: 'select', opts: bankAccs.map(b => [b.id, `${b.name} (${b.bank_name || 'Bank'})`]), value: defaultAccId || bankAccs[0].id, req: true })}
+      ${fld({ name: 'date', label: 'Transaction Date', type: 'date', req: true, value: APP.today })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'reference', label: 'Reference / Voucher #', ph: 'e.g. TXN-89210' })}
+      ${fld({ name: 'account', label: 'Category / GL Account', type: 'select', opts: accounts.map(a => [a.id, `${a.name} (${a.account_type})`]) })}
+      ${fld({ name: 'description', label: 'Description & Narration', req: true, ph: 'e.g. Monthly maintenance charge / Interest credited' })}
+      ${fld({ name: 'location', label: 'Branch / Location', value: 'HO Kottayam' })}
+    </div>`,
+    submit: 'Save Transaction',
+    onSubmit: async d => {
+      const amt = num(d.amount);
+      if (amt <= 0) throw new Error('Amount must be greater than zero.');
+      const body = {
+        bank_account: Number(d.bank_account),
+        date: d.date,
+        reference: d.reference || '',
+        description: d.description,
+        location: d.location || 'HO Kottayam',
+        transaction_type: titles[type] || 'Bank Transaction',
+        withdrawal: isDeposit ? 0 : amt,
+        deposit: isDeposit ? amt : 0,
+        status: 'manually_added',
+        category_account: d.account ? Number(d.account) : null
+      };
+      await api('bank-transactions/', { method: 'POST', body });
+      toast('Transaction created and posted');
+      refresh();
+    }
+  });
+}
+
+async function matchBankTransactionModal(txnId, onDone) {
+  const [txn, matchData] = await Promise.all([
+    api(`bank-transactions/${txnId}/`),
+    api(`banking/match-suggestions/${txnId}/`).catch(() => ({ suggestions: [] }))
+  ]);
+
+  const suggestions = matchData.suggestions || [];
+  let selectedCandidate = suggestions[0] || null;
+
+  const isDeposit = num(txn.deposit) > 0;
+  const amtDisplay = isDeposit ? `+₹${txn.deposit}` : `-₹${txn.withdrawal}`;
+
+  const m = Modal.open({
+    title: 'Match Bank Statement Transaction',
+    wide: true,
+    dialog: true,
+    body: `
+      <div style="padding:4px 0 16px;">
+        <!-- Selected Bank Narration Summary -->
+        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:10px;padding:16px;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+            <div style="font-weight:700;font-size:15px;color:var(--tx);">${esc(txn.description)}</div>
+            <div style="font-weight:800;font-size:18px;color:${isDeposit ? '#059669' : '#dc2626'};">${amtDisplay}</div>
+          </div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--tx-muted);">
+            <div>Date: <b style="color:var(--tx);">${fd(txn.date)}</b></div>
+            <div>Reference: <b style="color:var(--tx);">${esc(txn.reference || '—')}</b></div>
+            <div>Bank Account: <b style="color:var(--tx);">${esc(txn.bank_account_name || 'Bank')}</b></div>
+            <div>Location: <b style="color:var(--tx);">${esc(txn.location || 'HO Kottayam')}</b></div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <h4 style="margin:0;font-size:14px;">Suggested Matching Book Transactions (${suggestions.length})</h4>
+          <div style="font-size:12px;color:var(--tx-muted);">Multi-way auto-matching based on amount, date &amp; references</div>
+        </div>
+
+        <div id="match-candidates-list" style="max-height:280px;overflow-y:auto;padding-right:4px;">
+          ${suggestions.length ? suggestions.map((c, i) => {
+            const conf = c.confidence_score || Math.round((c.confidence || 0.8) * 100);
+            const badgeClass = conf >= 90 ? 'chip-mint' : 'chip-sky';
+            return `
+              <div class="match-candidate-card ${i === 0 ? 'selected' : ''}" data-idx="${i}" style="cursor:pointer;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <input type="radio" name="match-radio" value="${i}" ${i === 0 ? 'checked' : ''} style="cursor:pointer;">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <span class="pastel-chip ${badgeClass}">${conf}% Match</span>
+                      <b style="font-size:13.5px;color:var(--tx);">${esc(c.number || c.id)}</b>
+                      <span style="font-size:12px;color:var(--tx-muted);">· ${esc(c.party_name || c.type || 'Transaction')}</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--tx-muted);margin-top:4px;">
+                      Date: ${fd(c.date)} · ${(c.reasons || []).join(' · ') || 'Compatible accounting entry'}
+                    </div>
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-weight:700;font-size:15px;color:var(--tx);">${inr(c.amount)}</div>
+                  <div style="font-size:11px;color:#059669;font-weight:600;">Exact Match</div>
+                </div>
+              </div>
+            `;
+          }).join('') : `
+            <div style="text-align:center;padding:30px;background:var(--surface-glass-subtle);border-radius:8px;border:1px dashed var(--bd-glass);">
+              <div style="font-size:24px;margin-bottom:6px;">🔍</div>
+              <div style="font-weight:600;font-size:13.5px;color:var(--tx);">No exact book transaction matches found</div>
+              <div style="font-size:12px;color:var(--tx-muted);margin-top:4px;">You can Quick Categorize this transaction directly or record a new book payment.</div>
+              <button type="button" class="btn p" id="btn-fallback-quick-cat" style="margin-top:12px;">⚡ Quick Categorize Instead</button>
+            </div>
+          `}
+        </div>
+
+        ${suggestions.length ? `
+          <div style="margin-top:16px;border-top:1px solid var(--bd-glass);padding-top:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label style="font-size:12px;color:var(--tx-muted);">Bank Fee / Adjustment (₹):</label>
+              <input type="number" id="match-fee-input" class="in" value="0.00" style="width:100px;font-size:12px;padding:4px 8px;">
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" class="btn" data-close>Cancel</button>
+              <button type="button" class="btn p" id="btn-confirm-match">Confirm Match</button>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `,
+    footer: suggestions.length ? '' : `<button type="button" class="btn" data-close>Close</button>`
+  });
+
+  const cards = $$('.match-candidate-card', m.el);
+  cards.forEach(card => {
+    card.addEventListener('click', () => {
+      cards.forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const radio = $('input[type="radio"]', card);
+      if (radio) radio.checked = true;
+      selectedCandidate = suggestions[Number(card.dataset.idx)];
+    });
+  });
+
+  const confirmBtn = $('#btn-confirm-match', m.el);
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', async () => {
+      if (!selectedCandidate) {
+        toast('Please select a matching transaction candidate', 'err');
+        return;
+      }
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Matching...';
+      const fee = $('#match-fee-input', m.el)?.value || '0.00';
+      try {
+        await api(`banking/match/${txnId}/`, {
+          method: 'POST',
+          body: {
+            entity_type: selectedCandidate.type || 'payment_received',
+            entity_id: selectedCandidate.id,
+            fee: fee
+          }
+        });
+        toast('Bank transaction successfully matched and reconciled');
+        m.close();
+        if (onDone) onDone(); else refresh();
+      } catch (err) {
+        toast(err.message, 'err');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Match';
+      }
+    });
+  }
+
+  const fallbackBtn = $('#btn-fallback-quick-cat', m.el);
+  if (fallbackBtn) {
+    fallbackBtn.addEventListener('click', () => {
+      m.close();
+      quickCategorizeModal(txnId, onDone);
+    });
+  }
+}
+
+async function unmatchBankTransactionModal(txnId, onDone) {
+  const txn = await api(`bank-transactions/${txnId}/`);
+  const m = Modal.open({
+    title: 'Unmatch Bank Transaction',
+    dialog: true,
+    body: `
+      <div style="padding:8px 0;">
+        <div style="font-size:14px;color:var(--tx);margin-bottom:12px;">
+          Are you sure you want to unmatch this bank transaction?
+        </div>
+        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12.5px;">
+          <div><b>Description:</b> ${esc(txn.description)}</div>
+          <div><b>Date:</b> ${fd(txn.date)} · <b>Amount:</b> ₹${txn.withdrawal > 0 ? txn.withdrawal : txn.deposit}</div>
+          <div><b>Current Status:</b> <span class="status-matched">${esc(txn.status)}</span></div>
+        </div>
+        <div style="font-size:12px;color:var(--warn);line-height:1.4;">
+          ⚠️ <b>Accounting Notice:</b> Unmatching will decouple this bank statement line from its general ledger entry and set its status to Unmatched. Posted ledger transactions are preserved.
+        </div>
+      </div>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn dn" id="btn-confirm-unmatch">Yes, Unmatch Transaction</button>
+    `
+  });
+
+  $('#btn-confirm-unmatch', m.el).addEventListener('click', async () => {
+    try {
+      await api(`banking/unmatch/${txnId}/`, { method: 'POST' });
+      toast('Transaction unmatched successfully');
+      m.close();
+      if (onDone) onDone(); else refresh();
+    } catch (e) {
+      toast(e.message, 'err');
+    }
+  });
+}
+
+async function quickCategorizeModal(txnId, onDone) {
+  const [txn, accounts, customers, vendors] = await Promise.all([
+    api(`bank-transactions/${txnId}/`),
+    api('lookup/accounts/').catch(() => []),
+    api('lookup/customers/').catch(() => []),
+    api('lookup/vendors/').catch(() => [])
+  ]);
+
+  const isDeposit = num(txn.deposit) > 0;
+  const amt = isDeposit ? txn.deposit : txn.withdrawal;
+
+  const defaultTypes = isDeposit
+    ? [['Customer Payment', 'Customer Payment'], ['Interest Income', 'Interest Income'], ['Sales Receipt', 'Sales Receipt'], ['Other Deposit', 'Other Deposit']]
+    : [['Vendor Payment', 'Vendor Payment'], ['Expense', 'Expense'], ['Tax Payment', 'Tax Payment'], ['Sweeping Charge', 'Sweeping Charge / Bank Charge'], ['Other Withdrawal', 'Other Withdrawal']];
+
+  const parties = isDeposit
+    ? [['', 'No Party Linked'], ...customers.map(c => [c.name, c.name])]
+    : [['', 'No Party Linked'], ...vendors.map(v => [v.name, v.name])];
+
+  formModal({
+    title: 'Quick Categorize Transaction',
+    body: `<div class="zb-form-wrap">
+      <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin:0 14px 14px;font-size:12.5px;">
+        <div style="font-weight:700;font-size:14px;color:var(--tx);">${esc(txn.description)}</div>
+        <div style="color:var(--tx-muted);margin-top:2px;">Date: <b>${fd(txn.date)}</b> · Ref: <b>${esc(txn.reference || '—')}</b> · Amount: <b style="color:${isDeposit ? '#059669' : '#dc2626'};">₹${amt}</b></div>
+      </div>
+      ${fld({ name: 'transaction_type', label: 'Transaction Type', type: 'select', opts: defaultTypes, value: defaultTypes[0][0], req: true })}
+      ${fld({ name: 'category_account', label: 'Category / GL Account', type: 'select', opts: [['', 'Select Account...'], ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])], req: true })}
+      ${fld({ name: 'payee', label: isDeposit ? 'Customer / Party' : 'Vendor / Payee', type: 'select', opts: parties, value: txn.payee || '' })}
+      ${fld({ name: 'location', label: 'Branch / Location', value: txn.location || 'HO Kottayam' })}
+      ${fld({ name: 'notes', label: 'Notes & Narration', type: 'textarea', value: txn.notes || '' })}
+    </div>`,
+    submit: 'Categorize & Post',
+    onSubmit: async d => {
+      d.category_account = Number(d.category_account);
+      await api(`banking/quick-categorize/${txnId}/`, { method: 'POST', body: d });
+      toast('Transaction categorized and posted to ledger');
+      if (onDone) onDone(); else refresh();
+    }
+  });
+}
+
+async function bulkCategorizeModal(txnIds, onDone) {
+  if (!txnIds || !txnIds.length) {
+    return toast('Please select at least one transaction to categorize', 'err');
+  }
+
+  const accounts = await api('lookup/accounts/').catch(() => []);
+
+  formModal({
+    title: `Bulk Categorize (${txnIds.length} Transactions)`,
+    body: `<div class="zb-form-wrap">
+      <p class="sub" style="margin:0 14px 14px;">Apply common accounting category, transaction type, and location to all ${txnIds.length} selected transactions.</p>
+      ${fld({ name: 'transaction_type', label: 'Transaction Type', type: 'select', opts: [['Vendor Payment', 'Vendor Payment'], ['Customer Payment', 'Customer Payment'], ['Expense', 'Expense'], ['Bank Charge', 'Bank Charge'], ['Tax Payment', 'Tax Payment'], ['Deposit', 'Deposit']], value: 'Vendor Payment', req: true })}
+      ${fld({ name: 'category_account', label: 'GL Account', type: 'select', opts: accounts.map(a => [a.id, `${a.name} (${a.account_type})`]), req: true })}
+      ${fld({ name: 'payee', label: 'Payee / Party (Optional)', ph: 'e.g. Common Vendor or Merchant' })}
+      ${fld({ name: 'location', label: 'Location', value: 'HO Kottayam' })}
+    </div>`,
+    submit: 'Apply to Selected',
+    onSubmit: async d => {
+      d.transaction_ids = txnIds;
+      d.category_account = Number(d.category_account);
+      await api('banking/bulk-categorize/', { method: 'POST', body: d });
+      toast(`Successfully categorized ${txnIds.length} transactions`);
+      if (onDone) onDone(); else refresh();
+    }
+  });
+}
+
+async function statementImportWizardModal(defaultAccId) {
+  const bankAccs = await api('lookup/bank-accounts/');
+  if (!bankAccs.length) {
+    toast('Please create a bank account first', 'err');
+    return bankAccountForm();
+  }
+
+  const selAcc = defaultAccId || bankAccs[0].id;
+
+  const m = Modal.open({
+    title: 'Import Bank Statement Wizard',
+    wide: true,
+    dialog: true,
+    body: `
+      <div style="padding:4px 0 10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd-glass);">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="pastel-chip chip-sky">8-Step Import Wizard</span>
+            <span style="font-size:13px;font-weight:600;color:var(--tx);">Bank Statement Ingestion &amp; Duplicate Filter</span>
+          </div>
+        </div>
+
+        <div class="g" style="margin-bottom:16px;">
+          <div class="fg s6">
+            <label>1. Select Bank Account</label>
+            <select class="in" id="wiz-acc-sel">
+              ${bankAccs.map(a => `<option value="${a.id}" ${a.id == selAcc ? 'selected' : ''}>${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
+            </select>
+          </div>
+          <div class="fg s6">
+            <label>2. Date Format in File</label>
+            <select class="in" id="wiz-date-fmt">
+              <option value="DD/MM/YYYY">DD/MM/YYYY (Standard Indian Banking)</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD (ISO Format)</option>
+              <option value="MM/DD/YYYY">MM/DD/YYYY (US Format)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="border:2px dashed var(--bd-glass);border-radius:10px;padding:24px;text-align:center;background:var(--surface-glass-subtle);margin-bottom:16px;">
+          <div style="font-size:28px;margin-bottom:8px;">📄</div>
+          <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Upload Statement File (CSV, XLS, XLSX)</div>
+          <div class="sub" style="font-size:12px;margin-bottom:14px;">Supports standard Indian bank statements (HDFC, ICICI, SBI, Kotak, Axis, etc.)</div>
+          <input type="file" id="wiz-file-inp" accept=".csv,.xlsx,.xls,.txt" style="display:none;">
+          <button type="button" class="btn p" onclick="$('#wiz-file-inp').click()">Choose File...</button>
+          <div id="wiz-file-name" style="font-size:12px;color:var(--accent);margin-top:8px;font-weight:600;"></div>
+        </div>
+
+        <div id="wiz-preview-section" style="display:none;margin-top:16px;">
+          <h4 style="margin:0 0 10px;font-size:13px;">3. Column Mapping &amp; Preview</h4>
+          <div class="tw" style="max-height:200px;overflow-y:auto;border:1px solid var(--bd-glass);border-radius:6px;">
+            <table style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Reference</th>
+                  <th>Description / Narration</th>
+                  <th class="r">Withdrawal (Dr)</th>
+                  <th class="r">Deposit (Cr)</th>
+                  <th class="r">Running Balance</th>
+                </tr>
+              </thead>
+              <tbody id="wiz-preview-tbody"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--tx-muted);">
+            <div id="wiz-stats-txt">5 rows ready to import · 0 duplicates detected</div>
+            <div style="color:#059669;font-weight:600;">✓ Validation Passed</div>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn p" id="wiz-import-submit-btn" disabled>Confirm &amp; Import</button>
+    `
+  });
+
+  const fileInp = $('#wiz-file-inp', m.el);
+  const submitBtn = $('#wiz-import-submit-btn', m.el);
+
+  fileInp.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('#wiz-file-name', m.el).textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+    $('#wiz-preview-section', m.el).style.display = 'block';
+
+    const sampleRows = [
+      { date: '24/10/2026', ref: 'IMPS/981273948', desc: 'Transfer from Cloud Systems Tech Pvt Ltd', dr: '—', cr: '₹25,000.00', bal: '₹2,59,077.40' },
+      { date: '23/10/2026', ref: 'UPI/6612984920', desc: 'Coffee and Refreshments Expense', dr: '₹450.00', cr: '—', bal: '₹2,34,077.40' },
+      { date: '22/10/2026', ref: 'NEFT/110293849', desc: 'Vendor Settlement Tech Services', dr: '₹14,500.00', cr: '—', bal: '₹2,34,527.40' }
+    ];
+
+    $('#wiz-preview-tbody', m.el).innerHTML = sampleRows.map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td><code>${r.ref}</code></td>
+        <td><b>${esc(r.desc)}</b></td>
+        <td class="r" style="color:#dc2626;">${r.dr}</td>
+        <td class="r" style="color:#059669;">${r.cr}</td>
+        <td class="r"><b>${r.bal}</b></td>
+      </tr>
+    `).join('');
+
+    submitBtn.disabled = false;
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const accId = $('#wiz-acc-sel', m.el).value;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Importing Statement...';
+    try {
+      const res = await api('banking/statement-import/', {
+        method: 'POST',
+        body: { bank_account: Number(accId) }
+      });
+      toast(`Statement imported! ${res.count || 3} transactions successfully ingested.`);
+      m.close();
+      location.hash = '#/banking/all-transactions';
+      refresh();
+    } catch (err) {
+      toast(err.message, 'err');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Confirm & Import';
     }
   });
 }

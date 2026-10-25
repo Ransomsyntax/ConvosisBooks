@@ -15,13 +15,20 @@ urlpatterns = [
 
     path('reports/<slug:name>/', api.reports_view),
 
+    path('banking/dashboard-summary/', api.banking_dashboard_summary_view),
     path('banking/statement-import/', api.banking_import_view),
     path('banking/feed-sync/<int:bank_account_id>/', api.banking_feed_sync_view),
     path('banking/rules/', api.banking_rules_view),
     path('banking/rules/<int:pk>/', api.banking_rules_detail_view),
     path('banking/rollback/<int:batch_id>/', api.banking_rollback_view),
     path('banking/match-suggestions/<int:txn_id>/', api.banking_match_suggestions_view),
+    path('banking/match/<int:txn_id>/', api.banking_match_action_view),
+    path('banking/unmatch/<int:txn_id>/', api.banking_unmatch_action_view),
+    path('banking/quick-categorize/<int:txn_id>/', api.banking_quick_categorize_view),
+    path('banking/bulk-categorize/', api.banking_bulk_categorize_view),
+    path('banking/exclude/<int:txn_id>/', api.banking_exclude_view),
     path('banking/reconcile/<int:txn_id>/', api.banking_reconcile_view),
+    path('banking/reconciliation/complete/', api.banking_reconcile_complete_view),
     path('banking/transfer/', api.banking_transfer_view),
 
     path('documents/<int:pk>/ocr/', api.document_ocr_view),

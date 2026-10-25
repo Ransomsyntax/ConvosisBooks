@@ -1673,6 +1673,11 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
     let sortDirection = 'desc';
     let activeFilter = filterTab || 'all';
 
+    const booksBal = parseFloat(activeAccount.current_balance || 0);
+    const bankBal = parseFloat(activeAccount.bank_balance || activeAccount.current_balance || 0);
+    const varianceDiff = booksBal - bankBal;
+    const isBalanced = Math.abs(varianceDiff) < 0.01;
+
     const maskedAccNum = activeAccount.masked_account_number || `xxxx${(activeAccount.account_number || '').slice(-4)}`;
     const feedDateDisplay = activeAccount.last_feed_date ? fmtBankDate(activeAccount.last_feed_date) : '20/10/2026';
     const lastSyncDisplay = '23/10/2026';
@@ -1702,7 +1707,7 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
                 </div>
               </div>
 
-              <!-- Green WiFi Live Feed Icon -->
+              <!-- Green Live Feed Icon -->
               <span class="banking-feed-active-badge" title="Live Bank Feed Connected">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
               </span>
@@ -1712,6 +1717,11 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
 
           <!-- Top Right Action Buttons -->
           <div class="banking-header-actions">
+            <button type="button" class="banking-btn-auto" id="bnk-act-auto-match" title="Automatically evaluate bank rules and high-confidence transaction matches">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span>⚡ Auto-Match &amp; Categorize All</span>
+            </button>
+
             <button type="button" class="banking-action-link-btn" id="bnk-act-statements">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg>
               <span>Bank Statements</span>
@@ -1801,6 +1811,20 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
           </div>
         </div>
 
+        <!-- Variance / Reconciliation Explanation Banner -->
+        <div class="banking-variance-banner ${isBalanced ? 'balanced' : 'variance'}" id="bnk-variance-card">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:16px;">${isBalanced ? '✓' : '⚠️'}</span>
+            <div>
+              <b>${isBalanced ? 'Books and Bank Statement are in sync' : `Reconciliation Variance: ₹${inr(Math.abs(varianceDiff))}`}</b>
+              <span style="opacity:0.88;margin-left:6px;">${isBalanced ? 'General Ledger balance matches your bank statement.' : (varianceDiff > 0 ? 'General Ledger balance exceeds bank statement balance (unmatched deposits or uncleared checks).' : 'Bank statement balance exceeds General Ledger balance (unrecorded charges, sweep, or missing entries).')}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <a href="#/banking/bank-reconciliation" class="btn" style="font-size:11.5px;padding:3px 10px;text-decoration:none;">Reconciliation Cockpit ›</a>
+          </div>
+        </div>
+
         <!-- Top Right Feed Update Indicator -->
         <div class="banking-sync-bar">
           <span>Bank feeds last fetched on <b>${lastSyncDisplay}</b></span>
@@ -1819,9 +1843,9 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
           </a>
 
           <!-- Tab 2: 2 Uncategorized Transactions / From Bank Statements -->
-          <button type="button" class="banking-tab-item ${activeFilter === 'uncategorized' ? 'active' : ''}" id="bnk-tab-uncat">
+          <button type="button" class="banking-tab-item ${activeFilter === 'uncategorized' || activeFilter === 'unmatched' ? 'active' : ''}" id="bnk-tab-uncat">
             <div class="banking-tab-main-title">
-              <span class="banking-tab-badge-red" id="bnk-uncat-badge">${activeAccount.uncategorized_count || 2}</span>
+              <span class="banking-tab-badge-red" id="bnk-uncat-badge">${activeAccount.uncategorized_count || 0}</span>
               <span>Uncategorized Transactions</span>
             </div>
             <div class="banking-tab-subtitle">From Bank Statements</div>
@@ -1829,7 +1853,7 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
 
           <!-- Tab 3: All Transactions ▾ / In Books -->
           <div class="rel" style="display:inline-flex;">
-            <button type="button" class="banking-tab-item ${activeFilter !== 'uncategorized' ? 'active' : ''}" id="bnk-tab-all-btn">
+            <button type="button" class="banking-tab-item ${activeFilter !== 'uncategorized' && activeFilter !== 'unmatched' ? 'active' : ''}" id="bnk-tab-all-btn">
               <div class="banking-tab-main-title">
                 <span id="bnk-active-tab-title">All Transactions</span>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
@@ -1849,6 +1873,25 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
 
         <!-- BANKING TRANSACTION TABLE CONTAINER -->
         <div class="banking-table-container">
+          <!-- Interactive Status Filter Ribbon -->
+          <div class="banking-filter-ribbon">
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'all' ? 'active' : ''}" data-ribbon-filter="all">All Feeds</button>
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'unmatched' || activeFilter === 'uncategorized' ? 'active' : ''}" data-ribbon-filter="unmatched">
+              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef4444;"></span>
+              <span>⚡ Uncategorized (${activeAccount.uncategorized_count || 0})</span>
+            </button>
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'matched' ? 'active' : ''}" data-ribbon-filter="matched">✓ Matched</button>
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'categorized' ? 'active' : ''}" data-ribbon-filter="categorized">📋 Categorized</button>
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'manually_added' ? 'active' : ''}" data-ribbon-filter="manually_added">✏️ Manually Added</button>
+            <button type="button" class="banking-ribbon-pill ${activeFilter === 'excluded' ? 'active' : ''}" data-ribbon-filter="excluded">🚫 Excluded</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+              <button type="button" class="btn" id="bnk-export-csv-btn" style="font-size:11px;padding:3px 9px;" title="Export filtered bank feed transactions to CSV">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                <span>Export (CSV)</span>
+              </button>
+            </div>
+          </div>
+
           <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--bd-glass);background:var(--surface-glass-subtle);">
             <div id="bnk-active-filter-label" style="font-size:13px;font-weight:600;color:var(--tx);">Showing All Transactions</div>
             <div style="display:flex;align-items:center;gap:8px;">
@@ -1911,12 +1954,61 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
       });
     });
 
+    // One-Click Automation Engine Handler
+    const autoMatchBtn = $('#bnk-act-auto-match', root);
+    if (autoMatchBtn) {
+      autoMatchBtn.addEventListener('click', async () => {
+        autoMatchBtn.disabled = true;
+        autoMatchBtn.innerHTML = `${spinner} Running Automation...`;
+        toast('Evaluating bank rules and smart match candidates...');
+        try {
+          const res = await api('banking/run-automation/', {
+            method: 'POST',
+            body: { bank_account: selectedAccountId }
+          });
+          toast(res.message || 'Automation engine finished', 'ok');
+          bankingMainPage(root, activeFilter, selectedAccountId);
+        } catch (e) {
+          toast(e.message, 'err');
+          autoMatchBtn.disabled = false;
+          autoMatchBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> <span>⚡ Auto-Match &amp; Categorize All</span>`;
+        }
+      });
+    }
+
+    // Export CSV Handler
+    const exportCsvBtn = $('#bnk-export-csv-btn', root);
+    if (exportCsvBtn) {
+      exportCsvBtn.addEventListener('click', () => {
+        const url = `/api/banking/export-transactions/?bank_account=${selectedAccountId}&status=${activeFilter}`;
+        window.open(url, '_blank');
+      });
+    }
+
+    // Ribbon Filter Events
+    $$('[data-ribbon-filter]', root).forEach(pill => {
+      pill.addEventListener('click', () => {
+        $$('.banking-ribbon-pill', root).forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        activeFilter = pill.dataset.ribbonFilter;
+        if (activeFilter === 'unmatched') {
+          $('#bnk-tab-uncat', root).classList.add('active');
+          $('#bnk-tab-all-btn', root).classList.remove('active');
+        } else {
+          $('#bnk-tab-uncat', root).classList.remove('active');
+          $('#bnk-tab-all-btn', root).classList.add('active');
+        }
+        $('#bnk-active-filter-label', root).textContent = `Showing ${pill.textContent.trim()}`;
+        currentPage = 1;
+        loadTransactions();
+      });
+    });
+
     $('#bnk-act-statements', root).addEventListener('click', () => {
       statementImportWizardModal(selectedAccountId);
     });
 
     $('#bnk-act-quick-cat', root).addEventListener('click', async () => {
-      // Find first uncategorized transaction
       try {
         const res = await api(`bank-transactions/?bank_account=${selectedAccountId}&status=unmatched&page_size=1`);
         if (res.results && res.results.length) {
@@ -1972,9 +2064,10 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
 
     // Tab Bar Events
     $('#bnk-tab-uncat', root).addEventListener('click', () => {
-      activeFilter = 'uncategorized';
+      activeFilter = 'unmatched';
       $('#bnk-tab-uncat', root).classList.add('active');
       $('#bnk-tab-all-btn', root).classList.remove('active');
+      $$('.banking-ribbon-pill', root).forEach(p => p.classList.toggle('active', p.dataset.ribbonFilter === 'unmatched'));
       $('#bnk-active-filter-label', root).textContent = 'Showing Uncategorized Transactions';
       currentPage = 1;
       loadTransactions();
@@ -1995,6 +2088,7 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
         $('#bnk-tab-all-btn', root).classList.add('active');
         $('#bnk-active-tab-title', root).textContent = btn.textContent;
         $('#bnk-active-filter-label', root).textContent = `Showing ${btn.textContent}`;
+        $$('.banking-ribbon-pill', root).forEach(p => p.classList.toggle('active', p.dataset.ribbonFilter === activeFilter));
         currentPage = 1;
         loadTransactions();
       });
@@ -2150,7 +2244,7 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
                       </div>
                     </td>
                   </tr>
-                  <tr id="bnk-drawer-${t.id}" style="display:none;">
+                  <tr id="bnk-drawer-${t.id}" style="display:none;" data-drawer-txn-id="${t.id}" data-drawer-status="${t.status}">
                     <td colspan="10" style="padding:0;">
                       <div class="banking-detail-panel">
                         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
@@ -2173,6 +2267,14 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
                             </div>
                           </div>
                         </div>
+
+                        ${t.status === 'unmatched' ? `
+                          <div id="bnk-smart-rec-${t.id}" class="banking-smart-match-box" style="margin-top:14px;">
+                            <div style="font-size:12px;color:var(--tx-muted);display:flex;align-items:center;gap:6px;">
+                              ${spinner} Loading intelligent match suggestions...
+                            </div>
+                          </div>
+                        ` : ''}
                       </div>
                     </td>
                   </tr>
@@ -2182,13 +2284,77 @@ async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null
           </table>
         `;
 
-        // Row expand events
+        // Row expand events & Smart Match Suggestions Loader
         $$('tr[data-txn-id]', tableWrap).forEach(tr => {
-          tr.addEventListener('click', () => {
+          tr.addEventListener('click', async () => {
             const tid = tr.dataset.txnId;
             const drawer = $(`#bnk-drawer-${tid}`, tableWrap);
-            if (drawer) {
-              drawer.style.display = (drawer.style.display === 'none') ? 'table-row' : 'none';
+            if (!drawer) return;
+            const isOpening = (drawer.style.display === 'none');
+            drawer.style.display = isOpening ? 'table-row' : 'none';
+
+            if (isOpening && drawer.dataset.drawerStatus === 'unmatched' && !drawer.dataset.suggestionsLoaded) {
+              drawer.dataset.suggestionsLoaded = '1';
+              const recBox = $(`#bnk-smart-rec-${tid}`, drawer);
+              if (!recBox) return;
+              try {
+                const suggestions = await api(`banking/match-suggestions/${tid}/`);
+                if (suggestions && suggestions.length > 0) {
+                  const top = suggestions[0];
+                  recBox.innerHTML = `
+                    <div style="display:flex;flex-direction:column;gap:3px;">
+                      <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="banking-confidence-badge">${top.confidence_score}% Match Confidence</span>
+                        <b style="font-size:13px;color:var(--tx);">Smart Match Found: ${esc(top.party_name || top.number)} (${top.type.toUpperCase()})</b>
+                      </div>
+                      <div style="font-size:12px;color:var(--tx-muted);">
+                        Document Amount: <b>${inr(top.amount)}</b> · Date: <b>${fmtBankDate(top.date)}</b> · Matched by exact amount &amp; timeline
+                      </div>
+                    </div>
+                    <button type="button" class="btn p" data-smart-match-accept="${tid}" data-match-type="${top.type}" data-match-id="${top.id}" style="font-size:12px;padding:6px 14px;white-space:nowrap;">
+                      ⚡ One-Click Match &amp; Reconcile
+                    </button>
+                  `;
+                  const acceptBtn = $('[data-smart-match-accept]', recBox);
+                  if (acceptBtn) {
+                    acceptBtn.addEventListener('click', async (e) => {
+                      e.stopPropagation();
+                      acceptBtn.disabled = true;
+                      acceptBtn.textContent = 'Matching...';
+                      try {
+                        await api(`banking/match/${tid}/`, {
+                          method: 'POST',
+                          body: { entity_type: top.type, entity_id: top.id }
+                        });
+                        toast('Transaction matched and reconciled successfully', 'ok');
+                        loadTransactions();
+                      } catch (err) {
+                        toast(err.message, 'err');
+                        acceptBtn.disabled = false;
+                        acceptBtn.textContent = '⚡ One-Click Match & Reconcile';
+                      }
+                    });
+                  }
+                } else {
+                  recBox.innerHTML = `
+                    <div style="font-size:12px;color:var(--tx-muted);line-height:1.5;">
+                      💡 <b>No automated invoice/bill candidate found</b> for this amount. You can click <b>Categorize</b> to assign a Chart of Accounts expense/income category, or create a <b>Bank Rule</b> for recurring narrations.
+                    </div>
+                    <button type="button" class="btn" data-act-quick-cat="${tid}" style="font-size:11.5px;padding:4px 10px;white-space:nowrap;">
+                      Categorize Transaction
+                    </button>
+                  `;
+                  const catBtn = $('[data-act-quick-cat]', recBox);
+                  if (catBtn) {
+                    catBtn.addEventListener('click', (e) => {
+                      e.stopPropagation();
+                      quickCategorizeModal(tid, () => loadTransactions());
+                    });
+                  }
+                }
+              } catch (e) {
+                recBox.innerHTML = `<div style="font-size:11.5px;color:var(--tx-muted);">Match suggestions unavailable.</div>`;
+              }
             }
           });
         });
@@ -2292,6 +2458,10 @@ async function bankingDashboardPage(root) {
             <div class="sub">Cash, current &amp; credit card balances, statement feed health, and pending reconciliations</div>
           </div>
           <div class="act">
+            <button class="banking-btn-auto" id="bnk-dash-auto-btn" title="Run bank rules and auto-matching across all accounts">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span>⚡ Run Automation Engine</span>
+            </button>
             <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
             <button class="btn" onclick="statementImportWizardModal()">Import Statement</button>
             <button class="btn" onclick="recordDepositModal()">Record Deposit</button>
@@ -2452,6 +2622,24 @@ async function bankingDashboardPage(root) {
         </div>
       </div>
     `;
+
+    const dashAutoBtn = $('#bnk-dash-auto-btn', root);
+    if (dashAutoBtn) {
+      dashAutoBtn.addEventListener('click', async () => {
+        dashAutoBtn.disabled = true;
+        dashAutoBtn.innerHTML = `${spinner} Processing...`;
+        toast('Evaluating bank rules and matching candidates across all accounts...');
+        try {
+          const res = await api('banking/run-automation/', { method: 'POST' });
+          toast(res.message || 'Banking automation completed', 'ok');
+          bankingDashboardPage(root);
+        } catch (e) {
+          toast(e.message, 'err');
+          dashAutoBtn.disabled = false;
+          dashAutoBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> <span>⚡ Run Automation Engine</span>`;
+        }
+      });
+    }
   } catch (err) {
     root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
   }
@@ -2724,7 +2912,15 @@ async function bankRulesPage(root) {
             <div class="sub">Auto-assign transaction types, accounting GL accounts, and payees based on narration text</div>
           </div>
           <div class="act">
+            <button class="btn" id="bnk-seed-rules-btn" title="Deploy standard rules for GST, bank charges, stationery, hosting, and sweeps">⚡ Deploy Recommended Rules</button>
             <button class="btn p" onclick="bankRulesModal()">+ Create Rule</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;padding:14px 18px;background:rgba(59,130,246,0.05);border:1px dashed rgba(59,130,246,0.3);border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:var(--tx);margin-bottom:4px;">💡 How Automated Bank Rules Work</div>
+          <div style="font-size:12px;color:var(--tx-muted);line-height:1.6;">
+            Incoming bank statement feeds are evaluated in order of <b>Priority</b> (lowest number first). When narration matches your criteria, ConvosisBooks automatically assigns the designated GL Account, Transaction Type, and Payee. If <b>Auto-Reconcile</b> is enabled, the transaction is marked verified and reconciled immediately.
           </div>
         </div>
 
@@ -2754,7 +2950,7 @@ async function bankRulesPage(root) {
                     </td>
                   </tr>
                 `).join('') : `
-                  <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--tx-muted);">No categorization rules created yet. Click "Create Rule" to automate matching.</td></tr>
+                  <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--tx-muted);">No categorization rules created yet. Click "Deploy Recommended Rules" or "Create Rule" to automate matching.</td></tr>
                 `}
               </tbody>
             </table>
@@ -2762,6 +2958,23 @@ async function bankRulesPage(root) {
         </div>
       </div>
     `;
+
+    const seedBtn = $('#bnk-seed-rules-btn', root);
+    if (seedBtn) {
+      seedBtn.addEventListener('click', async () => {
+        seedBtn.disabled = true;
+        seedBtn.innerHTML = `${spinner} Deploying rules...`;
+        try {
+          const res = await api('banking/generate-default-rules/', { method: 'POST' });
+          toast(res.message || 'Recommended bank rules deployed', 'ok');
+          bankRulesPage(root);
+        } catch (e) {
+          toast(e.message, 'err');
+          seedBtn.disabled = false;
+          seedBtn.innerHTML = '⚡ Deploy Recommended Rules';
+        }
+      });
+    }
   } catch (err) {
     root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
   }

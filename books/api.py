@@ -3134,6 +3134,48 @@ def banking_rollback_view(request, batch_id):
     return j(res)
 
 
+@api_view
+def banking_run_automation_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request) if request.body else {}
+    ba_id = d.get('bank_account')
+    if ba_id:
+        try:
+            ba_id = int(ba_id)
+        except (ValueError, TypeError):
+            ba_id = None
+    res = services.run_banking_automation(bank_account_id=ba_id, user=request.user)
+    return j(res)
+
+
+@api_view
+def banking_generate_default_rules_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    rules = services.ensure_default_bank_rules(force=True)
+    return j({
+        'status': 'ok',
+        'count': len(rules),
+        'message': f'{len(rules)} recommended bank rules deployed successfully.'
+    })
+
+
+@api_view
+def banking_export_transactions_view(request):
+    ba_id = request.GET.get('bank_account')
+    if ba_id and ba_id.isdigit():
+        ba_id = int(ba_id)
+    else:
+        ba_id = None
+    status = request.GET.get('status')
+    csv_content = services.export_bank_transactions_csv(bank_account_id=ba_id, status=status)
+    resp = HttpResponse(csv_content, content_type='text/csv; charset=utf-8')
+    resp['Content-Disposition'] = 'attachment; filename="bank_feed_transactions.csv"'
+    return resp
+
+
+
 
 @api_view
 def gst_returns_gstr1_view(request):

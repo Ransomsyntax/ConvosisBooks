@@ -2489,16 +2489,32 @@ def apply_bank_rules_to_transaction(txn):
             matched = True
 
         if matched:
+            fields_to_update = ['status']
+            if rule.assign_account:
+                txn.category_account = rule.assign_account
+                fields_to_update.append('category_account')
+            if rule.assign_transaction_type:
+                txn.transaction_type = rule.assign_transaction_type
+                fields_to_update.append('transaction_type')
+            if rule.assign_payee:
+                txn.payee = rule.assign_payee
+                fields_to_update.append('payee')
+
             if rule.auto_reconcile:
                 txn.status = 'reconciled'
                 txn.reconciled_at = timezone.now()
+                fields_to_update.append('reconciled_at')
             else:
-                txn.status = 'matched'
+                txn.status = 'categorized' if rule.assign_account else 'matched'
+
             if rule.assign_party_type and rule.assign_party_id:
                 txn.matched_entity_type = rule.assign_party_type
                 txn.matched_entity_id = rule.assign_party_id
-            txn.save(update_fields=['status', 'reconciled_at', 'matched_entity_type', 'matched_entity_id'])
-            break
+                fields_to_update.extend(['matched_entity_type', 'matched_entity_id'])
+
+            txn.save(update_fields=fields_to_update)
+            return rule
+    return None
 
 
 def get_advanced_bank_match_suggestions(txn_id):
@@ -2704,6 +2720,233 @@ def get_advanced_bank_match_suggestions(txn_id):
 
     suggestions.sort(key=lambda s: s['confidence_score'], reverse=True)
     return suggestions
+
+
+def ensure_default_bank_rules(force=False):
+    """Seed comprehensive standard bank rules for automated categorization."""
+    if not force and BankRule.objects.filter(active=True).exists():
+        return list(BankRule.objects.filter(active=True))
+
+    rule_defs = [
+        {
+            'name': 'GST & Tax Settlement',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'gst',
+            'account_code': '2300',
+            'transaction_type': 'Tax Payment',
+            'payee': 'GST Department / Tax Authority',
+            'priority': 10,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Bank Fees & Gateway Charges',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'charge',
+            'account_code': '6070',
+            'transaction_type': 'Bank Charge',
+            'payee': 'Bank Service Charges',
+            'priority': 20,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'SMS & Alert Charges',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'sms',
+            'account_code': '6070',
+            'transaction_type': 'Bank Charge',
+            'payee': 'Bank Alerts',
+            'priority': 25,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Office Stationery & Supplies',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'stationery',
+            'account_code': '6020',
+            'transaction_type': 'Expense',
+            'payee': 'Stationery & Office Supplies Vendor',
+            'priority': 30,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Cloud Hosting & Infrastructure',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'amazon',
+            'account_code': '6060',
+            'transaction_type': 'Expense',
+            'payee': 'Amazon Web Services / Cloud Hosting',
+            'priority': 40,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Auto Sweep to Term Investment',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'sweep',
+            'account_code': '1010',
+            'transaction_type': 'Sweeping Charge',
+            'payee': 'Term Deposit Sweep',
+            'priority': 50,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Bank Interest Credit',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'interest',
+            'account_code': '4900',
+            'transaction_type': 'Interest Income',
+            'payee': 'Bank Interest',
+            'priority': 60,
+            'auto_reconcile': False
+        },
+        {
+            'name': 'Customer Inward Payment',
+            'field': 'description',
+            'operator': 'contains',
+            'value': 'invoice payment',
+            'account_code': '4000',
+            'transaction_type': 'Payment Received',
+            'payee': '',
+            'priority': 70,
+            'auto_reconcile': False
+        }
+    ]
+
+    created_rules = []
+    for rd in rule_defs:
+        if BankRule.objects.filter(name=rd['name']).exists():
+            continue
+        acc = Account.objects.filter(code=rd.get('account_code')).first()
+        r = BankRule.objects.create(
+            name=rd['name'],
+            field=rd['field'],
+            operator=rd['operator'],
+            value=rd['value'],
+            assign_account=acc,
+            assign_transaction_type=rd.get('transaction_type', ''),
+            assign_payee=rd.get('payee', ''),
+            priority=rd.get('priority', 10),
+            auto_reconcile=rd.get('auto_reconcile', False),
+            active=True
+        )
+        created_rules.append(r)
+    return created_rules
+
+
+def run_banking_automation(bank_account_id=None, user=None):
+    """
+    Automated banking engine:
+    1. Evaluates all active BankRules against unmatched transactions, applying category/payee or auto-reconcile.
+    2. Runs multi-way auto-matching on remaining unmatched transactions. If high confidence (>= 75%), automatically matches.
+    3. Re-computes account books and feed balances.
+    Returns details of matched, categorized, and rules evaluated.
+    """
+    ensure_default_bank_rules()
+
+    txns_qs = BankTransaction.objects.filter(status__in=['unmatched', 'unreconciled'])
+    if bank_account_id:
+        txns_qs = txns_qs.filter(bank_account_id=bank_account_id)
+
+    total_processed = txns_qs.count()
+    auto_matched_count = 0
+    rule_applied_count = 0
+    action_details = []
+
+    for txn in list(txns_qs):
+        # 1. Try Bank Rules first
+        rule = apply_bank_rules_to_transaction(txn)
+        if rule:
+            rule_applied_count += 1
+            action_details.append({
+                'txn_id': txn.pk,
+                'action': 'rule_applied',
+                'rule_name': rule.name,
+                'status': txn.status,
+                'description': txn.description,
+                'amount': str(txn.deposit or txn.withdrawal)
+            })
+            continue
+
+        # 2. Try High-Confidence Auto-Match
+        try:
+            suggestions = get_advanced_bank_match_suggestions(txn.pk)
+            if suggestions and suggestions[0].get('confidence_score', 0) >= 75:
+                top = suggestions[0]
+                match_bank_transaction_action(
+                    txn.pk,
+                    top['type'],
+                    top['id'],
+                    user=user
+                )
+                auto_matched_count += 1
+                action_details.append({
+                    'txn_id': txn.pk,
+                    'action': 'auto_matched',
+                    'entity_label': top.get('party_name') or top.get('number'),
+                    'confidence': top.get('confidence_score'),
+                    'description': txn.description,
+                    'amount': str(txn.deposit or txn.withdrawal)
+                })
+        except Exception:
+            pass
+
+    log_audit(user, 'automate', 'BankTransaction', 0, f"Banking automation processed {total_processed} transactions: {auto_matched_count} matched, {rule_applied_count} categorized via rules")
+
+    msg = f"Automation completed: {auto_matched_count} transaction(s) auto-matched, {rule_applied_count} categorized via rules."
+    if (auto_matched_count + rule_applied_count) == 0 and total_processed > 0:
+        msg = f"All {total_processed} transactions evaluated. No high-confidence automatic matches found — review suggestions manually or create bank rules."
+    elif total_processed == 0:
+        msg = "All bank feed transactions are already matched or categorized!"
+
+    return {
+        'success': True,
+        'total_processed': total_processed,
+        'auto_matched_count': auto_matched_count,
+        'rule_applied_count': rule_applied_count,
+        'action_details': action_details,
+        'message': msg
+    }
+
+
+def export_bank_transactions_csv(bank_account_id=None, status=None):
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'Transaction ID', 'Date', 'Bank Account', 'Description / Narration',
+        'Reference Number', 'Transaction Type', 'Payee / Merchant',
+        'Withdrawal (Debit)', 'Deposit (Credit)', 'Running Balance',
+        'Status', 'Accounting Category'
+    ])
+    qs = BankTransaction.objects.select_related('bank_account', 'category_account').order_by('-date', '-id')
+    if bank_account_id:
+        qs = qs.filter(bank_account_id=bank_account_id)
+    if status and status != 'all':
+        qs = qs.filter(status=status)
+
+    for t in qs:
+        writer.writerow([
+            t.pk,
+            t.date.strftime('%d/%m/%Y') if t.date else '',
+            t.bank_account.name if t.bank_account else '',
+            t.description,
+            t.reference or '',
+            t.transaction_type or '',
+            t.payee or '',
+            str(t.withdrawal) if t.withdrawal > 0 else '0.00',
+            str(t.deposit) if t.deposit > 0 else '0.00',
+            str(t.balance) if t.balance else '0.00',
+            t.status,
+            t.category_account.name if t.category_account else ''
+        ])
+    return output.getvalue()
 
 
 

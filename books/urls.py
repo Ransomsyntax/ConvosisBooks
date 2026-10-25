@@ -30,6 +30,10 @@ urlpatterns = [
     path('banking/reconcile/<int:txn_id>/', api.banking_reconcile_view),
     path('banking/reconciliation/complete/', api.banking_reconcile_complete_view),
     path('banking/transfer/', api.banking_transfer_view),
+    path('banking/run-automation/', api.banking_run_automation_view),
+    path('banking/generate-default-rules/', api.banking_generate_default_rules_view),
+    path('banking/export-transactions/', api.banking_export_transactions_view),
+
 
     path('documents/<int:pk>/ocr/', api.document_ocr_view),
     path('documents/<int:pk>/convert/', api.document_convert_view),

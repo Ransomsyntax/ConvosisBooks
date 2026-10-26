@@ -128,6 +128,9 @@ if not DEBUG and os.environ.get('DJANGO_HTTPS', '0') == '1':
     SECURE_HSTS_SECONDS = 31536000
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_AGE = 86400  # 24-hour session expiration
+SESSION_SAVE_EVERY_REQUEST = True  # Rolling active session window
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 LLM_PROVIDER = os.environ.get('CONVOBOT_LLM_PROVIDER', 'openai')
 LLM_MODEL = os.environ.get('CONVOBOT_LLM_MODEL', 'gpt-4o-mini')

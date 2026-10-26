@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 from functools import wraps
 
+from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
@@ -50,17 +51,109 @@ def body(request):
     return data
 
 
+CASHIER_ALLOWED_RESOURCES = {
+    'customers', 'items', 'item_categories', 'invoices', 'payments_received',
+    'sales_orders', 'delivery_challans', 'price_lists', 'attachments'
+}
+
+
+def get_user_role(user):
+    if not user or not user.is_authenticated:
+        return None
+    if user.is_superuser:
+        return UserProfile.ADMIN
+    profile = getattr(user, 'profile', None)
+    if not profile:
+        profile, _ = UserProfile.objects.get_or_create(
+            user=user,
+            defaults={'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT}
+        )
+    return profile.role
+
+
+def check_permission(request, allowed_roles=None, resource_name=None, action_name=None):
+    user = request.user
+    if not user or not user.is_authenticated:
+        raise ApiError(401, 'Authentication required.')
+
+    role = get_user_role(user)
+    if role == UserProfile.ADMIN or user.is_superuser:
+        return True
+
+    if role == UserProfile.PORTAL:
+        raise ApiError(403, 'Permission denied: Portal users cannot access internal accounting operations.')
+
+    if allowed_roles and role not in allowed_roles:
+        raise ApiError(403, f'Permission denied: Role "{role}" is not authorized for this operation.')
+
+    if role == UserProfile.AUDITOR:
+        if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            if resource_name in ('ai_query', 'convobot', 'notifications', 'search') or action_name in ('verify', 'test', 'export'):
+                return True
+            raise ApiError(403, 'Permission denied: Statutory Auditors have read-only access.')
+        return True
+
+    if role == UserProfile.CASHIER:
+        if resource_name and resource_name not in CASHIER_ALLOWED_RESOURCES:
+            raise ApiError(403, f'Permission denied: Cashiers do not have access to {resource_name}.')
+        if request.method == 'DELETE' or action_name in ('void', 'rollback'):
+            raise ApiError(403, 'Permission denied: Cashiers cannot delete or void records.')
+        return True
+
+    return True
+
+
+def role_required(*allowed_roles):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(request, *args, **kwargs):
+            if not request.user.is_authenticated:
+                return j({'error': 'Authentication required.', 'message': 'Authentication required.', 'errors': {}}, 401)
+            role = get_user_role(request.user)
+            if role != UserProfile.ADMIN and not request.user.is_superuser and role not in allowed_roles:
+                return j({'error': f'Permission denied: Role "{role}" is not authorized.',
+                          'message': f'Permission denied: Role "{role}" is not authorized.', 'errors': {}}, 403)
+            return fn(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def api_view(fn):
     @wraps(fn)
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
-            return j({'message': 'Authentication required.'}, 401)
+            return j({'error': 'Authentication required.', 'message': 'Authentication required.', 'errors': {}}, 401)
+
+        profile = getattr(request.user, 'profile', None)
+        if not profile:
+            profile, _ = UserProfile.objects.get_or_create(
+                user=request.user,
+                defaults={'role': UserProfile.ADMIN if (request.user.is_superuser or request.user.is_staff) else UserProfile.ACCOUNTANT}
+            )
+
+        if profile.is_locked:
+            return j({
+                'error': 'Account locked.',
+                'message': 'Your account has been locked by an administrator. Please contact support.',
+                'errors': {}
+            }, 403)
+
+        ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR', '')
+        if ip and profile.last_active_ip != ip:
+            profile.last_active_ip = ip
+            profile.save(update_fields=['last_active_ip'])
+
         try:
             return fn(request, *args, **kwargs)
         except ApiError as e:
             return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
         except ProtectedError:
-            return j({'message': 'This record is used by other transactions and cannot be deleted. Mark it inactive instead.'}, 409)
+            return j({'error': 'Conflict', 'message': 'This record is used by other transactions and cannot be deleted. Mark it inactive instead.', 'errors': {}}, 409)
+        except Exception as e:
+            if settings.DEBUG:
+                import traceback
+                traceback.print_exc()
+            return j({'error': 'Internal server error.', 'message': str(e) if settings.DEBUG else 'An unexpected error occurred.', 'errors': {}}, 500)
     return wrapper
 
 
@@ -151,6 +244,7 @@ class Resource:
         return resp
 
     def handle_collection(self, request):
+        check_permission(request, resource_name=self.name)
         if request.method == 'GET':
             qs = self.queryset(request)
             if request.GET.get('export') == 'csv':
@@ -170,6 +264,7 @@ class Resource:
         raise ApiError(405, 'Method not allowed.')
 
     def handle_item(self, request, pk):
+        check_permission(request, resource_name=self.name)
         obj = self.get_object(pk)
         if request.method == 'GET':
             return j(self.detail(obj))
@@ -184,6 +279,7 @@ class Resource:
         raise ApiError(405, 'Method not allowed.')
 
     def handle_action(self, request, pk, name):
+        check_permission(request, resource_name=self.name, action_name=name)
         if request.method != 'POST':
             raise ApiError(405, 'Method not allowed.')
         obj = self.get_object(pk)
@@ -207,7 +303,7 @@ def party_stats(kind, ids):
         bal = d.total - q2(d.paid_sum)
         s['billed'] += d.total
         s['outstanding'] += bal
-        if bal > 0 and d.due_date < today:
+        if bal > 0 and d.due_date and d.due_date < today:
             s['overdue'] += bal
     return out
 
@@ -550,7 +646,7 @@ def display_status(doc, posted, today):
     paid = q2(doc.paid_sum)
     if doc.total - paid <= 0:
         return 'Paid'
-    if doc.due_date < today:
+    if doc.due_date and doc.due_date < today:
         return 'Overdue'
     return 'Partially Paid' if paid > 0 else ('Sent' if posted == 'sent' else 'Open')
 
@@ -2194,12 +2290,41 @@ def org_json(o):
 @api_view
 def me(request):
     u = request.user
-    return j({'user': {'username': u.get_username(), 'name': u.get_full_name() or u.get_username()},
-              'organization': org_json(Organization.get()), 'today': timezone.localdate(),
-              'counts': {'customers': Customer.objects.count(), 'vendors': Vendor.objects.count(),
-                         'items': Item.objects.count(), 'invoices': Invoice.objects.exclude(status='draft').count(),
-                         'bills': Bill.objects.exclude(status='draft').count(),
-                         'payments': PaymentReceived.objects.count() + PaymentMade.objects.count()}})
+    role = get_user_role(u)
+    profile = getattr(u, 'profile', None)
+    return j({
+        'user': {
+            'id': u.pk,
+            'username': u.get_username(),
+            'name': u.get_full_name() or u.get_username(),
+            'email': u.email,
+            'role': role,
+            'role_display': dict(UserProfile.ROLES).get(role, role.title() if role else 'Administrator'),
+            'phone': profile.phone if profile else '',
+            'is_superuser': u.is_superuser,
+            'is_staff': u.is_staff,
+            'permissions': {
+                'can_manage_users': role == UserProfile.ADMIN or u.is_superuser,
+                'can_manage_subscription': role == UserProfile.ADMIN or u.is_superuser,
+                'can_manage_developer': role == UserProfile.ADMIN or u.is_superuser,
+                'can_edit_organization': role == UserProfile.ADMIN or u.is_superuser,
+                'can_write_accounting': (role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT)) or u.is_superuser,
+                'can_reconcile_bank': (role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT)) or u.is_superuser,
+                'can_billing': (role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT, UserProfile.CASHIER)) or u.is_superuser,
+                'is_read_only': role == UserProfile.AUDITOR,
+            }
+        },
+        'organization': org_json(Organization.get()),
+        'today': timezone.localdate(),
+        'counts': {
+            'customers': Customer.objects.count(),
+            'vendors': Vendor.objects.count(),
+            'items': Item.objects.count(),
+            'invoices': Invoice.objects.exclude(status='draft').count(),
+            'bills': Bill.objects.exclude(status='draft').count(),
+            'payments': PaymentReceived.objects.count() + PaymentMade.objects.count()
+        }
+    })
 
 
 @api_view
@@ -2209,6 +2334,7 @@ def organization(request):
         return j(org_json(org))
     if request.method not in ('PUT', 'PATCH'):
         raise ApiError(405, 'Method not allowed.')
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
     c = Cleaner(body(request))
     out = {
         'name': c.text('name', True, 200),
@@ -2410,6 +2536,8 @@ def health_view(request):
 
 @api_view
 def reports_view(request, name):
+    if request.method != 'GET':
+        raise ApiError(405, 'Method not allowed.')
     start, end = parse_range(request)
     if name == 'trial-balance':
         as_of = request.GET.get('as_of')
@@ -2493,6 +2621,7 @@ def reports_view(request, name):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_import_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2544,6 +2673,7 @@ def banking_match_suggestions_view(request, txn_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_match_action_view(request, txn_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2557,6 +2687,7 @@ def banking_match_action_view(request, txn_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_unmatch_action_view(request, txn_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2565,6 +2696,7 @@ def banking_unmatch_action_view(request, txn_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_quick_categorize_view(request, txn_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2574,6 +2706,7 @@ def banking_quick_categorize_view(request, txn_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_bulk_categorize_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2584,6 +2717,7 @@ def banking_bulk_categorize_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_exclude_view(request, txn_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2603,6 +2737,7 @@ def banking_dashboard_summary_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_reconcile_view(request, txn_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2616,6 +2751,7 @@ def banking_reconcile_view(request, txn_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_reconcile_complete_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2625,6 +2761,7 @@ def banking_reconcile_complete_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_transfer_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -2713,6 +2850,8 @@ def ewaybill_generate_view(request, doc_type, doc_id):
 
 @api_view
 def transaction_locking_view(request):
+    if request.method == 'POST':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN, UserProfile.ACCOUNTANT])
     if request.method == 'GET':
         lock = LockDate.get_lock()
         return j({
@@ -3127,6 +3266,7 @@ def banking_rules_detail_view(request, pk):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_rollback_view(request, batch_id):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3135,6 +3275,7 @@ def banking_rollback_view(request, batch_id):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_run_automation_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3150,6 +3291,7 @@ def banking_run_automation_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_generate_default_rules_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3252,6 +3394,7 @@ def security_mfa_verify_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def security_backup_create_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3278,6 +3421,7 @@ def security_backup_list_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def security_disaster_recovery_drill_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3362,6 +3506,7 @@ def subscription_summary_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def subscription_update_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3373,12 +3518,14 @@ def subscription_update_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def tenant_admin_summary_view(request):
     res = services.get_tenant_admin_summary()
     return j(res)
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def tenant_admin_invite_user_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3393,6 +3540,7 @@ def tenant_admin_invite_user_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def tenant_admin_update_role_view(request, pk):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
@@ -3402,6 +3550,7 @@ def tenant_admin_update_role_view(request, pk):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def developer_keys_list_create_view(request):
     if request.method == 'POST':
         d = body(request)
@@ -3412,6 +3561,7 @@ def developer_keys_list_create_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def developer_key_revoke_view(request, pk):
     if request.method not in ('POST', 'DELETE'):
         raise ApiError(405, 'Method not allowed.')
@@ -3420,6 +3570,7 @@ def developer_key_revoke_view(request, pk):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def developer_webhooks_list_create_view(request):
     if request.method == 'POST':
         d = body(request)
@@ -3430,6 +3581,7 @@ def developer_webhooks_list_create_view(request):
 
 
 @api_view
+@role_required(UserProfile.ADMIN)
 def developer_webhook_test_view(request, pk):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')

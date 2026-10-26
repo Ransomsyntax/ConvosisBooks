@@ -1459,6 +1459,16 @@ def detect_financial_anomalies():
 
 
 
+def sanitize_ai_text(text):
+    if not text or not isinstance(text, str):
+        return text
+    clean = re.sub(r'<\s*script[^>]*>[\s\S]*?(?:<\s*/\s*script\s*>|$)', '', text, flags=re.IGNORECASE)
+    clean = re.sub(r'<\s*iframe[^>]*>[\s\S]*?(?:<\s*/\s*iframe\s*>|$)', '', clean, flags=re.IGNORECASE)
+    clean = re.sub(r'\bon[a-zA-Z]+\s*=\s*(?:["\'][^"\']*["\']|[^\s>]+)', '', clean, flags=re.IGNORECASE)
+    clean = re.sub(r'href\s*=\s*(?:["\']\s*javascript:[^"\']*["\']|javascript:[^\s>]+)', 'href="#"', clean, flags=re.IGNORECASE)
+    return clean
+
+
 def get_live_accounting_context():
     """
     Computes real-time, live accounting metrics from the ledger database
@@ -1466,18 +1476,18 @@ def get_live_accounting_context():
     """
     today = timezone.localdate()
     m_start = today.replace(day=1)
-    
+
     bank_accounts = list(BankAccount.objects.all())
     total_bank_cash = sum((acc.current_balance or Decimal('0.00')) for acc in bank_accounts)
-    
+
     inv_unpaid = invoice_qs().filter(status__in=['sent', 'partially_paid'])
     total_receivable = sum((inv.total - inv.paid_sum) for inv in inv_unpaid)
     overdue_invs = [inv for inv in inv_unpaid if inv.due_date and inv.due_date < today]
     total_overdue = sum((inv.total - inv.paid_sum) for inv in overdue_invs)
-    
+
     bill_unpaid = bill_qs().filter(status__in=['open', 'partially_paid'])
     total_payable = sum((b.total - b.paid_sum) for b in bill_unpaid)
-    
+
     pnl = profit_and_loss_report(m_start, today)
     gstr1 = gstr1_report(m_start, today)
     gstr3b = gstr3b_report(m_start, today)
@@ -1485,26 +1495,47 @@ def get_live_accounting_context():
     itc_dict = gstr3b.get('section_4_itc', {}).get('net_itc_available', {})
     itc_available = itc_dict.get('cgst', Decimal('0.00')) + itc_dict.get('sgst', Decimal('0.00')) + itc_dict.get('igst', Decimal('0.00'))
     net_gst_payable = max(Decimal('0.00'), output_tax - itc_available)
-    
+
     low_stock_count = Item.objects.filter(track_inventory=True, stock__lte=F('reorder_level'), active=True).count()
     anomalies_count = FinancialAnomaly.objects.filter(status='detected').count()
+    tb = trial_balance_report(today)
+
+    accs_data = [
+        {
+            'id': a.pk,
+            'name': a.name,
+            'bank_name': a.bank_name,
+            'account_number': a.account_number,
+            'balance': a.current_balance,
+            'bank_balance': a.bank_balance
+        }
+        for a in bank_accounts
+    ]
 
     return {
         'as_of_date': today.strftime('%d %B %Y'),
         'total_bank_cash': total_bank_cash,
         'bank_accounts_count': len(bank_accounts),
+        'bank_accounts_list': accs_data,
         'total_receivable': total_receivable,
         'total_overdue': total_overdue,
         'overdue_count': len(overdue_invs),
+        'overdue_invoices': [{'number': i.number, 'customer': i.customer.name, 'due_date': str(i.due_date), 'amount': i.total - i.paid_sum} for i in overdue_invs[:8]],
         'total_payable': total_payable,
         'open_bills_count': len(bill_unpaid),
+        'open_bills': [{'number': b.number, 'vendor': b.vendor.name, 'due_date': str(b.due_date) if b.due_date else '', 'amount': b.total - b.paid_sum} for b in bill_unpaid[:8]],
         'month_income': pnl['total_income'],
         'month_gross_profit': pnl['gross_profit'],
         'month_net_profit': pnl['net_profit'],
         'net_margin_pct': pnl['margin_pct'],
+        'cogs': pnl['total_cogs'],
+        'operating_expenses': pnl['total_operating_expenses'],
         'gst_output_tax': output_tax,
         'gst_itc_credit': itc_available,
         'net_gst_payable': net_gst_payable,
+        'trial_balance_balanced': tb.get('is_balanced', True),
+        'trial_balance_debits': tb.get('total_debit', Decimal('0.00')),
+        'trial_balance_credits': tb.get('total_credit', Decimal('0.00')),
         'low_stock_count': low_stock_count,
         'anomalies_count': anomalies_count,
     }
@@ -1516,6 +1547,156 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
     q = raw_query.lower()
     today = timezone.localdate()
     m_start = today.replace(day=1)
+
+    # 0. Live Bank Accounts & Available Cash Balance Grounding
+    if any(k in q for k in ['bank account', 'bank balance', 'how much money', 'cash balance', 'bank cash', 'in the bank', 'available cash']):
+        ctx = get_live_accounting_context()
+        accs = ctx['bank_accounts_list']
+        rows = [{'Account Name': a['name'], 'Bank': a['bank_name'], 'Account No.': a['account_number'], 'Book Balance': f"₹{a['balance']:,.2f}", 'Statement Balance': f"₹{a['bank_balance']:,.2f}"} for a in accs]
+        return {
+            'query': raw_query,
+            'doubt_topic': 'Connected Bank Accounts & Available Cash',
+            'summary': f"Total available bank cash across {len(accs)} accounts is ₹{ctx['total_bank_cash']:,.2f}.",
+            'answer': (
+                f"### Connected Bank Accounts & Real-Time Cash Position\n\n"
+                f"As of **{ctx['as_of_date']}**, Convosis Books is connected to **{len(accs)} bank accounts** with a total available book balance of **₹{ctx['total_bank_cash']:,.2f}**.\n\n"
+                f"| Bank Account | Institution | Account No. | General Ledger Balance | Statement Balance |\n"
+                f"|:---|:---|:---:|:---:|:---:|\n" +
+                "\n".join([f"| **{a['name']}** | {a['bank_name']} | `{a['account_number']}` | **₹{a['balance']:,.2f}** | ₹{a['bank_balance']:,.2f} |" for a in accs]) +
+                f"\n\n**Reconciliation & Cash Summary:**\n"
+                f"- All cash transactions are reconciled with the double-entry general ledger.\n"
+                f"- Bank transfers update both account balances and post balanced journal entries automatically."
+            ),
+            'key_takeaways': [
+                f"Total liquid bank reserves: ₹{ctx['total_bank_cash']:,.2f}",
+                f"Active bank accounts: {len(accs)}",
+                "Automated bank feeds synchronize daily statement entries."
+            ],
+            'rule_formula': "Total Cash & Bank Equivalents = Sum(All Active BankAccount Current Balances)",
+            'type': 'cards',
+            'cards': [
+                {'label': 'Total Bank Cash', 'value': f"₹{ctx['total_bank_cash']:,.2f}"},
+                {'label': 'Bank Accounts', 'value': str(len(accs))},
+                {'label': 'Receivables', 'value': f"₹{ctx['total_receivable']:,.2f}"}
+            ],
+            'data': rows,
+            'quick_actions': [
+                {'label': 'Banking Hub', 'hash': '#/banking/banking-dashboard'},
+                {'label': 'Bank Reconciliation', 'hash': '#/banking/bank-reconciliation'},
+                {'label': 'Record Transfer', 'hash': '#/banking/transfers'}
+            ],
+            'related_doubts': [
+                'How do automated bank feeds and auto-matching work?',
+                'Show overdue customer invoices and balances',
+                'What is our current month revenue & net margin?'
+            ]
+        }
+
+    # Specific Document Lookup: Invoice Number
+    inv_match = re.search(r'\b(INV-?\d+)\b', raw_query, re.IGNORECASE)
+    if inv_match:
+        inv_num = inv_match.group(1).upper()
+        inv = invoice_qs().filter(number__iexact=inv_num).first() or invoice_qs().filter(number__icontains=inv_num.replace('-', '')).first()
+        if inv:
+            paid = q2(getattr(inv, 'paid_sum', Decimal('0.00')))
+            bal = inv.total - paid
+            st = 'Paid' if bal <= 0 else ('Overdue' if (inv.due_date and inv.due_date < today) else ('Partially Paid' if paid > 0 else 'Sent'))
+            return {
+                'query': raw_query,
+                'doubt_topic': f"Invoice Record: {inv.number}",
+                'summary': f"Invoice {inv.number} for {inv.customer.name} is {st}. Total: ₹{inv.total:,.2f}, Balance Due: ₹{bal:,.2f}.",
+                'answer': (
+                    f"### Invoice Details: `{inv.number}`\n\n"
+                    f"- **Customer**: **{inv.customer.name}** ({inv.customer.company or 'Direct Customer'})\n"
+                    f"- **Date Issued**: **{inv.date}** | **Due Date**: **{inv.due_date}**\n"
+                    f"- **Invoice Total**: **₹{inv.total:,.2f}** (Subtotal: ₹{inv.subtotal:,.2f})\n"
+                    f"- **Amount Paid**: **₹{paid:,.2f}**\n"
+                    f"- **Outstanding Balance Due**: **₹{bal:,.2f}**\n"
+                    f"- **Status**: **{st}**\n"
+                    f"- **Place of Supply**: {inv.place_of_supply or 'Home State'}\n\n"
+                    f"This invoice is posted to the general ledger and recorded under Accounts Receivable."
+                ),
+                'key_takeaways': [
+                    f"Invoice {inv.number} balance due: ₹{bal:,.2f}",
+                    f"Current status: {st}",
+                    f"Issued to {inv.customer.name}"
+                ],
+                'rule_formula': "Balance Due = Total Amount - Settled Payment Allocations",
+                'type': 'cards',
+                'cards': [
+                    {'label': 'Invoice Total', 'value': f"₹{inv.total:,.2f}"},
+                    {'label': 'Paid', 'value': f"₹{paid:,.2f}"},
+                    {'label': 'Balance Due', 'value': f"₹{bal:,.2f}"}
+                ],
+                'quick_actions': [
+                    {'label': 'View Invoices', 'hash': '#/sales/invoices'},
+                    {'label': 'Record Payment', 'hash': '#/sales/payments-received'}
+                ]
+            }
+
+    # Expense & Spending Breakdown Grounding
+    if any(k in q for k in ['expense', 'spending', 'what did we spend', 'expenditure']) and not any(k in q for k in ['spike', 'anomal']):
+        exps = Expense.objects.select_related('expense_account', 'vendor').order_by('-date')
+        tot_exp = exps.aggregate(s=Sum('total'))['s'] or Decimal('0.00')
+        exp_by_acc = {}
+        for e in exps[:25]:
+            aname = e.expense_account.name if e.expense_account else 'General Expense'
+            exp_by_acc[aname] = exp_by_acc.get(aname, Decimal('0.00')) + e.total
+        rows = [{'Expense Category': k, 'Total Spent': f"₹{v:,.2f}"} for k, v in exp_by_acc.items()]
+        return {
+            'query': raw_query,
+            'doubt_topic': 'Business Expenses & Spending Breakdown',
+            'summary': f"Total recorded business expenditure is ₹{tot_exp:,.2f} across {exps.count()} expense vouchers.",
+            'answer': (
+                f"### Expense Analysis & Operational Spending\n\n"
+                f"Cumulative recorded expenditure across all categories is **₹{tot_exp:,.2f}** across **{exps.count()} vouchers**.\n\n"
+                f"**Top Spending Categories:**\n" +
+                "\n".join([f"- **{k}**: **₹{v:,.2f}**" for k, v in list(exp_by_acc.items())[:6]]) +
+                f"\n\nAll expenses are debit-normal nominal accounts posted in accordance with double-entry principles."
+            ),
+            'key_takeaways': [
+                f"Total recorded expenses: ₹{tot_exp:,.2f}",
+                f"Vouchers tracked: {exps.count()}",
+                "Operating expenses directly reduce Net Margin in the Profit & Loss statement."
+            ],
+            'rule_formula': "Operating Expenses = Sum of all Debit postings to Expense Accounts",
+            'type': 'table',
+            'data': rows,
+            'quick_actions': [
+                {'label': 'Expenses Hub', 'hash': '#/purchases/expenses'},
+                {'label': 'Profit & Loss Statement', 'hash': '#/reports/business-overview'}
+            ]
+        }
+
+    # Accounts Payable / Vendor Bills Grounding
+    if any(k in q for k in ['open bill', 'vendor bill', 'payable', 'what do we owe', 'vendor dues']) and not any(k in q for k in ['duplicate', 'eway']):
+        b_unpaid = list(bill_qs().filter(status__in=['open', 'partially_paid']))
+        tot_payable = sum((b.total - b.paid_sum) for b in b_unpaid)
+        rows = [{'Number': b.number, 'Vendor': b.vendor.name, 'Due Date': str(b.due_date) if b.due_date else 'Immediate', 'Balance': f"₹{b.total - b.paid_sum:,.2f}"} for b in b_unpaid[:8]]
+        return {
+            'query': raw_query,
+            'doubt_topic': 'Accounts Payable & Vendor Bills',
+            'summary': f"There are {len(b_unpaid)} open vendor bills totaling ₹{tot_payable:,.2f} in pending payables.",
+            'answer': (
+                f"### Accounts Payable & Open Vendor Bills\n\n"
+                f"You currently have **{len(b_unpaid)} open vendor bills** with an unpaid liability balance of **₹{tot_payable:,.2f}**.\n\n"
+                f"**Pending Vendor Invoices:**\n" +
+                "\n".join([f"- **{b.number}** ({b.vendor.name}): **₹{b.total - b.paid_sum:,.2f}** due {b.due_date or 'on receipt'}" for b in b_unpaid[:6]]) +
+                f"\n\nClearing vendor bills within 180 days ensures that Input Tax Credit (ITC) under GST Section 16(2) remains valid."
+            ),
+            'key_takeaways': [
+                f"Total outstanding payables: ₹{tot_payable:,.2f}",
+                f"Open vendor bills: {len(b_unpaid)}",
+                "Payment allocations automatically generate vendor payment vouchers."
+            ],
+            'rule_formula': "Accounts Payable = Sum of Unpaid Vendor Bills (Credit Normal Liability)",
+            'type': 'table',
+            'data': rows,
+            'quick_actions': [
+                {'label': 'Vendor Bills', 'hash': '#/purchases/bills'},
+                {'label': 'Record Vendor Payment', 'hash': '#/purchases/payments-made'}
+            ]
+        }
 
     if ('briefing' in q or 'summary' in q or 'executive' in q or 'health' in q or 'status' in q or 'how is our business' in q or 'overview' in q or 'position' in q) and not ('gstr' in q or 'tax' in q or 'audit' in q):
         ctx = get_live_accounting_context()
@@ -2346,6 +2527,14 @@ def process_convobot_query(query, category=None, history=None, user=None):
     res['model'] = getattr(settings, 'LLM_MODEL', 'gpt-4o-mini')
     res['provider'] = getattr(settings, 'LLM_PROVIDER', 'openai')
     res['llm_grounded'] = True
+
+    # Sanitize all text fields to ensure secure HTML rendering
+    for k in ('answer', 'summary', 'doubt_topic', 'rule_formula'):
+        if k in res and isinstance(res[k], str):
+            res[k] = sanitize_ai_text(res[k])
+    if 'key_takeaways' in res and isinstance(res['key_takeaways'], list):
+        res['key_takeaways'] = [sanitize_ai_text(t) for t in res['key_takeaways']]
+
     return res
 
 
@@ -3186,6 +3375,9 @@ def record_bank_transfer(data, user=None):
         raise ApiError(400, 'Transfer amount must be greater than zero.')
 
     dt = data.get('date') or timezone.localdate()
+    check_transaction_lock(dt)
+    if from_acc.current_balance < amount:
+        raise ApiError(400, f"Insufficient funds in {from_acc.name}. Available balance: ₹{from_acc.current_balance:,.2f}, transfer amount: ₹{amount:,.2f}.")
     ref = data.get('reference', '')
     desc = data.get('description', '')
     notes = data.get('notes', '')
@@ -3243,8 +3435,6 @@ def record_bank_transfer(data, user=None):
             reference=f"TXF {xfer_num}",
             entry_type='transfer',
             notes=f"Bank Transfer from {from_acc.name} to {to_acc.name}",
-            total_debit=amount,
-            total_credit=amount,
             created_by=user if getattr(user, 'pk', None) else None
         )
         JournalItem.objects.create(journal=jnl, account=to_gl, debit=amount, credit=Decimal('0.00'), description=f"Transfer into {to_acc.name}")
@@ -3261,10 +3451,12 @@ def record_bank_transfer(data, user=None):
     }
 
 
+@transaction.atomic
 def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0.00'), notes='', user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    check_transaction_lock(txn.date)
 
     entity_label = f"{entity_type.replace('_', ' ').title()} #{entity_id}"
     if entity_type == 'invoice':
@@ -3313,10 +3505,12 @@ def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0
     }
 
 
+@transaction.atomic
 def unmatch_bank_transaction_action(txn_id, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    check_transaction_lock(txn.date)
 
     prev_label = (txn.match_metadata or {}).get('entity_label') or f"{txn.matched_entity_type} #{txn.matched_entity_id}"
     txn.status = 'unmatched'
@@ -3336,10 +3530,12 @@ def unmatch_bank_transaction_action(txn_id, user=None):
     }
 
 
+@transaction.atomic
 def quick_categorize_bank_transaction(txn_id, data, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    check_transaction_lock(txn.date)
 
     ttype = data.get('transaction_type', 'Expense')
     acc_id = data.get('category_account_id') or data.get('account_id')
@@ -3367,6 +3563,7 @@ def quick_categorize_bank_transaction(txn_id, data, user=None):
     }
 
 
+@transaction.atomic
 def bulk_categorize_bank_transactions(txn_ids, data, user=None):
     results = []
     for tid in txn_ids:
@@ -3394,6 +3591,7 @@ def toggle_exclude_bank_transaction(txn_id, user=None):
     return {'id': txn.pk, 'status': txn.status, 'message': msg}
 
 
+@transaction.atomic
 def complete_bank_reconciliation(data, user=None):
     acc_id = data.get('bank_account_id') or data.get('bank_account')
     acc = BankAccount.objects.filter(pk=acc_id).first()
@@ -3401,6 +3599,7 @@ def complete_bank_reconciliation(data, user=None):
         raise ApiError(404, 'Bank account not found.')
 
     stmt_date = data.get('statement_date') or timezone.localdate()
+    check_transaction_lock(stmt_date)
     ending_bal = Decimal(str(data.get('statement_ending_balance', 0)))
     cleared_ids = data.get('cleared_transaction_ids', [])
     notes = data.get('notes', '')

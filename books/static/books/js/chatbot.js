@@ -651,14 +651,31 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .convobot-input-hint {
-        font-size: 11px;
-        color: #000000;
-        display: flex;
-        justify-content: space-between;
-      }
       .convobot-input-hint b {
         color: #ea580c;
+      }
+
+      @media (max-width: 640px) {
+        #convobot-launcher {
+          bottom: 16px;
+          right: 16px;
+          padding: 4px 8px 4px 4px;
+        }
+        .convobot-launcher-sub {
+          display: none;
+        }
+        #convobot-widget {
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: 100vw !important;
+          max-height: 100vh !important;
+          border-radius: 0 !important;
+          border: none !important;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -902,39 +919,166 @@
     container.innerHTML = renderPromptButtons(prompts);
   }
 
+  function sanitizeBotHtml(dirty) {
+    if (!dirty) return '';
+    const allowedTags = new Set([
+      'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'B', 'STRONG', 'I', 'EM', 'U',
+      'CODE', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY',
+      'TR', 'TH', 'TD', 'DIV', 'SPAN', 'BR', 'HR', 'A'
+    ]);
+    const parser = new DOMParser();
+    const doc = parser.parseFromString('<div>' + dirty + '</div>', 'text/html');
+    const container = doc.body.firstElementChild || doc.body;
+
+    function cleanNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) return;
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        node.remove();
+        return;
+      }
+      const tagName = node.tagName.toUpperCase();
+      if (!allowedTags.has(tagName)) {
+        const text = doc.createTextNode(node.textContent || '');
+        node.replaceWith(text);
+        return;
+      }
+
+      // Sanitize attributes
+      const attrs = Array.from(node.attributes);
+      for (const attr of attrs) {
+        const name = attr.name.toLowerCase();
+        const val = attr.value || '';
+        if (name.startsWith('on')) {
+          node.removeAttribute(name);
+        } else if (name === 'href') {
+          const valLower = val.trim().toLowerCase();
+          if (valLower.startsWith('javascript:') || valLower.startsWith('data:') || valLower.startsWith('vbscript:')) {
+            node.removeAttribute('href');
+          } else {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+          }
+        } else if (name === 'style') {
+          const valLower = val.toLowerCase();
+          if (valLower.includes('expression') || valLower.includes('behavior') || valLower.includes('javascript:') || valLower.includes('url(')) {
+            node.removeAttribute('style');
+          }
+        } else if (!['class', 'id', 'data-hash', 'data-query', 'title', 'target', 'rel'].includes(name)) {
+          node.removeAttribute(name);
+        }
+      }
+
+      // Recursively clean children
+      Array.from(node.childNodes).forEach(cleanNode);
+    }
+
+    Array.from(container.childNodes).forEach(cleanNode);
+    return container.innerHTML;
+  }
+
   function parseMarkdown(md) {
     if (!md) return '';
-    let out = esc(md);
 
-    out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-    out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+    // Step 1: Extract code blocks and formulas to protect them from regex mangling
+    const placeholders = [];
+    let text = String(md);
 
-    out = out.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-    out = out.replace(/\*(.*?)\*/g, '<i>$1</i>');
-
-    out = out.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-    out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    out = out.replace(/\$\$(.*?)\$\$/g, '<div class="convobot-formula-box">$1</div>');
-
-    const tableRegex = /\|(.+)\|[\r\n]+\|[-:| ]+\|[\r\n]+((?:\|.+|[\r\n]*)+)/g;
-    out = out.replace(tableRegex, (match, header, rows) => {
-      const ths = header.split('|').map(c => c.trim()).filter(Boolean).map(c => `<th>${c}</th>`).join('');
-      const trs = rows.trim().split('\n').map(row => {
-        const tds = row.split('|').map(c => c.trim()).filter(Boolean).map(c => `<td>${c}</td>`).join('');
-        return `<tr>${tds}</tr>`;
-      }).join('');
-      return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+    // Multi-line code blocks
+    text = text.replace(/```([a-z0-9_-]*)\s*\n?([\s\S]*?)```/gi, function(match, lang, codeContent) {
+      const idx = placeholders.length;
+      placeholders.push('<pre class="convobot-code-block"><code>' + esc(codeContent.trim()) + '</code></pre>');
+      return '@@@CB_BLOCK_' + idx + '@@@';
     });
 
-    out = out.replace(/^\s*-\s+(.*$)/gim, '<li>$1</li>');
-    out = out.replace(/(<li>[\s\S]*<\/li>)/, '<ul>$1</ul>');
+    // Inline code
+    text = text.replace(/`([^`\n]+)`/g, function(match, codeContent) {
+      const idx = placeholders.length;
+      placeholders.push('<code class="convobot-inline-code">' + esc(codeContent) + '</code>');
+      return '@@@CB_BLOCK_' + idx + '@@@';
+    });
 
-    out = out.replace(/^\s*\d+\.\s+(.*$)/gim, '<li>$1</li>');
+    // Math formulas
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, function(match, formula) {
+      const idx = placeholders.length;
+      placeholders.push('<div class="convobot-formula-box">' + esc(formula.trim()) + '</div>');
+      return '@@@CB_BLOCK_' + idx + '@@@';
+    });
 
-    out = out.replace(/\n\n/g, '<br><br>');
+    // Step 2: Escape raw HTML in the remaining text
+    let out = esc(text);
 
-    return out;
+    // Step 3: Markdown Headings
+    out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+    out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+    out = out.replace(/^## (.*$)/gim, '<h3>$1</h3>');
+    out = out.replace(/^# (.*$)/gim, '<h3>$1</h3>');
+
+    // Step 4: Bold and Italic
+    out = out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    out = out.replace(/__(.+?)__/g, '<b>$1</b>');
+    out = out.replace(/\*([^\*\n]+)\*/g, '<i>$1</i>');
+    out = out.replace(/_([^_\n]+)_/g, '<i>$1</i>');
+
+    // Step 5: Safe Markdown Links [text](url)
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(match, label, href) {
+      const hrefClean = href.trim();
+      const hrefLower = hrefClean.toLowerCase();
+      if (hrefLower.startsWith('http://') || hrefLower.startsWith('https://') || hrefLower.startsWith('#') || hrefLower.startsWith('mailto:')) {
+        return '<a href="' + hrefClean + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      }
+      return label;
+    });
+
+    // Step 6: Markdown Tables
+    const tableRegex = /\|(.+)\|[\r\n]+\|[-:| ]+\|[\r\n]+((?:\|.+|[\r\n]*)+)/g;
+    out = out.replace(tableRegex, function(match, header, rows) {
+      const ths = header.split('|').map(c => c.trim()).filter(Boolean).map(c => '<th>' + c + '</th>').join('');
+      const trs = rows.trim().split('\n').map(row => {
+        const tds = row.split('|').map(c => c.trim()).filter(Boolean).map(c => '<td>' + c + '</td>').join('');
+        return '<tr>' + tds + '</tr>';
+      }).join('');
+      return '<div class="convobot-table-wrap"><table><thead><tr>' + ths + '</tr></thead><tbody>' + trs + '</tbody></table></div>';
+    });
+
+    // Step 7: Unordered and Ordered Lists
+    const lines = out.split('\n');
+    let inUl = false;
+    let inOl = false;
+    const processedLines = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const ulMatch = line.match(/^\s*[-*]\s+(.*)$/);
+      const olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
+
+      if (ulMatch) {
+        if (inOl) { processedLines.push('</ol>'); inOl = false; }
+        if (!inUl) { processedLines.push('<ul>'); inUl = true; }
+        processedLines.push('<li>' + ulMatch[1] + '</li>');
+      } else if (olMatch) {
+        if (inUl) { processedLines.push('</ul>'); inUl = false; }
+        if (!inOl) { processedLines.push('<ol>'); inOl = true; }
+        processedLines.push('<li>' + olMatch[2] + '</li>');
+      } else {
+        if (inUl) { processedLines.push('</ul>'); inUl = false; }
+        if (inOl) { processedLines.push('</ol>'); inOl = false; }
+        processedLines.push(line);
+      }
+    }
+    if (inUl) processedLines.push('</ul>');
+    if (inOl) processedLines.push('</ol>');
+    out = processedLines.join('\n');
+
+    // Step 8: Paragraphs and Line Breaks
+    out = out.replace(/\n\n+/g, '<br><br>');
+
+    // Step 9: Restore placeholders
+    out = out.replace(/@@@CB_BLOCK_(\d+)@@@/g, function(match, idx) {
+      return placeholders[Number(idx)] || '';
+    });
+
+    // Step 10: Run full DOM sanitizer to guarantee XSS immunity
+    return sanitizeBotHtml(out);
   }
 
   async function handleSend(customQuery) {

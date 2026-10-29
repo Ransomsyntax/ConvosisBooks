@@ -6,7 +6,20 @@ function listPage(root, cfg) {
   const st = { q: '', page: 1, size: 10, ordering: cfg.ordering || '', f: {} };
   let cache = {};
   root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act"><button class="btn" data-x="csv" type="button">Export CSV</button>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
-<div class="card" style="margin-top:14px"><div class="tb"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts, '')}</select>`).join('')}<span class="sub" id="cnt"></span></div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
+<div class="card" style="margin-top:14px"><div class="tb"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts || [], '')}</select>`).join('')}<span class="sub" id="cnt"></span></div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
+  if (cfg.filters) {
+    for (const f of cfg.filters) {
+      if (f.loadOpts) {
+        f.loadOpts().then(newOpts => {
+          const sel = root.querySelector(`select[data-f="${f.name}"]`);
+          if (sel) {
+            const curVal = sel.value;
+            sel.innerHTML = opts(newOpts, curVal);
+          }
+        }).catch(() => {});
+      }
+    }
+  }
   const params = () => ({ ...(cfg.params || {}), ...st.f, q: st.q, ordering: st.ordering });
   async function load() {
     PAGE.reload = load;
@@ -125,18 +138,52 @@ const LISTS = {
   },
   inventory: {
     api: 'items', title: 'Inventory Summary', bc: 'Inventory', params: { tracked: 1 }, empty: 'No inventory-tracked items yet. Create a goods item with “Track inventory” on.',
-    filters: [{ name: 'stock', label: 'Stock level', opts: [['', 'All'], ['low', 'Low stock'], ['out', 'Out of stock']] }],
-    cols: [{ h: 'Item', s: 'name', f: r => esc(r.name) }, { h: 'SKU', s: 'sku', f: r => esc(r.sku) }, { h: 'On hand', s: 'stock', r: 1, f: r => qty(r.stock) + ' ' + esc(r.unit) }, { h: 'Reorder at', r: 1, f: r => qty(r.reorder_level) }, { h: 'Unit cost', ...money(r => inr(r.purchase_price)) }, { h: 'Stock value', ...money(r => inr(r.valuation)) }, { h: 'Status', f: r => badge(r.status) }],
+    filters: [
+      { name: 'stock', label: 'Stock level', opts: [['', 'All Stock Levels'], ['low', 'Low stock'], ['out', 'Out of stock']] },
+      { name: 'warehouse', label: 'Warehouse', loadOpts: async () => [['', 'All Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
+    ],
+    cols: [
+      { h: 'Warehouse Code', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || 'WH-MAIN')}</span>` },
+      { h: 'Item', s: 'name', f: r => esc(r.name) },
+      { h: 'SKU', s: 'sku', f: r => esc(r.sku || '—') },
+      { h: 'On hand', s: 'stock', r: 1, f: r => qty(r.stock) + ' ' + esc(r.unit) },
+      { h: 'Reorder at', r: 1, f: r => qty(r.reorder_level) },
+      { h: 'Unit cost', ...money(r => inr(r.purchase_price)) },
+      { h: 'Stock value', ...money(r => inr(r.valuation)) },
+      { h: 'Status', f: r => badge(r.status) }
+    ],
     actions: () => [['adjust', 'Adjust']], onAction: (a, r) => adjustForm(r.id),
   },
   adjustments: {
     api: 'stock-adjustments', title: 'Stock Adjustments', bc: 'Inventory', newLabel: 'New adjustment', onNew: () => adjustForm(), ordering: '-date', empty: 'No stock adjustments yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Reference', f: r => esc(r.reference) }, { h: 'Item', s: 'item', f: r => esc(r.item) }, { h: 'Reason', f: r => esc(r.reason) }, { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` }, { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }],
+    filters: [
+      { name: 'warehouse', label: 'Warehouse', loadOpts: async () => [['', 'All Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
+    ],
+    cols: [
+      { h: 'Date & Time', s: 'date', f: r => `${fd(r.date)} ${r.adjusted_time ? `<small style="color:var(--tx-muted);font-weight:600;margin-left:4px;">${esc(r.adjusted_time)}</small>` : ''}` },
+      { h: 'Warehouse Code', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')}</span>` },
+      { h: 'Reference', f: r => esc(r.reference) },
+      { h: 'Item', s: 'item', f: r => esc(r.item) },
+      { h: 'Reason', f: r => esc(r.reason) },
+      { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` },
+      { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }
+    ],
   },
   movements: {
-    api: 'stock-movements', title: 'Stock Movement', bc: 'Inventory', ordering: '-date', empty: 'No stock movements yet.',
-    filters: [{ name: 'kind', label: 'Type', opts: [['', 'All types'], ['opening', 'Opening stock'], ['sale', 'Sales'], ['sale_void', 'Sales voided'], ['purchase', 'Purchases'], ['purchase_void', 'Purchases voided'], ['adjustment', 'Adjustments']] }],
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Item', s: 'item', f: r => esc(r.item) }, { h: 'Type', f: r => esc(r.kind_label) }, { h: 'Reference', f: r => esc(r.reference || '—') }, { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` }, { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }],
+    api: 'stock-movements', title: 'Stock Movement', bc: 'Inventory', newLabel: 'Move stock', onNew: () => stockMoveModal(), ordering: '-date', empty: 'No stock movements yet.',
+    filters: [
+      { name: 'kind', label: 'Type', opts: [['', 'All types'], ['transfer', 'Warehouse Transfers'], ['opening', 'Opening stock'], ['sale', 'Sales'], ['sale_void', 'Sales voided'], ['purchase', 'Purchases'], ['purchase_void', 'Purchases voided'], ['adjustment', 'Adjustments']] },
+      { name: 'warehouse', label: 'Warehouse', loadOpts: async () => [['', 'All Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
+    ],
+    cols: [
+      { h: 'Date & Time', s: 'date', f: r => `${fd(r.date)} ${r.adjusted_time ? `<small style="color:var(--tx-muted);font-weight:600;margin-left:4px;">${esc(r.adjusted_time)}</small>` : ''}` },
+      { h: 'Item', s: 'item', f: r => esc(r.item) },
+      { h: 'Warehouse', f: r => r.to_warehouse_code ? `<span class="pastel-chip chip-sky" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')} → ${esc(r.to_warehouse_code)}</span>` : `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')}</span>` },
+      { h: 'Type', f: r => badge(r.kind_label || r.kind) },
+      { h: 'Reference', f: r => esc(r.reference || '—') },
+      { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` },
+      { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }
+    ],
   },
   'sales-orders': {
     api: 'sales-orders', title: 'Sales Orders', bc: 'Sales', newLabel: 'New sales order', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No sales orders yet.',
@@ -317,7 +364,14 @@ const LISTS = {
   },
   warehouses: {
     api: 'warehouses', title: 'Warehouses', bc: 'Inventory', newLabel: 'New warehouse', onNew: () => warehouseModal(), ordering: 'name', empty: 'No warehouses configured.',
-    cols: [{ h: 'Code', s: 'code', f: r => `<b>${esc(r.code)}</b>` }, { h: 'Warehouse Name', s: 'name', f: r => `<b>${esc(r.name)}</b>${r.is_primary ? ' <span class="pastel-chip chip-lavender" style="font-size:10px;padding:1px 6px;">Primary</span>' : ''}` }, { h: 'City', f: r => esc(r.city || '—') }, { h: 'State', f: r => esc(r.state || '—') }],
+    cols: [
+      { h: 'Code', s: 'code', f: r => `<b>${esc(r.code)}</b>` },
+      { h: 'Warehouse Name', s: 'name', f: r => `<b>${esc(r.name)}</b>${r.is_primary ? ' <span class="pastel-chip chip-lavender" style="font-size:10px;padding:1px 6px;">Primary</span>' : ''}` },
+      { h: 'Warehouse Type', f: r => r.is_sub_warehouse ? `<span class="pastel-chip chip-amber" style="font-size:11px;">Sub-warehouse of <b>${esc(r.parent_code || r.parent_name)}</b></span>` : `<span class="pastel-chip chip-mint" style="font-size:11px;">Main Warehouse</span>` },
+      { h: 'Database', f: () => `<span class="pastel-chip chip-sky" style="font-size:10.5px;">Shared Database</span>` },
+      { h: 'City', f: r => esc(r.city || '—') },
+      { h: 'State', f: r => esc(r.state || '—') }
+    ],
     actions: () => [['delete', 'Delete', 'd']],
     onAction: (a, r) => deleteRecord('warehouses', r, 'warehouse'),
   },

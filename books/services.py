@@ -30,7 +30,7 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
                      StockMovement, TenantSubscription, UserProfile, Vendor, VendorPortalAccess,
-                     WebhookSubscription)
+                     Warehouse, WebhookSubscription)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
@@ -126,17 +126,66 @@ def check_transaction_lock(doc_date):
 
 
 
-def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes=''):
+def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes='', warehouse=None, warehouse_code='', adjusted_at=None, to_warehouse=None, to_warehouse_code=''):
     check_transaction_lock(on)
     item = Item.objects.select_for_update().get(pk=item_id)
     new = item.stock + change
     if new < 0:
         raise ApiError(400, f'Insufficient stock for {item.name}: available {fmt_qty(item.stock)}, required {fmt_qty(-change)}.')
     item.stock = new
-    item.save(update_fields=['stock'])
-    StockMovement.objects.create(item=item, date=on, kind=kind, reference=reference, change=change,
-                                 balance_after=new, reason=reason, notes=notes,
-                                 created_by=user if getattr(user, 'pk', None) else None)
+    uf = ['stock']
+    if warehouse and not item.warehouse_id:
+        item.warehouse = warehouse
+        uf.append('warehouse')
+    if warehouse_code and not item.warehouse_code:
+        item.warehouse_code = warehouse_code
+        uf.append('warehouse_code')
+    item.save(update_fields=uf)
+    if not warehouse_code and warehouse:
+        warehouse_code = warehouse.code
+    if not to_warehouse_code and to_warehouse:
+        to_warehouse_code = to_warehouse.code
+
+    return StockMovement.objects.create(
+        item=item, date=on, adjusted_at=adjusted_at,
+        warehouse=warehouse, warehouse_code=warehouse_code,
+        to_warehouse=to_warehouse, to_warehouse_code=to_warehouse_code,
+        kind=kind, reference=reference, change=change,
+        balance_after=new, reason=reason, notes=notes,
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+
+
+@transaction.atomic
+def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjusted_at=None, user=None, reason='Warehouse Transfer', notes='', reference=''):
+    check_transaction_lock(on)
+    if from_warehouse_id == to_warehouse_id:
+        raise ApiError(400, 'Source and destination warehouses cannot be the same.')
+    item = Item.objects.select_for_update().get(pk=item_id)
+    if qty <= Decimal('0'):
+        raise ApiError(400, 'Transfer quantity must be greater than zero.')
+    if item.stock < qty:
+        raise ApiError(400, f'Insufficient stock for {item.name}: available {fmt_qty(item.stock)}, required {fmt_qty(qty)}.')
+    from_wh = Warehouse.objects.filter(pk=from_warehouse_id).first()
+    to_wh = Warehouse.objects.filter(pk=to_warehouse_id).first()
+    if not from_wh or not to_wh:
+        raise ApiError(400, 'Select valid source and destination warehouses.')
+    if not reference:
+        reference = next_number('TRF')
+
+    mv = StockMovement.objects.create(
+        item=item, date=on, adjusted_at=adjusted_at,
+        warehouse=from_wh, warehouse_code=from_wh.code,
+        to_warehouse=to_wh, to_warehouse_code=to_wh.code,
+        kind='transfer', reference=reference, change=qty,
+        balance_after=item.stock, reason=reason or 'Warehouse Transfer', notes=notes,
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+    item.warehouse = to_wh
+    item.warehouse_code = to_wh.code
+    item.save(update_fields=['warehouse', 'warehouse_code'])
+    log_audit(user, 'transfer', 'StockMovement', mv.pk, f'Transferred {fmt_qty(qty)} {item.unit} of {item.name} from {from_wh.code} to {to_wh.code}')
+    return mv
 
 
 def stock_totals(doc):
@@ -150,7 +199,10 @@ def stock_totals(doc):
 
 def apply_stock(doc, sign, kind, user):
     for item_id, qty in sorted(stock_totals(doc).items()):
-        move_stock(item_id, sign * qty, kind, doc.number, doc.date, user)
+        it = Item.objects.filter(pk=item_id).first()
+        wh = it.warehouse if it else None
+        wh_code = it.warehouse_code if it else ''
+        move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wh_code)
 
 
 

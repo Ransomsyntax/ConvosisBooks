@@ -1063,7 +1063,7 @@ async function partyForm(kind, id) {
 
 
 async function itemForm(id) {
-  const [r, vendors] = await Promise.all([
+  const [r, vendors, warehouses] = await Promise.all([
     id ? api(`items/${id}/`) : {
       type: 'goods',
       item_type: 'goods',
@@ -1073,6 +1073,8 @@ async function itemForm(id) {
       active: true,
       unit: 'pcs',
       track_inventory: true,
+      warehouse_id: null,
+      warehouse_code: '',
       tax_preference: 'taxable',
       sales_account: 'Sales',
       purchase_account: 'Cost of Goods Sold',
@@ -1085,7 +1087,8 @@ async function itemForm(id) {
       reorder_level: '',
       sku: ''
     },
-    api('lookup/vendors/').catch(() => [])
+    api('lookup/vendors/').catch(() => []),
+    api('lookup/warehouses/').catch(() => [])
   ]);
 
   const isGoods = (r.type || r.item_type || 'goods') === 'goods';
@@ -1303,29 +1306,31 @@ async function itemForm(id) {
       </div>
 
       <div class="zb-form-row">
-        <label for="item_sku" class="zb-form-label">SKU<span class="rq">*</span> <span class="zb-info-tip" title="Stock Keeping Unit (unique identifier)">ⓘ</span></label>
+        <label for="item_sku" class="zb-form-label">SKU <span class="zb-info-tip" title="Stock Keeping Unit (Optional - auto-generated if left blank)">ⓘ</span></label>
         <div class="zb-form-ctrl">
-          <input class="in" type="text" id="item_sku" name="sku" value="${esc(r.sku || '')}" placeholder="e.g. PROD-001" maxlength="60" required style="text-transform:uppercase;max-width:260px;">
+          <input class="in" type="text" id="item_sku" name="sku" value="${esc(r.sku || '')}" placeholder="Optional (e.g. PROD-001 or auto)" maxlength="60" style="text-transform:uppercase;max-width:260px;">
           <div class="er" data-err="sku" role="alert"></div>
         </div>
       </div>
 
       <div class="zb-form-row">
-        <label for="item_hsn" class="zb-form-label">HSN / SAC Code</label>
+        <label for="item_hsn" class="zb-form-label">HSN / SAC Code <span class="zb-info-tip" title="6-digit GST classification code">ⓘ</span></label>
         <div class="zb-form-ctrl">
           <div class="hsn-search-wrap">
-            <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="Type to add or search HSN/SAC" maxlength="10">
+            <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="6-digit HSN/SAC code (e.g. 847130)" maxlength="6" pattern="[0-9]{6}">
             <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <datalist id="hsn_presets">
-              <option value="8471">8471 - Computers, laptops & electronic hardware</option>
-              <option value="8517">8517 - Telephones, smartphones & transmission apparatus</option>
-              <option value="8528">8528 - Monitors, displays & televisions</option>
-              <option value="4820">4820 - Registers, notebooks & office stationery</option>
-              <option value="9983">9983 - Professional, IT & software consulting services</option>
-              <option value="9984">9984 - Telecommunications & cloud information services</option>
-              <option value="9987">9987 - Maintenance, support & engineering repair services</option>
+              <option value="847130">847130 - Portable computers, laptops & notebooks</option>
+              <option value="847150">847150 - Digital processing units & servers</option>
+              <option value="851713">851713 - Smartphones & cellular devices</option>
+              <option value="852852">852852 - Computer monitors & visual display units</option>
+              <option value="482010">482010 - Registers, account books & office stationery</option>
+              <option value="998313">998313 - Information technology consulting & software development</option>
+              <option value="998314">998314 - Cloud hosting, infrastructure & IT data processing</option>
+              <option value="998713">998713 - Maintenance & repair of IT equipment</option>
             </datalist>
           </div>
+          <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">Standard 6-digit numeric HSN (goods) or SAC (services) code</div>
           <div class="er" data-err="hsn_sac" role="alert"></div>
         </div>
       </div>
@@ -1427,50 +1432,63 @@ async function itemForm(id) {
       </div>
 
       <!-- Purchase Information -->
+      <!-- Purchase Information -->
       <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
-        <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;color:var(--tx);">Purchase Information</h4>
         <div class="zb-form-row">
-          <label for="item_purchase_price" class="zb-form-label">Cost Price<span class="rq">*</span></label>
+          <div class="zb-form-label"></div>
           <div class="zb-form-ctrl">
-            <div style="display:flex;max-width:260px;">
-              <span class="zb-input-prefix">INR</span>
-              <input class="in" type="number" step="0.01" min="0" id="item_purchase_price" name="purchase_price" value="${esc(r.purchase_price || '')}" placeholder="0.00" required>
+            <label class="ck" style="height:35px;display:flex;align-items:center;">
+              <input type="checkbox" id="chkPurchaseInfo" name="enable_purchase_info" ${(r.purchase_price && Number(r.purchase_price) > 0) || r.preferred_vendor_id ? 'checked' : ''}>
+              <b>Include Purchase Information</b>
+              <span class="sub" style="margin-left:8px;font-size:11.5px;color:var(--tx-muted);">(Optional - check to show essential purchase fields)</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="purchaseFieldsWrap" style="${((r.purchase_price && Number(r.purchase_price) > 0) || r.preferred_vendor_id) ? '' : 'display:none;'}">
+          <div class="zb-form-row">
+            <label for="item_purchase_price" class="zb-form-label">Cost Price <span class="sub" style="font-size:11px;color:var(--tx-muted);">(Optional)</span></label>
+            <div class="zb-form-ctrl">
+              <div style="display:flex;max-width:260px;">
+                <span class="zb-input-prefix">INR</span>
+                <input class="in" type="number" step="0.01" min="0" id="item_purchase_price" name="purchase_price" value="${esc(r.purchase_price || '')}" placeholder="0.00">
+              </div>
+              <div class="er" data-err="purchase_price" role="alert"></div>
             </div>
-            <div class="er" data-err="purchase_price" role="alert"></div>
           </div>
-        </div>
-        <div class="zb-form-row">
-          <label for="item_purchase_account" class="zb-form-label">Account<span class="rq">*</span></label>
-          <div class="zb-form-ctrl">
-            <select class="in" id="item_purchase_account" name="purchase_account">
-              ${purchaseAccountsHtml}
-              ${extraPurchOpt}
-              <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
-            </select>
-            <div class="er" data-err="purchase_account" role="alert"></div>
+          <div class="zb-form-row">
+            <label for="item_purchase_account" class="zb-form-label">Account</label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="item_purchase_account" name="purchase_account">
+                ${purchaseAccountsHtml}
+                ${extraPurchOpt}
+                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Account…</option>
+              </select>
+              <div class="er" data-err="purchase_account" role="alert"></div>
+            </div>
           </div>
-        </div>
-        <div class="zb-form-row">
-          <label for="item_preferred_vendor" class="zb-form-label">Preferred Vendor <span class="zb-info-tip" title="Choose default vendor for purchase orders">ⓘ</span></label>
-          <div class="zb-form-ctrl">
-            <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
-              <option value="">Select a vendor…</option>
-              ${vendorOptsHtml}
-              <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Vendor…</option>
-            </select>
-            <div class="er" data-err="preferred_vendor_id" role="alert"></div>
+          <div class="zb-form-row">
+            <label for="item_preferred_vendor" class="zb-form-label">Preferred Vendor <span class="zb-info-tip" title="Choose default vendor for purchase orders">ⓘ</span></label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
+                <option value="">Select a vendor (Optional)…</option>
+                ${vendorOptsHtml}
+                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Vendor…</option>
+              </select>
+              <div class="er" data-err="preferred_vendor_id" role="alert"></div>
+            </div>
           </div>
-        </div>
-        <div class="zb-form-row align-top">
-          <label for="item_purchase_desc" class="zb-form-label">Description</label>
-          <div class="zb-form-ctrl">
-            <textarea class="in" id="item_purchase_desc" rows="2" placeholder="Purchase description for vendor bills…"></textarea>
+          <div class="zb-form-row align-top">
+            <label for="item_purchase_desc" class="zb-form-label">Description</label>
+            <div class="zb-form-ctrl">
+              <textarea class="in" id="item_purchase_desc" rows="2" placeholder="Purchase description for vendor bills…"></textarea>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Inventory Tracking -->
-      <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
+      <div id="inventorySection" style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
         <div class="zb-form-row">
           <div class="zb-form-label"></div>
           <div class="zb-form-ctrl">
@@ -1481,6 +1499,15 @@ async function itemForm(id) {
           </div>
         </div>
         <div id="inventoryBody" style="${r.track_inventory ? '' : 'display:none;'}">
+          <div class="zb-form-row">
+            <label for="item_warehouse" class="zb-form-label">Warehouse Code <span class="zb-info-tip" title="Primary storage warehouse or sub-warehouse">ⓘ</span></label>
+            <div class="zb-form-ctrl">
+              <select class="in" id="item_warehouse" name="warehouse_id" style="max-width:280px;">
+                <option value="">Select Warehouse…</option>
+                ${(warehouses || []).map(w => `<option value="${w.id}" ${(String(w.id) === String(r.warehouse_id) || w.code === r.warehouse_code) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
+              </select>
+            </div>
+          </div>
           ${id ? '' : `
             <div class="zb-form-row" id="openingStockWrap">
               <label class="zb-form-label">Opening Stock</label>
@@ -1791,6 +1818,14 @@ async function itemForm(id) {
         invBody.style.display = trackInvCheck.checked ? 'grid' : 'none';
       };
       trackInvCheck.addEventListener('change', syncTrackInv);
+
+      const chkPurch = $('#chkPurchaseInfo', form);
+      const wrapPurch = $('#purchaseFieldsWrap', form);
+      if (chkPurch && wrapPurch) {
+        chkPurch.addEventListener('change', () => {
+          wrapPurch.style.display = chkPurch.checked ? '' : 'none';
+        });
+      }
       syncType();
     },
     onSubmit: async d => {
@@ -2330,30 +2365,45 @@ async function paymentForm(kind, pre = {}) {
 
 
 async function adjustForm(preItem) {
-  const items = (await api('lookup/items/')).filter(i => i.track_inventory);
+  const [items, warehouses] = await Promise.all([
+    api('lookup/items/').then(r => r.filter(i => i.track_inventory)),
+    api('lookup/warehouses/').catch(() => [])
+  ]);
   if (!items.length) { toast('Create an inventory-tracked goods item first.', 'err'); return; }
   const REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other'];
+  const curTime = new Date().toTimeString().slice(0, 5);
   formModal({
-    title: 'New stock adjustment',
+    title: 'New Stock Adjustment',
     body: `<div class="zb-form-wrap">${[
-      fld({ name: 'date', label: 'Adjustment date', type: 'date', req: 1, value: APP.today }),
-      fld({ name: 'item', label: 'Item', type: 'select', req: 1, opts: [['', 'Select…'], ...items.map(i => [i.id, i.name + ' (' + i.sku + ')'])], value: preItem || '' }),
+      fld({ name: 'date', label: 'Adjustment Date', type: 'date', req: 1, value: APP.today }),
+      fld({ name: 'time', label: 'Adjustment Time', type: 'time', req: 1, value: curTime }),
+      fld({ name: 'warehouse', label: 'Warehouse Code / Location', type: 'select', req: 1, opts: [['', 'Select Warehouse…'], ...warehouses.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }),
+      fld({ name: 'item', label: 'Item', type: 'select', req: 1, opts: [['', 'Select…'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])], value: preItem || '' }),
       fld({ name: 'new_quantity', label: 'New quantity on hand', type: 'number', req: 1, attrs: 'min="0" step="0.001"' }),
       fld({ name: 'reason', label: 'Reason', type: 'select', req: 1, opts: [['', 'Select a reason'], ...REASONS] }),
       fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 'c2', max: 1000 }),
-    ].join('')}</div><div class="note" id="prev" style="margin-top:12px">Select an item and enter the new quantity to preview the change.</div>`,
+    ].join('')}</div><div class="note" id="prev" style="margin-top:12px">Select an item, warehouse, and enter the new quantity to preview the change.</div>`,
     submit: 'Review & apply',
     onReady: form => {
       const upd = () => {
         const it = items.find(i => String(i.id) === form.elements.item.value), nq = form.elements.new_quantity.value;
-        $('#prev', form).textContent = it && nq !== '' ? `${it.name}: ${qty(it.stock)} → ${qty(nq)} ${it.unit} (difference ${num(nq) - num(it.stock) >= 0 ? '+' : ''}${qty(num(nq) - num(it.stock))}, value ${inr((num(nq) - num(it.stock)) * num(it.purchase_price))})` : 'Select an item and enter the new quantity to preview the change.';
+        const wh = warehouses.find(w => String(w.id) === form.elements.warehouse.value);
+        const whText = wh ? ` [${wh.code}]` : '';
+        $('#prev', form).textContent = it && nq !== '' ? `${it.name}${whText}: ${qty(it.stock)} → ${qty(nq)} ${it.unit} (difference ${num(nq) - num(it.stock) >= 0 ? '+' : ''}${qty(num(nq) - num(it.stock))}, value ${inr((num(nq) - num(it.stock)) * num(it.purchase_price))})` : 'Select an item, warehouse, and enter the new quantity to preview the change.';
       };
+      form.elements.item.addEventListener('change', () => {
+        const it = items.find(i => String(i.id) === form.elements.item.value);
+        if (it && it.warehouse_id && !form.elements.warehouse.value) {
+          form.elements.warehouse.value = it.warehouse_id;
+        }
+      });
       form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
     },
     onSubmit: async d => {
       const it = items.find(i => String(i.id) === d.item);
+      const wh = warehouses.find(w => String(w.id) === d.warehouse);
       if (it && d.new_quantity !== '') {
-        const ok = await confirmBox({ title: 'Apply stock adjustment?', message: `${it.name}: ${qty(it.stock)} → ${qty(d.new_quantity)}. This changes inventory immediately and can only be reversed by another adjustment.`, okText: 'Apply adjustment' });
+        const ok = await confirmBox({ title: 'Apply stock adjustment?', message: `${it.name}${wh ? ` (${wh.code})` : ''}: ${qty(it.stock)} → ${qty(d.new_quantity)}. This changes inventory immediately and can only be reversed by another adjustment.`, okText: 'Apply adjustment' });
         if (!ok) throw { cancel: true };
       }
       await api('stock-adjustments/', { method: 'POST', body: d });
@@ -3547,19 +3597,88 @@ async function priceListModal() {
 }
 
 async function warehouseModal() {
+  const existingWh = await api('lookup/warehouses/').catch(() => []);
   formModal({
     title: 'New Inventory Warehouse',
     body: `<div class="g">
       ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', ph: 'e.g. Kottayam Central Warehouse' })}
       ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', ph: 'WH-KTY-01' })}
+      ${fld({ name: 'parent_id', label: 'Parent Warehouse (Sub-warehouse of)', type: 'select', opts: [['', 'None (Main Warehouse)'], ...existingWh.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
       ${fld({ name: 'city', label: 'City', col: 's6', ph: 'Kottayam' })}
       ${fld({ name: 'state', label: 'State', type: 'select', opts: STATES, value: APP.org.state || 'Kerala', col: 's6' })}
       ${fld({ name: 'address', label: 'Address', type: 'textarea', col: 's12', ph: 'Anugraha Complex, Kottayam West...' })}
-      ${fld({ name: 'is_primary', label: 'Set as Primary Warehouse', type: 'checkbox', value: false, col: 's12' })}
+      ${fld({ name: 'is_primary', label: 'Set as Primary Warehouse', type: 'checkbox', value: false, col: 's6' })}
+      ${fld({ name: 'shared_database', label: 'Shared Database Architecture (Unified inventory catalog)', type: 'checkbox', value: true, col: 's6' })}
     </div>`,
     onSubmit: async d => {
       await api('warehouses/', { method: 'POST', body: d });
       toast('Warehouse created');
+      refresh();
+    }
+  });
+}
+
+async function stockMoveModal() {
+  const [items, warehouses] = await Promise.all([
+    api('lookup/items/').then(r => r.filter(i => i.track_inventory)),
+    api('lookup/warehouses/').catch(() => [])
+  ]);
+  if (!items.length) { toast('No inventory-tracked items available to move.', 'err'); return; }
+  if (warehouses.length < 2) {
+    toast('At least two warehouses (or a main warehouse and sub-warehouse) are required to move stock. Please add another warehouse first.', 'err');
+    return;
+  }
+  const curTime = new Date().toTimeString().slice(0, 5);
+  formModal({
+    title: 'Move Stock Between Warehouses',
+    body: `<div class="g">
+      ${fld({ name: 'item', label: 'Item to Move', type: 'select', req: true, opts: [['', 'Select Item…'], ...items.map(i => [i.id, `${i.name} (${i.sku || 'No SKU'}) - On Hand: ${qty(i.stock)} ${i.unit}`])], col: 's12' })}
+      ${fld({ name: 'from_warehouse', label: 'Source Warehouse', type: 'select', req: true, opts: [['', 'Select Source Warehouse…'], ...warehouses.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
+      ${fld({ name: 'to_warehouse', label: 'Destination Warehouse', type: 'select', req: true, opts: [['', 'Select Destination Warehouse…'], ...warehouses.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
+      ${fld({ name: 'quantity', label: 'Quantity to Move', type: 'number', req: true, attrs: 'min="0.001" step="0.001"', col: 's4' })}
+      ${fld({ name: 'date', label: 'Transfer Date', type: 'date', req: true, value: APP.today, col: 's4' })}
+      ${fld({ name: 'time', label: 'Transfer Time', type: 'time', req: true, value: curTime, col: 's4' })}
+      ${fld({ name: 'reason', label: 'Reason for Transfer', type: 'select', opts: [['Warehouse Transfer', 'Warehouse Transfer'], ['Stock Rebalancing', 'Stock Rebalancing'], ['Fulfillment Relocation', 'Fulfillment Relocation'], ['Branch Transfer', 'Branch Transfer'], ['Other', 'Other']], col: 's12' })}
+      ${fld({ name: 'notes', label: 'Transfer Notes', type: 'textarea', col: 's12', max: 500, ph: 'Add any delivery challan or transit tracking details…' })}
+    </div>
+    <div class="note" id="movePrev" style="margin-top:12px">Select an item, source warehouse, destination warehouse, and quantity.</div>`,
+    submit: 'Confirm & Move Stock',
+    onReady: form => {
+      const upd = () => {
+        const it = items.find(i => String(i.id) === form.elements.item.value);
+        const fw = warehouses.find(w => String(w.id) === form.elements.from_warehouse.value);
+        const tw = warehouses.find(w => String(w.id) === form.elements.to_warehouse.value);
+        const q = form.elements.quantity.value;
+        const prev = $('#movePrev', form);
+        if (fw && tw && fw.id === tw.id) {
+          prev.textContent = '⚠️ Source and destination warehouses must be different!';
+          prev.style.color = 'var(--dn, #e11d48)';
+          return;
+        }
+        prev.style.color = '';
+        if (it && fw && tw && q) {
+          prev.textContent = `Transferring ${qty(q)} ${it.unit} of "${it.name}" from [${fw.code}] to [${tw.code}]. Unified Shared Database maintains complete traceability.`;
+        } else {
+          prev.textContent = 'Select an item, source warehouse, destination warehouse, and quantity.';
+        }
+      };
+      form.elements.item.addEventListener('change', () => {
+        const it = items.find(i => String(i.id) === form.elements.item.value);
+        if (it && it.warehouse_id && !form.elements.from_warehouse.value) {
+          form.elements.from_warehouse.value = it.warehouse_id;
+        }
+        upd();
+      });
+      form.addEventListener('input', upd);
+      form.addEventListener('change', upd);
+    },
+    onSubmit: async d => {
+      if (d.from_warehouse === d.to_warehouse) {
+        toast('Source and destination warehouses cannot be the same.', 'err');
+        throw { cancel: true };
+      }
+      await api('stock-movements/move/', { method: 'POST', body: d });
+      toast('Stock moved successfully between warehouses');
       refresh();
     }
   });

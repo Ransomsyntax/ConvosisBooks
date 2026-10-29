@@ -120,7 +120,7 @@ class Vendor(Party):
 class Item(models.Model):
     GOODS, SERVICE = 'goods', 'service'
     name = models.CharField(max_length=200)
-    sku = models.CharField(max_length=60, unique=True)
+    sku = models.CharField(max_length=60, unique=True, blank=True)
     item_type = models.CharField(max_length=10, choices=[(GOODS, 'Goods'), (SERVICE, 'Service')], default=GOODS)
     category = models.CharField(max_length=100, blank=True)
     hsn_sac = models.CharField(max_length=10, blank=True)
@@ -132,6 +132,8 @@ class Item(models.Model):
     track_inventory = models.BooleanField(default=False)
     stock = models.DecimalField(default=Decimal('0.000'), **QTY)
     reorder_level = models.DecimalField(default=Decimal('0.000'), **QTY)
+    warehouse = models.ForeignKey('Warehouse', null=True, blank=True, on_delete=models.SET_NULL, related_name='items')
+    warehouse_code = models.CharField(max_length=30, blank=True, default='')
     image_data = models.TextField(blank=True, default='')
     tax_preference = models.CharField(max_length=30, default='taxable')
     sales_account = models.CharField(max_length=100, default='Sales')
@@ -259,9 +261,15 @@ class BillAllocation(models.Model):
 
 class StockMovement(models.Model):
     KINDS = [('opening', 'Opening stock'), ('sale', 'Sale'), ('sale_void', 'Sale voided'),
-             ('purchase', 'Purchase'), ('purchase_void', 'Purchase voided'), ('adjustment', 'Adjustment')]
+             ('purchase', 'Purchase'), ('purchase_void', 'Purchase voided'), ('adjustment', 'Adjustment'),
+             ('transfer', 'Warehouse Transfer')]
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='movements')
     date = models.DateField()
+    adjusted_at = models.DateTimeField(null=True, blank=True)
+    warehouse = models.ForeignKey('Warehouse', null=True, blank=True, on_delete=models.SET_NULL, related_name='stock_movements')
+    warehouse_code = models.CharField(max_length=30, blank=True, default='')
+    to_warehouse = models.ForeignKey('Warehouse', null=True, blank=True, on_delete=models.SET_NULL, related_name='incoming_stock_movements')
+    to_warehouse_code = models.CharField(max_length=30, blank=True, default='')
     kind = models.CharField(max_length=15, choices=KINDS)
     reference = models.CharField(max_length=40, blank=True)
     change = models.DecimalField(**QTY)
@@ -774,16 +782,20 @@ class PriceList(models.Model):
 class Warehouse(models.Model):
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=30, unique=True)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_warehouses')
     address = models.TextField(blank=True)
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=60, blank=True)
     is_primary = models.BooleanField(default=False)
+    shared_database = models.BooleanField(default=True, help_text='Operates on shared centralized database')
     active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['name']
 
     def __str__(self):
+        if self.parent:
+            return f'{self.name} ({self.code}) [Sub-warehouse of {self.parent.code}]'
         return f'{self.name} ({self.code})'
 
 

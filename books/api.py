@@ -1,7 +1,8 @@
 """JSON API (session-authenticated, CSRF-protected). One Resource class per entity."""
 import csv
-import json
+import datetime
 from datetime import timedelta
+import json
 from decimal import Decimal
 from functools import wraps
 
@@ -501,11 +502,11 @@ class VendorResource(PartyResource):
 class ItemResource(Resource):
     name = 'items'
     model = Item
-    search_fields = ('name', 'sku', 'category', 'hsn_sac')
+    search_fields = ('name', 'sku', 'category', 'hsn_sac', 'warehouse_code')
     orderings = {'name': 'name', 'sku': 'sku', 'selling_price': 'selling_price', 'stock': 'stock', 'created': 'created_at'}
     default_ordering = ('name',)
     csv_cols = [('Name', 'name'), ('SKU', 'sku'), ('Type', 'type'), ('Category', 'category'), ('HSN/SAC', 'hsn_sac'),
-                ('Unit', 'unit'), ('Selling price', 'selling_price'), ('Purchase price', 'purchase_price'),
+                ('Warehouse', 'warehouse_code'), ('Unit', 'unit'), ('Selling price', 'selling_price'), ('Purchase price', 'purchase_price'),
                 ('GST %', 'gst_rate'), ('Stock', 'stock'), ('Reorder level', 'reorder_level'),
                 ('Stock value', 'valuation'), ('Status', 'status')]
 
@@ -519,6 +520,9 @@ class ItemResource(Resource):
             qs = qs.filter(active=(g['active'] == '1'))
         if g.get('tracked') == '1':
             qs = qs.filter(item_type='goods', track_inventory=True)
+        if g.get('warehouse'):
+            wh = g['warehouse']
+            qs = qs.filter(Q(warehouse_code=wh) | Q(warehouse__code=wh))
         if g.get('stock') == 'out':
             qs = qs.filter(item_type='goods', track_inventory=True, stock__lte=0)
         elif g.get('stock') == 'low':
@@ -535,26 +539,34 @@ class ItemResource(Resource):
             status = 'Low stock'
         else:
             status = 'Active'
-        return {'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'category': o.category, 'hsn_sac': o.hsn_sac,
-                'unit': o.unit, 'description': o.description, 'selling_price': o.selling_price,
-                'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate, 'track_inventory': tracked,
-                'stock': o.stock if tracked else None, 'reorder_level': o.reorder_level if tracked else None,
-                'valuation': q2(o.stock * o.purchase_price) if tracked else None, 'active': o.active, 'status': status,
-                'image_data': o.image_data, 'tax_preference': o.tax_preference,
-                'sales_account': o.sales_account, 'purchase_account': o.purchase_account,
-                'preferred_vendor_id': o.preferred_vendor_id,
-                'preferred_vendor_name': o.preferred_vendor.name if o.preferred_vendor else '',
-                'inventory_account': o.inventory_account}
+        return {
+            'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'category': o.category, 'hsn_sac': o.hsn_sac,
+            'unit': o.unit, 'description': o.description, 'selling_price': o.selling_price,
+            'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate, 'track_inventory': tracked,
+            'stock': o.stock if tracked else None, 'reorder_level': o.reorder_level if tracked else None,
+            'warehouse_id': o.warehouse_id,
+            'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
+            'warehouse_name': o.warehouse.name if o.warehouse else '',
+            'valuation': q2(o.stock * o.purchase_price) if tracked else None, 'active': o.active, 'status': status,
+            'image_data': o.image_data, 'tax_preference': o.tax_preference,
+            'sales_account': o.sales_account, 'purchase_account': o.purchase_account,
+            'preferred_vendor_id': o.preferred_vendor_id,
+            'preferred_vendor_name': o.preferred_vendor.name if o.preferred_vendor else '',
+            'inventory_account': o.inventory_account
+        }
 
     def clean(self, data, instance=None):
         c = Cleaner(data)
         out = {
-            'name': c.text('name', True, 200), 'sku': c.text('sku', True, 60, upper=True),
+            'name': c.text('name', True, 200),
+            'sku': c.text('sku', False, 60, upper=True),
             'item_type': c.choice('item_type', ['goods', 'service'], 'goods'),
-            'category': c.text('category', max_len=100), 'hsn_sac': c.text('hsn_sac', max_len=10),
-            'unit': c.text('unit', max_len=20, default='nos') or 'nos', 'description': c.text('description', max_len=2000),
+            'category': c.text('category', max_len=100),
+            'hsn_sac': c.text('hsn_sac', max_len=6),
+            'unit': c.text('unit', max_len=20, default='nos') or 'nos',
+            'description': c.text('description', max_len=2000),
             'selling_price': c.number('selling_price', lo=Decimal('0'), hi=Decimal('999999999')),
-            'purchase_price': c.number('purchase_price', lo=Decimal('0'), hi=Decimal('999999999')),
+            'purchase_price': c.number('purchase_price', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999')),
             'gst_rate': c.number('gst_rate', default=Decimal('18.00')),
             'track_inventory': c.boolean('track_inventory'),
             'reorder_level': c.number('reorder_level', lo=Decimal('0'), hi=Decimal('99999999'), places=3),
@@ -565,18 +577,36 @@ class ItemResource(Resource):
             'purchase_account': c.text('purchase_account', max_len=100) or 'Cost of Goods Sold',
             'inventory_account': c.text('inventory_account', max_len=100) or 'Inventory Asset',
         }
+        wid = c.integer('warehouse_id', required=False)
+        if wid is None:
+            wid = c.integer('warehouse', required=False)
+        wh = Warehouse.objects.filter(pk=wid).first() if wid else None
+        out['warehouse_id'] = wh.pk if wh else None
+        out['warehouse_code'] = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
+
         vid = c.integer('preferred_vendor_id', required=False)
         if vid is None:
             vid = c.integer('preferred_vendor', required=False)
         out['preferred_vendor_id'] = vid if vid and Vendor.objects.filter(pk=vid).exists() else None
+
+        if out['hsn_sac']:
+            hsn = out['hsn_sac'].strip()
+            if not hsn.isdigit() or len(hsn) != 6:
+                c.err('hsn_sac', 'HSN/SAC code must be a 6-digit numeric code.')
+            out['hsn_sac'] = hsn
+
         if out['gst_rate'] < Decimal('0') or out['gst_rate'] > Decimal('100'):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
-        if out['sku']:
+
+        if not out['sku']:
+            out['sku'] = next_number('SKU')
+        else:
             dup = Item.objects.filter(sku__iexact=out['sku'])
             if instance:
                 dup = dup.exclude(pk=instance.pk)
             if dup.exists():
                 c.err('sku', 'This SKU is already in use.')
+
         opening = c.number('opening_stock', lo=Decimal('0'), hi=Decimal('99999999'), places=3)
         c.done()
         if out['item_type'] == 'service':
@@ -591,7 +621,8 @@ class ItemResource(Resource):
         out, opening = self.clean(data)
         obj = Item.objects.create(**out)
         if opening > 0:
-            services.move_stock(obj.pk, opening, 'opening', 'Opening stock', timezone.localdate(), user, 'Opening stock')
+            services.move_stock(obj.pk, opening, 'opening', 'Opening stock', timezone.localdate(), user, 'Opening stock',
+                                warehouse=obj.warehouse, warehouse_code=obj.warehouse_code)
         return obj
 
     def update(self, obj, data, user):
@@ -1097,14 +1128,16 @@ class PaymentMadeResource(PaymentResource):
 class StockMovementResource(Resource):
     name = 'stock-movements'
     model = StockMovement
-    search_fields = ('item__name', 'item__sku', 'reference', 'reason')
+    search_fields = ('item__name', 'item__sku', 'reference', 'reason', 'warehouse_code', 'to_warehouse_code')
     orderings = {'date': 'date', 'item': 'item__name'}
     default_ordering = ('-date', '-id')
-    csv_cols = [('Date', 'date'), ('Item', 'item'), ('SKU', 'sku'), ('Type', 'kind_label'), ('Reference', 'reference'),
+    csv_cols = [('Date', 'date'), ('Adjusted At', 'adjusted_at_display'), ('Item', 'item'), ('SKU', 'sku'),
+                ('Warehouse', 'warehouse_code'), ('To Warehouse', 'to_warehouse_code'),
+                ('Type', 'kind_label'), ('Reference', 'reference'),
                 ('Change', 'change'), ('Balance after', 'balance_after'), ('Reason', 'reason')]
 
     def base_qs(self):
-        return StockMovement.objects.select_related('item')
+        return StockMovement.objects.select_related('item', 'warehouse', 'to_warehouse')
 
     def filter_qs(self, qs, request):
         k = request.GET.get('kind')
@@ -1113,25 +1146,48 @@ class StockMovementResource(Resource):
         i = request.GET.get('item')
         if i and i.isdigit():
             qs = qs.filter(item_id=int(i))
+        wh = request.GET.get('warehouse')
+        if wh:
+            qs = qs.filter(Q(warehouse_code=wh) | Q(warehouse__code=wh) | Q(to_warehouse_code=wh) | Q(to_warehouse__code=wh))
         return qs
 
     def row(self, o):
-        return {'id': o.pk, 'date': o.date, 'item_id': o.item_id, 'item': o.item.name, 'sku': o.item.sku, 'kind': o.kind,
-                'kind_label': o.get_kind_display(), 'reference': o.reference, 'change': o.change,
-                'balance_after': o.balance_after, 'reason': o.reason, 'notes': o.notes}
+        adj_time = o.adjusted_at.strftime('%H:%M') if o.adjusted_at else ''
+        adj_disp = o.adjusted_at.strftime('%d/%m/%Y %H:%M') if o.adjusted_at else (o.date.strftime('%d/%m/%Y') if o.date else '')
+        return {
+            'id': o.pk, 'date': o.date,
+            'adjusted_at': o.adjusted_at.isoformat() if o.adjusted_at else None,
+            'adjusted_time': adj_time,
+            'adjusted_at_display': adj_disp,
+            'warehouse_id': o.warehouse_id,
+            'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else ''),
+            'warehouse_name': o.warehouse.name if o.warehouse else '',
+            'to_warehouse_id': o.to_warehouse_id,
+            'to_warehouse_code': o.to_warehouse_code or (o.to_warehouse.code if o.to_warehouse else ''),
+            'to_warehouse_name': o.to_warehouse.name if o.to_warehouse else '',
+            'item_id': o.item_id, 'item': o.item.name, 'sku': o.item.sku, 'kind': o.kind,
+            'kind_label': o.get_kind_display(), 'reference': o.reference, 'change': o.change,
+            'balance_after': o.balance_after, 'reason': o.reason, 'notes': o.notes
+        }
 
 
 class StockAdjustmentResource(StockMovementResource):
     name = 'stock-adjustments'
 
     def base_qs(self):
-        return StockMovement.objects.select_related('item').filter(kind='adjustment')
+        return StockMovement.objects.select_related('item', 'warehouse').filter(kind='adjustment')
 
     def create(self, data, user):
         c = Cleaner(data)
         iid = c.integer('item', lo=1, required=True)
         new = c.number('new_quantity', True, lo=Decimal('0'), hi=Decimal('99999999'), places=3)
         on = c.date('date', required=True)
+        adj_time = c.text('time', max_len=10)
+        wid = c.integer('warehouse_id', required=False)
+        if wid is None:
+            wid = c.integer('warehouse', required=False)
+        wh = Warehouse.objects.filter(pk=wid).first() if wid else None
+        wh_code = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
         reason = c.choice('reason', REASONS, required=True)
         notes = c.text('notes', max_len=1000)
         item = Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True).first() if iid else None
@@ -1141,9 +1197,71 @@ class StockAdjustmentResource(StockMovementResource):
         change = new - item.stock
         if change == 0:
             raise ApiError(400, 'The new quantity equals the current stock; nothing to adjust.', {'new_quantity': 'No change.'})
+        
+        adjusted_at = None
+        if on:
+            if adj_time:
+                try:
+                    parts = [int(p) for p in adj_time.split(':')[:2]]
+                    t_val = datetime.time(parts[0], parts[1])
+                    adjusted_at = timezone.make_aware(datetime.datetime.combine(on, t_val))
+                except Exception:
+                    adjusted_at = timezone.now()
+            else:
+                adjusted_at = timezone.now()
+
         ref = next_number('ADJ')
-        services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes)
+        services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes,
+                            warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
         return StockMovement.objects.filter(reference=ref).first()
+
+
+@api_view
+def stock_move_action_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    c = Cleaner(body(request))
+    iid = c.integer('item', lo=1, required=False)
+    if iid is None:
+        iid = c.integer('item_id', lo=1, required=False)
+    if iid is None:
+        c.err('item', 'Item is required.')
+
+    from_wh_id = c.integer('from_warehouse', lo=1, required=False)
+    if from_wh_id is None:
+        from_wh_id = c.integer('from_warehouse_id', lo=1, required=False)
+    if from_wh_id is None:
+        c.err('from_warehouse', 'Source warehouse is required.')
+
+    to_wh_id = c.integer('to_warehouse', lo=1, required=False)
+    if to_wh_id is None:
+        to_wh_id = c.integer('to_warehouse_id', lo=1, required=False)
+    if to_wh_id is None:
+        c.err('to_warehouse', 'Destination warehouse is required.')
+
+    qty_val = c.number('quantity', required=True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
+    on_date = c.date('date', default=timezone.localdate())
+    adj_time = c.text('time', max_len=10)
+    reason = c.text('reason', max_len=100) or 'Warehouse Transfer'
+    notes = c.text('notes', max_len=1000)
+    c.done()
+
+    adjusted_at = None
+    if on_date:
+        if adj_time:
+            try:
+                parts = [int(p) for p in adj_time.split(':')[:2]]
+                t_val = datetime.time(parts[0], parts[1])
+                adjusted_at = timezone.make_aware(datetime.datetime.combine(on_date, t_val))
+            except Exception:
+                adjusted_at = timezone.now()
+        else:
+            adjusted_at = timezone.now()
+
+    mv = services.transfer_stock(iid, qty_val, from_wh_id, to_wh_id, on_date,
+                                 adjusted_at=adjusted_at, user=request.user,
+                                 reason=reason, notes=notes)
+    return j(StockMovementResource().row(mv))
 
 
 
@@ -2174,22 +2292,67 @@ class PriceListResource(Resource):
 class WarehouseResource(Resource):
     name = 'warehouses'
     model = Warehouse
-    search_fields = ('name', 'code', 'city')
+    search_fields = ('name', 'code', 'city', 'parent__name', 'parent__code')
     default_ordering = ('name',)
 
-    def row(self, o):
-        return {'id': o.pk, 'name': o.name, 'code': o.code, 'address': o.address, 'city': o.city, 'state': o.state, 'is_primary': o.is_primary, 'active': o.active}
+    def base_qs(self):
+        return Warehouse.objects.select_related('parent')
 
-    def create(self, data, user):
+    def row(self, o):
+        return {
+            'id': o.pk, 'name': o.name, 'code': o.code,
+            'parent_id': o.parent_id,
+            'parent_name': o.parent.name if o.parent else '',
+            'parent_code': o.parent.code if o.parent else '',
+            'is_sub_warehouse': bool(o.parent_id),
+            'type_label': f"Sub-warehouse of {o.parent.name} ({o.parent.code})" if o.parent else "Main Warehouse",
+            'address': o.address, 'city': o.city, 'state': o.state,
+            'is_primary': o.is_primary, 'shared_database': o.shared_database,
+            'active': o.active
+        }
+
+    def clean(self, data, instance=None):
         c = Cleaner(data)
         name = c.text('name', required=True, max_len=100)
-        code = c.text('code', required=True, max_len=30)
+        code = c.text('code', required=True, max_len=30, upper=True)
+        pid = c.integer('parent_id', required=False)
+        if pid is None:
+            pid = c.integer('parent', required=False)
+        parent = Warehouse.objects.filter(pk=pid).first() if pid else None
+        if instance and parent and parent.pk == instance.pk:
+            c.err('parent_id', 'Warehouse cannot be a sub-warehouse of itself.')
         addr = c.text('address', max_len=500)
         city = c.text('city', max_len=100)
         state = c.text('state', max_len=60)
         is_prim = c.boolean('is_primary', default=False)
+        shared_db = c.boolean('shared_database', default=True)
+        if code:
+            dup = Warehouse.objects.filter(code__iexact=code)
+            if instance:
+                dup = dup.exclude(pk=instance.pk)
+            if dup.exists():
+                c.err('code', 'This warehouse code is already in use.')
         c.done()
-        return Warehouse.objects.create(name=name, code=code, address=addr, city=city, state=state, is_primary=is_prim)
+        if is_prim:
+            qs = Warehouse.objects.filter(is_primary=True)
+            if instance:
+                qs = qs.exclude(pk=instance.pk)
+            qs.update(is_primary=False)
+        return {
+            'name': name, 'code': code, 'parent': parent, 'address': addr,
+            'city': city, 'state': state, 'is_primary': is_prim, 'shared_database': shared_db
+        }
+
+    def create(self, data, user):
+        out = self.clean(data)
+        return Warehouse.objects.create(**out)
+
+    def update(self, obj, data, user):
+        out = self.clean(data, obj)
+        for k, v in out.items():
+            setattr(obj, k, v)
+        obj.save()
+        return obj
 
 
 class PaymentTransactionResource(Resource):
@@ -2445,8 +2608,9 @@ def lookup(request, name):
     elif name == 'items':
         data = [{'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,
                  'selling_price': o.selling_price, 'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate,
+                 'warehouse_id': o.warehouse_id, 'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
                  'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': o.stock, 'unit': o.unit}
-                for o in Item.objects.filter(active=True).order_by('name')]
+                for o in Item.objects.filter(active=True).select_related('warehouse').order_by('name')]
     elif name == 'accounts':
         services.ensure_default_accounts()
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
@@ -2464,8 +2628,12 @@ def lookup(request, name):
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id}
                 for o in Project.objects.filter(status='active').order_by('name')]
     elif name == 'warehouses':
-        data = [{'id': o.pk, 'name': o.name, 'code': o.code}
-                for o in Warehouse.objects.filter(active=True).order_by('name')]
+        data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'is_primary': o.is_primary,
+                 'is_sub_warehouse': bool(o.parent_id), 'parent_id': o.parent_id,
+                 'parent_code': o.parent.code if o.parent else '',
+                 'parent_name': o.parent.name if o.parent else '',
+                 'shared_database': o.shared_database}
+                for o in Warehouse.objects.filter(active=True).select_related('parent').order_by('name')]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
                 for o in PriceList.objects.filter(active=True).order_by('name')]
@@ -2602,10 +2770,16 @@ def reports_view(request, name):
         return j({'period': {'start': start, 'end': end}, 'results': rows})
     elif name == 'inventory-summary':
         rows = []
-        for it in Item.objects.filter(item_type='goods', track_inventory=True, active=True):
+        for it in Item.objects.filter(item_type='goods', track_inventory=True, active=True).select_related('warehouse'):
             val = it.stock * it.purchase_price
             status = 'Low stock' if 0 < it.stock <= it.reorder_level else ('Out of stock' if it.stock <= 0 else 'In stock')
-            rows.append({'item': it.name, 'sku': it.sku, 'stock': it.stock, 'unit': it.unit, 'cost_price': it.purchase_price, 'valuation': val, 'reorder_level': it.reorder_level, 'status': status})
+            rows.append({
+                'item': it.name, 'sku': it.sku,
+                'warehouse_code': it.warehouse_code or (it.warehouse.code if it.warehouse else 'WH-MAIN'),
+                'stock': it.stock, 'unit': it.unit,
+                'cost_price': it.purchase_price, 'valuation': val,
+                'reorder_level': it.reorder_level, 'status': status
+            })
         return j({'results': rows, 'total_valuation': sum((r['valuation'] for r in rows), Z)})
     elif name == 'receivables-aging':
         inv_open = list(invoice_qs().filter(status='sent', paid_sum__lt=F('total')))

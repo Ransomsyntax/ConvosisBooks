@@ -18,7 +18,8 @@ from books import services
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, Customer, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
-    LockDate, Organization, PaymentReceived, ReceivedAllocation, UserProfile, Vendor
+    LockDate, Organization, PaymentReceived, ReceivedAllocation, StockMovement,
+    UserProfile, Vendor, Warehouse
 )
 
 User = get_user_model()
@@ -433,3 +434,182 @@ class TestApiConsistencyAndErrorHandling(BaseAccountingTestCase):
         self.assertEqual(res.status_code, 405)
         data = res.json()
         self.assertEqual(data['error'], 'Method not allowed.')
+
+
+class TestInventoryAndWarehouses(BaseAccountingTestCase):
+    """Test inventory enhancements, warehouse hierarchies, stock adjustments, and movements."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def test_item_sku_optional_and_auto_generated(self):
+        """SKU is not mandatory and auto-generated when omitted."""
+        payload = {
+            'name': 'Wireless Optical Mouse',
+            'sku': '',
+            'selling_price': 450.00,
+            'purchase_price': 250.00,
+            'hsn_sac': '847160',
+            'track_inventory': True,
+        }
+        res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertTrue(data['sku'].startswith('SKU-'))
+        item = Item.objects.get(id=data['id'])
+        self.assertTrue(item.sku.startswith('SKU-'))
+
+    def test_item_hsn_sac_validation(self):
+        """HSN/SAC must be exactly 6 digits."""
+        # Non-6-digit should fail
+        res = self.client.post('/api/items/', data=json.dumps({
+            'name': 'Invalid HSN Item',
+            'hsn_sac': '1234',
+            'selling_price': 100.00
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('6-digit', res.json().get('errors', {}).get('hsn_sac', ''))
+
+        # Non-digit should fail
+        res = self.client.post('/api/items/', data=json.dumps({
+            'name': 'Non-numeric HSN Item',
+            'hsn_sac': 'ABCDEF',
+            'selling_price': 100.00
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+
+        # 6 digits should succeed
+        res = self.client.post('/api/items/', data=json.dumps({
+            'name': 'Valid HSN Item',
+            'hsn_sac': '847130',
+            'selling_price': 100.00
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+
+    def test_sub_warehouse_creation_and_shared_database(self):
+        """Warehouse can have sub-warehouses and shared database architecture."""
+        # Create Main Warehouse
+        res_main = self.client.post('/api/warehouses/', data=json.dumps({
+            'name': 'Main Central Distribution Hub',
+            'code': 'WH-CENTRAL',
+            'is_primary': True,
+            'shared_database': True
+        }), content_type='application/json')
+        self.assertEqual(res_main.status_code, 201)
+        main_wh_id = res_main.json()['id']
+
+        # Create Sub Warehouse
+        res_sub = self.client.post('/api/warehouses/', data=json.dumps({
+            'name': 'Rack Zone A - Sub Hub',
+            'code': 'WH-RACK-A',
+            'parent_id': main_wh_id,
+            'shared_database': True
+        }), content_type='application/json')
+        self.assertEqual(res_sub.status_code, 201)
+        sub_wh_id = res_sub.json()['id']
+
+        sub_wh = Warehouse.objects.get(id=sub_wh_id)
+        self.assertEqual(sub_wh.parent_id, main_wh_id)
+        self.assertTrue(sub_wh.shared_database)
+
+        # Verify listing shows hierarchy info
+        res_list = self.client.get('/api/warehouses/')
+        self.assertEqual(res_list.status_code, 200)
+        items = res_list.json()['results']
+        sub_wh_entry = next((w for w in items if w['id'] == sub_wh_id), None)
+        self.assertIsNotNone(sub_wh_entry)
+        self.assertEqual(sub_wh_entry['parent_code'], 'WH-CENTRAL')
+        self.assertTrue(sub_wh_entry['is_sub_warehouse'])
+
+    def test_stock_adjustment_with_datetime_and_warehouse_code(self):
+        """Stock adjustment captures date, time, and warehouse code."""
+        wh = Warehouse.objects.create(name='Secondary Depot', code='WH-SEC', is_primary=False)
+        item = Item.objects.create(
+            name='Test Stock Widget',
+            sku='SKU-STK-001',
+            selling_price=Decimal('100.00'),
+            track_inventory=True,
+            stock=Decimal('10.000'),
+            warehouse=wh,
+            warehouse_code=wh.code
+        )
+
+        res = self.client.post('/api/stock-adjustments/', data=json.dumps({
+            'item': item.id,
+            'new_quantity': 25.0,
+            'reason': 'Damaged goods',
+            'date': '2026-10-29',
+            'time': '16:45',
+            'warehouse_id': wh.id,
+            'warehouse_code': wh.code,
+            'notes': 'Verified by warehouse manager'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+
+        # Check latest stock movement
+        movement = StockMovement.objects.filter(item=item, kind='adjustment').latest('id')
+        self.assertEqual(movement.warehouse_code, 'WH-SEC')
+        self.assertIsNotNone(movement.adjusted_at)
+        local_dt = timezone.localtime(movement.adjusted_at)
+        self.assertEqual(local_dt.hour, 16)
+        self.assertEqual(local_dt.minute, 45)
+
+    def test_stock_movement_transfer(self):
+        """Transfer stock between warehouses via stock-movements/move/."""
+        wh_src = Warehouse.objects.create(name='Source Storage', code='WH-SRC')
+        wh_dst = Warehouse.objects.create(name='Destination Retail', code='WH-DST')
+        item = Item.objects.create(
+            name='Transfer Cable Pack',
+            sku='SKU-TRF-001',
+            selling_price=Decimal('50.00'),
+            track_inventory=True,
+            stock=Decimal('100.000'),
+            warehouse=wh_src,
+            warehouse_code=wh_src.code
+        )
+
+        res = self.client.post('/api/stock-movements/move/', data=json.dumps({
+            'item_id': item.id,
+            'from_warehouse_id': wh_src.id,
+            'to_warehouse_id': wh_dst.id,
+            'quantity': 15.0,
+            'date': '2026-10-29',
+            'time': '17:15',
+            'reason': 'Stock transfer for retail fulfillment'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+
+        # Verify movements logged
+        movements = StockMovement.objects.filter(item=item, kind='transfer')
+        self.assertTrue(movements.exists())
+        latest_movement = movements.latest('id')
+        self.assertEqual(latest_movement.warehouse_code, 'WH-SRC')
+        self.assertEqual(latest_movement.to_warehouse_code, 'WH-DST')
+        self.assertEqual(latest_movement.change, Decimal('15.000'))
+
+        # Verify item warehouse updated
+        item.refresh_from_db()
+        self.assertEqual(item.warehouse, wh_dst)
+        self.assertEqual(item.warehouse_code, 'WH-DST')
+
+    def test_inventory_summary_report_includes_warehouse_code(self):
+        """Inventory summary report returns warehouse_code for each inventory item."""
+        wh = Warehouse.objects.create(name='Logistics Yard', code='WH-YARD')
+        Item.objects.create(
+            name='Warehouse Barcode Scanner',
+            sku='SKU-SCAN-01',
+            selling_price=Decimal('2500.00'),
+            track_inventory=True,
+            stock=Decimal('5.000'),
+            warehouse=wh,
+            warehouse_code=wh.code
+        )
+        res = self.client.get('/api/reports/inventory-summary/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        item_entry = next((x for x in data.get('results', []) if x.get('sku') == 'SKU-SCAN-01'), None)
+        self.assertIsNotNone(item_entry)
+        self.assertEqual(item_entry.get('warehouse_code'), 'WH-YARD')
+

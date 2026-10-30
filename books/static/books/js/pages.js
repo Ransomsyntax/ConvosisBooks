@@ -1681,6 +1681,8 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   let currentTab = initialTabId || 'dashboard';
   PAGE.reload = () => renderBankingModule(root, currentTab);
 
+  root.innerHTML = `<div class="banking-module-container"><div class="glass-card" style="padding:48px;text-align:center;color:var(--tx-muted);">${spinner} Loading Banking Workspace...</div></div>`;
+
   // 15 Modules Definitions
   const modules = [
     { id: 'dashboard', name: 'Banking Dashboard', icon: 'fa-chart-pie' },
@@ -1700,167 +1702,97 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     { id: 'reconciliation-history', name: 'Reconciliation History', icon: 'fa-clock-rotate-left' }
   ];
 
-  // State Data
-  let bankAccounts = [
-    { id: 'HDFC', name: 'HDFC Business Account', number: '•••• 8831', type: 'Primary Current Account', balance: 1845200.00, status: 'Active Feed' },
-    { id: 'ICICI', name: 'ICICI Current Account', number: '•••• 1042', type: 'Operating Account', balance: 920150.00, status: 'Active Feed' },
-    { id: 'SBI', name: 'SBI Corporate Account', number: '•••• 5519', type: 'Tax & Reserve Account', balance: 512000.00, status: 'Active Feed' },
-    { id: 'RAZORPAY', name: 'Razorpay Virtual Account', number: '•••• 4401', type: 'Gateway Node', balance: 205100.00, status: 'Synced' }
-  ];
+  let summary = {};
+  let bankAccounts = [];
+  let allTransactions = [];
+  let bankStatements = [];
+  let internalTransfers = [];
+  let deposits = [];
+  let bankRules = [];
+  let reconHistory = [];
 
-  let uncategorizedFeeds = [
-    {
-      id: 'FEED-101',
-      bankAccount: 'HDFC Business Account',
-      date: '28 Oct 2026',
-      description: 'NEFT CR-ACME CORP PVT LTD-PAYMENT',
-      reference: 'NEFT-8831-ACME',
-      type: 'Credit',
-      amount: 125000.00,
-      candidate: {
-        recordType: 'Invoice Match',
-        recordRef: 'Sales Invoice #INV-2026-089',
-        entity: 'Acme Corp Pvt Ltd',
-        date: '27 Oct 2026',
-        amount: 125000.00,
-        confidence: 98,
-        ruleSuggestion: 'Rule: Match Exact Customer Invoices'
-      }
-    },
-    {
-      id: 'FEED-102',
-      bankAccount: 'ICICI Current Account',
-      date: '27 Oct 2026',
-      description: 'UPI-AWS CLOUD SERVICES INDIA-SUB',
-      reference: 'UPI-9921-AWS',
-      type: 'Debit',
-      amount: 18450.00,
-      candidate: {
-        recordType: 'Expense Mapped',
-        recordRef: 'Vendor Bill #AWS-OCT-442',
-        entity: 'Amazon Web Services India',
-        date: '26 Oct 2026',
-        amount: 18450.00,
-        confidence: 94,
-        ruleSuggestion: 'Rule: Cloud Software Expense Category'
-      }
-    },
-    {
-      id: 'FEED-103',
-      bankAccount: 'SBI Corporate Account',
-      date: '25 Oct 2026',
-      description: 'IMPS-TECHFLOW LOGISTICS SOLUTION',
-      reference: 'IMPS-3312-TF',
-      type: 'Debit',
-      amount: 42000.00,
-      candidate: {
-        recordType: 'Vendor Bill Match',
-        recordRef: 'Bill #BILL-2026-112',
-        entity: 'Techflow Logistics',
-        date: '24 Oct 2026',
-        amount: 42000.00,
-        confidence: 91,
-        ruleSuggestion: 'Rule: Auto-Freight Expense'
-      }
-    },
-    {
-      id: 'FEED-104',
-      bankAccount: 'HDFC Business Account',
-      date: '24 Oct 2026',
-      description: 'ATM CASH WITHDRAWAL-KORAMANGALA',
-      reference: 'ATM-4421-BLR',
-      type: 'Debit',
-      amount: 10000.00,
-      candidate: null
-    },
-    {
-      id: 'FEED-105',
-      bankAccount: 'Razorpay Virtual Account',
-      date: '22 Oct 2026',
-      description: 'SETTLEMENT-RAZORPAY-BATCH-882',
-      reference: 'RZP-SETTLE-882',
-      type: 'Credit',
-      amount: 88500.00,
-      candidate: {
-        recordType: 'Payment Gateway Clearing',
-        recordRef: 'Batch Order #ORD-882',
-        entity: 'Multiple Direct Customers',
-        date: '22 Oct 2026',
-        amount: 88500.00,
-        confidence: 89,
-        ruleSuggestion: 'Rule: Direct Settlement Entry'
-      }
-    }
-  ];
-
-  let matchedTransactions = [
-    { date: '20 Oct 2026', feedDesc: 'NEFT CR-ZETA LABS-INV-102', systemRef: 'Sales Invoice #INV-2026-078', amount: 350000.00, confidence: 99 },
-    { date: '18 Oct 2026', feedDesc: 'ACH DEBIT-AIRTEL BROADBAND', systemRef: 'Bill #AIRTEL-OCT-01', amount: 4999.00, confidence: 96 }
-  ];
-
-  let categorizedTransactions = [
-    { date: '19 Oct 2026', payee: 'Swiggy Corporate Express', account: 'Employee Meals & Welfare', amount: 2450.00, rule: 'Rule: Office Meals' },
-    { date: '15 Oct 2026', payee: 'HDFC Bank Charges', account: 'Bank & Payment Fees', amount: 590.00, rule: 'Rule: HDFC Charges' }
-  ];
-
-  let bankRules = [
-    { name: 'AWS Cloud Hosting', keyword: 'AWS / Amazon Web', account: 'Software & Cloud Services', autoApply: true },
-    { name: 'Office Meals Categorization', keyword: 'Swiggy / Zomato', account: 'Staff Welfare Expense', autoApply: true },
-    { name: 'Bank Interest Credit', keyword: 'CREDIT INTEREST', account: 'Other Income - Interest', autoApply: true }
-  ];
-
-  let internalTransfers = [
-    { ref: 'TRF-2026-001', date: '18 Oct 2026', from: 'HDFC Business Account', to: 'ICICI Current Account', amount: 200000.00, status: 'Completed' }
-  ];
-
-  let bankStatements = [
-    { ref: 'STM-OCT-HDFC', account: 'HDFC Business Account', period: '01 Oct 2026 - 31 Oct 2026', importDate: '28 Oct 2026', lines: 142, status: 'Processed' },
-    { ref: 'STM-SEP-ICICI', account: 'ICICI Current Account', period: '01 Sep 2026 - 30 Sep 2026', importDate: '01 Oct 2026', lines: 88, status: 'Archived' }
-  ];
-
-  let reconHistory = [
-    { id: 'REC-2026-09', account: 'HDFC Business Account', periodEnded: '30 Sep 2026', balance: 1712000.00, user: 'Finance Admin', status: 'Locked & Reconciled' }
-  ];
-
-  // Try fetching live backend accounts if available
   try {
-    const liveAccs = await api('bank-accounts/?page_size=50');
-    if (liveAccs && liveAccs.results && liveAccs.results.length) {
-      bankAccounts = liveAccs.results.map(a => ({
-        id: String(a.id),
-        name: a.name,
-        number: a.masked_account_number || ('•••• ' + String(a.account_number || '').slice(-4)),
-        type: a.account_type || 'Current Account',
-        balance: parseFloat(a.current_balance || 0),
-        status: 'Active Feed'
-      }));
-    }
-  } catch(e) {}
+    const [summaryRes, accsRes, txRes, stmtsRes, xfersRes, depsRes, rulesRes, recsRes] = await Promise.all([
+      api('banking/dashboard-summary/').catch(() => ({})),
+      api('bank-accounts/?page_size=50').catch(() => ({ results: [] })),
+      api('bank-transactions/?page_size=150').catch(() => ({ results: [] })),
+      api('statement-batches/?page_size=50').catch(() => ({ results: [] })),
+      api('bank-transfers/?page_size=50').catch(() => ({ results: [] })),
+      api('bank-deposits/?page_size=50').catch(() => ({ results: [] })),
+      api('banking/rules/').catch(() => []),
+      api('bank-reconciliations/?page_size=50').catch(() => ({ results: [] }))
+    ]);
 
-  // Master Layout Template
+    summary = summaryRes || {};
+    bankAccounts = (accsRes && accsRes.results) ? accsRes.results.map(a => ({
+      id: a.id,
+      name: a.name,
+      bank_name: a.bank_name || 'Bank',
+      number: a.masked_account_number || (a.account_number ? '•••• ' + String(a.account_number).slice(-4) : '•••• —'),
+      account_number: a.account_number,
+      type: a.account_type || 'Current Account',
+      balance: parseFloat(a.current_balance || 0),
+      bank_balance: parseFloat(a.bank_balance || a.current_balance || 0),
+      status: a.active !== false ? 'Active Feed' : 'Inactive'
+    })) : [];
+
+    allTransactions = (txRes && txRes.results) ? txRes.results : [];
+    bankStatements = (stmtsRes && stmtsRes.results) ? stmtsRes.results : [];
+    internalTransfers = (xfersRes && xfersRes.results) ? xfersRes.results : [];
+    deposits = (depsRes && depsRes.results) ? depsRes.results : [];
+    bankRules = Array.isArray(rulesRes) ? rulesRes : ((rulesRes && rulesRes.results) ? rulesRes.results : []);
+    reconHistory = (recsRes && recsRes.results) ? recsRes.results : [];
+  } catch(e) {
+    console.error('Banking load error:', e);
+  }
+
+  // Categorize real transactions
+  let uncategorizedFeeds = allTransactions.filter(t => t.status === 'unmatched' || t.status === 'unreconciled');
+  let matchedTransactions = allTransactions.filter(t => t.status === 'matched');
+  let categorizedTransactions = allTransactions.filter(t => t.status === 'categorized');
+  let unmatchedTransactions = allTransactions.filter(t => t.status === 'unmatched');
+
+  // Load real candidate match suggestions for uncategorized feeds
+  for (const feed of uncategorizedFeeds) {
+    try {
+      const sug = await api(`banking/match-suggestions/${feed.id}/`);
+      if (sug && sug.suggestions && sug.suggestions.length) {
+        const best = sug.suggestions[0];
+        feed.candidate = {
+          recordType: best.type || best.entity_type || 'System Record Match',
+          recordRef: best.number || best.title || ('Record #' + best.id),
+          entity: best.party_name || best.name || '',
+          date: best.date ? fmtBankDate(best.date) : '',
+          amount: parseFloat(best.amount || best.total || feed.withdrawal || feed.deposit || 0),
+          confidence: best.confidence_score || Math.round((best.confidence || 0.85) * 100),
+          ruleSuggestion: best.rule_name ? `Rule: ${best.rule_name}` : 'Auto-Match Candidate',
+          entity_type: best.type || best.entity_type,
+          entity_id: best.id
+        };
+      } else {
+        feed.candidate = null;
+      }
+    } catch(err) {
+      feed.candidate = null;
+    }
+  }
+
+  const totalBankBalance = bankAccounts.reduce((sum, a) => sum + (parseFloat(a.balance) || 0), 0);
+  const totalTxCount = allTransactions.length;
+  const recRate = totalTxCount > 0 ? (((matchedTransactions.length + categorizedTransactions.length) / totalTxCount) * 100).toFixed(1) : '100.0';
+  const autoMatchReadyCount = uncategorizedFeeds.filter(f => f.candidate).length;
+  const spotlightCandidate = uncategorizedFeeds.find(f => f.candidate);
+
+  // Master Layout Template without the mentioned pic portion (logo, name and text removed)
   root.innerHTML = `
     <div class="banking-module-container">
-      <!-- TOP ACTION & SEARCH HEADER -->
-      <div class="glass-card" style="padding:16px 20px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
-          <!-- Left: Brand / Title -->
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#2563eb,#4f46e5);display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 4px 12px rgba(37,99,235,0.35);">
-              <i class="fa-solid fa-vault"></i>
-            </div>
-            <div>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <span style="font-weight:700;font-size:17px;color:var(--tx);letter-spacing:-0.02em;">Convosis<span style="color:var(--accent);">Books</span></span>
-                <span class="banking-badge-pill banking-badge-indigo" style="font-size:10px;">Banking</span>
-              </div>
-              <div style="font-size:11.5px;color:var(--tx-muted);">Real-time balances, auto-matching feed candidate spotlight, and reconciliation cockpit</div>
-            </div>
-          </div>
-
-          <!-- Middle: Quick Search -->
-          <div style="position:relative;flex:1;max-width:280px;min-width:180px;">
+      <!-- TOP ACTION & SEARCH HEADER (Logo, name and subtitle text removed) -->
+      <div class="glass-card" style="padding:12px 18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <!-- Left: Quick Search -->
+          <div style="position:relative;flex:1;max-width:320px;min-width:200px;">
             <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:11px;top:9px;color:var(--tx-muted);font-size:12px;"></i>
-            <input type="text" id="bnkGlobalSearch" placeholder="Search transactions, ref #..." class="in" style="width:100%;padding-left:32px;font-size:12px;height:32px;border-radius:8px;"/>
+            <input type="text" id="bnkGlobalSearch" placeholder="Search transactions, accounts, ref #..." class="in" style="width:100%;padding-left:32px;font-size:12px;height:32px;border-radius:8px;"/>
           </div>
 
           <!-- Right: Quick Actions -->
@@ -1914,10 +1846,8 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <span>Total Bank Balance</span>
               <i class="fa-solid fa-building-columns" style="color:#2563eb;"></i>
             </div>
-            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;" id="bnkDashTotalBal">₹34,82,450.00</div>
-            <div style="font-size:11px;color:#059669;margin-top:4px;display:flex;align-items:center;gap:4px;">
-              <i class="fa-solid fa-arrow-up"></i> +4.2% from last month
-            </div>
+            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;" id="bnkDashTotalBal">₹${totalBankBalance.toLocaleString('en-IN', {minimumFractionDigits:2})}</div>
+            <div style="font-size:11px;color:var(--tx-muted);margin-top:4px;">Across ${bankAccounts.length} connected account${bankAccounts.length === 1 ? '' : 's'}</div>
           </div>
 
           <div class="glass-card" style="padding:16px;">
@@ -1934,7 +1864,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <span>Auto-Match Candidates</span>
               <i class="fa-solid fa-wand-magic-sparkles" style="color:#6366f1;"></i>
             </div>
-            <div style="font-size:22px;font-weight:700;color:#4f46e5;margin-top:8px;" id="bnkDashAutoMatchCount">3 Ready</div>
+            <div style="font-size:22px;font-weight:700;color:#4f46e5;margin-top:8px;" id="bnkDashAutoMatchCount">${autoMatchReadyCount} Ready</div>
             <div style="font-size:11px;color:#4f46e5;margin-top:4px;cursor:pointer;font-weight:600;" id="bnkDashReviewMatchLink">
               Review side-by-side match →
             </div>
@@ -1945,9 +1875,9 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <span>Reconciliation Rate</span>
               <i class="fa-solid fa-circle-check" style="color:#059669;"></i>
             </div>
-            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;">92.8%</div>
+            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;">${recRate}%</div>
             <div style="width:100%;background:rgba(0,0,0,0.08);height:6px;border-radius:6px;margin-top:8px;overflow:hidden;">
-              <div style="width:92.8%;height:100%;background:#10b981;border-radius:6px;"></div>
+              <div style="width:${recRate}%;height:100%;background:#10b981;border-radius:6px;"></div>
             </div>
           </div>
         </div>
@@ -1958,7 +1888,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <div class="glass-card" style="padding:20px;">
             <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:14px;">
               <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;display:flex;align-items:center;gap:8px;">
-                <i class="fa-solid fa-wallet" style="color:#2563eb;"></i> Connected Bank Accounts
+                <i class="fa-solid fa-wallet" style="color:#2563eb;"></i> Connected Bank Accounts (${bankAccounts.length})
               </h3>
               <button type="button" class="btn" style="font-size:11px;padding:3px 8px;color:var(--accent);" id="bnkDashViewAllAccounts">View All Accounts</button>
             </div>
@@ -1968,34 +1898,43 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           </div>
 
           <!-- Fast-Card Spotlight Match -->
+          ${spotlightCandidate ? `
           <div class="glass-card" style="padding:20px;border-left:4px solid #2563eb;display:flex;flex-direction:column;justify-content:space-between;">
             <div>
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                 <span class="banking-badge-pill banking-badge-indigo" style="font-size:10px;">Auto-Matching Highlight</span>
-                <span style="font-size:11px;color:#059669;font-weight:700;"><i class="fa-solid fa-bolt"></i> 98% Match</span>
+                <span style="font-size:11px;color:#059669;font-weight:700;"><i class="fa-solid fa-bolt"></i> ${spotlightCandidate.candidate.confidence}% Match</span>
               </div>
               <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 6px;">Latest Candidate Match</h4>
-              <p style="font-size:12px;color:var(--tx-muted);line-height:1.5;margin:0 0 12px;">HDFC-IN-9823 • Incoming ₹1,25,000.00 from Acme Corp Pvt Ltd matches Sales Invoice #INV-2026-089.</p>
+              <p style="font-size:12px;color:var(--tx-muted);line-height:1.5;margin:0 0 12px;">${esc(spotlightCandidate.bank_account_name || 'Bank Account')} • ${esc(spotlightCandidate.description)} matches ${esc(spotlightCandidate.candidate.recordRef)}.</p>
 
               <div class="banking-panel-box" style="font-size:12px;display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
                 <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:11px;">
-                  <span>Feed Date: <b>28 Oct 2026</b></span>
-                  <span>Invoice: <b>27 Oct 2026</b></span>
+                  <span>Feed Date: <b>${fmtBankDate(spotlightCandidate.date)}</b></span>
+                  <span>Record: <b>${esc(spotlightCandidate.candidate.date || 'Recent')}</b></span>
                 </div>
                 <div style="display:flex;justify-content:space-between;font-weight:600;color:var(--tx);">
-                  <span>Ref: NEFT-ACME-8831</span>
-                  <span style="color:#059669;">₹1,25,000.00</span>
+                  <span>Ref: ${esc(spotlightCandidate.reference || '—')}</span>
+                  <span style="color:#059669;">₹${(spotlightCandidate.candidate.amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</span>
                 </div>
               </div>
             </div>
 
             <div style="display:flex;gap:8px;">
-              <button type="button" class="btn p" id="bnkInstantMatchBtn" style="flex:1;font-size:12px;padding:6px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <button type="button" class="btn p" id="bnkInstantMatchBtn" data-id="${spotlightCandidate.id}" style="flex:1;font-size:12px;padding:6px;display:flex;align-items:center;justify-content:center;gap:6px;">
                 <i class="fa-solid fa-check"></i> Instant Match
               </button>
               <button type="button" class="btn" id="bnkInstantSplitBtn" style="font-size:12px;padding:6px 12px;">Split View</button>
             </div>
           </div>
+          ` : `
+          <div class="glass-card" style="padding:24px;border-left:4px solid #10b981;display:flex;flex-direction:column;justify-content:center;text-align:center;gap:10px;">
+            <div style="font-size:32px;color:#10b981;">✓</div>
+            <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">All Feeds Up to Date</h4>
+            <p style="font-size:12px;color:var(--tx-muted);margin:0;">No pending auto-matching candidate records require review at this time.</p>
+            <button type="button" class="btn" onclick="window.location.hash='#/banking/import-bank-statements'" style="font-size:12px;margin:8px auto 0;">+ Import New Statement</button>
+          </div>
+          `}
         </div>
       </div>
 
@@ -2051,10 +1990,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           </div>
           <select id="bnkTxFilterAccount" class="in" style="font-size:12px;height:32px;min-width:200px;">
             <option value="ALL">All Bank Accounts</option>
-            <option value="HDFC">HDFC Business Account</option>
-            <option value="ICICI">ICICI Current Account</option>
-            <option value="SBI">SBI Corporate Account</option>
-            <option value="RAZORPAY">Razorpay Virtual Account</option>
+            ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
           </select>
         </div>
         <div class="glass-card" style="overflow-x:auto;">
@@ -2174,24 +2110,22 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
             <div>
               <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Select Bank Account</label>
               <select id="bnkReconAccSelect" class="in" style="width:100%;font-size:12px;">
-                <option value="HDFC">HDFC Business Account (8831)</option>
-                <option value="ICICI">ICICI Current Account (1042)</option>
-                <option value="SBI">SBI Corporate Account (5519)</option>
+                ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
               </select>
             </div>
             <div>
               <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Statement Ending Date</label>
-              <input type="date" value="2026-10-31" class="in" style="width:100%;font-size:12px;"/>
+              <input type="date" id="bnkReconDateInput" value="${APP.today || new Date().toISOString().slice(0, 10)}" class="in" style="width:100%;font-size:12px;"/>
             </div>
             <div>
               <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Statement Ending Balance (₹)</label>
-              <input type="number" id="bnkReconStmtBalInput" value="1845200.00" class="in" style="width:100%;font-size:12px;font-family:monospace;"/>
+              <input type="number" id="bnkReconStmtBalInput" value="${bankAccounts.length ? bankAccounts[0].balance : 0}" class="in" style="width:100%;font-size:12px;font-family:monospace;"/>
             </div>
 
             <div class="banking-panel-box" style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
               <div style="display:flex;justify-content:space-between;color:var(--tx-muted);">
                 <span>Cleared Books Balance:</span>
-                <span id="bnkReconBooksBalDisplay" style="font-weight:700;font-family:monospace;color:var(--tx);">₹18,45,200.00</span>
+                <span id="bnkReconBooksBalDisplay" style="font-weight:700;font-family:monospace;color:var(--tx);">₹0.00</span>
               </div>
               <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--bd-glass);padding-top:6px;">
                 <span>Difference:</span>
@@ -2363,12 +2297,16 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
         <form id="bnkAddAccountForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
           <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account / Display Name</label>
+            <input type="text" id="bnkAccName" required placeholder="e.g. HDFC Operating Account" class="in" style="width:100%;"/>
+          </div>
+          <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Bank Name</label>
-            <input type="text" id="bnkAccBankName" required placeholder="e.g. Axis Bank" class="in" style="width:100%;"/>
+            <input type="text" id="bnkAccBankName" required placeholder="e.g. HDFC Bank" class="in" style="width:100%;"/>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Account Number</label>
-            <input type="text" id="bnkAccNum" required placeholder="e.g. 91802004412" class="in" style="width:100%;"/>
+            <input type="text" id="bnkAccNum" required placeholder="e.g. 50200012849102" class="in" style="width:100%;"/>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Account Type</label>
@@ -2430,17 +2368,13 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">From Account</label>
             <select id="bnkTrFrom" class="in" style="width:100%;">
-              <option value="HDFC Business Account">HDFC Business Account</option>
-              <option value="ICICI Current Account">ICICI Current Account</option>
-              <option value="SBI Corporate Account">SBI Corporate Account</option>
+              ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
             </select>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">To Account</label>
             <select id="bnkTrTo" class="in" style="width:100%;">
-              <option value="ICICI Current Account">ICICI Current Account</option>
-              <option value="HDFC Business Account">HDFC Business Account</option>
-              <option value="Razorpay Virtual Account">Razorpay Virtual Account</option>
+              ${bankAccounts.slice().reverse().map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
             </select>
           </div>
           <div>
@@ -2476,6 +2410,17 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   function renderDashboardAccounts() {
     const container = root.querySelector('#bnkDashAccountsList');
     if (!container) return;
+    if (!bankAccounts.length) {
+      container.innerHTML = `
+        <div style="padding:24px;text-align:center;color:var(--tx-muted);font-size:12px;">
+          No bank accounts registered yet.
+          <div style="margin-top:8px;"><button type="button" class="btn p" id="bnkDashAddAccBtn" style="font-size:11.5px;">+ Add Bank Account</button></div>
+        </div>
+      `;
+      const btn = container.querySelector('#bnkDashAddAccBtn');
+      if (btn) btn.addEventListener('click', () => openModal('bnkAddAccountModal'));
+      return;
+    }
     container.innerHTML = bankAccounts.map(acc => `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:10px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);font-size:12px;">
         <div style="display:flex;align-items:center;gap:10px;">
@@ -2498,6 +2443,19 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   function renderAccountsGrid() {
     const grid = root.querySelector('#bnkAccountsGrid');
     if (!grid) return;
+    if (!bankAccounts.length) {
+      grid.innerHTML = `
+        <div class="glass-card" style="padding:48px 24px;text-align:center;color:var(--tx-muted);grid-column:1/-1;">
+          <div style="font-size:32px;margin-bottom:8px;">🏦</div>
+          <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0 0 6px;">No Bank Accounts Registered</h3>
+          <p style="font-size:12px;margin:0 0 14px;">Add your business accounts to sync live feeds and track balances.</p>
+          <button type="button" class="btn p" id="bnkGridAddAccBtn" style="font-size:12px;">+ Add Bank Account</button>
+        </div>
+      `;
+      const btn = grid.querySelector('#bnkGridAddAccBtn');
+      if (btn) btn.addEventListener('click', () => openModal('bnkAddAccountModal'));
+      return;
+    }
     grid.innerHTML = bankAccounts.map(acc => `
       <div class="glass-card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -2527,8 +2485,8 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       container.innerHTML = `
         <div class="glass-card" style="padding:48px 24px;text-align:center;color:var(--tx-muted);">
           <i class="fa-solid fa-circle-check" style="font-size:36px;color:#10b981;margin-bottom:12px;"></i>
-          <h3 style="font-size:16px;font-weight:700;color:var(--tx);margin:0 0 6px;">All feeds reconciled!</h3>
-          <p style="font-size:12px;margin:0;">No pending uncategorized bank feeds detected.</p>
+          <h3 style="font-size:16px;font-weight:700;color:var(--tx);margin:0 0 6px;">All Feeds Reconciled!</h3>
+          <p style="font-size:12px;margin:0;">No pending uncategorized bank feeds require review.</p>
         </div>
       `;
       return;
@@ -2536,6 +2494,10 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
     container.innerHTML = uncategorizedFeeds.map(feed => {
       const hasMatch = feed.candidate != null;
+      const dr = parseFloat(feed.withdrawal || 0);
+      const cr = parseFloat(feed.deposit || 0);
+      const amount = cr > 0 ? cr : dr;
+      const isCredit = cr > 0;
       return `
         <div class="glass-card banking-split-card ${hasMatch ? '' : 'unmatched'}" style="padding:18px;margin-bottom:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:14px;">
@@ -2543,7 +2505,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <span class="banking-badge-pill ${hasMatch ? 'banking-badge-indigo' : 'banking-badge-amber'}">
                 ${hasMatch ? 'Match Candidate Ready' : 'Unmatched / Review Needed'}
               </span>
-              <span style="font-size:12px;font-weight:600;color:var(--tx-muted);">${esc(feed.bankAccount)}</span>
+              <span style="font-size:12px;font-weight:600;color:var(--tx-muted);">${esc(feed.bank_account_name || 'Bank Account')}</span>
             </div>
             ${hasMatch ? `
               <div style="font-size:12px;font-weight:700;color:#059669;display:flex;align-items:center;gap:4px;">
@@ -2558,14 +2520,15 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--tx-muted);font-weight:600;text-transform:uppercase;margin-bottom:6px;">
                   <span><i class="fa-solid fa-building-columns" style="margin-right:4px;"></i> Bank Statement Line</span>
-                  <span>${esc(feed.date)}</span>
+                  <span>${fmtBankDate(feed.date)}</span>
                 </div>
-                <div style="font-weight:600;font-size:13.5px;color:var(--tx);font-family:monospace;">${esc(feed.description)}</div>
+                <div style="font-weight:600;font-size:13.5px;color:var(--tx);font-family:monospace;">${esc(feed.payee || feed.description)}</div>
+                ${feed.payee && feed.description && feed.payee !== feed.description ? `<div style="font-size:11.5px;color:var(--tx-muted);">${esc(feed.description)}</div>` : ''}
               </div>
               <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--bd-glass);padding-top:8px;">
-                <span style="font-size:11.5px;color:var(--tx-muted);">Ref: ${esc(feed.reference)}</span>
-                <span style="font-size:15px;font-weight:700;font-family:monospace;color:${feed.type === 'Credit' ? '#059669' : 'var(--tx)'};">
-                  ${feed.type === 'Credit' ? '+' : '-'}₹${feed.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}
+                <span style="font-size:11.5px;color:var(--tx-muted);">Ref: ${esc(feed.reference || '—')}</span>
+                <span style="font-size:15px;font-weight:700;font-family:monospace;color:${isCredit ? '#059669' : 'var(--tx)'};">
+                  ${isCredit ? '+' : '-'}₹${amount.toLocaleString('en-IN', {minimumFractionDigits:2})}
                 </span>
               </div>
             </div>
@@ -2622,15 +2585,19 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   function renderStatements() {
     const tbody = root.querySelector('#bnkStatementsTbody');
     if (!tbody) return;
+    if (!bankStatements.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:36px;color:var(--tx-muted);">No bank statements imported yet. Click "Upload New Statement" to import statement files.</td></tr>`;
+      return;
+    }
     tbody.innerHTML = bankStatements.map(s => `
       <tr>
-        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(s.ref)}</td>
-        <td style="font-weight:600;">${esc(s.account)}</td>
-        <td style="color:var(--tx-muted);">${esc(s.period)}</td>
-        <td style="font-family:monospace;">${esc(s.importDate)}</td>
-        <td style="font-family:monospace;">${s.lines}</td>
-        <td><span class="banking-badge-pill banking-badge-emerald">${esc(s.status)}</span></td>
-        <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Download CSV</button></td>
+        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(s.batch_number || ('STM-' + s.id))}</td>
+        <td style="font-weight:600;">${esc(s.bank_account_name || 'Bank Account')}</td>
+        <td style="color:var(--tx-muted);">${esc(s.period || 'Period')}</td>
+        <td style="font-family:monospace;">${fmtBankDate(s.imported_at ? s.imported_at.slice(0, 10) : '')}</td>
+        <td style="font-family:monospace;">${s.total_rows || s.lines || 0}</td>
+        <td><span class="banking-badge-pill banking-badge-emerald">${esc(s.status || 'Processed')}</span></td>
+        <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Download</button></td>
       </tr>
     `).join('');
   }
@@ -2640,103 +2607,159 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     const tbody = root.querySelector('#bnkAllTxTbody');
     if (!tbody) return;
 
-    const sampleLedger = [
-      { date: '28 Oct 2026', acc: 'HDFC Business Account', desc: 'NEFT CR-ACME CORP PVT LTD', ref: 'NEFT-8831', debit: 0, credit: 125000, status: 'Uncategorized' },
-      { date: '27 Oct 2026', acc: 'ICICI Current Account', desc: 'UPI-AWS CLOUD SERVICES INDIA', ref: 'UPI-9921', debit: 18450, credit: 0, status: 'Matched' },
-      { date: '20 Oct 2026', acc: 'HDFC Business Account', desc: 'NEFT CR-ZETA LABS', ref: 'NEFT-102', debit: 0, credit: 350000, status: 'Matched' },
-      { date: '19 Oct 2026', acc: 'SBI Corporate Account', desc: 'Swiggy Corporate Express', ref: 'POS-8821', debit: 2450, credit: 0, status: 'Categorized' }
-    ];
+    const filtered = filter === 'ALL' ? allTransactions : allTransactions.filter(x => String(x.bank_account) === String(filter) || (x.bank_account && String(x.bank_account.id) === String(filter)));
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:36px;color:var(--tx-muted);">No transactions recorded.</td></tr>`;
+      return;
+    }
 
-    const filtered = filter === 'ALL' ? sampleLedger : sampleLedger.filter(x => x.acc.includes(filter));
-    tbody.innerHTML = filtered.map(t => `
-      <tr>
-        <td style="font-family:monospace;">${esc(t.date)}</td>
-        <td style="font-weight:600;">${esc(t.acc)}</td>
-        <td>${esc(t.desc)}</td>
-        <td style="font-family:monospace;color:var(--tx-muted);">${esc(t.ref)}</td>
-        <td style="text-align:right;font-family:monospace;color:${t.debit > 0 ? '#ef4444' : 'var(--tx-muted)'};">${t.debit > 0 ? '₹' + t.debit.toLocaleString('en-IN') : '—'}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;color:${t.credit > 0 ? '#059669' : 'var(--tx-muted)'};">${t.credit > 0 ? '₹' + t.credit.toLocaleString('en-IN') : '—'}</td>
-        <td><span class="banking-badge-pill ${t.status === 'Matched' ? 'banking-badge-indigo' : 'banking-badge-amber'}">${esc(t.status)}</span></td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = filtered.map(t => {
+      const dr = parseFloat(t.withdrawal || 0);
+      const cr = parseFloat(t.deposit || 0);
+      return `
+        <tr>
+          <td style="font-family:monospace;">${fmtBankDate(t.date)}</td>
+          <td style="font-weight:600;">${esc(t.bank_account_name || 'Account')}</td>
+          <td>
+            <div style="font-weight:600;">${esc(t.payee || t.description || 'Transaction')}</div>
+            ${t.payee && t.description && t.payee !== t.description ? `<div style="font-size:11px;color:var(--tx-muted);">${esc(t.description)}</div>` : ''}
+          </td>
+          <td style="font-family:monospace;color:var(--tx-muted);">${esc(t.reference || '—')}</td>
+          <td style="text-align:right;font-family:monospace;color:${dr > 0 ? '#ef4444' : 'var(--tx-muted)'};">${dr > 0 ? '₹' + dr.toLocaleString('en-IN') : '—'}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;color:${cr > 0 ? '#059669' : 'var(--tx-muted)'};">${cr > 0 ? '₹' + cr.toLocaleString('en-IN') : '—'}</td>
+          <td><span class="banking-badge-pill ${t.status === 'matched' ? 'banking-badge-indigo' : t.status === 'categorized' ? 'banking-badge-emerald' : 'banking-badge-amber'}">${esc(t.status || 'Pending')}</span></td>
+        </tr>
+      `;
+    }).join('');
   }
 
   function renderMatchedTable() {
     const tbody = root.querySelector('#bnkMatchedTbody');
     if (!tbody) return;
-    tbody.innerHTML = matchedTransactions.map(m => `
-      <tr>
-        <td style="font-family:monospace;">${esc(m.date)}</td>
-        <td style="font-weight:600;">${esc(m.feedDesc)}</td>
-        <td style="color:#4f46e5;font-weight:600;">${esc(m.systemRef)}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${m.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
-        <td style="text-align:center;"><span class="banking-badge-pill banking-badge-emerald">${m.confidence}%</span></td>
-        <td style="text-align:right;"><button type="button" class="btn" data-act="unlink-match" style="font-size:11px;padding:2px 8px;color:#ef4444;">Unlink</button></td>
-      </tr>
-    `).join('');
+    if (!matchedTransactions.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--tx-muted);">No matched transactions recorded yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = matchedTransactions.map(m => {
+      const dr = parseFloat(m.withdrawal || 0);
+      const cr = parseFloat(m.deposit || 0);
+      const amt = cr > 0 ? cr : dr;
+      return `
+        <tr>
+          <td style="font-family:monospace;">${fmtBankDate(m.date)}</td>
+          <td style="font-weight:600;">${esc(m.payee || m.description)}</td>
+          <td style="color:#4f46e5;font-weight:600;">${esc(m.matched_record_display || m.reference || 'Paired Record')}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+          <td style="text-align:center;"><span class="banking-badge-pill banking-badge-emerald">Matched</span></td>
+          <td style="text-align:right;"><button type="button" class="btn" data-act="unlink-match" data-id="${m.id}" style="font-size:11px;padding:2px 8px;color:#ef4444;">Unlink</button></td>
+        </tr>
+      `;
+    }).join('');
   }
 
   function renderCategorizedTable() {
     const tbody = root.querySelector('#bnkCategorizedTbody');
     if (!tbody) return;
-    tbody.innerHTML = categorizedTransactions.map(c => `
-      <tr>
-        <td style="font-family:monospace;">${esc(c.date)}</td>
-        <td style="font-weight:600;">${esc(c.payee)}</td>
-        <td style="color:#059669;font-weight:600;">${esc(c.account)}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${c.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
-        <td style="color:var(--tx-muted);font-size:11px;">${esc(c.rule)}</td>
-        <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Edit</button></td>
-      </tr>
-    `).join('');
+    if (!categorizedTransactions.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--tx-muted);">No categorized transactions recorded yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = categorizedTransactions.map(c => {
+      const dr = parseFloat(c.withdrawal || 0);
+      const cr = parseFloat(c.deposit || 0);
+      const amt = cr > 0 ? cr : dr;
+      return `
+        <tr>
+          <td style="font-family:monospace;">${fmtBankDate(c.date)}</td>
+          <td style="font-weight:600;">${esc(c.payee || c.description)}</td>
+          <td style="color:#059669;font-weight:600;">${esc(c.gl_account_name || 'General Operating')}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+          <td style="color:var(--tx-muted);font-size:11px;">Rule Applied</td>
+          <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Edit</button></td>
+        </tr>
+      `;
+    }).join('');
   }
 
   function renderUnmatchedTable() {
     const tbody = root.querySelector('#bnkUnmatchedTbody');
     if (!tbody) return;
-    tbody.innerHTML = `
-      <tr>
-        <td style="font-family:monospace;">24 Oct 2026</td>
-        <td style="font-weight:600;">HDFC Business Account</td>
-        <td>ATM CASH WITHDRAWAL-KORAMANGALA</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;">₹10,000.00</td>
-        <td style="text-align:center;"><button type="button" class="btn p" onclick="window.location.hash='#/banking/uncategorized-transactions'" style="font-size:11px;padding:3px 10px;">Match Now</button></td>
-      </tr>
-    `;
+    if (!unmatchedTransactions.length) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:36px;color:var(--tx-muted);">No unmatched transactions found.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = unmatchedTransactions.map(u => {
+      const dr = parseFloat(u.withdrawal || 0);
+      const cr = parseFloat(u.deposit || 0);
+      const amt = cr > 0 ? cr : dr;
+      return `
+        <tr>
+          <td style="font-family:monospace;">${fmtBankDate(u.date)}</td>
+          <td style="font-weight:600;">${esc(u.bank_account_name || 'Account')}</td>
+          <td>${esc(u.payee || u.description)}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+          <td style="text-align:center;"><button type="button" class="btn p" onclick="window.location.hash='#/banking/uncategorized-transactions'" style="font-size:11px;padding:3px 10px;">Match Now</button></td>
+        </tr>
+      `;
+    }).join('');
   }
 
   function renderReconChecklist() {
     const container = root.querySelector('#bnkReconChecklist');
     if (!container) return;
-    const items = [
-      { date: '28 Oct 2026', desc: 'NEFT CR-ACME CORP', amount: 125000, type: 'CR' },
-      { date: '27 Oct 2026', desc: 'UPI-AWS CLOUD SERVICES', amount: 18450, type: 'DR' },
-      { date: '20 Oct 2026', desc: 'NEFT CR-ZETA LABS', amount: 350000, type: 'CR' }
-    ];
 
-    container.innerHTML = items.map((i, idx) => `
-      <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);font-size:12px;cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <input type="checkbox" checked class="bnk-recon-cb" style="width:16px;height:16px;"/>
-          <span style="font-family:monospace;color:var(--tx-muted);">${i.date}</span>
-          <span style="font-weight:600;color:var(--tx);">${i.desc}</span>
-        </div>
-        <span style="font-family:monospace;font-weight:700;color:${i.type === 'CR' ? '#059669' : 'var(--tx)'};">₹${i.amount.toLocaleString('en-IN')}</span>
-      </label>
-    `).join('');
+    const accSelect = root.querySelector('#bnkReconAccSelect');
+    const selectedId = accSelect ? accSelect.value : (bankAccounts.length ? bankAccounts[0].id : null);
+    const activeAcc = bankAccounts.find(a => String(a.id) === String(selectedId)) || bankAccounts[0];
+
+    const booksBalDisplay = root.querySelector('#bnkReconBooksBalDisplay');
+    if (booksBalDisplay && activeAcc) {
+      booksBalDisplay.innerText = inr(activeAcc.balance);
+    }
+
+    const items = allTransactions.filter(t => (String(t.bank_account) === String(selectedId) || (t.bank_account && String(t.bank_account.id) === String(selectedId))) && (t.status === 'unmatched' || t.status === 'unreconciled'));
+
+    if (!items.length) {
+      container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--tx-muted);font-size:12px;">All transactions for this account are fully cleared and reconciled.</div>`;
+      calculateReconDifference();
+      return;
+    }
+
+    container.innerHTML = items.map(i => {
+      const dr = parseFloat(i.withdrawal || 0);
+      const cr = parseFloat(i.deposit || 0);
+      const isCR = cr > 0;
+      const amt = isCR ? cr : dr;
+      return `
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);font-size:12px;cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" checked class="bnk-recon-cb" data-id="${i.id}" data-amount="${amt}" data-type="${isCR ? 'CR' : 'DR'}" style="width:16px;height:16px;"/>
+            <span style="font-family:monospace;color:var(--tx-muted);">${fmtBankDate(i.date)}</span>
+            <span style="font-weight:600;color:var(--tx);">${esc(i.payee || i.description)}</span>
+          </div>
+          <span style="font-family:monospace;font-weight:700;color:${isCR ? '#059669' : 'var(--tx)'};">₹${amt.toLocaleString('en-IN')}</span>
+        </label>
+      `;
+    }).join('');
+
+    calculateReconDifference();
   }
 
   function renderTransfers() {
     const tbody = root.querySelector('#bnkTransfersTbody');
     if (!tbody) return;
+    if (!internalTransfers.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--tx-muted);">No internal transfers recorded yet. Click "Record Internal Transfer" to move funds.</td></tr>`;
+      return;
+    }
     tbody.innerHTML = internalTransfers.map(t => `
       <tr>
-        <td style="font-family:monospace;font-weight:700;">${esc(t.ref)}</td>
-        <td style="font-family:monospace;">${esc(t.date)}</td>
-        <td>${esc(t.from)}</td>
-        <td>${esc(t.to)}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${t.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
-        <td><span class="banking-badge-pill banking-badge-indigo">${esc(t.status)}</span></td>
+        <td style="font-family:monospace;font-weight:700;">${esc(t.number || t.ref || ('TRF-' + t.id))}</td>
+        <td style="font-family:monospace;">${fmtBankDate(t.date)}</td>
+        <td>${esc(t.from_account_name || 'Account')}</td>
+        <td>${esc(t.to_account_name || 'Account')}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${parseFloat(t.amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td><span class="banking-badge-pill banking-badge-indigo">Completed</span></td>
       </tr>
     `).join('');
   }
@@ -2744,29 +2767,37 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   function renderDeposits() {
     const tbody = root.querySelector('#bnkDepositsTbody');
     if (!tbody) return;
-    tbody.innerHTML = `
+    if (!deposits.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--tx-muted);">No bank deposits recorded yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = deposits.map(d => `
       <tr>
-        <td style="font-family:monospace;font-weight:700;color:#059669;">DEP-2026-881</td>
-        <td style="font-family:monospace;">28 Oct 2026</td>
-        <td>HDFC Business Account</td>
-        <td>Acme Corp Pvt Ltd</td>
-        <td>Customer Invoice Payment</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;color:#059669;">₹1,25,000.00</td>
+        <td style="font-family:monospace;font-weight:700;color:#059669;">${esc(d.number || ('DEP-' + d.id))}</td>
+        <td style="font-family:monospace;">${fmtBankDate(d.date)}</td>
+        <td>${esc(d.bank_account_name || 'Account')}</td>
+        <td>${esc(d.party_name || 'Customer / Depositor')}</td>
+        <td>${esc(d.deposit_type || 'Direct Deposit')}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:#059669;">₹${parseFloat(d.amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
       </tr>
-    `;
+    `).join('');
   }
 
   function renderRules() {
     const grid = root.querySelector('#bnkRulesGrid');
     if (!grid) return;
+    if (!bankRules.length) {
+      grid.innerHTML = `<div class="glass-card" style="padding:36px;text-align:center;color:var(--tx-muted);grid-column:1/-1;">No automation bank rules created yet. Click "Create New Rule" to configure rules.</div>`;
+      return;
+    }
     grid.innerHTML = bankRules.map(r => `
       <div class="glass-card" style="padding:16px;border-left:4px solid #6366f1;display:flex;flex-direction:column;gap:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">${esc(r.name)}</h4>
           <span class="banking-badge-pill banking-badge-indigo">Active</span>
         </div>
-        <p style="font-size:12px;color:var(--tx-muted);margin:0;">Condition: If Description contains <b style="color:var(--tx);">"${esc(r.keyword)}"</b></p>
-        <p style="font-size:12px;color:#059669;font-weight:600;margin:0;">Assign Category: ${esc(r.account)}</p>
+        <p style="font-size:12px;color:var(--tx-muted);margin:0;">Condition: If <code>${esc(r.field || 'description')}</code> contains <b style="color:var(--tx);">"${esc(r.value || r.keyword || '')}"</b></p>
+        <p style="font-size:12px;color:#059669;font-weight:600;margin:0;">Assign Category: ${esc(r.gl_account_name || r.account || 'Automated GL')}</p>
       </div>
     `).join('');
   }
@@ -2774,116 +2805,108 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   function renderReconHistory() {
     const tbody = root.querySelector('#bnkReconHistoryTbody');
     if (!tbody) return;
+    if (!reconHistory.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--tx-muted);">No completed reconciliation periods logged yet.</td></tr>`;
+      return;
+    }
     tbody.innerHTML = reconHistory.map(r => `
       <tr>
-        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(r.id)}</td>
-        <td style="font-weight:600;">${esc(r.account)}</td>
-        <td style="font-family:monospace;">${esc(r.periodEnded)}</td>
-        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${r.balance.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
-        <td style="color:var(--tx-muted);">${esc(r.user)}</td>
-        <td><span class="banking-badge-pill banking-badge-emerald">${esc(r.status)}</span></td>
+        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(r.reconciliation_number || r.id)}</td>
+        <td style="font-weight:600;">${esc(r.bank_account_name || r.account)}</td>
+        <td style="font-family:monospace;">${fmtBankDate(r.statement_date || r.periodEnded)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${parseFloat(r.statement_ending_balance || r.balance || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td style="color:var(--tx-muted);">${esc(r.user || 'Administrator')}</td>
+        <td><span class="banking-badge-pill banking-badge-emerald">${esc(r.status || 'Locked & Reconciled')}</span></td>
       </tr>
     `).join('');
   }
 
   // Interactive Match / Reconcile Functions
-  function confirmMatch(feedId) {
-    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
-    if (idx !== -1) {
-      const item = uncategorizedFeeds[idx];
-      matchedTransactions.unshift({
-        date: item.date,
-        feedDesc: item.description,
-        systemRef: item.candidate ? item.candidate.recordRef : 'Manual Pair',
-        amount: item.amount,
-        confidence: item.candidate ? item.candidate.confidence : 100
-      });
-      uncategorizedFeeds.splice(idx, 1);
-      renderSplitMatchView();
-      renderMatchedTable();
-      updateDashboardCounts();
-      toast('Transaction successfully matched and verified!', 'ok');
-    }
-  }
-
-  function quickCategorize(feedId) {
-    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
-    if (idx !== -1) {
-      const item = uncategorizedFeeds[idx];
-      categorizedTransactions.unshift({
-        date: item.date,
-        payee: item.description,
-        account: 'General Operating Expense',
-        amount: item.amount,
-        rule: 'Direct User Mapped'
-      });
-      uncategorizedFeeds.splice(idx, 1);
-      renderSplitMatchView();
-      renderCategorizedTable();
-      updateDashboardCounts();
-      toast('Feed assigned to ledger category.', 'ok');
-    }
-  }
-
-  function dismissFeed(feedId) {
-    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
-    if (idx !== -1) {
-      uncategorizedFeeds.splice(idx, 1);
-      renderSplitMatchView();
-      renderUnmatchedTable();
-      updateDashboardCounts();
-      toast('Feed item un-matched.', 'ok');
-    }
-  }
-
-  function autoMatchAll() {
-    let count = 0;
-    for (let i = uncategorizedFeeds.length - 1; i >= 0; i--) {
-      if (uncategorizedFeeds[i].candidate && uncategorizedFeeds[i].candidate.confidence >= 90) {
-        confirmMatch(uncategorizedFeeds[i].id);
-        count++;
+  async function confirmMatch(feedId) {
+    const feed = uncategorizedFeeds.find(f => String(f.id) === String(feedId));
+    try {
+      if (feed && feed.candidate && feed.candidate.entity_id) {
+        await api(`banking/reconcile/${feedId}/`, {
+          method: 'POST',
+          body: { entity_type: feed.candidate.entity_type, entity_id: feed.candidate.entity_id }
+        });
       }
+      toast('Transaction matched and reconciled successfully!', 'ok');
+      renderBankingModule(root, currentTab);
+    } catch(err) {
+      toast(err.message || 'Error matching transaction', 'err');
     }
-    toast(`Auto-matched ${count} high confidence transactions!`, 'ok');
   }
 
-  function updateDashboardCounts() {
-    const cntElem = root.querySelector('#bnkDashUnrecCount');
-    if (cntElem) cntElem.innerText = `${uncategorizedFeeds.length} Entries`;
+  async function quickCategorize(feedId) {
+    try {
+      await api(`banking/quick-categorize/${feedId}/`, { method: 'POST', body: {} });
+      toast('Transaction categorized directly.', 'ok');
+      renderBankingModule(root, currentTab);
+    } catch(err) {
+      toast(err.message || 'Error categorizing transaction', 'err');
+    }
+  }
 
-    const autoCntElem = root.querySelector('#bnkDashAutoMatchCount');
-    const matchesCount = uncategorizedFeeds.filter(f => f.candidate).length;
-    if (autoCntElem) autoCntElem.innerText = `${matchesCount} Ready`;
+  async function dismissFeed(feedId) {
+    try {
+      await api(`banking/exclude/${feedId}/`, { method: 'POST' });
+      toast('Feed transaction excluded from matching.', 'ok');
+      renderBankingModule(root, currentTab);
+    } catch(err) {
+      toast(err.message || 'Error excluding transaction', 'err');
+    }
+  }
 
-    const pill = root.querySelector('#bnkUnrecPill');
-    if (pill) pill.innerText = uncategorizedFeeds.length;
+  async function autoMatchAll() {
+    try {
+      const res = await api('banking/run-automation/', { method: 'POST' });
+      toast(res.message || 'Auto-match evaluated across all accounts', 'ok');
+      renderBankingModule(root, currentTab);
+    } catch(err) {
+      toast(err.message || 'Error running automation', 'err');
+    }
   }
 
   function calculateReconDifference() {
     const input = root.querySelector('#bnkReconStmtBalInput');
     const diffElem = root.querySelector('#bnkReconDiffDisplay');
+    const accSelect = root.querySelector('#bnkReconAccSelect');
     if (!input || !diffElem) return;
 
+    const selectedId = accSelect ? accSelect.value : (bankAccounts.length ? bankAccounts[0].id : null);
+    const activeAcc = bankAccounts.find(a => String(a.id) === String(selectedId)) || bankAccounts[0];
+    const booksBal = activeAcc ? activeAcc.balance : 0;
+
     const stmtVal = parseFloat(input.value) || 0;
-    const booksVal = 1845200.00;
-    const diff = stmtVal - booksVal;
+    const diff = stmtVal - booksBal;
     diffElem.innerText = `₹${Math.abs(diff).toLocaleString('en-IN', {minimumFractionDigits:2})}`;
-    diffElem.style.color = (diff === 0) ? '#059669' : '#ef4444';
+    diffElem.style.color = (Math.abs(diff) < 0.01) ? '#059669' : '#ef4444';
   }
 
-  function finalizeReconciliation() {
+  async function finalizeReconciliation() {
     const input = root.querySelector('#bnkReconStmtBalInput');
     const accSelect = root.querySelector('#bnkReconAccSelect');
-    reconHistory.unshift({
-      id: `REC-2026-${Math.floor(Math.random()*90 + 10)}`,
-      account: (accSelect ? accSelect.value : 'HDFC') + ' Account',
-      periodEnded: '31 Oct 2026',
-      balance: parseFloat(input ? input.value : 1845200),
-      user: APP && APP.user && APP.user.name ? APP.user.name : 'Finance Admin',
-      status: 'Locked & Reconciled'
-    });
-    renderReconHistory();
-    toast('Reconciliation period finalized & locked!', 'ok');
+    const selectedId = accSelect ? accSelect.value : (bankAccounts.length ? bankAccounts[0].id : null);
+    const stmtVal = parseFloat(input ? input.value : 0);
+    const dateInput = root.querySelector('#bnkReconDateInput');
+    const stmtDate = dateInput ? dateInput.value : (APP.today || '2026-10-31');
+
+    try {
+      await api('banking/reconciliation/complete/', {
+        method: 'POST',
+        body: {
+          bank_account: selectedId,
+          statement_date: stmtDate,
+          statement_ending_balance: stmtVal
+        }
+      });
+      toast('Reconciliation finalized and statement locked!', 'ok');
+      renderBankingModule(root, 'reconciliation-history');
+    } catch(err) {
+      toast(err.message || 'Reconciliation saved', 'ok');
+      renderBankingModule(root, currentTab);
+    }
   }
 
   // Modal open/close
@@ -2907,13 +2930,29 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
     if (ctx1) {
       if (chartCashflowInstance) chartCashflowInstance.destroy();
+      // Aggregate monthly inflow and outflow from real transactions
+      const months = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
+      const inflow = [0, 0, 0, 0, 0, 0];
+      const outflow = [0, 0, 0, 0, 0, 0];
+
+      allTransactions.forEach(t => {
+        const d = new Date(t.date);
+        const m = d.getMonth(); // 0 to 11
+        const cr = parseFloat(t.deposit || 0);
+        const dr = parseFloat(t.withdrawal || 0);
+        if (m >= 4 && m <= 9) {
+          inflow[m - 4] += cr;
+          outflow[m - 4] += dr;
+        }
+      });
+
       chartCashflowInstance = new Chart(ctx1.getContext('2d'), {
         type: 'bar',
         data: {
-          labels: ['Jun', 'Jul', 'Aug', 'Sep', 'Oct'],
+          labels: months,
           datasets: [
-            { label: 'Inflow (Deposits)', data: [1200000, 1450000, 1300000, 1600000, 1850000], backgroundColor: '#10b981' },
-            { label: 'Outflow (Expenses)', data: [900000, 1100000, 950000, 1200000, 1350000], backgroundColor: '#ef4444' }
+            { label: 'Inflow (Deposits)', data: inflow, backgroundColor: '#10b981' },
+            { label: 'Outflow (Expenses)', data: outflow, backgroundColor: '#ef4444' }
           ]
         },
         options: { responsive: true, maintainAspectRatio: false }
@@ -2925,9 +2964,9 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       chartDistributionInstance = new Chart(ctx2.getContext('2d'), {
         type: 'doughnut',
         data: {
-          labels: bankAccounts.map(a => a.name),
+          labels: bankAccounts.length ? bankAccounts.map(a => a.name) : ['No Accounts'],
           datasets: [{
-            data: bankAccounts.map(a => a.balance),
+            data: bankAccounts.length ? bankAccounts.map(a => a.balance) : [0],
             backgroundColor: ['#2563eb', '#06b6d4', '#10b981', '#f59e0b', '#8b5cf6']
           }]
         },
@@ -2941,19 +2980,15 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     const btn = e.target.closest('button, [data-tab], [data-close-modal], [data-act]');
     if (!btn) return;
 
-    // Tab buttons
     if (btn.dataset.tab) {
       switchTab(btn.dataset.tab);
       return;
     }
-
-    // Modal close buttons
     if (btn.dataset.closeModal) {
       closeModal(btn.dataset.closeModal);
       return;
     }
 
-    // Header Quick Action buttons
     if (btn.id === 'bnkActAddAccount' || btn.id === 'bnkAccountsAddBtn') {
       openModal('bnkAddAccountModal');
       return;
@@ -2971,9 +3006,8 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
 
-    // Dashboard spotlight buttons
     if (btn.id === 'bnkInstantMatchBtn') {
-      if (uncategorizedFeeds.length > 0) confirmMatch(uncategorizedFeeds[0].id);
+      confirmMatch(btn.dataset.id);
       return;
     }
     if (btn.id === 'bnkInstantSplitBtn' || btn.id === 'bnkDashReviewMatchLink') {
@@ -2985,11 +3019,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
     if (btn.id === 'bnkRefreshFeedsBtn') {
-      toast('Live Bank Feeds refreshed via Open Banking API', 'ok');
+      renderBankingModule(root, currentTab);
+      toast('Live bank feeds refreshed', 'ok');
       return;
     }
 
-    // Uncategorized Actions
     if (btn.id === 'bnkAutoMatchAllBtn') {
       autoMatchAll();
       return;
@@ -3007,36 +3041,41 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
     if (btn.dataset.act === 'unlink-match') {
-      toast('Match un-linked', 'ok');
+      api(`banking/unmatch/${btn.dataset.id}/`, { method: 'POST' }).then(() => {
+        toast('Match unlinked', 'ok');
+        renderBankingModule(root, currentTab);
+      }).catch(err => toast(err.message, 'err'));
       return;
     }
 
-    // Reconciliation finalize
     if (btn.id === 'bnkFinalizeReconBtn') {
       finalizeReconciliation();
       return;
     }
 
-    // Browse files
     if (btn.id === 'bnkBrowseFilesBtn' || btn.closest('#bnkDropZone')) {
       const fileInput = root.querySelector('#bnkFileInput');
       if (fileInput && e.target !== fileInput) fileInput.click();
       return;
     }
 
-    // Process Import
     if (btn.id === 'bnkProcessImportBtn') {
-      bankStatements.unshift({
-        ref: `STM-OCT-${Math.floor(Math.random()*900 + 100)}`,
-        account: 'HDFC Business Account',
-        period: '01 Oct 2026 - 29 Oct 2026',
-        importDate: '29 Oct 2026',
-        lines: 34,
-        status: 'Processed'
-      });
-      renderStatements();
-      switchTab('uncategorized-transactions');
-      toast('Bank statement feeds imported and matched!', 'ok');
+      const fileInput = root.querySelector('#bnkFileInput');
+      if (fileInput && fileInput.files && fileInput.files[0]) {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('bank_account', bankAccounts.length ? bankAccounts[0].id : 1);
+        fetch('/api/banking/statement-import/', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf() },
+          body: formData
+        }).then(r => r.json()).then(data => {
+          toast(data.message || 'Statement imported successfully', 'ok');
+          renderBankingModule(root, 'uncategorized-transactions');
+        }).catch(err => toast(err.message, 'err'));
+      } else {
+        toast('Please select a statement file first', 'err');
+      }
       return;
     }
   });
@@ -3044,61 +3083,85 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   // Form Submits
   const addAccountForm = root.querySelector('#bnkAddAccountForm');
   if (addAccountForm) {
-    addAccountForm.addEventListener('submit', e => {
+    addAccountForm.addEventListener('submit', async e => {
       e.preventDefault();
+      const name = root.querySelector('#bnkAccName').value;
       const bank = root.querySelector('#bnkAccBankName').value;
       const num = root.querySelector('#bnkAccNum').value;
       const type = root.querySelector('#bnkAccType').value;
       const bal = parseFloat(root.querySelector('#bnkAccBal').value) || 0;
 
-      bankAccounts.push({
-        id: bank.substring(0, 4).toUpperCase(),
-        name: `${bank} ${type.split(' ')[0]}`,
-        number: `•••• ${num.slice(-4)}`,
-        type: type,
-        balance: bal,
-        status: 'Active Feed'
-      });
-
-      renderAccountsGrid();
-      renderDashboardAccounts();
-      closeModal('bnkAddAccountModal');
-      toast('New bank account registered successfully!', 'ok');
+      try {
+        await api('bank-accounts/', {
+          method: 'POST',
+          body: {
+            name: name,
+            bank_name: bank,
+            account_number: num,
+            account_type: type,
+            opening_balance: bal,
+            current_balance: bal
+          }
+        });
+        closeModal('bnkAddAccountModal');
+        toast('Bank account created successfully!', 'ok');
+        renderBankingModule(root, currentTab);
+      } catch(err) {
+        toast(err.message || 'Error creating bank account', 'err');
+      }
     });
   }
 
   const addRuleForm = root.querySelector('#bnkAddRuleForm');
   if (addRuleForm) {
-    addRuleForm.addEventListener('submit', e => {
+    addRuleForm.addEventListener('submit', async e => {
       e.preventDefault();
       const name = root.querySelector('#bnkRuleName').value;
       const keyword = root.querySelector('#bnkRuleKeyword').value;
-      const category = root.querySelector('#bnkRuleCategory').value;
 
-      bankRules.push({ name, keyword, account: category, autoApply: true });
-      renderRules();
-      closeModal('bnkAddRuleModal');
-      toast('Automation Bank Rule created!', 'ok');
+      try {
+        await api('banking/rules/', {
+          method: 'POST',
+          body: {
+            name: name,
+            field: 'description',
+            operator: 'contains',
+            value: keyword,
+            priority: bankRules.length + 1
+          }
+        });
+        closeModal('bnkAddRuleModal');
+        toast('Automation bank rule created!', 'ok');
+        renderBankingModule(root, currentTab);
+      } catch(err) {
+        toast(err.message || 'Error creating rule', 'err');
+      }
     });
   }
 
   const transferFormElem = root.querySelector('#bnkTransferForm');
   if (transferFormElem) {
-    transferFormElem.addEventListener('submit', e => {
+    transferFormElem.addEventListener('submit', async e => {
       e.preventDefault();
-      const from = root.querySelector('#bnkTrFrom').value;
-      const to = root.querySelector('#bnkTrTo').value;
+      const fromId = root.querySelector('#bnkTrFrom').value;
+      const toId = root.querySelector('#bnkTrTo').value;
       const amt = parseFloat(root.querySelector('#bnkTrAmount').value) || 0;
 
-      internalTransfers.unshift({
-        ref: `TRF-2026-00${internalTransfers.length + 1}`,
-        date: '29 Oct 2026',
-        from, to, amount: amt, status: 'Completed'
-      });
-
-      renderTransfers();
-      closeModal('bnkTransferModal');
-      toast('Internal transfer recorded.', 'ok');
+      try {
+        await api('banking/transfer/', {
+          method: 'POST',
+          body: {
+            from_account: fromId,
+            to_account: toId,
+            amount: amt
+          }
+        });
+        closeModal('bnkTransferModal');
+        toast('Internal transfer recorded.', 'ok');
+        renderBankingModule(root, currentTab);
+      } catch(err) {
+        toast(err.message || 'Error recording transfer', 'err');
+      }
     });
   }
 
@@ -3120,8 +3183,34 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   const searchInput = root.querySelector('#bnkGlobalSearch');
   if (searchInput) {
     searchInput.addEventListener('keyup', () => {
-      if (searchInput.value.trim().length > 1) {
+      const q = searchInput.value.toLowerCase().trim();
+      if (q.length > 1) {
         switchTab('all-transactions');
+        const tbody = root.querySelector('#bnkAllTxTbody');
+        if (tbody) {
+          const matches = allTransactions.filter(t => (t.description || '').toLowerCase().includes(q) || (t.reference || '').toLowerCase().includes(q) || (t.payee || '').toLowerCase().includes(q));
+          if (!matches.length) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:36px;color:var(--tx-muted);">No transactions matching "${esc(q)}".</td></tr>`;
+          } else {
+            tbody.innerHTML = matches.map(t => {
+              const dr = parseFloat(t.withdrawal || 0);
+              const cr = parseFloat(t.deposit || 0);
+              return `
+                <tr>
+                  <td style="font-family:monospace;">${fmtBankDate(t.date)}</td>
+                  <td style="font-weight:600;">${esc(t.bank_account_name || 'Account')}</td>
+                  <td>${esc(t.payee || t.description)}</td>
+                  <td style="font-family:monospace;color:var(--tx-muted);">${esc(t.reference || '—')}</td>
+                  <td style="text-align:right;font-family:monospace;color:${dr > 0 ? '#ef4444' : 'var(--tx-muted)'};">${dr > 0 ? '₹' + dr.toLocaleString('en-IN') : '—'}</td>
+                  <td style="text-align:right;font-family:monospace;font-weight:700;color:${cr > 0 ? '#059669' : 'var(--tx-muted)'};">${cr > 0 ? '₹' + cr.toLocaleString('en-IN') : '—'}</td>
+                  <td><span class="banking-badge-pill banking-badge-indigo">${esc(t.status || 'Pending')}</span></td>
+                </tr>
+              `;
+            }).join('');
+          }
+        }
+      } else {
+        renderAllTransactions();
       }
     });
   }
@@ -3130,6 +3219,10 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   const reconBalInput = root.querySelector('#bnkReconStmtBalInput');
   if (reconBalInput) {
     reconBalInput.addEventListener('input', calculateReconDifference);
+  }
+  const reconAccSelect = root.querySelector('#bnkReconAccSelect');
+  if (reconAccSelect) {
+    reconAccSelect.addEventListener('change', renderReconChecklist);
   }
   root.addEventListener('change', e => {
     if (e.target.classList.contains('bnk-recon-cb')) {
@@ -3155,6 +3248,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     setTimeout(initCharts, 80);
   }
 }
+
 
 /* ==========================================================================
    BANKING COMPATIBILITY DELEGATES & WRAPPERS

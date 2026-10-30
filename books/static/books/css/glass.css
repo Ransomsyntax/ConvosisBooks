@@ -3484,4 +3484,115 @@ select option {
   color: #34d399;
 }
 
+/* ==========================================================================
+   CONVOSIS BOOKS - UNIFIED BANKING MODULE STYLES
+   ========================================================================== */
+.glass-card {
+  background: var(--surface-glass, rgba(255, 255, 255, 0.75));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--bd-glass, rgba(226, 232, 240, 0.8));
+  border-radius: 14px;
+  box-shadow: var(--shadow-glass);
+}
+[data-theme="dark"] .glass-card {
+  background: var(--surface-glass, rgba(15, 23, 42, 0.75));
+  border-color: var(--bd-glass, rgba(51, 65, 85, 0.6));
+}
+
+.banking-module-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.banking-subnav-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  background: var(--surface-glass-solid, rgba(255, 255, 255, 0.85));
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--bd-glass);
+  border-radius: 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.banking-subnav-ribbon::-webkit-scrollbar {
+  display: none;
+}
+
+.banking-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tx2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.banking-nav-tab:hover {
+  background: var(--surface-glass-subtle);
+  color: var(--tx);
+}
+.banking-nav-tab.active {
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb, 37, 99, 235), 0.3);
+}
+.banking-nav-tab.highlight {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.banking-nav-tab.highlight i {
+  color: #f59e0b;
+}
+.banking-nav-tab.active.highlight i {
+  color: #ffffff;
+}
+
+.banking-split-card {
+  border-left: 4px solid #6366f1;
+  border-radius: 14px;
+}
+.banking-split-card.unmatched {
+  border-left-color: #f59e0b;
+}
+
+.banking-drop-zone {
+  border: 2px dashed rgba(37, 99, 235, 0.35);
+  border-radius: 14px;
+  padding: 36px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--surface-glass-subtle);
+}
+.banking-drop-zone:hover {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb, 37, 99, 235), 0.05);
+}
+
+.banking-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+
 

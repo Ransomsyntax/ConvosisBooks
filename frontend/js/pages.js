@@ -1674,9 +1674,1491 @@ async function documentsPage(root, mode = 'all') {
 }
 
 /* ==========================================================================
-   BANKING MODULE PAGES (MATCHING REFERENCE ACCOUNTING DESIGN)
+   CONVOSIS BOOKS - UNIFIED BANKING MODULE
    ========================================================================== */
 
+async function renderBankingModule(root, initialTabId = 'dashboard') {
+  let currentTab = initialTabId || 'dashboard';
+  PAGE.reload = () => renderBankingModule(root, currentTab);
+
+  // 15 Modules Definitions
+  const modules = [
+    { id: 'dashboard', name: 'Banking Dashboard', icon: 'fa-chart-pie' },
+    { id: 'bank-accounts', name: 'Bank Accounts', icon: 'fa-building-columns' },
+    { id: 'bank-statements', name: 'Bank Statements', icon: 'fa-file-lines' },
+    { id: 'all-transactions', name: 'All Transactions', icon: 'fa-list-check' },
+    { id: 'uncategorized-transactions', name: 'Uncategorized Feeds', icon: 'fa-wand-magic-sparkles', highlight: true },
+    { id: 'matched-transactions', name: 'Matched Transactions', icon: 'fa-link' },
+    { id: 'categorized-transactions', name: 'Categorized', icon: 'fa-tags' },
+    { id: 'unmatched-transactions', name: 'Unmatched', icon: 'fa-link-slash' },
+    { id: 'bank-reconciliation', name: 'Bank Reconciliation', icon: 'fa-scale-balanced' },
+    { id: 'transfers-between-accounts', name: 'Transfers', icon: 'fa-right-left' },
+    { id: 'deposits', name: 'Deposits', icon: 'fa-circle-arrow-down' },
+    { id: 'bank-rules', name: 'Bank Rules', icon: 'fa-sliders' },
+    { id: 'import-bank-statements', name: 'Import Statements', icon: 'fa-file-import' },
+    { id: 'banking-reports', name: 'Banking Reports', icon: 'fa-chart-column' },
+    { id: 'reconciliation-history', name: 'Reconciliation History', icon: 'fa-clock-rotate-left' }
+  ];
+
+  // State Data
+  let bankAccounts = [
+    { id: 'HDFC', name: 'HDFC Business Account', number: '•••• 8831', type: 'Primary Current Account', balance: 1845200.00, status: 'Active Feed' },
+    { id: 'ICICI', name: 'ICICI Current Account', number: '•••• 1042', type: 'Operating Account', balance: 920150.00, status: 'Active Feed' },
+    { id: 'SBI', name: 'SBI Corporate Account', number: '•••• 5519', type: 'Tax & Reserve Account', balance: 512000.00, status: 'Active Feed' },
+    { id: 'RAZORPAY', name: 'Razorpay Virtual Account', number: '•••• 4401', type: 'Gateway Node', balance: 205100.00, status: 'Synced' }
+  ];
+
+  let uncategorizedFeeds = [
+    {
+      id: 'FEED-101',
+      bankAccount: 'HDFC Business Account',
+      date: '28 Oct 2026',
+      description: 'NEFT CR-ACME CORP PVT LTD-PAYMENT',
+      reference: 'NEFT-8831-ACME',
+      type: 'Credit',
+      amount: 125000.00,
+      candidate: {
+        recordType: 'Invoice Match',
+        recordRef: 'Sales Invoice #INV-2026-089',
+        entity: 'Acme Corp Pvt Ltd',
+        date: '27 Oct 2026',
+        amount: 125000.00,
+        confidence: 98,
+        ruleSuggestion: 'Rule: Match Exact Customer Invoices'
+      }
+    },
+    {
+      id: 'FEED-102',
+      bankAccount: 'ICICI Current Account',
+      date: '27 Oct 2026',
+      description: 'UPI-AWS CLOUD SERVICES INDIA-SUB',
+      reference: 'UPI-9921-AWS',
+      type: 'Debit',
+      amount: 18450.00,
+      candidate: {
+        recordType: 'Expense Mapped',
+        recordRef: 'Vendor Bill #AWS-OCT-442',
+        entity: 'Amazon Web Services India',
+        date: '26 Oct 2026',
+        amount: 18450.00,
+        confidence: 94,
+        ruleSuggestion: 'Rule: Cloud Software Expense Category'
+      }
+    },
+    {
+      id: 'FEED-103',
+      bankAccount: 'SBI Corporate Account',
+      date: '25 Oct 2026',
+      description: 'IMPS-TECHFLOW LOGISTICS SOLUTION',
+      reference: 'IMPS-3312-TF',
+      type: 'Debit',
+      amount: 42000.00,
+      candidate: {
+        recordType: 'Vendor Bill Match',
+        recordRef: 'Bill #BILL-2026-112',
+        entity: 'Techflow Logistics',
+        date: '24 Oct 2026',
+        amount: 42000.00,
+        confidence: 91,
+        ruleSuggestion: 'Rule: Auto-Freight Expense'
+      }
+    },
+    {
+      id: 'FEED-104',
+      bankAccount: 'HDFC Business Account',
+      date: '24 Oct 2026',
+      description: 'ATM CASH WITHDRAWAL-KORAMANGALA',
+      reference: 'ATM-4421-BLR',
+      type: 'Debit',
+      amount: 10000.00,
+      candidate: null
+    },
+    {
+      id: 'FEED-105',
+      bankAccount: 'Razorpay Virtual Account',
+      date: '22 Oct 2026',
+      description: 'SETTLEMENT-RAZORPAY-BATCH-882',
+      reference: 'RZP-SETTLE-882',
+      type: 'Credit',
+      amount: 88500.00,
+      candidate: {
+        recordType: 'Payment Gateway Clearing',
+        recordRef: 'Batch Order #ORD-882',
+        entity: 'Multiple Direct Customers',
+        date: '22 Oct 2026',
+        amount: 88500.00,
+        confidence: 89,
+        ruleSuggestion: 'Rule: Direct Settlement Entry'
+      }
+    }
+  ];
+
+  let matchedTransactions = [
+    { date: '20 Oct 2026', feedDesc: 'NEFT CR-ZETA LABS-INV-102', systemRef: 'Sales Invoice #INV-2026-078', amount: 350000.00, confidence: 99 },
+    { date: '18 Oct 2026', feedDesc: 'ACH DEBIT-AIRTEL BROADBAND', systemRef: 'Bill #AIRTEL-OCT-01', amount: 4999.00, confidence: 96 }
+  ];
+
+  let categorizedTransactions = [
+    { date: '19 Oct 2026', payee: 'Swiggy Corporate Express', account: 'Employee Meals & Welfare', amount: 2450.00, rule: 'Rule: Office Meals' },
+    { date: '15 Oct 2026', payee: 'HDFC Bank Charges', account: 'Bank & Payment Fees', amount: 590.00, rule: 'Rule: HDFC Charges' }
+  ];
+
+  let bankRules = [
+    { name: 'AWS Cloud Hosting', keyword: 'AWS / Amazon Web', account: 'Software & Cloud Services', autoApply: true },
+    { name: 'Office Meals Categorization', keyword: 'Swiggy / Zomato', account: 'Staff Welfare Expense', autoApply: true },
+    { name: 'Bank Interest Credit', keyword: 'CREDIT INTEREST', account: 'Other Income - Interest', autoApply: true }
+  ];
+
+  let internalTransfers = [
+    { ref: 'TRF-2026-001', date: '18 Oct 2026', from: 'HDFC Business Account', to: 'ICICI Current Account', amount: 200000.00, status: 'Completed' }
+  ];
+
+  let bankStatements = [
+    { ref: 'STM-OCT-HDFC', account: 'HDFC Business Account', period: '01 Oct 2026 - 31 Oct 2026', importDate: '28 Oct 2026', lines: 142, status: 'Processed' },
+    { ref: 'STM-SEP-ICICI', account: 'ICICI Current Account', period: '01 Sep 2026 - 30 Sep 2026', importDate: '01 Oct 2026', lines: 88, status: 'Archived' }
+  ];
+
+  let reconHistory = [
+    { id: 'REC-2026-09', account: 'HDFC Business Account', periodEnded: '30 Sep 2026', balance: 1712000.00, user: 'Finance Admin', status: 'Locked & Reconciled' }
+  ];
+
+  // Try fetching live backend accounts if available
+  try {
+    const liveAccs = await api('bank-accounts/?page_size=50');
+    if (liveAccs && liveAccs.results && liveAccs.results.length) {
+      bankAccounts = liveAccs.results.map(a => ({
+        id: String(a.id),
+        name: a.name,
+        number: a.masked_account_number || ('•••• ' + String(a.account_number || '').slice(-4)),
+        type: a.account_type || 'Current Account',
+        balance: parseFloat(a.current_balance || 0),
+        status: 'Active Feed'
+      }));
+    }
+  } catch(e) {}
+
+  // Master Layout Template
+  root.innerHTML = `
+    <div class="banking-module-container">
+      <!-- TOP ACTION & SEARCH HEADER -->
+      <div class="glass-card" style="padding:16px 20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
+          <!-- Left: Brand / Title -->
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#2563eb,#4f46e5);display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 4px 12px rgba(37,99,235,0.35);">
+              <i class="fa-solid fa-vault"></i>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-weight:700;font-size:17px;color:var(--tx);letter-spacing:-0.02em;">Convosis<span style="color:var(--accent);">Books</span></span>
+                <span class="banking-badge-pill banking-badge-indigo" style="font-size:10px;">Banking</span>
+              </div>
+              <div style="font-size:11.5px;color:var(--tx-muted);">Real-time balances, auto-matching feed candidate spotlight, and reconciliation cockpit</div>
+            </div>
+          </div>
+
+          <!-- Middle: Quick Search -->
+          <div style="position:relative;flex:1;max-width:280px;min-width:180px;">
+            <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:11px;top:9px;color:var(--tx-muted);font-size:12px;"></i>
+            <input type="text" id="bnkGlobalSearch" placeholder="Search transactions, ref #..." class="in" style="width:100%;padding-left:32px;font-size:12px;height:32px;border-radius:8px;"/>
+          </div>
+
+          <!-- Right: Quick Actions -->
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn p" id="bnkActAddAccount" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-plus"></i> Bank Account
+            </button>
+            <button type="button" class="btn" id="bnkActImportStmt" style="font-size:12px;background:#10b981;color:#fff;border-color:#10b981;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-file-import"></i> Import Statement
+            </button>
+            <button type="button" class="btn" id="bnkActAddRule" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> Add Rule
+            </button>
+            <button type="button" class="btn" id="bnkActTransfer" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-right-left" style="color:var(--accent);"></i> Transfer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- HORIZONTAL MODULE SUB-NAVIGATION RIBBON (15 SUBMODULES) -->
+      <nav class="banking-subnav-ribbon" id="bnkNavigationRibbon">
+        ${modules.map(m => `
+          <button type="button" class="banking-nav-tab ${m.id === currentTab ? 'active' : ''} ${m.highlight ? 'highlight' : ''}" data-tab="${m.id}" id="bnk-tab-btn-${m.id}">
+            <i class="fa-solid ${m.icon}"></i>
+            <span>${m.name}</span>
+            ${m.id === 'uncategorized-transactions' ? `<span id="bnkUnrecPill" style="padding:1px 6px;border-radius:10px;font-size:10px;background:rgba(245,158,11,0.2);color:#d97706;font-weight:700;">${uncategorizedFeeds.length}</span>` : ''}
+          </button>
+        `).join('')}
+      </nav>
+
+      <!-- 1. BANKING DASHBOARD -->
+      <div id="bnk-panel-dashboard" class="bnk-panel" style="display:${currentTab === 'dashboard' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Banking Overview</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Real-time balances, auto-match feed stats, and reconciliation progress</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;color:var(--tx-muted);">Last Synced: <b style="color:var(--tx);">Just Now</b></span>
+            <button type="button" class="btn" id="bnkRefreshFeedsBtn" title="Sync Live Feeds" style="padding:4px 8px;font-size:12px;">
+              <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Quick Metric Cards -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:16px;margin-bottom:20px;">
+          <div class="glass-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx-muted);font-weight:600;">
+              <span>Total Bank Balance</span>
+              <i class="fa-solid fa-building-columns" style="color:#2563eb;"></i>
+            </div>
+            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;" id="bnkDashTotalBal">₹34,82,450.00</div>
+            <div style="font-size:11px;color:#059669;margin-top:4px;display:flex;align-items:center;gap:4px;">
+              <i class="fa-solid fa-arrow-up"></i> +4.2% from last month
+            </div>
+          </div>
+
+          <div class="glass-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx-muted);font-weight:600;">
+              <span>Uncategorized Feeds</span>
+              <i class="fa-solid fa-tags" style="color:#f59e0b;"></i>
+            </div>
+            <div style="font-size:22px;font-weight:700;color:#d97706;margin-top:8px;" id="bnkDashUnrecCount">${uncategorizedFeeds.length} Entries</div>
+            <div style="font-size:11px;color:var(--tx-muted);margin-top:4px;">Requires user review or rule</div>
+          </div>
+
+          <div class="glass-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx-muted);font-weight:600;">
+              <span>Auto-Match Candidates</span>
+              <i class="fa-solid fa-wand-magic-sparkles" style="color:#6366f1;"></i>
+            </div>
+            <div style="font-size:22px;font-weight:700;color:#4f46e5;margin-top:8px;" id="bnkDashAutoMatchCount">3 Ready</div>
+            <div style="font-size:11px;color:#4f46e5;margin-top:4px;cursor:pointer;font-weight:600;" id="bnkDashReviewMatchLink">
+              Review side-by-side match →
+            </div>
+          </div>
+
+          <div class="glass-card" style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx-muted);font-weight:600;">
+              <span>Reconciliation Rate</span>
+              <i class="fa-solid fa-circle-check" style="color:#059669;"></i>
+            </div>
+            <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:8px;">92.8%</div>
+            <div style="width:100%;background:rgba(0,0,0,0.08);height:6px;border-radius:6px;margin-top:8px;overflow:hidden;">
+              <div style="width:92.8%;height:100%;background:#10b981;border-radius:6px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accounts Summary & Fast-Match Spotlight -->
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:20px;">
+          <!-- Bank Accounts Quick List -->
+          <div class="glass-card" style="padding:20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:14px;">
+              <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;display:flex;align-items:center;gap:8px;">
+                <i class="fa-solid fa-wallet" style="color:#2563eb;"></i> Connected Bank Accounts
+              </h3>
+              <button type="button" class="btn" style="font-size:11px;padding:3px 8px;color:var(--accent);" id="bnkDashViewAllAccounts">View All Accounts</button>
+            </div>
+            <div id="bnkDashAccountsList" style="display:flex;flex-direction:column;gap:10px;">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+
+          <!-- Fast-Card Spotlight Match -->
+          <div class="glass-card" style="padding:20px;border-left:4px solid #2563eb;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <span class="banking-badge-pill banking-badge-indigo" style="font-size:10px;">Auto-Matching Highlight</span>
+                <span style="font-size:11px;color:#059669;font-weight:700;"><i class="fa-solid fa-bolt"></i> 98% Match</span>
+              </div>
+              <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 6px;">Latest Candidate Match</h4>
+              <p style="font-size:12px;color:var(--tx-muted);line-height:1.5;margin:0 0 12px;">HDFC-IN-9823 • Incoming ₹1,25,000.00 from Acme Corp Pvt Ltd matches Sales Invoice #INV-2026-089.</p>
+
+              <div class="banking-panel-box" style="font-size:12px;display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
+                <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:11px;">
+                  <span>Feed Date: <b>28 Oct 2026</b></span>
+                  <span>Invoice: <b>27 Oct 2026</b></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-weight:600;color:var(--tx);">
+                  <span>Ref: NEFT-ACME-8831</span>
+                  <span style="color:#059669;">₹1,25,000.00</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn p" id="bnkInstantMatchBtn" style="flex:1;font-size:12px;padding:6px;display:flex;align-items:center;justify-content:center;gap:6px;">
+                <i class="fa-solid fa-check"></i> Instant Match
+              </button>
+              <button type="button" class="btn" id="bnkInstantSplitBtn" style="font-size:12px;padding:6px 12px;">Split View</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. BANK ACCOUNTS -->
+      <div id="bnk-panel-bank-accounts" class="bnk-panel" style="display:${currentTab === 'bank-accounts' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Accounts</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Manage all registered accounts, virtual accounts, and live bank feed links</div>
+          </div>
+          <button type="button" class="btn p" id="bnkAccountsAddBtn" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-plus"></i> Add New Account
+          </button>
+        </div>
+        <div id="bnkAccountsGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;"></div>
+      </div>
+
+      <!-- 3. BANK STATEMENTS -->
+      <div id="bnk-panel-bank-statements" class="bnk-panel" style="display:${currentTab === 'bank-statements' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Statements</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">View statement logs, feed file archives, and line counts</div>
+          </div>
+          <button type="button" class="btn" id="bnkUploadStmtBtn" style="background:#10b981;color:#fff;border-color:#10b981;font-size:12px;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-upload"></i> Upload New Statement
+          </button>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Statement Ref</th>
+                <th>Bank Account</th>
+                <th>Period</th>
+                <th>Import Date</th>
+                <th>Lines</th>
+                <th>Status</th>
+                <th style="text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="bnkStatementsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4. ALL TRANSACTIONS -->
+      <div id="bnk-panel-all-transactions" class="bnk-panel" style="display:${currentTab === 'all-transactions' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">All Bank Transactions</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Master ledger of raw bank feeds and mapped transactions</div>
+          </div>
+          <select id="bnkTxFilterAccount" class="in" style="font-size:12px;height:32px;min-width:200px;">
+            <option value="ALL">All Bank Accounts</option>
+            <option value="HDFC">HDFC Business Account</option>
+            <option value="ICICI">ICICI Current Account</option>
+            <option value="SBI">SBI Corporate Account</option>
+            <option value="RAZORPAY">Razorpay Virtual Account</option>
+          </select>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Account</th>
+                <th>Description / Payee</th>
+                <th>Reference</th>
+                <th style="text-align:right;">Debit (Out)</th>
+                <th style="text-align:right;">Credit (In)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="bnkAllTxTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 5. UNCATEGORIZED TRANSACTIONS (VERTICAL SPLIT VIEW CANDIDATES) -->
+      <div id="bnk-panel-uncategorized-transactions" class="bnk-panel" style="display:${currentTab === 'uncategorized-transactions' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Uncategorized Feeds &amp; Auto-Matching</h2>
+              <span class="banking-badge-pill banking-badge-amber">Side-by-Side Candidate View</span>
+            </div>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Bank Feed Entry automatically matched against System Candidates (Invoices, Bills, Expenses)</div>
+          </div>
+          <button type="button" class="btn p" id="bnkAutoMatchAllBtn" style="font-size:12px;display:flex;align-items:center;gap:6px;background:#4f46e5;border-color:#4f46e5;">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Match All High Confidence (>=90%)
+          </button>
+        </div>
+        <div id="bnkSplitMatchContainer"></div>
+      </div>
+
+      <!-- 6. MATCHED TRANSACTIONS -->
+      <div id="bnk-panel-matched-transactions" class="bnk-panel" style="display:${currentTab === 'matched-transactions' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Matched Transactions</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Transactions successfully paired with books records</div>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Bank Feed Description</th>
+                <th>Matched System Record</th>
+                <th style="text-align:right;">Amount</th>
+                <th style="text-align:center;">Confidence</th>
+                <th style="text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="bnkMatchedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 7. CATEGORIZED TRANSACTIONS -->
+      <div id="bnk-panel-categorized-transactions" class="bnk-panel" style="display:${currentTab === 'categorized-transactions' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Categorized Transactions</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Transactions assigned direct ledger account codes (e.g. Office Expense, Bank Fees)</div>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Payee / Description</th>
+                <th>Category Account</th>
+                <th style="text-align:right;">Amount</th>
+                <th>Rule Applied</th>
+                <th style="text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="bnkCategorizedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 8. UNMATCHED TRANSACTIONS -->
+      <div id="bnk-panel-unmatched-transactions" class="bnk-panel" style="display:${currentTab === 'unmatched-transactions' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Unmatched Transactions</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Feeds with no system record candidates found in Convosis Books</div>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Account</th>
+                <th>Description</th>
+                <th style="text-align:right;">Amount</th>
+                <th style="text-align:center;">Quick Action</th>
+              </tr>
+            </thead>
+            <tbody id="bnkUnmatchedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 9. BANK RECONCILIATION -->
+      <div id="bnk-panel-bank-reconciliation" class="bnk-panel" style="display:${currentTab === 'bank-reconciliation' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Reconciliation Tool</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Compare official bank statement ending balance against Convosis Books balance</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 2fr;gap:20px;">
+          <!-- Setup Card -->
+          <div class="glass-card" style="padding:20px;display:flex;flex-direction:column;gap:14px;">
+            <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;border-bottom:1px solid var(--bd-glass);padding-bottom:10px;">Reconciliation Setup</h3>
+            <div>
+              <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Select Bank Account</label>
+              <select id="bnkReconAccSelect" class="in" style="width:100%;font-size:12px;">
+                <option value="HDFC">HDFC Business Account (8831)</option>
+                <option value="ICICI">ICICI Current Account (1042)</option>
+                <option value="SBI">SBI Corporate Account (5519)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Statement Ending Date</label>
+              <input type="date" value="2026-10-31" class="in" style="width:100%;font-size:12px;"/>
+            </div>
+            <div>
+              <label style="display:block;font-size:11.5px;font-weight:600;margin-bottom:4px;">Statement Ending Balance (₹)</label>
+              <input type="number" id="bnkReconStmtBalInput" value="1845200.00" class="in" style="width:100%;font-size:12px;font-family:monospace;"/>
+            </div>
+
+            <div class="banking-panel-box" style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+              <div style="display:flex;justify-content:space-between;color:var(--tx-muted);">
+                <span>Cleared Books Balance:</span>
+                <span id="bnkReconBooksBalDisplay" style="font-weight:700;font-family:monospace;color:var(--tx);">₹18,45,200.00</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--bd-glass);padding-top:6px;">
+                <span>Difference:</span>
+                <span id="bnkReconDiffDisplay" style="font-family:monospace;color:#059669;">₹0.00</span>
+              </div>
+            </div>
+
+            <button type="button" class="btn" id="bnkFinalizeReconBtn" style="background:#10b981;color:#fff;border-color:#10b981;font-size:12px;padding:8px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <i class="fa-solid fa-lock"></i> Finalize Reconciliation
+            </button>
+          </div>
+
+          <!-- Uncleared Checklist -->
+          <div class="glass-card" style="padding:20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd-glass);padding-bottom:10px;margin-bottom:14px;">
+              <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">Uncleared Transactions Checklist</h3>
+              <span style="font-size:11.5px;color:var(--tx-muted);">Check items to mark as cleared for period</span>
+            </div>
+            <div id="bnkReconChecklist" style="display:flex;flex-direction:column;gap:8px;max-height:360px;overflow-y:auto;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 10. TRANSFERS -->
+      <div id="bnk-panel-transfers-between-accounts" class="bnk-panel" style="display:${currentTab === 'transfers-between-accounts' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Transfers Between Accounts</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Internal funds movement and contra-entry records</div>
+          </div>
+          <button type="button" class="btn p" id="bnkTransfersAddBtn" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-plus"></i> Record Internal Transfer
+          </button>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Transfer Ref</th>
+                <th>Date</th>
+                <th>From Account</th>
+                <th>To Account</th>
+                <th style="text-align:right;">Amount</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="bnkTransfersTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 11. DEPOSITS -->
+      <div id="bnk-panel-deposits" class="bnk-panel" style="display:${currentTab === 'deposits' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Deposits</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Direct customer payments, vendor refunds, and interest credits</div>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Deposit Ref</th>
+                <th>Date</th>
+                <th>Bank Account</th>
+                <th>Received From</th>
+                <th>Category</th>
+                <th style="text-align:right;">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="bnkDepositsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 12. BANK RULES -->
+      <div id="bnk-panel-bank-rules" class="bnk-panel" style="display:${currentTab === 'bank-rules' ? 'block' : 'none'};">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Automation Rules</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Automate transaction categorization based on description keywords &amp; amounts</div>
+          </div>
+          <button type="button" class="btn p" id="bnkRulesAddBtn" style="font-size:12px;background:#4f46e5;border-color:#4f46e5;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Create New Rule
+          </button>
+        </div>
+        <div id="bnkRulesGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;"></div>
+      </div>
+
+      <!-- 13. IMPORT BANK STATEMENTS -->
+      <div id="bnk-panel-import-bank-statements" class="bnk-panel" style="display:${currentTab === 'import-bank-statements' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Import Bank Statements</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Upload CSV, OFX, or MT940 bank statement files into Convosis Books</div>
+        </div>
+
+        <div class="banking-drop-zone" id="bnkDropZone">
+          <input type="file" id="bnkFileInput" style="display:none;" accept=".csv,.ofx,.qbo"/>
+          <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:50%;background:rgba(37,99,235,0.1);display:grid;place-items:center;color:#2563eb;font-size:26px;">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+          </div>
+          <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:4px;">Drag and drop bank statement files here</div>
+          <div style="font-size:12px;color:var(--tx-muted);margin-bottom:14px;">Supports .CSV, .OFX, .QBO format up to 25MB</div>
+          <button type="button" class="btn p" id="bnkBrowseFilesBtn" style="font-size:12px;padding:6px 16px;">Browse Files</button>
+        </div>
+
+        <div id="bnkUploadPreview" class="glass-card" style="display:none;padding:16px;margin-top:16px;align-items:center;justify-content:space-between;">
+          <span style="font-size:12.5px;font-weight:700;color:#059669;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-file-csv"></i> Statement Loaded: <span id="bnkLoadedFileName">statement.csv</span>
+          </span>
+          <button type="button" class="btn" id="bnkProcessImportBtn" style="background:#10b981;color:#fff;border-color:#10b981;font-size:12px;padding:6px 14px;font-weight:600;">
+            Run Feed Auto-Match Process
+          </button>
+        </div>
+      </div>
+
+      <!-- 14. BANKING REPORTS -->
+      <div id="bnk-panel-banking-reports" class="bnk-panel" style="display:${currentTab === 'banking-reports' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Banking Financial Analytics</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Cashflow trajectory, account balance breakdown, and fee summaries</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+          <div class="glass-card" style="padding:20px;">
+            <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 12px;">Monthly Cash Inflow vs Outflow</h3>
+            <div style="height:260px;position:relative;">
+              <canvas id="bnkChartCashflow"></canvas>
+            </div>
+          </div>
+          <div class="glass-card" style="padding:20px;">
+            <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 12px;">Liquidity Distribution across Accounts</h3>
+            <div style="height:260px;position:relative;">
+              <canvas id="bnkChartDistribution"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 15. RECONCILIATION HISTORY -->
+      <div id="bnk-panel-reconciliation-history" class="bnk-panel" style="display:${currentTab === 'reconciliation-history' ? 'block' : 'none'};">
+        <div style="margin-bottom:16px;">
+          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Reconciliation Audit Trail</h2>
+          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Archived reconciliation periods and signed lock statements</div>
+        </div>
+        <div class="glass-card" style="overflow-x:auto;">
+          <table class="tbl" style="width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th>Rec ID</th>
+                <th>Bank Account</th>
+                <th>Period Ended</th>
+                <th style="text-align:right;">Reconciled Balance</th>
+                <th>Completed By</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="bnkReconHistoryTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 1: ADD BANK ACCOUNT -->
+    <div id="bnkAddAccountModal" class="banking-modal-overlay" style="display:none;">
+      <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
+          <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Add Bank Account</h3>
+          <button type="button" class="btn" data-close-modal="bnkAddAccountModal" style="padding:2px 8px;font-size:12px;">✕</button>
+        </div>
+        <form id="bnkAddAccountForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Bank Name</label>
+            <input type="text" id="bnkAccBankName" required placeholder="e.g. Axis Bank" class="in" style="width:100%;"/>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Number</label>
+            <input type="text" id="bnkAccNum" required placeholder="e.g. 91802004412" class="in" style="width:100%;"/>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Type</label>
+            <select id="bnkAccType" class="in" style="width:100%;">
+              <option value="Current Account">Current Account</option>
+              <option value="Savings Account">Savings Account</option>
+              <option value="Corporate Account">Corporate Account</option>
+              <option value="Virtual Account">Virtual / Payment Gateway Account</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Opening Balance (₹)</label>
+            <input type="number" id="bnkAccBal" required placeholder="0.00" class="in" style="width:100%;font-family:monospace;"/>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+            <button type="button" class="btn" data-close-modal="bnkAddAccountModal">Cancel</button>
+            <button type="submit" class="btn p">Save Account</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL 2: ADD BANK RULE -->
+    <div id="bnkAddRuleModal" class="banking-modal-overlay" style="display:none;">
+      <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
+          <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Create Automation Bank Rule</h3>
+          <button type="button" class="btn" data-close-modal="bnkAddRuleModal" style="padding:2px 8px;font-size:12px;">✕</button>
+        </div>
+        <form id="bnkAddRuleForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Rule Name</label>
+            <input type="text" id="bnkRuleName" required placeholder="e.g. AWS Cloud Subscription" class="in" style="width:100%;"/>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">If Description Contains Keyword</label>
+            <input type="text" id="bnkRuleKeyword" required placeholder="e.g. AWS / Amazon Web" class="in" style="width:100%;"/>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Automatically Categorize As</label>
+            <input type="text" id="bnkRuleCategory" required placeholder="e.g. Software & Hosting Expense" class="in" style="width:100%;"/>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+            <button type="button" class="btn" data-close-modal="bnkAddRuleModal">Cancel</button>
+            <button type="submit" class="btn p" style="background:#4f46e5;border-color:#4f46e5;">Create Rule</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL 3: RECORD TRANSFER -->
+    <div id="bnkTransferModal" class="banking-modal-overlay" style="display:none;">
+      <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
+          <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Record Internal Transfer</h3>
+          <button type="button" class="btn" data-close-modal="bnkTransferModal" style="padding:2px 8px;font-size:12px;">✕</button>
+        </div>
+        <form id="bnkTransferForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">From Account</label>
+            <select id="bnkTrFrom" class="in" style="width:100%;">
+              <option value="HDFC Business Account">HDFC Business Account</option>
+              <option value="ICICI Current Account">ICICI Current Account</option>
+              <option value="SBI Corporate Account">SBI Corporate Account</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">To Account</label>
+            <select id="bnkTrTo" class="in" style="width:100%;">
+              <option value="ICICI Current Account">ICICI Current Account</option>
+              <option value="HDFC Business Account">HDFC Business Account</option>
+              <option value="Razorpay Virtual Account">Razorpay Virtual Account</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Amount (₹)</label>
+            <input type="number" id="bnkTrAmount" required placeholder="50000.00" class="in" style="width:100%;font-family:monospace;"/>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+            <button type="button" class="btn" data-close-modal="bnkTransferModal">Cancel</button>
+            <button type="submit" class="btn p">Submit Transfer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  // UI RENDERERS & EVENT BINDINGS
+  function switchTab(tabId) {
+    currentTab = tabId;
+    root.querySelectorAll('.bnk-panel').forEach(p => p.style.display = 'none');
+    root.querySelectorAll('.banking-nav-tab').forEach(b => b.classList.remove('active'));
+
+    const activePanel = root.querySelector('#bnk-panel-' + tabId);
+    if (activePanel) activePanel.style.display = 'block';
+
+    const activeBtn = root.querySelector('#bnk-tab-btn-' + tabId);
+    if (activeBtn) activeBtn.classList.add('active');
+
+    if (tabId === 'banking-reports') {
+      setTimeout(initCharts, 60);
+    }
+  }
+
+  function renderDashboardAccounts() {
+    const container = root.querySelector('#bnkDashAccountsList');
+    if (!container) return;
+    container.innerHTML = bankAccounts.map(acc => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:10px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);font-size:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:32px;height:32px;border-radius:8px;background:rgba(37,99,235,0.12);color:#2563eb;display:grid;place-items:center;font-weight:700;">
+            <i class="fa-solid fa-building-columns"></i>
+          </div>
+          <div>
+            <div style="font-weight:700;color:var(--tx);">${esc(acc.name)}</div>
+            <div style="font-size:11px;color:var(--tx-muted);">${esc(acc.number)} • ${esc(acc.type)}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-family:monospace;font-weight:700;font-size:13px;color:var(--tx);">₹${acc.balance.toLocaleString('en-IN', {minimumFractionDigits:2})}</div>
+          <span class="banking-badge-pill banking-badge-emerald" style="font-size:10px;margin-top:2px;">${esc(acc.status)}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderAccountsGrid() {
+    const grid = root.querySelector('#bnkAccountsGrid');
+    if (!grid) return;
+    grid.innerHTML = bankAccounts.map(acc => `
+      <div class="glass-card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <span style="font-size:10.5px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;">${esc(acc.type)}</span>
+            <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:4px 0 2px;">${esc(acc.name)}</h3>
+            <p style="font-size:12px;color:var(--tx-muted);margin:0;">${esc(acc.number)}</p>
+          </div>
+          <span class="banking-badge-pill banking-badge-emerald">${esc(acc.status)}</span>
+        </div>
+        <div style="border-top:1px solid var(--bd-glass);padding-top:10px;display:flex;justify-content:space-between;align-items:baseline;">
+          <span style="font-size:12px;color:var(--tx-muted);">Live Ledger Balance</span>
+          <span style="font-size:18px;font-weight:700;font-family:monospace;color:var(--tx);">₹${acc.balance.toLocaleString('en-IN', {minimumFractionDigits:2})}</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn p" style="flex:1;font-size:12px;" onclick="window.location.hash='#/banking/uncategorized-transactions'">Reconcile Feeds</button>
+          <button type="button" class="btn" style="font-size:12px;" onclick="window.location.hash='#/banking/all-transactions'">Statements</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderSplitMatchView() {
+    const container = root.querySelector('#bnkSplitMatchContainer');
+    if (!container) return;
+    if (uncategorizedFeeds.length === 0) {
+      container.innerHTML = `
+        <div class="glass-card" style="padding:48px 24px;text-align:center;color:var(--tx-muted);">
+          <i class="fa-solid fa-circle-check" style="font-size:36px;color:#10b981;margin-bottom:12px;"></i>
+          <h3 style="font-size:16px;font-weight:700;color:var(--tx);margin:0 0 6px;">All feeds reconciled!</h3>
+          <p style="font-size:12px;margin:0;">No pending uncategorized bank feeds detected.</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = uncategorizedFeeds.map(feed => {
+      const hasMatch = feed.candidate != null;
+      return `
+        <div class="glass-card banking-split-card ${hasMatch ? '' : 'unmatched'}" style="padding:18px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="banking-badge-pill ${hasMatch ? 'banking-badge-indigo' : 'banking-badge-amber'}">
+                ${hasMatch ? 'Match Candidate Ready' : 'Unmatched / Review Needed'}
+              </span>
+              <span style="font-size:12px;font-weight:600;color:var(--tx-muted);">${esc(feed.bankAccount)}</span>
+            </div>
+            ${hasMatch ? `
+              <div style="font-size:12px;font-weight:700;color:#059669;display:flex;align-items:center;gap:4px;">
+                <i class="fa-solid fa-bolt"></i> ${feed.candidate.confidence}% Match Confidence
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="banking-split-grid">
+            <!-- Left: Bank Statement Feed -->
+            <div class="banking-panel-box" style="display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+              <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--tx-muted);font-weight:600;text-transform:uppercase;margin-bottom:6px;">
+                  <span><i class="fa-solid fa-building-columns" style="margin-right:4px;"></i> Bank Statement Line</span>
+                  <span>${esc(feed.date)}</span>
+                </div>
+                <div style="font-weight:600;font-size:13.5px;color:var(--tx);font-family:monospace;">${esc(feed.description)}</div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--bd-glass);padding-top:8px;">
+                <span style="font-size:11.5px;color:var(--tx-muted);">Ref: ${esc(feed.reference)}</span>
+                <span style="font-size:15px;font-weight:700;font-family:monospace;color:${feed.type === 'Credit' ? '#059669' : 'var(--tx)'};">
+                  ${feed.type === 'Credit' ? '+' : '-'}₹${feed.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}
+                </span>
+              </div>
+            </div>
+
+            <!-- Right: System Match Candidate -->
+            <div class="banking-panel-box" style="display:flex;flex-direction:column;justify-content:space-between;gap:8px;background:var(--surface-glass-solid);">
+              ${hasMatch ? `
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#4f46e5;font-weight:600;margin-bottom:4px;">
+                    <span><i class="fa-solid fa-file-invoice" style="margin-right:4px;"></i> System Book Candidate (${esc(feed.candidate.recordType)})</span>
+                    <span>${esc(feed.candidate.date)}</span>
+                  </div>
+                  <div style="font-weight:700;font-size:13.5px;color:var(--tx);">${esc(feed.candidate.recordRef)}</div>
+                  <div style="font-size:12px;color:var(--tx-muted);">${esc(feed.candidate.entity)}</div>
+                  <div style="margin-top:6px;font-size:11px;color:#6366f1;font-weight:500;display:flex;align-items:center;gap:4px;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(feed.candidate.ruleSuggestion)}
+                  </div>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--bd-glass);padding-top:8px;">
+                  <span style="font-size:11.5px;color:var(--tx-muted);">Book Amount:</span>
+                  <span style="font-size:15px;font-weight:700;font-family:monospace;color:var(--tx);">₹${feed.candidate.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</span>
+                </div>
+              ` : `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:12px;gap:6px;">
+                  <i class="fa-solid fa-magnifying-glass" style="color:var(--tx-muted);font-size:22px;"></i>
+                  <p style="font-size:12px;color:var(--tx-muted);margin:0;">No exact match found in open invoices or bills.</p>
+                  <button type="button" class="btn" data-act="open-rule-modal" style="font-size:11.5px;padding:3px 10px;color:#6366f1;font-weight:600;">+ Create Rule to Auto-Categorize</button>
+                </div>
+              `}
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;border-top:1px solid var(--bd-glass);padding-top:12px;margin-top:12px;">
+            ${hasMatch ? `
+              <button type="button" class="btn p" data-act="confirm-match" data-id="${feed.id}" style="font-size:12px;padding:5px 12px;display:flex;align-items:center;gap:6px;">
+                <i class="fa-solid fa-check"></i> Accept Match
+              </button>
+            ` : ''}
+            <button type="button" class="btn" data-act="quick-categorize" data-id="${feed.id}" style="font-size:12px;padding:5px 12px;display:flex;align-items:center;gap:6px;background:rgba(16,185,129,0.12);color:#059669;border-color:rgba(16,185,129,0.3);">
+              <i class="fa-solid fa-tag"></i> Categorize Directly
+            </button>
+            <button type="button" class="btn" data-act="open-rule-modal" style="font-size:12px;padding:5px 10px;">
+              Rule
+            </button>
+            <button type="button" class="btn" data-act="dismiss-feed" data-id="${feed.id}" style="font-size:12px;padding:5px 10px;color:#ef4444;">
+              Unmatch / Dismiss
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderStatements() {
+    const tbody = root.querySelector('#bnkStatementsTbody');
+    if (!tbody) return;
+    tbody.innerHTML = bankStatements.map(s => `
+      <tr>
+        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(s.ref)}</td>
+        <td style="font-weight:600;">${esc(s.account)}</td>
+        <td style="color:var(--tx-muted);">${esc(s.period)}</td>
+        <td style="font-family:monospace;">${esc(s.importDate)}</td>
+        <td style="font-family:monospace;">${s.lines}</td>
+        <td><span class="banking-badge-pill banking-badge-emerald">${esc(s.status)}</span></td>
+        <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Download CSV</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderAllTransactions() {
+    const filter = root.querySelector('#bnkTxFilterAccount') ? root.querySelector('#bnkTxFilterAccount').value : 'ALL';
+    const tbody = root.querySelector('#bnkAllTxTbody');
+    if (!tbody) return;
+
+    const sampleLedger = [
+      { date: '28 Oct 2026', acc: 'HDFC Business Account', desc: 'NEFT CR-ACME CORP PVT LTD', ref: 'NEFT-8831', debit: 0, credit: 125000, status: 'Uncategorized' },
+      { date: '27 Oct 2026', acc: 'ICICI Current Account', desc: 'UPI-AWS CLOUD SERVICES INDIA', ref: 'UPI-9921', debit: 18450, credit: 0, status: 'Matched' },
+      { date: '20 Oct 2026', acc: 'HDFC Business Account', desc: 'NEFT CR-ZETA LABS', ref: 'NEFT-102', debit: 0, credit: 350000, status: 'Matched' },
+      { date: '19 Oct 2026', acc: 'SBI Corporate Account', desc: 'Swiggy Corporate Express', ref: 'POS-8821', debit: 2450, credit: 0, status: 'Categorized' }
+    ];
+
+    const filtered = filter === 'ALL' ? sampleLedger : sampleLedger.filter(x => x.acc.includes(filter));
+    tbody.innerHTML = filtered.map(t => `
+      <tr>
+        <td style="font-family:monospace;">${esc(t.date)}</td>
+        <td style="font-weight:600;">${esc(t.acc)}</td>
+        <td>${esc(t.desc)}</td>
+        <td style="font-family:monospace;color:var(--tx-muted);">${esc(t.ref)}</td>
+        <td style="text-align:right;font-family:monospace;color:${t.debit > 0 ? '#ef4444' : 'var(--tx-muted)'};">${t.debit > 0 ? '₹' + t.debit.toLocaleString('en-IN') : '—'}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:${t.credit > 0 ? '#059669' : 'var(--tx-muted)'};">${t.credit > 0 ? '₹' + t.credit.toLocaleString('en-IN') : '—'}</td>
+        <td><span class="banking-badge-pill ${t.status === 'Matched' ? 'banking-badge-indigo' : 'banking-badge-amber'}">${esc(t.status)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderMatchedTable() {
+    const tbody = root.querySelector('#bnkMatchedTbody');
+    if (!tbody) return;
+    tbody.innerHTML = matchedTransactions.map(m => `
+      <tr>
+        <td style="font-family:monospace;">${esc(m.date)}</td>
+        <td style="font-weight:600;">${esc(m.feedDesc)}</td>
+        <td style="color:#4f46e5;font-weight:600;">${esc(m.systemRef)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${m.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td style="text-align:center;"><span class="banking-badge-pill banking-badge-emerald">${m.confidence}%</span></td>
+        <td style="text-align:right;"><button type="button" class="btn" data-act="unlink-match" style="font-size:11px;padding:2px 8px;color:#ef4444;">Unlink</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderCategorizedTable() {
+    const tbody = root.querySelector('#bnkCategorizedTbody');
+    if (!tbody) return;
+    tbody.innerHTML = categorizedTransactions.map(c => `
+      <tr>
+        <td style="font-family:monospace;">${esc(c.date)}</td>
+        <td style="font-weight:600;">${esc(c.payee)}</td>
+        <td style="color:#059669;font-weight:600;">${esc(c.account)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${c.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td style="color:var(--tx-muted);font-size:11px;">${esc(c.rule)}</td>
+        <td style="text-align:right;"><button type="button" class="btn" style="font-size:11px;padding:2px 8px;color:var(--accent);">Edit</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderUnmatchedTable() {
+    const tbody = root.querySelector('#bnkUnmatchedTbody');
+    if (!tbody) return;
+    tbody.innerHTML = `
+      <tr>
+        <td style="font-family:monospace;">24 Oct 2026</td>
+        <td style="font-weight:600;">HDFC Business Account</td>
+        <td>ATM CASH WITHDRAWAL-KORAMANGALA</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹10,000.00</td>
+        <td style="text-align:center;"><button type="button" class="btn p" onclick="window.location.hash='#/banking/uncategorized-transactions'" style="font-size:11px;padding:3px 10px;">Match Now</button></td>
+      </tr>
+    `;
+  }
+
+  function renderReconChecklist() {
+    const container = root.querySelector('#bnkReconChecklist');
+    if (!container) return;
+    const items = [
+      { date: '28 Oct 2026', desc: 'NEFT CR-ACME CORP', amount: 125000, type: 'CR' },
+      { date: '27 Oct 2026', desc: 'UPI-AWS CLOUD SERVICES', amount: 18450, type: 'DR' },
+      { date: '20 Oct 2026', desc: 'NEFT CR-ZETA LABS', amount: 350000, type: 'CR' }
+    ];
+
+    container.innerHTML = items.map((i, idx) => `
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);font-size:12px;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="checkbox" checked class="bnk-recon-cb" style="width:16px;height:16px;"/>
+          <span style="font-family:monospace;color:var(--tx-muted);">${i.date}</span>
+          <span style="font-weight:600;color:var(--tx);">${i.desc}</span>
+        </div>
+        <span style="font-family:monospace;font-weight:700;color:${i.type === 'CR' ? '#059669' : 'var(--tx)'};">₹${i.amount.toLocaleString('en-IN')}</span>
+      </label>
+    `).join('');
+  }
+
+  function renderTransfers() {
+    const tbody = root.querySelector('#bnkTransfersTbody');
+    if (!tbody) return;
+    tbody.innerHTML = internalTransfers.map(t => `
+      <tr>
+        <td style="font-family:monospace;font-weight:700;">${esc(t.ref)}</td>
+        <td style="font-family:monospace;">${esc(t.date)}</td>
+        <td>${esc(t.from)}</td>
+        <td>${esc(t.to)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${t.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td><span class="banking-badge-pill banking-badge-indigo">${esc(t.status)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderDeposits() {
+    const tbody = root.querySelector('#bnkDepositsTbody');
+    if (!tbody) return;
+    tbody.innerHTML = `
+      <tr>
+        <td style="font-family:monospace;font-weight:700;color:#059669;">DEP-2026-881</td>
+        <td style="font-family:monospace;">28 Oct 2026</td>
+        <td>HDFC Business Account</td>
+        <td>Acme Corp Pvt Ltd</td>
+        <td>Customer Invoice Payment</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:#059669;">₹1,25,000.00</td>
+      </tr>
+    `;
+  }
+
+  function renderRules() {
+    const grid = root.querySelector('#bnkRulesGrid');
+    if (!grid) return;
+    grid.innerHTML = bankRules.map(r => `
+      <div class="glass-card" style="padding:16px;border-left:4px solid #6366f1;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">${esc(r.name)}</h4>
+          <span class="banking-badge-pill banking-badge-indigo">Active</span>
+        </div>
+        <p style="font-size:12px;color:var(--tx-muted);margin:0;">Condition: If Description contains <b style="color:var(--tx);">"${esc(r.keyword)}"</b></p>
+        <p style="font-size:12px;color:#059669;font-weight:600;margin:0;">Assign Category: ${esc(r.account)}</p>
+      </div>
+    `).join('');
+  }
+
+  function renderReconHistory() {
+    const tbody = root.querySelector('#bnkReconHistoryTbody');
+    if (!tbody) return;
+    tbody.innerHTML = reconHistory.map(r => `
+      <tr>
+        <td style="font-family:monospace;font-weight:700;color:var(--accent);">${esc(r.id)}</td>
+        <td style="font-weight:600;">${esc(r.account)}</td>
+        <td style="font-family:monospace;">${esc(r.periodEnded)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;">₹${r.balance.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+        <td style="color:var(--tx-muted);">${esc(r.user)}</td>
+        <td><span class="banking-badge-pill banking-badge-emerald">${esc(r.status)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  // Interactive Match / Reconcile Functions
+  function confirmMatch(feedId) {
+    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
+    if (idx !== -1) {
+      const item = uncategorizedFeeds[idx];
+      matchedTransactions.unshift({
+        date: item.date,
+        feedDesc: item.description,
+        systemRef: item.candidate ? item.candidate.recordRef : 'Manual Pair',
+        amount: item.amount,
+        confidence: item.candidate ? item.candidate.confidence : 100
+      });
+      uncategorizedFeeds.splice(idx, 1);
+      renderSplitMatchView();
+      renderMatchedTable();
+      updateDashboardCounts();
+      toast('Transaction successfully matched and verified!', 'ok');
+    }
+  }
+
+  function quickCategorize(feedId) {
+    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
+    if (idx !== -1) {
+      const item = uncategorizedFeeds[idx];
+      categorizedTransactions.unshift({
+        date: item.date,
+        payee: item.description,
+        account: 'General Operating Expense',
+        amount: item.amount,
+        rule: 'Direct User Mapped'
+      });
+      uncategorizedFeeds.splice(idx, 1);
+      renderSplitMatchView();
+      renderCategorizedTable();
+      updateDashboardCounts();
+      toast('Feed assigned to ledger category.', 'ok');
+    }
+  }
+
+  function dismissFeed(feedId) {
+    const idx = uncategorizedFeeds.findIndex(f => f.id === feedId);
+    if (idx !== -1) {
+      uncategorizedFeeds.splice(idx, 1);
+      renderSplitMatchView();
+      renderUnmatchedTable();
+      updateDashboardCounts();
+      toast('Feed item un-matched.', 'ok');
+    }
+  }
+
+  function autoMatchAll() {
+    let count = 0;
+    for (let i = uncategorizedFeeds.length - 1; i >= 0; i--) {
+      if (uncategorizedFeeds[i].candidate && uncategorizedFeeds[i].candidate.confidence >= 90) {
+        confirmMatch(uncategorizedFeeds[i].id);
+        count++;
+      }
+    }
+    toast(`Auto-matched ${count} high confidence transactions!`, 'ok');
+  }
+
+  function updateDashboardCounts() {
+    const cntElem = root.querySelector('#bnkDashUnrecCount');
+    if (cntElem) cntElem.innerText = `${uncategorizedFeeds.length} Entries`;
+
+    const autoCntElem = root.querySelector('#bnkDashAutoMatchCount');
+    const matchesCount = uncategorizedFeeds.filter(f => f.candidate).length;
+    if (autoCntElem) autoCntElem.innerText = `${matchesCount} Ready`;
+
+    const pill = root.querySelector('#bnkUnrecPill');
+    if (pill) pill.innerText = uncategorizedFeeds.length;
+  }
+
+  function calculateReconDifference() {
+    const input = root.querySelector('#bnkReconStmtBalInput');
+    const diffElem = root.querySelector('#bnkReconDiffDisplay');
+    if (!input || !diffElem) return;
+
+    const stmtVal = parseFloat(input.value) || 0;
+    const booksVal = 1845200.00;
+    const diff = stmtVal - booksVal;
+    diffElem.innerText = `₹${Math.abs(diff).toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+    diffElem.style.color = (diff === 0) ? '#059669' : '#ef4444';
+  }
+
+  function finalizeReconciliation() {
+    const input = root.querySelector('#bnkReconStmtBalInput');
+    const accSelect = root.querySelector('#bnkReconAccSelect');
+    reconHistory.unshift({
+      id: `REC-2026-${Math.floor(Math.random()*90 + 10)}`,
+      account: (accSelect ? accSelect.value : 'HDFC') + ' Account',
+      periodEnded: '31 Oct 2026',
+      balance: parseFloat(input ? input.value : 1845200),
+      user: APP && APP.user && APP.user.name ? APP.user.name : 'Finance Admin',
+      status: 'Locked & Reconciled'
+    });
+    renderReconHistory();
+    toast('Reconciliation period finalized & locked!', 'ok');
+  }
+
+  // Modal open/close
+  function openModal(modalId) {
+    const m = root.querySelector('#' + modalId);
+    if (m) m.style.display = 'flex';
+  }
+  function closeModal(modalId) {
+    const m = root.querySelector('#' + modalId);
+    if (m) m.style.display = 'none';
+  }
+
+  // Chart.js initialization
+  let chartCashflowInstance = null;
+  let chartDistributionInstance = null;
+
+  function initCharts() {
+    if (typeof Chart === 'undefined') return;
+    const ctx1 = root.querySelector('#bnkChartCashflow');
+    const ctx2 = root.querySelector('#bnkChartDistribution');
+
+    if (ctx1) {
+      if (chartCashflowInstance) chartCashflowInstance.destroy();
+      chartCashflowInstance = new Chart(ctx1.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: ['Jun', 'Jul', 'Aug', 'Sep', 'Oct'],
+          datasets: [
+            { label: 'Inflow (Deposits)', data: [1200000, 1450000, 1300000, 1600000, 1850000], backgroundColor: '#10b981' },
+            { label: 'Outflow (Expenses)', data: [900000, 1100000, 950000, 1200000, 1350000], backgroundColor: '#ef4444' }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+
+    if (ctx2) {
+      if (chartDistributionInstance) chartDistributionInstance.destroy();
+      chartDistributionInstance = new Chart(ctx2.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: bankAccounts.map(a => a.name),
+          datasets: [{
+            data: bankAccounts.map(a => a.balance),
+            backgroundColor: ['#2563eb', '#06b6d4', '#10b981', '#f59e0b', '#8b5cf6']
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+  }
+
+  // Event Listeners Registration
+  root.addEventListener('click', e => {
+    const btn = e.target.closest('button, [data-tab], [data-close-modal], [data-act]');
+    if (!btn) return;
+
+    // Tab buttons
+    if (btn.dataset.tab) {
+      switchTab(btn.dataset.tab);
+      return;
+    }
+
+    // Modal close buttons
+    if (btn.dataset.closeModal) {
+      closeModal(btn.dataset.closeModal);
+      return;
+    }
+
+    // Header Quick Action buttons
+    if (btn.id === 'bnkActAddAccount' || btn.id === 'bnkAccountsAddBtn') {
+      openModal('bnkAddAccountModal');
+      return;
+    }
+    if (btn.id === 'bnkActImportStmt' || btn.id === 'bnkUploadStmtBtn') {
+      switchTab('import-bank-statements');
+      return;
+    }
+    if (btn.id === 'bnkActAddRule' || btn.id === 'bnkRulesAddBtn' || btn.dataset.act === 'open-rule-modal') {
+      openModal('bnkAddRuleModal');
+      return;
+    }
+    if (btn.id === 'bnkActTransfer' || btn.id === 'bnkTransfersAddBtn') {
+      openModal('bnkTransferModal');
+      return;
+    }
+
+    // Dashboard spotlight buttons
+    if (btn.id === 'bnkInstantMatchBtn') {
+      if (uncategorizedFeeds.length > 0) confirmMatch(uncategorizedFeeds[0].id);
+      return;
+    }
+    if (btn.id === 'bnkInstantSplitBtn' || btn.id === 'bnkDashReviewMatchLink') {
+      switchTab('uncategorized-transactions');
+      return;
+    }
+    if (btn.id === 'bnkDashViewAllAccounts') {
+      switchTab('bank-accounts');
+      return;
+    }
+    if (btn.id === 'bnkRefreshFeedsBtn') {
+      toast('Live Bank Feeds refreshed via Open Banking API', 'ok');
+      return;
+    }
+
+    // Uncategorized Actions
+    if (btn.id === 'bnkAutoMatchAllBtn') {
+      autoMatchAll();
+      return;
+    }
+    if (btn.dataset.act === 'confirm-match') {
+      confirmMatch(btn.dataset.id);
+      return;
+    }
+    if (btn.dataset.act === 'quick-categorize') {
+      quickCategorize(btn.dataset.id);
+      return;
+    }
+    if (btn.dataset.act === 'dismiss-feed') {
+      dismissFeed(btn.dataset.id);
+      return;
+    }
+    if (btn.dataset.act === 'unlink-match') {
+      toast('Match un-linked', 'ok');
+      return;
+    }
+
+    // Reconciliation finalize
+    if (btn.id === 'bnkFinalizeReconBtn') {
+      finalizeReconciliation();
+      return;
+    }
+
+    // Browse files
+    if (btn.id === 'bnkBrowseFilesBtn' || btn.closest('#bnkDropZone')) {
+      const fileInput = root.querySelector('#bnkFileInput');
+      if (fileInput && e.target !== fileInput) fileInput.click();
+      return;
+    }
+
+    // Process Import
+    if (btn.id === 'bnkProcessImportBtn') {
+      bankStatements.unshift({
+        ref: `STM-OCT-${Math.floor(Math.random()*900 + 100)}`,
+        account: 'HDFC Business Account',
+        period: '01 Oct 2026 - 29 Oct 2026',
+        importDate: '29 Oct 2026',
+        lines: 34,
+        status: 'Processed'
+      });
+      renderStatements();
+      switchTab('uncategorized-transactions');
+      toast('Bank statement feeds imported and matched!', 'ok');
+      return;
+    }
+  });
+
+  // Form Submits
+  const addAccountForm = root.querySelector('#bnkAddAccountForm');
+  if (addAccountForm) {
+    addAccountForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const bank = root.querySelector('#bnkAccBankName').value;
+      const num = root.querySelector('#bnkAccNum').value;
+      const type = root.querySelector('#bnkAccType').value;
+      const bal = parseFloat(root.querySelector('#bnkAccBal').value) || 0;
+
+      bankAccounts.push({
+        id: bank.substring(0, 4).toUpperCase(),
+        name: `${bank} ${type.split(' ')[0]}`,
+        number: `•••• ${num.slice(-4)}`,
+        type: type,
+        balance: bal,
+        status: 'Active Feed'
+      });
+
+      renderAccountsGrid();
+      renderDashboardAccounts();
+      closeModal('bnkAddAccountModal');
+      toast('New bank account registered successfully!', 'ok');
+    });
+  }
+
+  const addRuleForm = root.querySelector('#bnkAddRuleForm');
+  if (addRuleForm) {
+    addRuleForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const name = root.querySelector('#bnkRuleName').value;
+      const keyword = root.querySelector('#bnkRuleKeyword').value;
+      const category = root.querySelector('#bnkRuleCategory').value;
+
+      bankRules.push({ name, keyword, account: category, autoApply: true });
+      renderRules();
+      closeModal('bnkAddRuleModal');
+      toast('Automation Bank Rule created!', 'ok');
+    });
+  }
+
+  const transferFormElem = root.querySelector('#bnkTransferForm');
+  if (transferFormElem) {
+    transferFormElem.addEventListener('submit', e => {
+      e.preventDefault();
+      const from = root.querySelector('#bnkTrFrom').value;
+      const to = root.querySelector('#bnkTrTo').value;
+      const amt = parseFloat(root.querySelector('#bnkTrAmount').value) || 0;
+
+      internalTransfers.unshift({
+        ref: `TRF-2026-00${internalTransfers.length + 1}`,
+        date: '29 Oct 2026',
+        from, to, amount: amt, status: 'Completed'
+      });
+
+      renderTransfers();
+      closeModal('bnkTransferModal');
+      toast('Internal transfer recorded.', 'ok');
+    });
+  }
+
+  // File Upload Handlers
+  const fileInput = root.querySelector('#bnkFileInput');
+  if (fileInput) {
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file) {
+        const nameElem = root.querySelector('#bnkLoadedFileName');
+        if (nameElem) nameElem.innerText = file.name;
+        const preview = root.querySelector('#bnkUploadPreview');
+        if (preview) preview.style.display = 'flex';
+      }
+    });
+  }
+
+  // Search input
+  const searchInput = root.querySelector('#bnkGlobalSearch');
+  if (searchInput) {
+    searchInput.addEventListener('keyup', () => {
+      if (searchInput.value.trim().length > 1) {
+        switchTab('all-transactions');
+      }
+    });
+  }
+
+  // Reconciliation inputs
+  const reconBalInput = root.querySelector('#bnkReconStmtBalInput');
+  if (reconBalInput) {
+    reconBalInput.addEventListener('input', calculateReconDifference);
+  }
+  root.addEventListener('change', e => {
+    if (e.target.classList.contains('bnk-recon-cb')) {
+      calculateReconDifference();
+    }
+  });
+
+  // Initial Content Population
+  renderDashboardAccounts();
+  renderAccountsGrid();
+  renderStatements();
+  renderAllTransactions();
+  renderSplitMatchView();
+  renderMatchedTable();
+  renderCategorizedTable();
+  renderUnmatchedTable();
+  renderReconChecklist();
+  renderTransfers();
+  renderDeposits();
+  renderRules();
+  renderReconHistory();
+  if (currentTab === 'banking-reports') {
+    setTimeout(initCharts, 80);
+  }
+}
+
+/* ==========================================================================
+   BANKING COMPATIBILITY DELEGATES & WRAPPERS
+   ========================================================================== */
 function fmtBankDate(dStr) {
   if (!dStr) return '—';
   if (dStr.includes('/')) return dStr;
@@ -1685,1644 +3167,25 @@ function fmtBankDate(dStr) {
   return dStr;
 }
 
-async function bankingMainPage(root, filterTab = 'all', selectedAccountId = null) {
-  PAGE.reload = () => bankingMainPage(root, filterTab, selectedAccountId);
-
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Banking Workspace...</div></div>`;
-
-  try {
-    const [accountsRes, summaryRes] = await Promise.all([
-      api('bank-accounts/?page_size=50'),
-      api(`banking/dashboard-summary/${selectedAccountId ? '?bank_account=' + selectedAccountId : ''}`)
-    ]);
-
-    const accounts = accountsRes.results || [];
-    if (!accounts.length) {
-      root.innerHTML = `
-        <div class="banking-page-container">
-          <div class="bc">Home / Banking</div>
-          <div class="hd"><h1>Banking</h1></div>
-          <div class="card" style="margin-top:20px;padding:40px;text-align:center;">
-            <div style="font-size:36px;margin-bottom:8px;">🏦</div>
-            <h3>No Bank Accounts Set Up</h3>
-            <p class="sub" style="margin-bottom:16px;">Add your business bank account to track feeds, categorize transactions, and reconcile books.</p>
-            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
-          </div>
-        </div>
-      `;
-      return;
-    }
-
-    let savedAccId = parseInt(sessionStorage.getItem('active_bank_account_id'), 10);
-    if (!selectedAccountId && savedAccId && accounts.some(a => a.id == savedAccId)) {
-      selectedAccountId = savedAccId;
-    }
-    let activeAccount = accounts.find(a => a.id == selectedAccountId) || accounts.find(a => (a.name || '').toLowerCase().includes('kotak')) || accounts[0];
-    selectedAccountId = activeAccount.id;
-    sessionStorage.setItem('active_bank_account_id', selectedAccountId);
-
-    let currentPage = 1;
-    let pageSize = 25;
-    let currentSearch = '';
-    let sortDirection = 'desc';
-    let activeFilter = filterTab || 'all';
-
-    const booksBal = parseFloat(activeAccount.current_balance || 0);
-    const bankBal = parseFloat(activeAccount.bank_balance || activeAccount.current_balance || 0);
-    const varianceDiff = booksBal - bankBal;
-    const isBalanced = Math.abs(varianceDiff) < 0.01;
-
-    const maskedAccNum = activeAccount.masked_account_number || `xxxx${(activeAccount.account_number || '').slice(-4)}`;
-    const feedDateDisplay = activeAccount.last_feed_date ? fmtBankDate(activeAccount.last_feed_date) : '20/10/2026';
-    const lastSyncDisplay = '23/10/2026';
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <!-- TOP ACCOUNT HEADER -->
-        <div class="banking-top-header">
-          <div class="banking-account-title-wrap">
-            <div class="banking-account-title-row">
-              <div class="rel">
-                <button type="button" class="banking-account-name-btn" id="bnk-acc-picker-btn">
-                  <span>${esc(activeAccount.name)}</span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>
-                </button>
-                <div class="pop" id="bnk-acc-picker-pop" style="min-width:240px;top:100%;left:0;margin-top:6px;z-index:90;">
-                  <div style="padding:8px 12px;font-size:11px;font-weight:700;color:var(--tx-muted);text-transform:uppercase;border-bottom:1px solid var(--bd-glass);">Switch Bank Account</div>
-                  ${accounts.map(a => `
-                    <button class="mi ${a.id == activeAccount.id ? 'act' : ''}" type="button" data-switch-acc="${a.id}">
-                      <div style="font-weight:600;font-size:13px;color:var(--tx);">${esc(a.name)}</div>
-                      <div class="sub" style="font-size:11px;">${esc(a.bank_name || 'Bank')} · ${esc(a.masked_account_number || 'xxxx' + (a.account_number || '').slice(-4))}</div>
-                    </button>
-                  `).join('')}
-                  <div style="border-top:1px solid var(--bd-glass);padding:6px;">
-                    <button class="btn" type="button" style="width:100%;font-size:12px;" onclick="bankAccountForm()">+ Add Another Account</button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Green Live Feed Icon -->
-              <span class="banking-feed-active-badge" title="Live Bank Feed Connected">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
-              </span>
-            </div>
-            <div class="banking-account-number-sub">Account Number: ${esc(maskedAccNum)}</div>
-          </div>
-
-          <!-- Top Right Action Buttons -->
-          <div class="banking-header-actions">
-            <button type="button" class="banking-btn-auto" id="bnk-act-auto-match" title="Automatically evaluate bank rules and high-confidence transaction matches">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              <span>⚡ Auto-Match &amp; Categorize All</span>
-            </button>
-
-            <button type="button" class="banking-action-link-btn" id="bnk-act-statements">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg>
-              <span>Bank Statements</span>
-            </button>
-
-            <button type="button" class="banking-btn-quick-cat" id="bnk-act-quick-cat">
-              <span>Quick Categorize</span>
-            </button>
-
-            <!-- Add Transaction Dropdown -->
-            <div class="rel">
-              <button type="button" class="banking-btn-pill" id="bnk-add-txn-btn">
-                <span>Add Transaction</span>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-              <div class="pop" id="bnk-add-txn-pop" style="min-width:200px;top:100%;right:0;margin-top:6px;z-index:90;">
-                <button class="mi" type="button" data-add-type="expense">Expense</button>
-                <button class="mi" type="button" data-add-type="payment_received">Customer Payment</button>
-                <button class="mi" type="button" data-add-type="payment_made">Vendor Payment</button>
-                <button class="mi" type="button" data-add-type="transfer">Transfer</button>
-                <div style="border-top:1px solid var(--bd-glass);margin:4px 0;"></div>
-                <button class="mi" type="button" data-add-type="bank_charge">Bank Charge</button>
-                <button class="mi" type="button" data-add-type="interest_income">Interest Income</button>
-                <button class="mi" type="button" data-add-type="refund">Refund</button>
-                <button class="mi" type="button" data-add-type="adjustment">Adjustment</button>
-              </div>
-            </div>
-
-            <button type="button" class="banking-btn-pill" id="bnk-act-record-deposit">
-              <span>Record Deposit</span>
-            </button>
-
-            <button type="button" class="banking-btn-icon-square" id="bnk-act-settings" title="Bank Account Settings" aria-label="Settings">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            </button>
-
-            <button type="button" class="banking-btn-icon-close" id="bnk-act-close" title="Close" aria-label="Close">
-              ✕
-            </button>
-          </div>
-        </div>
-
-        <!-- 4 ACCOUNT SUMMARY CARDS -->
-        <div class="banking-summary-cards-grid">
-          <!-- 1. Amount in Books -->
-          <div class="banking-card">
-            <div class="banking-card-icon-box blue">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z"/><path d="M8 7h8M8 11h8"/></svg>
-            </div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Amount in Books</div>
-              <div class="banking-card-value">${inr(activeAccount.current_balance)}</div>
-            </div>
-          </div>
-
-          <!-- 2. Amount in Bank -->
-          <div class="banking-card">
-            <div class="banking-card-icon-box teal">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg>
-            </div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Amount in Bank</div>
-              <div class="banking-card-value">${inr(activeAccount.bank_balance || activeAccount.current_balance)}</div>
-            </div>
-          </div>
-
-          <!-- 3. Last Feed Date -->
-          <div class="banking-card">
-            <div class="banking-card-icon-box calendar">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            </div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Last Feed Date</div>
-              <div class="banking-card-value">${feedDateDisplay}</div>
-            </div>
-          </div>
-
-          <!-- 4. Associated Locations -->
-          <div class="banking-card">
-            <div class="banking-card-icon-box location">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
-            </div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Associated Locations</div>
-              <div class="banking-card-value">${esc(activeAccount.branch_name || 'HO Kottayam')}</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Variance / Reconciliation Explanation Banner -->
-        <div class="banking-variance-banner ${isBalanced ? 'balanced' : 'variance'}" id="bnk-variance-card">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:16px;">${isBalanced ? '✓' : '⚠️'}</span>
-            <div>
-              <b>${isBalanced ? 'Books and Bank Statement are in sync' : `Reconciliation Variance: ₹${inr(Math.abs(varianceDiff))}`}</b>
-              <span style="opacity:0.88;margin-left:6px;">${isBalanced ? 'General Ledger balance matches your bank statement.' : (varianceDiff > 0 ? 'General Ledger balance exceeds bank statement balance (unmatched deposits or uncleared checks).' : 'Bank statement balance exceeds General Ledger balance (unrecorded charges, sweep, or missing entries).')}</span>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <a href="#/banking/bank-reconciliation" class="btn" style="font-size:11.5px;padding:3px 10px;text-decoration:none;">Reconciliation Cockpit ›</a>
-          </div>
-        </div>
-
-        <!-- Top Right Feed Update Indicator -->
-        <div class="banking-sync-bar">
-          <span>Bank feeds last fetched on <b>${lastSyncDisplay}</b></span>
-          <button type="button" class="banking-refresh-btn" id="bnk-act-refresh-feeds">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            <span>Refresh Feeds</span>
-          </button>
-        </div>
-
-        <!-- 3 TRANSACTION SUMMARY TABS -->
-        <div class="banking-tabs-row">
-          <!-- Tab 1: Dashboard / Account Summary -->
-          <a href="#/banking/banking-dashboard" class="banking-tab-item">
-            <div class="banking-tab-main-title">Dashboard</div>
-            <div class="banking-tab-subtitle">Account Summary</div>
-          </a>
-
-          <!-- Tab 2: 2 Uncategorized Transactions / From Bank Statements -->
-          <button type="button" class="banking-tab-item ${activeFilter === 'uncategorized' || activeFilter === 'unmatched' ? 'active' : ''}" id="bnk-tab-uncat">
-            <div class="banking-tab-main-title">
-              <span class="banking-tab-badge-red" id="bnk-uncat-badge">${activeAccount.uncategorized_count || 0}</span>
-              <span>Uncategorized Transactions</span>
-            </div>
-            <div class="banking-tab-subtitle">From Bank Statements</div>
-          </button>
-
-          <!-- Tab 3: All Transactions ▾ / In Books -->
-          <div class="rel" style="display:inline-flex;">
-            <button type="button" class="banking-tab-item ${activeFilter !== 'uncategorized' && activeFilter !== 'unmatched' ? 'active' : ''}" id="bnk-tab-all-btn">
-              <div class="banking-tab-main-title">
-                <span id="bnk-active-tab-title">All Transactions</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-              </div>
-              <div class="banking-tab-subtitle">In Books</div>
-            </button>
-            <div class="pop" id="bnk-all-dropdown-pop" style="min-width:210px;top:100%;left:0;margin-top:2px;z-index:90;">
-              <button class="mi ${activeFilter === 'all' ? 'act' : ''}" type="button" data-filter="all">All Transactions</button>
-              <button class="mi ${activeFilter === 'matched' ? 'act' : ''}" type="button" data-filter="matched">Matched Transactions</button>
-              <button class="mi ${activeFilter === 'unmatched' ? 'act' : ''}" type="button" data-filter="unmatched">Unmatched Transactions</button>
-              <button class="mi ${activeFilter === 'categorized' ? 'act' : ''}" type="button" data-filter="categorized">Categorized Transactions</button>
-              <button class="mi ${activeFilter === 'manually_added' ? 'act' : ''}" type="button" data-filter="manually_added">Manually Added Transactions</button>
-              <button class="mi ${activeFilter === 'excluded' ? 'act' : ''}" type="button" data-filter="excluded">Excluded Transactions</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- BANKING TRANSACTION TABLE CONTAINER -->
-        <div class="banking-table-container">
-          <!-- Interactive Status Filter Ribbon -->
-          <div class="banking-filter-ribbon">
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'all' ? 'active' : ''}" data-ribbon-filter="all">All Feeds</button>
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'unmatched' || activeFilter === 'uncategorized' ? 'active' : ''}" data-ribbon-filter="unmatched">
-              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef4444;"></span>
-              <span>⚡ Uncategorized (${activeAccount.uncategorized_count || 0})</span>
-            </button>
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'matched' ? 'active' : ''}" data-ribbon-filter="matched">✓ Matched</button>
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'categorized' ? 'active' : ''}" data-ribbon-filter="categorized">📋 Categorized</button>
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'manually_added' ? 'active' : ''}" data-ribbon-filter="manually_added">✏️ Manually Added</button>
-            <button type="button" class="banking-ribbon-pill ${activeFilter === 'excluded' ? 'active' : ''}" data-ribbon-filter="excluded">🚫 Excluded</button>
-            <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-              <button type="button" class="btn" id="bnk-export-csv-btn" style="font-size:11px;padding:3px 9px;" title="Export filtered bank feed transactions to CSV">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-                <span>Export (CSV)</span>
-              </button>
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--bd-glass);background:var(--surface-glass-subtle);">
-            <div id="bnk-active-filter-label" style="font-size:13px;font-weight:600;color:var(--tx);">Showing All Transactions</div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div class="rel" style="display:flex;align-items:center;">
-                <input type="text" id="bnk-search-input" class="in" placeholder="Search narration, ref, payee..." style="padding:5px 28px 5px 10px;font-size:12px;width:220px;border-radius:6px;">
-                <span style="position:absolute;right:8px;pointer-events:none;color:var(--tx-muted);font-size:12px;">🔍</span>
-              </div>
-              <button type="button" class="btn" id="bnk-bulk-cat-btn" style="font-size:12px;padding:5px 10px;display:none;">Bulk Categorize</button>
-            </div>
-          </div>
-
-          <div class="tw" id="bnk-txns-table-wrap">${spinner}</div>
-
-          <!-- BOTTOM PAGINATION BAR -->
-          <div class="banking-pagination-bar">
-            <div>
-              <span id="bnk-total-count-label">Total Count: </span>
-              <a class="banking-view-total-link" id="bnk-view-total-btn">View</a>
-            </div>
-
-            <div class="banking-pagination-controls">
-              <div class="rel">
-                <button type="button" class="banking-rows-per-page" id="bnk-rows-picker-btn">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                  <span id="bnk-rows-txt">25 per page</span>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-                </button>
-                <div class="pop" id="bnk-rows-pop" style="min-width:120px;bottom:100%;right:0;margin-bottom:6px;z-index:90;">
-                  <button class="mi" type="button" data-size="10">10 per page</button>
-                  <button class="mi" type="button" data-size="25">25 per page</button>
-                  <button class="mi" type="button" data-size="50">50 per page</button>
-                  <button class="mi" type="button" data-size="100">100 per page</button>
-                </div>
-              </div>
-
-              <div class="banking-page-nav-btns">
-                <button type="button" id="bnk-page-prev" title="Previous Page" aria-label="Previous Page">‹</button>
-                <span id="bnk-page-range-txt">1 - 25</span>
-                <button type="button" id="bnk-page-next" title="Next Page" aria-label="Next Page">›</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    // Hook Up Header Events
-    const accPickerBtn = $('#bnk-acc-picker-btn', root);
-    const accPickerPop = $('#bnk-acc-picker-pop', root);
-    accPickerBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      accPickerPop.classList.toggle('on');
-    });
-
-    $$('[data-switch-acc]', root).forEach(btn => {
-      btn.addEventListener('click', () => {
-        const targetId = Number(btn.dataset.switchAcc);
-        sessionStorage.setItem('active_bank_account_id', targetId);
-        bankingMainPage(root, activeFilter, targetId);
-      });
-    });
-
-    // One-Click Automation Engine Handler
-    const autoMatchBtn = $('#bnk-act-auto-match', root);
-    if (autoMatchBtn) {
-      autoMatchBtn.addEventListener('click', async () => {
-        autoMatchBtn.disabled = true;
-        autoMatchBtn.innerHTML = `${spinner} Running Automation...`;
-        toast('Evaluating bank rules and smart match candidates...');
-        try {
-          const res = await api('banking/run-automation/', {
-            method: 'POST',
-            body: { bank_account: selectedAccountId }
-          });
-          toast(res.message || 'Automation engine finished', 'ok');
-          bankingMainPage(root, activeFilter, selectedAccountId);
-        } catch (e) {
-          toast(e.message, 'err');
-          autoMatchBtn.disabled = false;
-          autoMatchBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> <span>⚡ Auto-Match &amp; Categorize All</span>`;
-        }
-      });
-    }
-
-    // Export CSV Handler
-    const exportCsvBtn = $('#bnk-export-csv-btn', root);
-    if (exportCsvBtn) {
-      exportCsvBtn.addEventListener('click', () => {
-        const url = `/api/banking/export-transactions/?bank_account=${selectedAccountId}&status=${activeFilter}`;
-        window.open(url, '_blank');
-      });
-    }
-
-    // Ribbon Filter Events
-    $$('[data-ribbon-filter]', root).forEach(pill => {
-      pill.addEventListener('click', () => {
-        $$('.banking-ribbon-pill', root).forEach(p => p.classList.remove('active'));
-        pill.classList.add('active');
-        activeFilter = pill.dataset.ribbonFilter;
-        if (activeFilter === 'unmatched') {
-          $('#bnk-tab-uncat', root).classList.add('active');
-          $('#bnk-tab-all-btn', root).classList.remove('active');
-        } else {
-          $('#bnk-tab-uncat', root).classList.remove('active');
-          $('#bnk-tab-all-btn', root).classList.add('active');
-        }
-        $('#bnk-active-filter-label', root).textContent = `Showing ${pill.textContent.trim()}`;
-        currentPage = 1;
-        loadTransactions();
-      });
-    });
-
-    $('#bnk-act-statements', root).addEventListener('click', () => {
-      statementImportWizardModal(selectedAccountId);
-    });
-
-    $('#bnk-act-quick-cat', root).addEventListener('click', async () => {
-      try {
-        const res = await api(`bank-transactions/?bank_account=${selectedAccountId}&status=unmatched&page_size=1`);
-        if (res.results && res.results.length) {
-          quickCategorizeModal(res.results[0].id, () => loadTransactions());
-        } else {
-          toast('No pending uncategorized transactions for this account', 'ok');
-        }
-      } catch (e) {
-        toast(e.message, 'err');
-      }
-    });
-
-    const addTxnBtn = $('#bnk-add-txn-btn', root);
-    const addTxnPop = $('#bnk-add-txn-pop', root);
-    addTxnBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      addTxnPop.classList.toggle('on');
-    });
-
-    $$('[data-add-type]', root).forEach(btn => {
-      btn.addEventListener('click', () => {
-        addTxnPop.classList.remove('on');
-        addBankTransactionModal(btn.dataset.addType, selectedAccountId);
-      });
-    });
-
-    $('#bnk-act-record-deposit', root).addEventListener('click', () => {
-      recordDepositModal(selectedAccountId);
-    });
-
-    $('#bnk-act-settings', root).addEventListener('click', () => {
-      bankAccountForm(selectedAccountId);
-    });
-
-    $('#bnk-act-close', root).addEventListener('click', () => {
-      location.hash = '#/home/dashboard';
-    });
-
-    $('#bnk-act-refresh-feeds', root).addEventListener('click', async () => {
-      const btn = $('#bnk-act-refresh-feeds', root);
-      btn.style.opacity = '0.5';
-      toast('Syncing bank feed updates...');
-      try {
-        await api(`banking/feed-sync/${selectedAccountId}/`, { method: 'POST', body: {} });
-        toast('Feeds successfully refreshed');
-        loadTransactions();
-      } catch (e) {
-        toast(e.message, 'err');
-      } finally {
-        btn.style.opacity = '1';
-      }
-    });
-
-    // Tab Bar Events
-    $('#bnk-tab-uncat', root).addEventListener('click', () => {
-      activeFilter = 'unmatched';
-      $('#bnk-tab-uncat', root).classList.add('active');
-      $('#bnk-tab-all-btn', root).classList.remove('active');
-      $$('.banking-ribbon-pill', root).forEach(p => p.classList.toggle('active', p.dataset.ribbonFilter === 'unmatched'));
-      $('#bnk-active-filter-label', root).textContent = 'Showing Uncategorized Transactions';
-      currentPage = 1;
-      loadTransactions();
-    });
-
-    const allDropdownBtn = $('#bnk-tab-all-btn', root);
-    const allDropdownPop = $('#bnk-all-dropdown-pop', root);
-    allDropdownBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      allDropdownPop.classList.toggle('on');
-    });
-
-    $$('[data-filter]', root).forEach(btn => {
-      btn.addEventListener('click', () => {
-        allDropdownPop.classList.remove('on');
-        activeFilter = btn.dataset.filter;
-        $('#bnk-tab-uncat', root).classList.remove('active');
-        $('#bnk-tab-all-btn', root).classList.add('active');
-        $('#bnk-active-tab-title', root).textContent = btn.textContent;
-        $('#bnk-active-filter-label', root).textContent = `Showing ${btn.textContent}`;
-        $$('.banking-ribbon-pill', root).forEach(p => p.classList.toggle('active', p.dataset.ribbonFilter === activeFilter));
-        currentPage = 1;
-        loadTransactions();
-      });
-    });
-
-    // Search input
-    let searchTimer = null;
-    $('#bnk-search-input', root).addEventListener('input', e => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => {
-        currentSearch = e.target.value.trim();
-        currentPage = 1;
-        loadTransactions();
-      }, 250);
-    });
-
-    // Rows per page picker
-    const rowsBtn = $('#bnk-rows-picker-btn', root);
-    const rowsPop = $('#bnk-rows-pop', root);
-    rowsBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      rowsPop.classList.toggle('on');
-    });
-
-    $$('[data-size]', root).forEach(btn => {
-      btn.addEventListener('click', () => {
-        rowsPop.classList.remove('on');
-        pageSize = Number(btn.dataset.size);
-        $('#bnk-rows-txt', root).textContent = `${pageSize} per page`;
-        currentPage = 1;
-        loadTransactions();
-      });
-    });
-
-    // Pagination nav
-    $('#bnk-page-prev', root).addEventListener('click', () => {
-      if (currentPage > 1) {
-        currentPage--;
-        loadTransactions();
-      }
-    });
-
-    $('#bnk-page-next', root).addEventListener('click', () => {
-      currentPage++;
-      loadTransactions();
-    });
-
-    // Load Transactions function
-    async function loadTransactions() {
-      const tableWrap = $('#bnk-txns-table-wrap', root);
-      if (!tableWrap) return;
-      tableWrap.innerHTML = spinner;
-
-      let url = `bank-transactions/?bank_account=${selectedAccountId}&page=${currentPage}&page_size=${pageSize}&ordering=${sortDirection === 'desc' ? '-date' : 'date'}`;
-      if (activeFilter && activeFilter !== 'all') {
-        url += `&status=${activeFilter}`;
-      }
-      if (currentSearch) {
-        url += `&q=${encodeURIComponent(currentSearch)}`;
-      }
-
-      try {
-        const res = await api(url);
-        const txns = res.results || [];
-        const total = res.count || 0;
-
-        // Update pagination labels
-        const startIdx = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-        const endIdx = Math.min(currentPage * pageSize, total);
-        $('#bnk-page-range-txt', root).textContent = total === 0 ? '0 - 0' : `${startIdx} - ${endIdx}`;
-        $('#bnk-page-prev', root).disabled = (currentPage <= 1);
-        $('#bnk-page-next', root).disabled = (endIdx >= total);
-
-        $('#bnk-view-total-btn', root).onclick = () => {
-          $('#bnk-total-count-label', root).innerHTML = `Total Count: <b style="color:var(--tx);">${total}</b>`;
-        };
-
-        if (!txns.length) {
-          tableWrap.innerHTML = `
-            <div style="padding:50px 20px;text-align:center;color:var(--tx-muted);">
-              <div style="font-size:28px;margin-bottom:8px;">📄</div>
-              <div style="font-weight:600;font-size:14px;color:var(--tx);">No transactions match the selected filter</div>
-              <div style="font-size:12px;margin-top:4px;">Try switching views or import a statement batch.</div>
-            </div>
-          `;
-          return;
-        }
-
-        tableWrap.innerHTML = `
-          <table class="banking-table">
-            <thead>
-              <tr>
-                <th style="width:40px;text-align:center;">
-                  <input type="checkbox" id="bnk-select-all" style="cursor:pointer;">
-                </th>
-                <th style="cursor:pointer;" id="bnk-sort-date-col" title="Click to sort">DATE ↕</th>
-                <th>REFERENCE#</th>
-                <th>TYPE</th>
-                <th>STATUS</th>
-                <th>LOCATION</th>
-                <th class="r">DEPOSITS</th>
-                <th class="r">WITHDRAWALS</th>
-                <th class="r">RUNNING BALANCE</th>
-                <th class="r" style="width:110px;">ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${txns.map(t => {
-                const statusClass = (t.status === 'matched') ? 'status-matched' :
-                  (t.status === 'categorized') ? 'status-categorized' :
-                  (t.status === 'manually_added') ? 'status-manually-added' :
-                  (t.status === 'unmatched') ? 'status-unmatched' : 'status-excluded';
-
-                const statusLabel = (t.status === 'matched') ? 'Matched' :
-                  (t.status === 'categorized') ? 'Categorized' :
-                  (t.status === 'manually_added') ? 'Manually Added' :
-                  (t.status === 'unmatched') ? 'Unmatched' :
-                  (t.status === 'excluded') ? 'Excluded' : esc(t.status);
-
-                const depVal = num(t.deposit) > 0 ? inr(t.deposit) : '';
-                const withVal = num(t.withdrawal) > 0 ? inr(t.withdrawal) : '';
-                const balVal = inr(t.balance || 0);
-
-                return `
-                  <tr data-txn-id="${t.id}" style="cursor:pointer;">
-                    <td style="text-align:center;" onclick="event.stopPropagation();">
-                      <input type="checkbox" class="bnk-row-check" value="${t.id}" style="cursor:pointer;">
-                    </td>
-                    <td>${fmtBankDate(t.date)}</td>
-                    <td><code>${esc(t.reference || '—')}</code></td>
-                    <td>
-                      <div class="banking-type-title">${esc(t.transaction_type || 'Bank Transaction')}</div>
-                      ${t.payee ? `<div class="banking-type-subtext">Vendor: ${esc(t.payee)}</div>` : ''}
-                    </td>
-                    <td><span class="${statusClass}">${statusLabel}</span></td>
-                    <td>${esc(t.location || 'HO Kottayam')}</td>
-                    <td class="r" style="font-weight:600;color:#059669;">${depVal}</td>
-                    <td class="r" style="font-weight:600;color:var(--tx);">${withVal}</td>
-                    <td class="r" style="font-weight:700;color:var(--tx);">${balVal}</td>
-                    <td class="r" onclick="event.stopPropagation();">
-                      <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
-                        ${t.status === 'unmatched' ? `
-                          <button type="button" class="btn p" data-act-match="${t.id}" style="padding:3px 8px;font-size:11.5px;">Match</button>
-                          <button type="button" class="btn" data-act-quick-cat="${t.id}" style="padding:3px 8px;font-size:11.5px;">Categorize</button>
-                        ` : t.status === 'matched' ? `
-                          <button type="button" class="btn" data-act-unmatch="${t.id}" style="padding:3px 8px;font-size:11.5px;color:#dc2626;">Unmatch</button>
-                        ` : t.status === 'categorized' ? `
-                          <button type="button" class="btn" data-act-quick-cat="${t.id}" style="padding:3px 8px;font-size:11.5px;">Edit</button>
-                          <button type="button" class="btn" data-act-unmatch="${t.id}" style="padding:3px 8px;font-size:11.5px;color:#dc2626;">Unmatch</button>
-                        ` : `
-                          <button type="button" class="btn" data-act-detail="${t.id}" style="padding:3px 8px;font-size:11.5px;">Details</button>
-                        `}
-                      </div>
-                    </td>
-                  </tr>
-                  <tr id="bnk-drawer-${t.id}" style="display:none;" data-drawer-txn-id="${t.id}" data-drawer-status="${t.status}">
-                    <td colspan="10" style="padding:0;">
-                      <div class="banking-detail-panel">
-                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
-                          <div>
-                            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">${esc(t.description)}</div>
-                            <div style="font-size:12px;color:var(--tx-muted);line-height:1.6;">
-                              <div>Reference: <b>${esc(t.reference || 'None')}</b> · Location: <b>${esc(t.location || 'HO Kottayam')}</b></div>
-                              <div>Payee / Merchant: <b>${esc(t.payee || 'Direct Ledger Posting')}</b></div>
-                              <div>Accounting Category: <b>${esc(t.category_account_name || 'General Cash & Bank')}</b></div>
-                              ${t.notes ? `<div>Notes: <i>${esc(t.notes)}</i></div>` : ''}
-                            </div>
-                          </div>
-                          <div style="text-align:right;">
-                            <div style="font-size:11.5px;color:var(--tx-muted);">Transaction Status</div>
-                            <div style="font-weight:700;font-size:13px;margin:2px 0 8px;"><span class="${statusClass}">${statusLabel}</span></div>
-                            <div style="display:flex;gap:6px;justify-content:flex-end;">
-                              <button type="button" class="btn" data-toggle-exclude="${t.id}" style="font-size:11px;padding:3px 8px;">
-                                ${t.status === 'excluded' ? 'Restore Transaction' : 'Exclude from Feeds'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        ${t.status === 'unmatched' ? `
-                          <div id="bnk-smart-rec-${t.id}" class="banking-smart-match-box" style="margin-top:14px;">
-                            <div style="font-size:12px;color:var(--tx-muted);display:flex;align-items:center;gap:6px;">
-                              ${spinner} Loading intelligent match suggestions...
-                            </div>
-                          </div>
-                        ` : ''}
-                      </div>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        `;
-
-        // Row expand events & Smart Match Suggestions Loader
-        $$('tr[data-txn-id]', tableWrap).forEach(tr => {
-          tr.addEventListener('click', async () => {
-            const tid = tr.dataset.txnId;
-            const drawer = $(`#bnk-drawer-${tid}`, tableWrap);
-            if (!drawer) return;
-            const isOpening = (drawer.style.display === 'none');
-            drawer.style.display = isOpening ? 'table-row' : 'none';
-
-            if (isOpening && drawer.dataset.drawerStatus === 'unmatched' && !drawer.dataset.suggestionsLoaded) {
-              drawer.dataset.suggestionsLoaded = '1';
-              const recBox = $(`#bnk-smart-rec-${tid}`, drawer);
-              if (!recBox) return;
-              try {
-                const suggestions = await api(`banking/match-suggestions/${tid}/`);
-                if (suggestions && suggestions.length > 0) {
-                  const top = suggestions[0];
-                  recBox.innerHTML = `
-                    <div style="display:flex;flex-direction:column;gap:3px;">
-                      <div style="display:flex;align-items:center;gap:8px;">
-                        <span class="banking-confidence-badge">${top.confidence_score}% Match Confidence</span>
-                        <b style="font-size:13px;color:var(--tx);">Smart Match Found: ${esc(top.party_name || top.number)} (${top.type.toUpperCase()})</b>
-                      </div>
-                      <div style="font-size:12px;color:var(--tx-muted);">
-                        Document Amount: <b>${inr(top.amount)}</b> · Date: <b>${fmtBankDate(top.date)}</b> · Matched by exact amount &amp; timeline
-                      </div>
-                    </div>
-                    <button type="button" class="btn p" data-smart-match-accept="${tid}" data-match-type="${top.type}" data-match-id="${top.id}" style="font-size:12px;padding:6px 14px;white-space:nowrap;">
-                      ⚡ One-Click Match &amp; Reconcile
-                    </button>
-                  `;
-                  const acceptBtn = $('[data-smart-match-accept]', recBox);
-                  if (acceptBtn) {
-                    acceptBtn.addEventListener('click', async (e) => {
-                      e.stopPropagation();
-                      acceptBtn.disabled = true;
-                      acceptBtn.textContent = 'Matching...';
-                      try {
-                        await api(`banking/match/${tid}/`, {
-                          method: 'POST',
-                          body: { entity_type: top.type, entity_id: top.id }
-                        });
-                        toast('Transaction matched and reconciled successfully', 'ok');
-                        loadTransactions();
-                      } catch (err) {
-                        toast(err.message, 'err');
-                        acceptBtn.disabled = false;
-                        acceptBtn.textContent = '⚡ One-Click Match & Reconcile';
-                      }
-                    });
-                  }
-                } else {
-                  recBox.innerHTML = `
-                    <div style="font-size:12px;color:var(--tx-muted);line-height:1.5;">
-                      💡 <b>No automated invoice/bill candidate found</b> for this amount. You can click <b>Categorize</b> to assign a Chart of Accounts expense/income category, or create a <b>Bank Rule</b> for recurring narrations.
-                    </div>
-                    <button type="button" class="btn" data-act-quick-cat="${tid}" style="font-size:11.5px;padding:4px 10px;white-space:nowrap;">
-                      Categorize Transaction
-                    </button>
-                  `;
-                  const catBtn = $('[data-act-quick-cat]', recBox);
-                  if (catBtn) {
-                    catBtn.addEventListener('click', (e) => {
-                      e.stopPropagation();
-                      quickCategorizeModal(tid, () => loadTransactions());
-                    });
-                  }
-                }
-              } catch (e) {
-                recBox.innerHTML = `<div style="font-size:11.5px;color:var(--tx-muted);">Match suggestions unavailable.</div>`;
-              }
-            }
-          });
-        });
-
-        // Contextual buttons
-        $$('[data-act-match]', tableWrap).forEach(btn => {
-          btn.addEventListener('click', () => {
-            matchBankTransactionModal(btn.dataset.actMatch, () => loadTransactions());
-          });
-        });
-
-        $$('[data-act-unmatch]', tableWrap).forEach(btn => {
-          btn.addEventListener('click', () => {
-            unmatchBankTransactionModal(btn.dataset.actUnmatch, () => loadTransactions());
-          });
-        });
-
-        $$('[data-act-quick-cat]', tableWrap).forEach(btn => {
-          btn.addEventListener('click', () => {
-            quickCategorizeModal(btn.dataset.actQuickCat, () => loadTransactions());
-          });
-        });
-
-        $$('[data-toggle-exclude]', tableWrap).forEach(btn => {
-          btn.addEventListener('click', async () => {
-            try {
-              await api(`banking/exclude/${btn.dataset.toggleExclude}/`, { method: 'POST' });
-              toast('Transaction status updated');
-              loadTransactions();
-            } catch (e) {
-              toast(e.message, 'err');
-            }
-          });
-        });
-
-        // Sorting by date
-        const sortCol = $('#bnk-sort-date-col', tableWrap);
-        if (sortCol) {
-          sortCol.addEventListener('click', () => {
-            sortDirection = (sortDirection === 'desc') ? 'asc' : 'desc';
-            loadTransactions();
-          });
-        }
-
-        // Selection checkbox handling
-        const selectAllBox = $('#bnk-select-all', tableWrap);
-        const rowChecks = $$('.bnk-row-check', tableWrap);
-        const bulkCatBtn = $('#bnk-bulk-cat-btn', root);
-
-        const updateBulkBar = () => {
-          const checked = Array.from(rowChecks).filter(c => c.checked).map(c => Number(c.value));
-          if (checked.length > 0) {
-            bulkCatBtn.style.display = 'inline-flex';
-            bulkCatBtn.textContent = `Categorize Selected (${checked.length})`;
-          } else {
-            bulkCatBtn.style.display = 'none';
-          }
-        };
-
-        if (selectAllBox) {
-          selectAllBox.addEventListener('change', () => {
-            rowChecks.forEach(c => c.checked = selectAllBox.checked);
-            updateBulkBar();
-          });
-        }
-
-        rowChecks.forEach(c => c.addEventListener('change', updateBulkBar));
-
-        bulkCatBtn.onclick = () => {
-          const checked = Array.from(rowChecks).filter(c => c.checked).map(c => Number(c.value));
-          bulkCategorizeModal(checked, () => loadTransactions());
-        };
-
-      } catch (err) {
-        tableWrap.innerHTML = errBox(err.message, true);
-      }
-    }
-
-    loadTransactions();
-
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankingDashboardPage(root) {
-  PAGE.reload = () => bankingDashboardPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Banking Dashboard...</div></div>`;
-
-  try {
-    const summary = await api('banking/dashboard-summary/');
-    const accounts = summary.accounts || summary.all_accounts || [];
-    const recentTxns = summary.recent_transactions || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Dashboard</div>
-        <div class="hd">
-          <div>
-            <h1>Banking Dashboard</h1>
-            <div class="sub">Cash, current &amp; credit card balances, statement feed health, and pending reconciliations</div>
-          </div>
-          <div class="act">
-            <button class="banking-btn-auto" id="bnk-dash-auto-btn" title="Run bank rules and auto-matching across all accounts">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              <span>⚡ Run Automation Engine</span>
-            </button>
-            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
-            <button class="btn" onclick="statementImportWizardModal()">Import Statement</button>
-            <button class="btn" onclick="recordDepositModal()">Record Deposit</button>
-            <button class="btn" onclick="transferForm()">Transfer Funds</button>
-            <button class="btn" onclick="location.hash='#/banking/bank-reconciliation'">Reconciliation Cockpit</button>
-          </div>
-        </div>
-
-        <div class="banking-summary-cards-grid" style="margin-top:16px;">
-          <div class="banking-card">
-            <div class="banking-card-icon-box blue">🏦</div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Total Books Balance</div>
-              <div class="banking-card-value">${inr(summary.total_books_balance || 0)}</div>
-              <div class="sub" style="font-size:11px;margin-top:2px;">ConvosisBooks General Ledger</div>
-            </div>
-          </div>
-          <div class="banking-card">
-            <div class="banking-card-icon-box teal">🏛️</div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Total Bank Balance</div>
-              <div class="banking-card-value">${inr(summary.total_bank_balance || 0)}</div>
-              <div class="sub" style="font-size:11px;margin-top:2px;">Per Connected Bank Feeds</div>
-            </div>
-          </div>
-          <div class="banking-card" style="cursor:pointer;" onclick="location.hash='#/banking/uncategorized-transactions'" title="View uncategorized transactions">
-            <div class="banking-card-icon-box calendar">⚡</div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Pending Uncategorized</div>
-              <div class="banking-card-value" style="color:${(summary.total_unrec_count || 0) > 0 ? '#ef4444' : 'var(--tx)'};">${summary.total_unrec_count || 0}</div>
-              <div class="sub" style="font-size:11px;margin-top:2px;color:${(summary.total_unrec_count || 0) > 0 ? '#ef4444' : 'var(--tx-muted)'};font-weight:500;">Review pending feeds ›</div>
-            </div>
-          </div>
-          <div class="banking-card">
-            <div class="banking-card-icon-box location">🏢</div>
-            <div class="banking-card-info">
-              <div class="banking-card-label">Active Bank Accounts</div>
-              <div class="banking-card-value">${accounts.length}</div>
-              <div class="sub" style="font-size:11px;margin-top:2px;">Connected live accounts</div>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 12px;">
-          <h3 style="font-size:16px;margin:0;">Connected Bank Accounts (${accounts.length})</h3>
-          <a href="#/banking/bank-accounts" class="sub" style="font-size:12.5px;color:var(--accent);font-weight:600;text-decoration:none;">Manage Bank Accounts ›</a>
-        </div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:16px;">
-          ${accounts.map(a => {
-            const currentBal = parseFloat(a.current_balance || 0);
-            const bankBal = parseFloat(a.bank_balance || a.current_balance || 0);
-            const diff = Math.abs(currentBal - bankBal);
-            return `
-            <div class="card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:14px;">
-              <div>
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-                  <b style="font-size:15px;color:var(--tx);">${esc(a.name)}</b>
-                  <span class="pastel-chip chip-mint">Active</span>
-                </div>
-                <div class="sub" style="font-size:12px;">${esc(a.bank_name || 'Bank')} · ${esc(a.masked_account_number || a.account_number)}</div>
-                <div class="sub" style="font-size:11px;margin-top:2px;">Location: <b>${esc(a.branch_name || 'HO Kottayam')}</b></div>
-              </div>
-
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
-                <div>
-                  <div style="font-size:11px;color:var(--tx-muted);">In Books</div>
-                  <div style="font-weight:700;font-size:14px;color:var(--tx);">${inr(a.current_balance)}</div>
-                </div>
-                <div style="text-align:right;">
-                  <div style="font-size:11px;color:var(--tx-muted);">In Bank</div>
-                  <div style="font-weight:700;font-size:14px;color:#059669;">${inr(a.bank_balance || a.current_balance)}</div>
-                </div>
-              </div>
-
-              ${diff > 0.01 ? `<div style="font-size:11.5px;color:var(--tx-muted);display:flex;justify-content:space-between;"><span>Reconciliation Variance</span><span style="font-weight:600;color:#f59e0b;">${inr(diff)}</span></div>` : ''}
-
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--bd-glass);padding-top:12px;">
-                <span style="font-size:11.5px;color:${a.unrec_count > 0 ? '#ef4444' : '#059669'};font-weight:600;">
-                  ${a.unrec_count > 0 ? `⚡ ${a.unrec_count} pending` : '✓ Fully reconciled'}
-                </span>
-                <div style="display:flex;gap:6px;">
-                  <button type="button" class="btn" onclick="statementImportWizardModal(${a.id})" style="font-size:12px;padding:4px 8px;" title="Import Statement">Import</button>
-                  <button type="button" class="btn" onclick="sessionStorage.setItem('active_bank_account_id', '${a.id}'); location.hash='#/banking/bank-reconciliation';" style="font-size:12px;padding:4px 8px;" title="Reconcile Account">Reconcile</button>
-                  <button type="button" class="btn p" onclick="sessionStorage.setItem('active_bank_account_id', '${a.id}'); location.hash='#/banking/all-transactions';" style="font-size:12px;padding:4px 10px;">View Account ›</button>
-                </div>
-              </div>
-            </div>
-          `;
-          }).join('')}
-        </div>
-
-        <!-- RECENT BANKING ACTIVITY TABLE -->
-        <div style="margin-top:28px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-            <div>
-              <h3 style="font-size:16px;margin:0;">Recent Bank Feed Activity</h3>
-              <div class="sub" style="font-size:12px;">Latest statement feed transactions across connected accounts</div>
-            </div>
-            <button class="btn" onclick="location.hash='#/banking/all-transactions'" style="font-size:12px;">View All Feed Transactions ›</button>
-          </div>
-
-          <div class="card" style="overflow-x:auto;">
-            <table class="tbl" style="width:100%;margin:0;">
-              <thead>
-                <tr>
-                  <th style="width:90px;">Date</th>
-                  <th style="width:140px;">Bank Account</th>
-                  <th>Description / Payee</th>
-                  <th style="width:110px;">Ref #</th>
-                  <th style="width:120px;text-align:right;">Withdrawal (Dr)</th>
-                  <th style="width:120px;text-align:right;">Deposit (Cr)</th>
-                  <th style="width:110px;text-align:center;">Status</th>
-                  <th style="width:90px;text-align:center;">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${recentTxns.length ? recentTxns.map(tx => {
-                  const dr = parseFloat(tx.withdrawal || 0);
-                  const cr = parseFloat(tx.deposit || 0);
-                  const isUnmatched = tx.status === 'unmatched' || tx.status === 'unreconciled';
-                  const chipClass = tx.status === 'matched' ? 'chip-mint' :
-                                    tx.status === 'categorized' ? 'chip-sky' :
-                                    tx.status === 'manually_added' ? 'chip-lavender' :
-                                    'chip-rose';
-                  const statusLabel = tx.status === 'unmatched' ? 'Uncategorized' :
-                                      tx.status === 'matched' ? 'Matched' :
-                                      tx.status === 'categorized' ? 'Categorized' :
-                                      tx.status === 'manually_added' ? 'Manual' :
-                                      (tx.status || 'Pending');
-                  return `
-                    <tr>
-                      <td style="white-space:nowrap;font-size:12px;">${fmtBankDate(tx.date)}</td>
-                      <td style="font-size:12px;font-weight:600;color:var(--tx);">${esc(tx.bank_account_name || 'Bank')}</td>
-                      <td>
-                        <div style="font-weight:500;font-size:13px;color:var(--tx);">${esc(tx.payee || tx.description || 'Transaction')}</div>
-                        ${tx.payee && tx.description && tx.payee !== tx.description ? `<div class="sub" style="font-size:11px;">${esc(tx.description)}</div>` : ''}
-                      </td>
-                      <td class="sub" style="font-size:11.5px;font-family:monospace;">${esc(tx.reference || '—')}</td>
-                      <td style="text-align:right;font-weight:600;font-size:12.5px;color:${dr > 0 ? '#ef4444' : 'var(--tx-muted)'};">${dr > 0 ? inr(dr) : '—'}</td>
-                      <td style="text-align:right;font-weight:600;font-size:12.5px;color:${cr > 0 ? '#059669' : 'var(--tx-muted)'};">${cr > 0 ? inr(cr) : '—'}</td>
-                      <td style="text-align:center;"><span class="pastel-chip ${chipClass}">${statusLabel}</span></td>
-                      <td style="text-align:center;">
-                        <button type="button" class="btn" style="padding:2px 8px;font-size:11px;" onclick="location.hash='#/banking/all-transactions'">${isUnmatched ? 'Review' : 'View'}</button>
-                      </td>
-                    </tr>
-                  `;
-                }).join('') : `
-                  <tr>
-                    <td colspan="8" style="text-align:center;padding:32px;" class="sub">
-                      No feed transactions recorded yet. <button class="btn p" style="margin-left:8px;" onclick="statementImportWizardModal()">Import First Statement</button>
-                    </td>
-                  </tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const dashAutoBtn = $('#bnk-dash-auto-btn', root);
-    if (dashAutoBtn) {
-      dashAutoBtn.addEventListener('click', async () => {
-        dashAutoBtn.disabled = true;
-        dashAutoBtn.innerHTML = `${spinner} Processing...`;
-        toast('Evaluating bank rules and matching candidates across all accounts...');
-        try {
-          const res = await api('banking/run-automation/', { method: 'POST' });
-          toast(res.message || 'Banking automation completed', 'ok');
-          bankingDashboardPage(root);
-        } catch (e) {
-          toast(e.message, 'err');
-          dashAutoBtn.disabled = false;
-          dashAutoBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> <span>⚡ Run Automation Engine</span>`;
-        }
-      });
-    }
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankingAccountsPage(root) {
-  PAGE.reload = () => bankingAccountsPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Accounts...</div></div>`;
-
-  try {
-    const res = await api('bank-accounts/?page_size=50');
-    const accounts = res.results || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Bank Accounts</div>
-        <div class="hd">
-          <div>
-            <h1>Bank Accounts</h1>
-            <div class="sub">Manage corporate checking, savings, current accounts, and credit cards</div>
-          </div>
-          <div class="act">
-            <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Account Name</th>
-                  <th>Bank Name</th>
-                  <th>Account Number</th>
-                  <th>Type</th>
-                  <th>Branch</th>
-                  <th class="r">Book Balance</th>
-                  <th class="r">Bank Balance</th>
-                  <th class="r">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${accounts.map(a => `
-                  <tr>
-                    <td><b>${esc(a.name)}</b></td>
-                    <td>${esc(a.bank_name || '—')}</td>
-                    <td><code>${esc(a.masked_account_number || a.account_number)}</code></td>
-                    <td><span class="pastel-chip chip-sky">${esc(a.account_type || 'Current')}</span></td>
-                    <td>${esc(a.branch_name || 'HO Kottayam')}</td>
-                    <td class="r" style="font-weight:700;">${inr(a.current_balance)}</td>
-                    <td class="r" style="font-weight:700;color:#059669;">${inr(a.bank_balance || a.current_balance)}</td>
-                    <td class="r">
-                      <div style="display:flex;gap:6px;justify-content:flex-end;">
-                        <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="location.hash='#/banking/all-transactions'">Transactions</button>
-                        <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="bankAccountForm(${a.id})">Edit</button>
-                      </div>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankStatementsListPage(root) {
-  PAGE.reload = () => bankStatementsListPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Statements...</div></div>`;
-
-  try {
-    const res = await api('statement-batches/?page_size=50');
-    const batches = res.results || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Bank Statements</div>
-        <div class="hd">
-          <div>
-            <h1>Bank Statements &amp; Import Batches</h1>
-            <div class="sub">Import history, statement reconciliations, and rollback audit trail</div>
-          </div>
-          <div class="act">
-            <button class="btn p" onclick="statementImportWizardModal()">+ Import Statement</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Batch Number</th>
-                  <th>Bank Account</th>
-                  <th>Filename</th>
-                  <th>Import Date</th>
-                  <th class="r">Total Rows</th>
-                  <th class="r">Imported</th>
-                  <th class="r">Duplicates</th>
-                  <th>Status</th>
-                  <th class="r">Rollback</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${batches.length ? batches.map(b => `
-                  <tr>
-                    <td><b>${esc(b.batch_number)}</b></td>
-                    <td>${esc(b.bank_account_name || 'Bank Account')}</td>
-                    <td><code>${esc(b.filename || 'statement.csv')}</code></td>
-                    <td>${fmtBankDate(b.imported_at ? b.imported_at.slice(0, 10) : '')}</td>
-                    <td class="r">${b.total_rows}</td>
-                    <td class="r" style="font-weight:700;color:#059669;">${b.imported_count}</td>
-                    <td class="r">${b.duplicate_count}</td>
-                    <td><span class="pastel-chip chip-mint">${esc(b.status || 'Imported')}</span></td>
-                    <td class="r">
-                      <button class="btn" style="padding:4px 8px;font-size:11px;color:#dc2626;" onclick="rollbackBatchModal(${b.bank_account_id})">Rollback</button>
-                    </td>
-                  </tr>
-                `).join('') : `
-                  <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--tx-muted);">No statement batches imported yet. Click "Import Statement" to upload your first bank statement.</td></tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankDepositsPage(root) {
-  PAGE.reload = () => bankDepositsPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Deposits...</div></div>`;
-
-  try {
-    const res = await api('bank-deposits/?page_size=50');
-    const deposits = res.results || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Deposits</div>
-        <div class="hd">
-          <div>
-            <h1>Recorded Bank Deposits</h1>
-            <div class="sub">Cash, cheque, and electronic receipts credited directly to bank accounts</div>
-          </div>
-          <div class="act">
-            <button class="btn p" onclick="recordDepositModal()">+ Record Deposit</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Deposit #</th>
-                  <th>Date</th>
-                  <th>Bank Account</th>
-                  <th>Party / Received From</th>
-                  <th>Deposit Type</th>
-                  <th>Reference</th>
-                  <th class="r">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${deposits.length ? deposits.map(d => `
-                  <tr>
-                    <td><b>${esc(d.number)}</b></td>
-                    <td>${fmtBankDate(d.date)}</td>
-                    <td>${esc(d.bank_account_name || 'Bank Account')}</td>
-                    <td>${esc(d.party_name || 'Direct Receipt')}</td>
-                    <td><span class="pastel-chip chip-sky">${esc(d.deposit_type)}</span></td>
-                    <td><code>${esc(d.reference || '—')}</code></td>
-                    <td class="r" style="font-weight:700;color:#059669;">+${inr(d.amount)}</td>
-                  </tr>
-                `).join('') : `
-                  <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--tx-muted);">No deposits recorded yet. Click "Record Deposit" to create one.</td></tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankTransfersPage(root) {
-  PAGE.reload = () => bankTransfersPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Transfers...</div></div>`;
-
-  try {
-    const res = await api('bank-transfers/?page_size=50');
-    const transfers = res.results || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Transfers Between Accounts</div>
-        <div class="hd">
-          <div>
-            <h1>Transfers Between Accounts</h1>
-            <div class="sub">Inter-account fund movements with double-entry journal postings</div>
-          </div>
-          <div class="act">
-            <button class="btn p" onclick="transferForm()">+ Record Transfer</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Transfer #</th>
-                  <th>Date</th>
-                  <th>From Account</th>
-                  <th>To Account</th>
-                  <th>Reference</th>
-                  <th>Description</th>
-                  <th class="r">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${transfers.length ? transfers.map(x => `
-                  <tr>
-                    <td><b>${esc(x.number)}</b></td>
-                    <td>${fmtBankDate(x.date)}</td>
-                    <td>${esc(x.from_account_name)}</td>
-                    <td>${esc(x.to_account_name)}</td>
-                    <td><code>${esc(x.reference || '—')}</code></td>
-                    <td>${esc(x.description || 'Inter-account transfer')}</td>
-                    <td class="r" style="font-weight:700;">${inr(x.amount)}</td>
-                  </tr>
-                `).join('') : `
-                  <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--tx-muted);">No transfers recorded yet. Click "Record Transfer" to move funds between accounts.</td></tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankRulesPage(root) {
-  PAGE.reload = () => bankRulesPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Bank Rules...</div></div>`;
-
-  try {
-    const rules = await api('banking/rules/');
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Bank Rules</div>
-        <div class="hd">
-          <div>
-            <h1>Automated Bank Categorization Rules</h1>
-            <div class="sub">Auto-assign transaction types, accounting GL accounts, and payees based on narration text</div>
-          </div>
-          <div class="act">
-            <button class="btn" id="bnk-seed-rules-btn" title="Deploy standard rules for GST, bank charges, stationery, hosting, and sweeps">⚡ Deploy Recommended Rules</button>
-            <button class="btn p" onclick="bankRulesModal()">+ Create Rule</button>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:14px;padding:14px 18px;background:rgba(59,130,246,0.05);border:1px dashed rgba(59,130,246,0.3);border-radius:8px;">
-          <div style="font-weight:700;font-size:13px;color:var(--tx);margin-bottom:4px;">💡 How Automated Bank Rules Work</div>
-          <div style="font-size:12px;color:var(--tx-muted);line-height:1.6;">
-            Incoming bank statement feeds are evaluated in order of <b>Priority</b> (lowest number first). When narration matches your criteria, ConvosisBooks automatically assigns the designated GL Account, Transaction Type, and Payee. If <b>Auto-Reconcile</b> is enabled, the transaction is marked verified and reconciled immediately.
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Priority</th>
-                  <th>Rule Name</th>
-                  <th>Condition</th>
-                  <th>Action</th>
-                  <th>Auto-Reconcile</th>
-                  <th class="r">Delete</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rules.length ? rules.map(r => `
-                  <tr>
-                    <td><b>#${r.priority}</b></td>
-                    <td><b>${esc(r.name)}</b></td>
-                    <td><code>${esc(r.field)}</code> ${esc(r.operator)} "<b>${esc(r.value)}</b>"</td>
-                    <td>Assign GL Account &amp; Payee</td>
-                    <td><span class="pastel-chip ${r.auto_reconcile ? 'chip-mint' : 'chip-sky'}">${r.auto_reconcile ? 'Yes · Auto Reconcile' : 'Suggest Only'}</span></td>
-                    <td class="r">
-                      <button class="btn dn" onclick="deleteRecord('banking/rules', {id: ${r.id}, name: '${esc(r.name)}'}, 'bank rule')" style="padding:2px 8px;font-size:11px;">✕</button>
-                    </td>
-                  </tr>
-                `).join('') : `
-                  <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--tx-muted);">No categorization rules created yet. Click "Deploy Recommended Rules" or "Create Rule" to automate matching.</td></tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const seedBtn = $('#bnk-seed-rules-btn', root);
-    if (seedBtn) {
-      seedBtn.addEventListener('click', async () => {
-        seedBtn.disabled = true;
-        seedBtn.innerHTML = `${spinner} Deploying rules...`;
-        try {
-          const res = await api('banking/generate-default-rules/', { method: 'POST' });
-          toast(res.message || 'Recommended bank rules deployed', 'ok');
-          bankRulesPage(root);
-        } catch (e) {
-          toast(e.message, 'err');
-          seedBtn.disabled = false;
-          seedBtn.innerHTML = '⚡ Deploy Recommended Rules';
-        }
-      });
-    }
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-function importBankStatementWizard(root) {
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">Opening Statement Import Wizard...</div></div>`;
-  statementImportWizardModal();
-}
-
-async function bankingReconciliationPage(root) {
-  PAGE.reload = () => bankingReconciliationPage(root);
-  const bankAccs = await api('lookup/bank-accounts/');
-
-  if (!bankAccs.length) {
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking</div>
-        <div class="hd"><h1>Bank Reconciliation Cockpit</h1></div>
-        <div class="card" style="margin-top:14px;padding:30px;text-align:center;">
-          <p>No bank accounts set up yet.</p>
-          <button class="btn p" onclick="bankAccountForm()">+ Add Bank Account</button>
-        </div>
-      </div>
-    `;
-    return;
-  }
-
-  let savedAccId = parseInt(sessionStorage.getItem('active_bank_account_id'), 10);
-  let selectedAccId = (savedAccId && bankAccs.some(a => a.id === savedAccId)) ? savedAccId : bankAccs[0].id;
-
-  root.innerHTML = `
-    <div class="banking-page-container">
-      <div class="bc">Home / Banking / Reconciliation</div>
-      <div class="hd">
-        <div>
-          <h1>Bank Reconciliation Cockpit</h1>
-          <div class="sub" style="margin-top:2px;">Compare statement balance with books, mark cleared transactions, and verify zero difference</div>
-        </div>
-        <div class="act">
-          <button class="btn p" id="bnk-rec-live-sync" type="button">⚡ Sync Live Feed</button>
-          <button class="btn" id="bnk-rec-rules" type="button">⚙️ Bank Rules</button>
-          <button class="btn" id="bnk-rec-imp" type="button">Import Statement</button>
-          <button class="btn" id="bnk-rec-xfer" type="button">Transfer Funds</button>
-        </div>
-      </div>
-
-      <div class="card" style="margin:14px 0;padding:16px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;">
-          <div style="display:flex;align-items:center;gap:12px;">
-            <label style="font-weight:600;">Bank Account:</label>
-            <select class="in" id="bnk-sel-acc" style="min-width:260px;">
-              ${bankAccs.map(a => `<option value="${a.id}" ${a.id === selectedAccId ? 'selected' : ''}>${esc(a.name)} (${esc(a.bank_name || 'Bank')})</option>`).join('')}
-            </select>
-          </div>
-          <div id="bnk-kpi-strip" style="display:flex;gap:16px;flex-wrap:wrap;">
-            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
-              <div class="sub" style="font-size:11px;">Current Book Balance</div>
-              <div style="font-weight:700;font-size:16px;color:var(--accent);" id="bnk-cur-bal">₹0.00</div>
-            </div>
-            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
-              <div class="sub" style="font-size:11px;">Statement Ending Balance</div>
-              <div style="font-weight:700;font-size:16px;" id="bnk-stmt-bal">₹0.00</div>
-            </div>
-            <div style="padding:6px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd-glass);">
-              <div class="sub" style="font-size:11px;">Difference Remaining</div>
-              <div style="font-weight:700;font-size:16px;color:#059669;" id="bnk-rec-diff">₹0.00</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="tb">
-          <h3 style="font-size:14px;margin:0;">Pending Reconciliation Lines</h3>
-          <span class="sub" id="bnk-txn-cnt"></span>
-        </div>
-        <div class="tw" id="bnk-rec-table">${spinner}</div>
-      </div>
-    </div>
-  `;
-
-  $('#bnk-rec-live-sync', root).addEventListener('click', () => statementImportWizardModal(selectedAccId));
-  $('#bnk-rec-rules', root).addEventListener('click', () => bankRulesModal());
-  $('#bnk-rec-imp', root).addEventListener('click', () => statementImportWizardModal(selectedAccId));
-  $('#bnk-rec-xfer', root).addEventListener('click', () => transferForm());
-  $('#bnk-sel-acc', root).addEventListener('change', e => {
-    selectedAccId = Number(e.target.value);
-    sessionStorage.setItem('active_bank_account_id', selectedAccId);
-    loadReconciliation();
-  });
-
-  async function loadReconciliation() {
-    $('#bnk-rec-table', root).innerHTML = spinner;
-    try {
-      const acc = await api(`bank-accounts/${selectedAccId}/`);
-      $('#bnk-cur-bal', root).textContent = inr(acc.current_balance);
-      $('#bnk-stmt-bal', root).textContent = inr(acc.bank_balance || acc.current_balance);
-
-      const diff = Math.abs(num(acc.current_balance) - num(acc.bank_balance || acc.current_balance));
-      $('#bnk-rec-diff', root).textContent = inr(diff);
-      $('#bnk-rec-diff', root).style.color = (diff === 0) ? '#059669' : '#dc2626';
-
-      const txns = await api(`bank-transactions/?bank_account=${selectedAccId}&status=unmatched&page_size=50`);
-      if (!root.isConnected) return;
-      $('#bnk-txn-cnt', root).textContent = `${txns.count} pending match`;
-
-      if (!txns.results.length) {
-        $('#bnk-rec-table', root).innerHTML = `
-          <div class="empty" style="padding:40px;">
-            All transactions for this account are fully matched and reconciled!<br>
-            <button class="btn p" style="margin-top:10px;" id="sync-new-feed">+ Sync Bank Feed</button>
-          </div>
-        `;
-        const sb = $('#sync-new-feed', root);
-        if (sb) sb.addEventListener('click', () => statementImportWizardModal(selectedAccId));
-        return;
-      }
-
-      $('#bnk-rec-table', root).innerHTML = `
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Bank Statement Line</th>
-              <th class="r">Withdrawal</th>
-              <th class="r">Deposit</th>
-              <th>Suggested Match</th>
-              <th class="r">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${txns.results.map(t => `
-              <tr id="bnk-row-${t.id}">
-                <td>${fmtBankDate(t.date)}</td>
-                <td>
-                  <div style="font-weight:600;">${esc(t.description)}</div>
-                  ${t.reference ? `<div class="sub" style="font-size:11px;">Ref: ${esc(t.reference)}</div>` : ''}
-                </td>
-                <td class="r">${num(t.withdrawal) > 0 ? `<span class="dn">${inr(t.withdrawal)}</span>` : '—'}</td>
-                <td class="r">${num(t.deposit) > 0 ? `<span class="up">+${inr(t.deposit)}</span>` : '—'}</td>
-                <td id="match-cell-${t.id}">
-                  <span class="sub">${spinner} Checking match candidates...</span>
-                </td>
-                <td class="r">
-                  <button class="btn p" type="button" data-match-txn="${t.id}" style="padding:4px 12px;font-size:12px;">Match</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
-
-      for (const t of txns.results) {
-        api(`banking/match-suggestions/${t.id}/`).then(res => {
-          const cell = $(`#match-cell-${t.id}`, root);
-          if (!cell) return;
-          if (res.suggestions && res.suggestions.length) {
-            const best = res.suggestions[0];
-            const confPct = best.confidence_score || Math.round((best.confidence || 0.8) * 100);
-            const chipClass = confPct >= 90 ? 'chip-mint' : 'chip-sky';
-            cell.innerHTML = `
-              <div style="display:flex;align-items:center;gap:8px;">
-                <span class="pastel-chip ${chipClass}">${confPct}% Match</span>
-                <span style="font-size:12px;color:var(--tx);font-weight:500;">${esc(best.party_name || best.number || 'Entry')}</span>
-              </div>
-            `;
-          } else {
-            cell.innerHTML = `<span class="sub" style="font-size:12px;">No exact match · Quick Categorize</span>`;
-          }
-        }).catch(() => {});
-      }
-
-      $$('[data-match-txn]', root).forEach(btn => {
-        btn.addEventListener('click', () => {
-          matchBankTransactionModal(btn.dataset.matchTxn, () => loadReconciliation());
-        });
-      });
-
-    } catch (e) {
-      if (root.isConnected) $('#bnk-rec-table', root).innerHTML = errBox(e.message, true);
-    }
-  }
-
-  loadReconciliation();
-}
-
-async function reconciliationHistoryPage(root) {
-  PAGE.reload = () => reconciliationHistoryPage(root);
-  root.innerHTML = `<div class="banking-page-container"><div style="padding:40px;text-align:center;">${spinner} Loading Reconciliation History...</div></div>`;
-
-  try {
-    const res = await api('bank-reconciliations/?page_size=50');
-    const recs = res.results || [];
-
-    root.innerHTML = `
-      <div class="banking-page-container">
-        <div class="bc">Home / Banking / Reconciliation History</div>
-        <div class="hd">
-          <div>
-            <h1>Reconciliation History</h1>
-            <div class="sub">Log of completed and locked statement reconciliation periods</div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>Reconciliation #</th>
-                  <th>Bank Account</th>
-                  <th>Statement Date</th>
-                  <th class="r">Ending Balance</th>
-                  <th class="r">Book Balance</th>
-                  <th class="r">Difference</th>
-                  <th class="r">Cleared Items</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${recs.length ? recs.map(r => `
-                  <tr>
-                    <td><b>${esc(r.reconciliation_number)}</b></td>
-                    <td>${esc(r.bank_account_name || 'Bank Account')}</td>
-                    <td>${fmtBankDate(r.statement_date)}</td>
-                    <td class="r" style="font-weight:700;">${inr(r.statement_ending_balance)}</td>
-                    <td class="r" style="font-weight:700;">${inr(r.book_balance)}</td>
-                    <td class="r" style="font-weight:700;color:${r.difference == 0 ? '#059669' : '#dc2626'};">${inr(r.difference)}</td>
-                    <td class="r">${r.cleared_count}</td>
-                    <td><span class="pastel-chip chip-mint">${esc(r.status || 'Reconciled')}</span></td>
-                  </tr>
-                `).join('') : `
-                  <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--tx-muted);">No completed reconciliation periods yet. Open Bank Reconciliation to reconcile.</td></tr>
-                `}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    root.innerHTML = `<div class="banking-page-container">${errBox(err.message, true)}</div>`;
-  }
-}
-
-async function bankingReportsPage(root) {
-  PAGE.reload = () => bankingReportsPage(root);
-  root.innerHTML = `
-    <div class="banking-page-container">
-      <div class="bc">Home / Banking / Banking Reports</div>
-      <div class="hd">
-        <div>
-          <h1>Banking Reports</h1>
-          <div class="sub">Audit-compliant bank books, cash flow statements, and reconciliation certificates</div>
-        </div>
-      </div>
-
-      <div class="g" style="margin-top:16px;">
-        <div class="s4">
-          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
-            <div>
-              <div style="font-size:24px;margin-bottom:8px;">📖</div>
-              <h3 style="margin:0 0 4px;font-size:15px;">Bank Book Report</h3>
-              <p class="sub" style="font-size:12px;">Chronological transaction journal for all receipts and disbursements per bank account.</p>
-            </div>
-            <button class="btn p" onclick="reportTablePage($('#pg'), 'bank-book', 'Bank Book Journal Report', 'Banking')" style="margin-top:14px;width:100%;">Run Bank Book Report</button>
-          </div>
-        </div>
-
-        <div class="s4">
-          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
-            <div>
-              <div style="font-size:24px;margin-bottom:8px;">⚖️</div>
-              <h3 style="margin:0 0 4px;font-size:15px;">Bank Reconciliation Statement</h3>
-              <p class="sub" style="font-size:12px;">Summary of differences between bank statement balance and book ledger balance.</p>
-            </div>
-            <button class="btn p" onclick="location.hash='#/banking/bank-reconciliation'" style="margin-top:14px;width:100%;">Open Reconciliation</button>
-          </div>
-        </div>
-
-        <div class="s4">
-          <div class="card" style="padding:20px;height:100%;display:flex;flex-direction:column;justify-content:space-between;">
-            <div>
-              <div style="font-size:24px;margin-bottom:8px;">💵</div>
-              <h3 style="margin:0 0 4px;font-size:15px;">Cash &amp; Bank Balances Summary</h3>
-              <p class="sub" style="font-size:12px;">Real-time cash position breakdown across all bank accounts and petty cash funds.</p>
-            </div>
-            <button class="btn p" onclick="cashFlowPage($('#pg'))" style="margin-top:14px;width:100%;">View Cash Flow</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
+async function bankingDashboardPage(root) { return renderBankingModule(root, 'dashboard'); }
+async function bankingAccountsPage(root) { return renderBankingModule(root, 'bank-accounts'); }
+async function bankStatementsListPage(root) { return renderBankingModule(root, 'bank-statements'); }
+async function bankDepositsPage(root) { return renderBankingModule(root, 'deposits'); }
+async function bankTransfersPage(root) { return renderBankingModule(root, 'transfers-between-accounts'); }
+async function bankRulesPage(root) { return renderBankingModule(root, 'bank-rules'); }
+function importBankStatementWizard(root) { return renderBankingModule(root, 'import-bank-statements'); }
+async function bankingReconciliationPage(root) { return renderBankingModule(root, 'bank-reconciliation'); }
+async function reconciliationHistoryPage(root) { return renderBankingModule(root, 'reconciliation-history'); }
+async function bankingReportsPage(root) { return renderBankingModule(root, 'banking-reports'); }
+async function bankingMainPage(root, filterTab = 'all') {
+  const map = {
+    'all': 'all-transactions',
+    'uncategorized': 'uncategorized-transactions',
+    'matched': 'matched-transactions',
+    'categorized': 'categorized-transactions',
+    'unmatched': 'unmatched-transactions'
+  };
+  return renderBankingModule(root, map[filterTab] || 'all-transactions');
 }
 
 async function gstFilingPage(root, tab = 'overview') {

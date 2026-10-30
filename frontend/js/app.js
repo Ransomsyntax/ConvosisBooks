@@ -8,23 +8,7 @@ const NAV = [
   ['Sales', 'sales', ['Customers', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
-  ['Banking', 'banking', [
-    'Banking Dashboard',
-    'Bank Accounts',
-    'Bank Statements',
-    'All Transactions',
-    'Uncategorized Transactions',
-    'Matched Transactions',
-    'Categorized Transactions',
-    'Unmatched Transactions',
-    'Bank Reconciliation',
-    'Transfers Between Accounts',
-    'Deposits',
-    'Bank Rules',
-    'Import Bank Statements',
-    'Banking Reports',
-    'Reconciliation History'
-  ]],
+  ['Banking', 'banking', []],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
   ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
   ['Reports', 'reports', ['Reports Center', 'Business Overview', 'Sales Reports', 'Purchase Reports', 'Inventory Reports', 'Receivables', 'Payables', 'Tax Reports', 'Accounting Reports', 'Cash Flow Reports']],
@@ -38,7 +22,7 @@ const DEFAULT_ROUTES = {
   sales: 'sales/invoices',
   purchases: 'purchases/bills',
   time: 'time/projects',
-  banking: 'banking/banking-dashboard',
+  banking: 'banking',
   filing: 'filing/gst-filing',
   accountant: 'accountant/manual-journals',
   reports: 'reports/reports-center',
@@ -86,25 +70,25 @@ const ROUTES = {
   'time/projects': r => listPage(r, LISTS.projects),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
 
-  'banking': r => bankingDashboardPage(r),
-  'banking/dashboard': r => bankingDashboardPage(r),
-  'banking/banking-dashboard': r => bankingDashboardPage(r),
-  'banking/bank-accounts': r => bankingAccountsPage(r),
-  'banking/bank-statements': r => bankStatementsListPage(r),
-  'banking/all-transactions': r => bankingMainPage(r, 'all'),
-  'banking/uncategorized-transactions': r => bankingMainPage(r, 'uncategorized'),
-  'banking/matched-transactions': r => bankingMainPage(r, 'matched'),
-  'banking/categorized-transactions': r => bankingMainPage(r, 'categorized'),
-  'banking/unmatched-transactions': r => bankingMainPage(r, 'unmatched'),
-  'banking/bank-reconciliation': r => bankingReconciliationPage(r),
-  'banking/transfers-between-accounts': r => bankTransfersPage(r),
-  'banking/transfers': r => bankTransfersPage(r),
-  'banking/transactions': r => bankingMainPage(r, 'all'),
-  'banking/deposits': r => bankDepositsPage(r),
-  'banking/bank-rules': r => bankRulesPage(r),
-  'banking/import-bank-statements': r => importBankStatementWizard(r),
-  'banking/banking-reports': r => bankingReportsPage(r),
-  'banking/reconciliation-history': r => reconciliationHistoryPage(r),
+  'banking': r => renderBankingModule(r, 'dashboard'),
+  'banking/dashboard': r => renderBankingModule(r, 'dashboard'),
+  'banking/banking-dashboard': r => renderBankingModule(r, 'dashboard'),
+  'banking/bank-accounts': r => renderBankingModule(r, 'bank-accounts'),
+  'banking/bank-statements': r => renderBankingModule(r, 'bank-statements'),
+  'banking/all-transactions': r => renderBankingModule(r, 'all-transactions'),
+  'banking/uncategorized-transactions': r => renderBankingModule(r, 'uncategorized-transactions'),
+  'banking/matched-transactions': r => renderBankingModule(r, 'matched-transactions'),
+  'banking/categorized-transactions': r => renderBankingModule(r, 'categorized-transactions'),
+  'banking/unmatched-transactions': r => renderBankingModule(r, 'unmatched-transactions'),
+  'banking/bank-reconciliation': r => renderBankingModule(r, 'bank-reconciliation'),
+  'banking/transfers-between-accounts': r => renderBankingModule(r, 'transfers-between-accounts'),
+  'banking/transfers': r => renderBankingModule(r, 'transfers-between-accounts'),
+  'banking/transactions': r => renderBankingModule(r, 'all-transactions'),
+  'banking/deposits': r => renderBankingModule(r, 'deposits'),
+  'banking/bank-rules': r => renderBankingModule(r, 'bank-rules'),
+  'banking/import-bank-statements': r => renderBankingModule(r, 'import-bank-statements'),
+  'banking/banking-reports': r => renderBankingModule(r, 'banking-reports'),
+  'banking/reconciliation-history': r => renderBankingModule(r, 'reconciliation-history'),
 
   'filing': r => gstFilingPage(r, 'overview'),
   'filing/gst-filing': r => gstFilingPage(r, 'overview'),
@@ -179,11 +163,16 @@ function getNavAddAction(k, c) {
 }
 
 function drawNav(cur) {
-  const items = NAV.map(([l, k, ch], i) => `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${openG.includes(k) ? 'open' : ''} ${cur.startsWith(k + '/') ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${openG.includes(k)}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span></button><div class="ch">${ch.map(c => {
-    const target = k + '/' + slug(c);
-    const hasAdd = Boolean(getNavAddAction(k, c));
-    return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
-  }).join('')}</div></div>`).join('');
+  const items = NAV.map(([l, k, ch], i) => {
+    const hasSub = ch && ch.length > 0;
+    const isAct = cur === k || cur.startsWith(k + '/');
+    const isOpen = openG.includes(k);
+    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${ch.map(c => {
+      const target = k + '/' + slug(c);
+      const hasAdd = Boolean(getNavAddAction(k, c));
+      return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
+    }).join('')}</div>` : ''}</div>`;
+  }).join('');
   const roleName = APP.user.role_display || (APP.user.role ? APP.user.role.toUpperCase() : 'Administrator');
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag" id="sidebarUserRoleTag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span id="sidebarUserRole">${esc(roleName)}</span></span></div></div></div>`;
   $('#side').innerHTML = items + footer;

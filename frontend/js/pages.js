@@ -423,7 +423,8 @@ const LISTS = {
       { h: 'Reference', f: r => esc(r.reference || '—') },
       { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` },
       { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }
-    ],
+    ]
+  },
   quotes: {
     api: 'quotes', title: 'Quotes', bc: 'Sales', newLabel: 'New Quote',
     onNew: () => quoteForm(), ordering: '-date', empty: 'No quotes yet. Click + New Quote to create your first sales quotation.',

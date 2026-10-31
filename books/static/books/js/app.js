@@ -287,7 +287,8 @@ const QC = [
   ['Item', () => itemForm()],
   ['Stock adjustment', () => adjustForm()]
 ];
-$('#qcm').innerHTML = QC.map((q, i) => `<button class="mi" type="button" data-q="${i}">New ${esc(q[0].toLowerCase())}</button>`).join('');
+const qcmEl = $('#qcm');
+if (qcmEl) qcmEl.innerHTML = QC.map((q, i) => `<button class="mi" type="button" data-q="${i}">New ${esc(q[0].toLowerCase())}</button>`).join('');
 
 function openRecord(t, id) {
   const M = { customer: ['sales/customers', () => partyDetail('customers', id)], vendor: ['purchases/vendors', () => partyDetail('vendors', id)], invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)], bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)], item: ['items/items-services', () => itemForm(id)] };
@@ -464,19 +465,24 @@ const rfshBtn = $('#rfsh');
 if (rfshBtn) rfshBtn.addEventListener('click', () => { refresh(); toast('Refreshed'); });
 
 let qt;
-$('#q').addEventListener('input', e => {
-  clearTimeout(qt);
-  const v = e.target.value.trim(), box = $('#qr');
-  if (v.length < 2) { box.classList.remove('on'); return; }
-  qt = setTimeout(async () => {
-    try {
-      const r = await api('search/?' + qs({ q: v }));
-      if ($('#q').value.trim() !== v) return;
-      box.innerHTML = r.length ? r.map(x => `<button class="mi" type="button" data-t="${esc(x.type)}" data-id="${esc(x.id)}"><b>${esc(x.label)}</b> <span class="sub">${esc(x.sub)}</span></button>`).join('') : '<div class="sub" style="padding:8px">No results</div>';
-      box.classList.add('on');
-    } catch (err) { }
-  }, 220);
-});
+const qInp = $('#q');
+if (qInp) {
+  qInp.addEventListener('input', e => {
+    clearTimeout(qt);
+    const v = e.target.value.trim(), box = $('#qr');
+    if (v.length < 2) { if (box) box.classList.remove('on'); return; }
+    qt = setTimeout(async () => {
+      try {
+        const r = await api('search/?' + qs({ q: v }));
+        if (qInp.value.trim() !== v) return;
+        if (box) {
+          box.innerHTML = r.length ? r.map(x => `<button class="mi" type="button" data-t="${esc(x.type)}" data-id="${esc(x.id)}"><b>${esc(x.label)}</b> <span class="sub">${esc(x.sub)}</span></button>`).join('') : '<div class="sub" style="padding:8px">No results</div>';
+          box.classList.add('on');
+        }
+      } catch (err) { }
+    }, 220);
+  });
+}
 document.addEventListener('keydown', e => {
   if (e.key === '/' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && !Modal.count()) { e.preventDefault(); $('#q').focus(); }
   if (e.key === 'Escape') {

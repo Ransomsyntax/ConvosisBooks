@@ -508,6 +508,26 @@ class SalesOrder(Document):
 class SalesOrderLine(Line):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
 
+class Quote(Document):
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='quotes')
+    reference_number = models.CharField(max_length=100, blank=True, default='')
+    expiry_date = models.DateField(null=True, blank=True)
+    salesperson = models.CharField(max_length=120, blank=True, default='')
+    project_name = models.CharField(max_length=150, blank=True, default='')
+    subject = models.TextField(blank=True, default='')
+    terms = models.TextField(blank=True, default='')
+    tax_type = models.CharField(max_length=10, default='tds', choices=[('tds', 'TDS'), ('tcs', 'TCS')])
+    tds_tcs_tax = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    adjustment = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    adjustment_label = models.CharField(max_length=50, blank=True, default='Adjustment')
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.number
+
+class QuoteLine(Line):
+    quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name='lines')
+
 class RecurringInvoice(models.Model):
     FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
     profile_name = models.CharField(max_length=150)

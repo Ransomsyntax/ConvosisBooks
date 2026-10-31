@@ -18,7 +18,7 @@ from books import services
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, Customer, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
-    LockDate, Organization, PaymentReceived, ReceivedAllocation, StockMovement,
+    LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
     UserProfile, Vendor, Warehouse
 )
 
@@ -690,4 +690,160 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         item_reorder_10.save()
         res_stock2 = self.client.get(f'/api/items/{item_reorder_10.id}/')
         self.assertEqual(res_stock2.json()['status'], 'Active')
+
+
+class TestQuoteModule(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.admin_user)
+
+    def test_quote_create_and_read(self):
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'expiry_date': '2026-11-30',
+            'reference_number': 'REF-Q-001',
+            'salesperson': 'John Doe',
+            'project_name': 'Cloud Migration',
+            'subject': 'Enterprise Quote for Q4',
+            'notes': 'Thank you for your business.',
+            'terms': 'Net 30 days.',
+            'tax_type': 'tds',
+            'tds_tcs_tax': 'TDS - 194C (1%)',
+            'adjustment': '-50.00',
+            'adjustment_label': 'Special Discount',
+            'lines': [
+                {
+                    'item_id': self.item.id,
+                    'description': 'Pro Subscription 1 Year',
+                    'quantity': '2',
+                    'rate': '1000.00',
+                    'discount': '10.00',
+                    'tax_rate': '18.00'
+                }
+            ]
+        }
+        res = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertTrue(data['number'].startswith('QT-'))
+        quote_id = data['id']
+
+        res_get = self.client.get(f'/api/quotes/{quote_id}/')
+        self.assertEqual(res_get.status_code, 200)
+        qdata = res_get.json()
+        self.assertEqual(qdata['customer_name'], self.customer.name)
+        self.assertEqual(qdata['reference_number'], 'REF-Q-001')
+        self.assertEqual(qdata['salesperson'], 'John Doe')
+        self.assertEqual(qdata['project_name'], 'Cloud Migration')
+        self.assertEqual(qdata['subject'], 'Enterprise Quote for Q4')
+        self.assertEqual(qdata['adjustment'], '-50.00')
+        self.assertEqual(qdata['status'], 'draft')
+        self.assertEqual(len(qdata['lines']), 1)
+
+    def test_quote_actions_send_accept_decline(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            date='2026-10-31',
+            due_date='2026-11-30',
+            number='QT-TEST-01',
+            status='draft',
+            total=Decimal('1000.00')
+        )
+        QuoteLine.objects.create(
+            quote=quote,
+            item=self.item,
+            description='Test item',
+            quantity=Decimal('1'),
+            rate=Decimal('1000.00'),
+            taxable=Decimal('1000.00'),
+            tax_amount=Decimal('180.00'),
+            line_total=Decimal('1180.00'),
+            gst_rate=Decimal('18.00')
+        )
+
+        res_send = self.client.post(f'/api/quotes/{quote.id}/send/')
+        self.assertEqual(res_send.status_code, 200)
+        quote.refresh_from_db()
+        self.assertEqual(quote.status, 'sent')
+        self.assertIsNotNone(quote.sent_at)
+
+        res_accept = self.client.post(f'/api/quotes/{quote.id}/accept/')
+        self.assertEqual(res_accept.status_code, 200)
+        quote.refresh_from_db()
+        self.assertEqual(quote.status, 'accepted')
+
+        res_decline = self.client.post(f'/api/quotes/{quote.id}/decline/')
+        self.assertEqual(res_decline.status_code, 200)
+        quote.refresh_from_db()
+        self.assertEqual(quote.status, 'declined')
+
+    def test_quote_convert_to_invoice(self):
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'lines': [
+                {
+                    'item_id': self.item.id,
+                    'quantity': '3',
+                    'rate': '1000.00',
+                    'discount': '0',
+                    'tax_rate': '18.00'
+                }
+            ]
+        }
+        res = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        quote_id = res.json()['id']
+
+        res_conv = self.client.post(f'/api/quotes/{quote_id}/convert-to-invoice/')
+        self.assertEqual(res_conv.status_code, 200)
+        conv_data = res_conv.json()
+        invoice_id = conv_data['invoice_id']
+
+        inv_res = self.client.get(f'/api/invoices/{invoice_id}/')
+        self.assertEqual(inv_res.status_code, 200)
+        inv_data = inv_res.json()
+        self.assertEqual(inv_data['party_id'], self.customer.id)
+        self.assertEqual(len(inv_data['lines']), 1)
+        self.assertEqual(inv_data['lines'][0]['item'], self.item.id)
+        self.assertEqual(Decimal(str(inv_data['lines'][0]['quantity'])), Decimal('3'))
+
+        q_res = self.client.get(f'/api/quotes/{quote_id}/')
+        self.assertEqual(q_res.json()['status'], 'invoiced')
+
+    def test_quote_convert_to_sales_order(self):
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'lines': [
+                {
+                    'item_id': self.item.id,
+                    'quantity': '5',
+                    'rate': '1000.00',
+                    'discount': '0',
+                    'tax_rate': '18.00'
+                }
+            ]
+        }
+        res = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        quote_id = res.json()['id']
+
+        res_conv = self.client.post(f'/api/quotes/{quote_id}/convert-to-sales-order/')
+        self.assertEqual(res_conv.status_code, 200)
+        conv_data = res_conv.json()
+        so_id = conv_data['sales_order_id']
+
+        so_res = self.client.get(f'/api/sales-orders/{so_id}/')
+        self.assertEqual(so_res.status_code, 200)
+        so_data = so_res.json()
+        self.assertEqual(so_data['customer_id'], self.customer.id)
+        self.assertEqual(len(so_data['lines']), 1)
+        self.assertEqual(so_data['lines'][0]['item'], self.item.id)
+        self.assertEqual(Decimal(str(so_data['lines'][0]['quantity'])), Decimal('5'))
+
+        q_res = self.client.get(f'/api/quotes/{quote_id}/')
+        self.assertEqual(q_res.json()['status'], 'accepted')
+
 

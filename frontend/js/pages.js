@@ -424,6 +424,35 @@ const LISTS = {
       { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` },
       { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }
     ],
+  quotes: {
+    api: 'quotes', title: 'Quotes', bc: 'Sales', newLabel: 'New Quote',
+    onNew: () => quoteForm(), ordering: '-date', empty: 'No quotes yet. Click + New Quote to create your first sales quotation.',
+    filters: [
+      { name: 'status', label: 'Status', opts: [['', 'All Quotes'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['invoiced', 'Invoiced']] }
+    ],
+    cols: [
+      { h: 'Date', s: 'date', f: r => fd(r.date) },
+      { h: 'Quote#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}"><b>${esc(r.number)}</b></button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
+      { h: 'Customer Name', f: r => esc(r.party || r.customer_name) },
+      { h: 'Reference#', f: r => esc(r.reference_number || '—') },
+      { h: 'Status', f: r => `<span class="pastel-chip ${r.status === 'accepted' ? 'chip-mint' : r.status === 'declined' ? 'chip-rose' : r.status === 'sent' ? 'chip-sky' : r.status === 'invoiced' ? 'chip-indigo' : 'chip-lavender'}">${esc(r.status ? r.status.toUpperCase() : 'DRAFT')}</span>` },
+      { h: 'Expiry Date', s: 'expiry_date', f: r => r.expiry_date ? fd(r.expiry_date) : '—' },
+      { h: 'Amount', s: 'total', ...money(r => inr(r.total)) }
+    ],
+    actions: () => [
+      ['view', 'View'],
+      ['edit', 'Edit'],
+      ['convert-inv', 'Convert to Invoice'],
+      ['convert-so', 'Convert to Sales Order'],
+      ['delete', 'Delete', 'd']
+    ],
+    onAction: (a, r) => {
+      if (a === 'view') viewQuoteDetail(r.id);
+      else if (a === 'edit') quoteForm(r.id);
+      else if (a === 'convert-inv') convertQuoteToInvoice(r.id);
+      else if (a === 'convert-so') convertQuoteToSalesOrder(r.id);
+      else if (a === 'delete') deleteRecord('quotes', r, 'quote');
+    }
   },
   'sales-orders': {
     api: 'sales-orders', title: 'Sales Orders', bc: 'Sales', newLabel: 'New sales order', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No sales orders yet.',
@@ -5223,5 +5252,186 @@ async function developerPlatformPage(root, tab = 'keys') {
     root.innerHTML = errBox(e.message, true);
     const btn = $('[data-retry]', root);
     if (btn) btn.addEventListener('click', () => developerPlatformPage(root, tab));
+  }
+}
+
+async function convertQuoteToInvoice(id) {
+  const conf = await confirmBox({
+    title: 'Convert Quote to Invoice',
+    message: 'Are you sure you want to convert this quote into an invoice? A draft invoice will be created with all items from this quote.'
+  });
+  if (!conf) return;
+  try {
+    const res = await api(`quotes/${id}/convert-to-invoice/`, { method: 'POST', body: {} });
+    toast(`Successfully converted to Invoice ${res.number}!`);
+    location.hash = '#/sales/invoices';
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function convertQuoteToSalesOrder(id) {
+  const conf = await confirmBox({
+    title: 'Convert Quote to Sales Order',
+    message: 'Are you sure you want to convert this quote into a confirmed sales order?'
+  });
+  if (!conf) return;
+  try {
+    const res = await api(`quotes/${id}/convert-to-sales-order/`, { method: 'POST', body: {} });
+    toast(`Successfully converted to Sales Order ${res.number}!`);
+    location.hash = '#/sales/sales-orders';
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function viewQuoteDetail(id) {
+  try {
+    const q = await api(`quotes/${id}/`);
+    Modal.open({
+      title: `Quote ${q.number}`,
+      dialog: true,
+      wide: true,
+      body: `
+        <div style="background:#fff;color:#1e293b;border-radius:10px;padding:32px;box-shadow:0 4px 20px rgba(0,0,0,0.06);border:1px solid #e2e8f0;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:24px;">
+            <div>
+              <div style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">${esc(APP.org.name)}</div>
+              <div class="sub" style="font-size:12px;margin-top:4px;color:#64748b;line-height:1.5;">
+                ${esc(APP.org.address)}<br>
+                GSTIN: <b>${esc(APP.org.gstin || '—')}</b> · State: ${esc(APP.org.state)}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:26px;font-weight:800;color:#2563eb;letter-spacing:1px;text-transform:uppercase;">QUOTATION</div>
+              <div style="font-size:16px;font-weight:700;color:#334155;margin-top:2px;"># ${esc(q.number)}</div>
+              <div style="margin-top:6px;">
+                <span class="pastel-chip ${q.status === 'accepted' ? 'chip-mint' : q.status === 'declined' ? 'chip-rose' : q.status === 'sent' ? 'chip-sky' : q.status === 'invoiced' ? 'chip-indigo' : 'chip-lavender'}" style="font-size:11px;font-weight:700;text-transform:uppercase;">
+                  ${esc(q.status)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
+            <div>
+              <div style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:700;margin-bottom:6px;">Quotation For:</div>
+              <div style="font-size:15px;font-weight:700;color:#0f172a;">${esc(q.party || (q.party_details && q.party_details.name) || q.customer_name)}</div>
+              <div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:4px;">
+                ${q.party_details && q.party_details.company ? `<div>${esc(q.party_details.company)}</div>` : ''}
+                ${q.party_details && q.party_details.billing_address ? `<div>${esc(q.party_details.billing_address)}</div>` : ''}
+                ${q.party_details && q.party_details.gstin ? `<div>GSTIN: <b>${esc(q.party_details.gstin)}</b></div>` : ''}
+                ${q.party_details && q.party_details.email ? `<div>Email: ${esc(q.party_details.email)}</div>` : ''}
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;">
+              <div><b>Quote Date:</b></div><div>${fd(q.date)}</div>
+              <div><b>Expiry Date:</b></div><div>${q.expiry_date ? fd(q.expiry_date) : '—'}</div>
+              <div><b>Reference#:</b></div><div>${esc(q.reference_number || '—')}</div>
+              <div><b>Salesperson:</b></div><div>${esc(q.salesperson || '—')}</div>
+              <div><b>Project:</b></div><div>${esc(q.project_name || '—')}</div>
+              <div><b>Place of Supply:</b></div><div>${esc(q.place_of_supply || '—')}</div>
+            </div>
+          </div>
+
+          ${q.subject ? `
+            <div style="background:#eff6ff;border-left:3px solid #2563eb;padding:10px 14px;border-radius:4px;margin-bottom:20px;font-size:13px;color:#1e3a8a;">
+              <b>Subject:</b> ${esc(q.subject)}
+            </div>
+          ` : ''}
+
+          <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <thead>
+              <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;font-size:12px;text-align:left;color:#475569;">
+                <th style="padding:10px 12px;">#</th>
+                <th style="padding:10px 12px;">Item & Description</th>
+                <th style="padding:10px 12px;text-align:right;">Qty</th>
+                <th style="padding:10px 12px;text-align:right;">Rate (₹)</th>
+                <th style="padding:10px 12px;text-align:right;">Disc %</th>
+                <th style="padding:10px 12px;text-align:right;">GST</th>
+                <th style="padding:10px 12px;text-align:right;">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(q.lines || []).map((l, i) => `
+                <tr style="border-bottom:1px solid #e2e8f0;font-size:13px;">
+                  <td style="padding:10px 12px;color:#64748b;">${i + 1}</td>
+                  <td style="padding:10px 12px;"><b>${esc(l.description || 'Item')}</b>${l.hsn_sac ? ` <small style="color:#64748b;">(HSN ${esc(l.hsn_sac)})</small>` : ''}</td>
+                  <td style="padding:10px 12px;text-align:right;">${qty(l.quantity)}</td>
+                  <td style="padding:10px 12px;text-align:right;">${inr(l.rate)}</td>
+                  <td style="padding:10px 12px;text-align:right;">${num(l.discount_percent) > 0 ? l.discount_percent + '%' : '—'}</td>
+                  <td style="padding:10px 12px;text-align:right;">${l.gst_rate}%</td>
+                  <td style="padding:10px 12px;text-align:right;font-weight:600;">${inr(l.line_total)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;">
+            <div style="flex:1;max-width:55%;">
+              ${q.notes ? `
+                <div style="margin-bottom:16px;">
+                  <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Customer Notes</div>
+                  <div style="font-size:12px;color:#334155;white-space:pre-wrap;">${esc(q.notes)}</div>
+                </div>
+              ` : ''}
+              ${q.terms ? `
+                <div>
+                  <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Terms & Conditions</div>
+                  <div style="font-size:12px;color:#334155;white-space:pre-wrap;">${esc(q.terms)}</div>
+                </div>
+              ` : ''}
+            </div>
+
+            <div style="width:280px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                <span style="color:#64748b;">Subtotal (Taxable):</span>
+                <b>${inr(q.subtotal)}</b>
+              </div>
+              ${num(q.cgst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">CGST:</span><span>${inr(q.cgst)}</span></div>` : ''}
+              ${num(q.sgst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">SGST:</span><span>${inr(q.sgst)}</span></div>` : ''}
+              ${num(q.igst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">IGST:</span><span>${inr(q.igst)}</span></div>` : ''}
+              ${num(q.adjustment) !== 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">${esc(q.adjustment_label || 'Adjustment')}:</span><span>${num(q.adjustment) > 0 ? '+' : ''}${inr(q.adjustment)}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between;border-top:2px solid #cbd5e1;padding-top:10px;margin-top:10px;font-size:16px;font-weight:800;color:#0f172a;">
+                <span>Total:</span>
+                <span style="color:#2563eb;">${inr(q.total)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      footer: `
+        <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:10px;">
+          <div>
+            <button type="button" class="btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
+            <button type="button" class="btn" id="btn-view-edit-q"><i class="fa-solid fa-pen"></i> Edit Quote</button>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn p" id="btn-q-to-inv" style="background:#059669;border:none;">
+              <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
+            </button>
+            <button type="button" class="btn" id="btn-q-to-so">
+              <i class="fa-solid fa-cart-shopping"></i> Convert to Sales Order
+            </button>
+            <button type="button" class="btn" data-close>Close</button>
+          </div>
+        </div>
+      `
+    });
+
+    $('#btn-view-edit-q')?.addEventListener('click', () => {
+      Modal.close();
+      quoteForm(q.id);
+    });
+    $('#btn-q-to-inv')?.addEventListener('click', () => {
+      Modal.close();
+      convertQuoteToInvoice(q.id);
+    });
+    $('#btn-q-to-so')?.addEventListener('click', () => {
+      Modal.close();
+      convertQuoteToSalesOrder(q.id);
+    });
+  } catch (err) {
+    toast(err.message, 'err');
   }
 }

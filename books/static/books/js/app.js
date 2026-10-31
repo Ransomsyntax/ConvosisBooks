@@ -5,7 +5,7 @@ const NAV = [
   ['Home', 'home', ['Dashboard', 'Getting Started', 'Recent Updates']],
   ['Items', 'items', ['Items', 'Item Categories', 'Price Lists']],
   ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Movement', 'Warehouses']],
-  ['Sales', 'sales', ['Customers', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
+  ['Sales', 'sales', ['Customers', 'Quotes', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
   ['Banking', 'banking', []],
@@ -19,7 +19,7 @@ const DEFAULT_ROUTES = {
   home: 'home/dashboard',
   items: 'items/items',
   inventory: 'inventory/inventory-summary',
-  sales: 'sales/invoices',
+  sales: 'sales/quotes',
   purchases: 'purchases/bills',
   time: 'time/projects',
   banking: 'banking',
@@ -47,7 +47,8 @@ const ROUTES = {
   'inventory/stock-movement': r => listPage(r, LISTS.movements),
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
-  'sales': r => docMasterDetail(r, 'invoices'),
+  'sales': r => listPage(r, LISTS.quotes),
+  'sales/quotes': r => listPage(r, LISTS.quotes),
   'sales/customers': r => listPage(r, LISTS.customers),
   'sales/sales-orders': r => listPage(r, LISTS['sales-orders']),
   'sales/invoices': r => docMasterDetail(r, 'invoices'),
@@ -153,6 +154,7 @@ let openG = pref.get('open', ['home']);
 const NAV_NEW_ACTIONS = {
   'items/items': () => itemForm(),
   'sales/customers': () => partyForm('customers'),
+  'sales/quotes': () => quoteForm(),
   'purchases/vendors': () => partyForm('vendors')
 };
 

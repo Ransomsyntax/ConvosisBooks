@@ -4498,3 +4498,718 @@ function zohoMigrationModal() {
     } catch (e) { toast(e.message, 'err'); }
   });
 }
+
+function bulkItemPickerModal(items, onSelect) {
+  let searchQ = '';
+  const selectedMap = new Map();
+
+  const m = Modal.open({
+    title: 'Select Items in Bulk',
+    dialog: true,
+    wide: true,
+    body: `
+      <div style="padding:10px 0;">
+        <input class="in" type="search" id="bulk-item-search" placeholder="Search items by name, SKU, or category…" style="margin-bottom:14px;width:100%;">
+        <div class="tw" style="max-height:360px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:40px;"><input type="checkbox" id="bulk-item-select-all"></th>
+                <th>Item Details</th>
+                <th>SKU</th>
+                <th class="r">Rate (₹)</th>
+                <th class="r">Stock On Hand</th>
+                <th style="width:100px;" class="r">Qty to Add</th>
+              </tr>
+            </thead>
+            <tbody id="bulk-item-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+        <span class="sub" id="bulk-selected-count">0 items selected</span>
+        <div>
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="button" class="btn p" id="btn-bulk-add-confirm">Add Selected Items</button>
+        </div>
+      </div>
+    `
+  });
+
+  function renderList() {
+    const q = searchQ.toLowerCase().trim();
+    const filtered = items.filter(it => !q || it.name.toLowerCase().includes(q) || (it.sku && it.sku.toLowerCase().includes(q)));
+    const tb = $('#bulk-item-tbody', m.el);
+    if (!filtered.length) {
+      tb.innerHTML = `<tr><td colspan="6"><div class="empty">No matching items found.</div></td></tr>`;
+      return;
+    }
+    tb.innerHTML = filtered.map(it => {
+      const isSel = selectedMap.has(it.id);
+      const qtyVal = isSel ? selectedMap.get(it.id) : 1;
+      return `
+        <tr>
+          <td><input type="checkbox" class="chk-bulk-item" data-id="${it.id}" ${isSel ? 'checked' : ''}></td>
+          <td><b>${esc(it.name)}</b>${it.category ? `<br><small class="sub">${esc(it.category)}</small>` : ''}</td>
+          <td>${esc(it.sku || '—')}</td>
+          <td class="r">${inr(it.selling_price || 0)}</td>
+          <td class="r">${it.track_inventory ? esc(it.stock || 0) : '—'}</td>
+          <td class="r">
+            <input type="number" min="0.001" step="0.001" class="in bulk-qty-input" data-id="${it.id}" value="${qtyVal}" style="width:80px;text-align:right;" ${isSel ? '' : 'disabled'}>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    updateCount();
+  }
+
+  function updateCount() {
+    const cnt = selectedMap.size;
+    $('#bulk-selected-count', m.el).textContent = `${cnt} item${cnt === 1 ? '' : 's'} selected`;
+  }
+
+  $('#bulk-item-search', m.el).addEventListener('input', e => {
+    searchQ = e.target.value;
+    renderList();
+  });
+
+  m.el.addEventListener('change', e => {
+    if (e.target.classList.contains('chk-bulk-item')) {
+      const itId = Number(e.target.dataset.id);
+      const qtyInp = $(`.bulk-qty-input[data-id="${itId}"]`, m.el);
+      if (e.target.checked) {
+        selectedMap.set(itId, Number(qtyInp ? qtyInp.value : 1) || 1);
+        if (qtyInp) qtyInp.disabled = false;
+      } else {
+        selectedMap.delete(itId);
+        if (qtyInp) qtyInp.disabled = true;
+      }
+      updateCount();
+    } else if (e.target.id === 'bulk-item-select-all') {
+      const chks = $$('.chk-bulk-item', m.el);
+      chks.forEach(chk => {
+        chk.checked = e.target.checked;
+        const itId = Number(chk.dataset.id);
+        const qtyInp = $(`.bulk-qty-input[data-id="${itId}"]`, m.el);
+        if (chk.checked) {
+          selectedMap.set(itId, Number(qtyInp ? qtyInp.value : 1) || 1);
+          if (qtyInp) qtyInp.disabled = false;
+        } else {
+          selectedMap.delete(itId);
+          if (qtyInp) qtyInp.disabled = true;
+        }
+      });
+      updateCount();
+    } else if (e.target.classList.contains('bulk-qty-input')) {
+      const itId = Number(e.target.dataset.id);
+      if (selectedMap.has(itId)) {
+        selectedMap.set(itId, Number(e.target.value) || 1);
+      }
+    }
+  });
+
+  $('#btn-bulk-add-confirm', m.el).addEventListener('click', () => {
+    if (!selectedMap.size) {
+      toast('Please select at least one item.', 'err');
+      return;
+    }
+    const chosen = [];
+    selectedMap.forEach((quantity, itemId) => {
+      const itemObj = items.find(x => x.id === itemId);
+      if (itemObj) {
+        chosen.push({
+          item: itemObj.id,
+          description: itemObj.name,
+          hsn_sac: itemObj.hsn_sac || '',
+          quantity,
+          rate: itemObj.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(itemObj.gst_rate) || 0
+        });
+      }
+    });
+    m.close();
+    if (onSelect) onSelect(chosen);
+  });
+
+  renderList();
+}
+
+async function quoteForm(id, onDone) {
+  const [parties, items, projects, salespersons, nextNum, rec] = await Promise.all([
+    api('lookup/customers/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    api('lookup/projects/').catch(() => []),
+    api('lookup/salespersons/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
+    id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  if (!parties.length) {
+    toast('Please create at least one customer first before making a quote.', 'err');
+    return;
+  }
+
+  const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
+  const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
+  const qDate = rec ? rec.date : APP.today;
+  const qExpiry = rec ? (rec.expiry_date || '') : '';
+  const qRef = rec ? (rec.reference_number || '') : '';
+  const qSalesperson = rec ? (rec.salesperson || '') : '';
+  const qProject = rec ? (rec.project_name || '') : '';
+  const qSubject = rec ? (rec.subject || '') : '';
+  const qNotes = rec ? (rec.notes || '') : 'Looking forward for your business.';
+  const qTerms = rec ? (rec.terms || '') : (APP.org.terms_default || '');
+  const qTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const qTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
+  const qAdj = rec ? num(rec.adjustment || 0) : 0;
+  const qAdjLabel = rec ? (rec.adjustment_label || 'Adjustment') : 'Adjustment';
+  const qLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
+  const pendingFiles = [];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-quote" style="border-bottom:1px solid var(--bd);">
+      <td style="width:30px;text-align:center;color:var(--tx-muted);cursor:grab;padding:10px 4px;">
+        <i class="fa-solid fa-grip-vertical"></i>
+      </td>
+      <td style="min-width:280px;padding:10px 8px;">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <div style="width:44px;height:44px;border-radius:6px;background:var(--surface-glass-subtle);border:1px dashed var(--bd);display:grid;place-items:center;color:var(--tx-muted);flex-shrink:0;">
+            <i class="fa-regular fa-image" style="font-size:18px;"></i>
+          </div>
+          <div style="flex:1;">
+            <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+              <option value="">Type or click to select an item.</option>
+              ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+            </select>
+            <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
+            <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+          </div>
+        </div>
+      </td>
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-qty" type="number" step="0.001" min="0.001" aria-label="Quantity" value="${esc(l.quantity || '1.00')}" style="text-align:right;">
+      </td>
+      <td style="width:130px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;">
+      </td>
+      <td style="width:130px;padding:10px 8px;vertical-align:top;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
+      </td>
+      <td style="width:150px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate">
+          <option value="0">Select a Tax</option>
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${inr(l.line_total || 0)}
+      </td>
+      <td style="width:40px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  const m = Modal.open({
+    title: id ? `Edit Quote ${qNumber}` : 'New Quote',
+    dialog: true,
+    wide: true,
+    body: `
+      <form id="quote-form-element" style="padding:4px 0;" novalidate>
+        <div style="display:flex;flex-direction:column;gap:14px;background:var(--surface-glass-subtle);padding:20px;border-radius:10px;border:1px solid var(--bd);">
+          
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Name<span style="color:#ef4444;">*</span></label>
+            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="q-customer" name="customer" required style="flex:1;">
+                <option value="">Select or add a customer</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;background:#2563eb;color:#fff;border-radius:6px;border:none;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote#<span style="color:#ef4444;">*</span></label>
+            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
+              <input type="text" class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;">
+              <button type="button" class="btn ic" id="btn-quote-gear" title="Configure Quote Number Sequence" style="color:#3b82f6;border-radius:6px;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference#</label>
+            <div style="flex:1;max-width:440px;">
+              <input type="text" class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote Date<span style="color:#ef4444;">*</span></label>
+            <div style="display:flex;align-items:center;gap:16px;flex:1;max-width:650px;">
+              <input type="date" class="in" id="q-date" name="date" value="${esc(qDate)}" required style="width:180px;">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);margin-left:12px;">Expiry Date</label>
+              <input type="date" class="in" id="q-expiry" name="expiry_date" value="${esc(qExpiry)}" style="width:180px;">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Salesperson</label>
+            <div style="flex:1;max-width:440px;">
+              <select class="in" id="q-salesperson" name="salesperson">
+                <option value="">Select or Add Salesperson</option>
+                ${salespersons.map(s => `<option value="${esc(s.name)}" ${qSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);margin-top:6px;">Project Name</label>
+            <div style="flex:1;max-width:440px;">
+              <select class="in" id="q-project" name="project_name">
+                <option value="">Select a project</option>
+                ${projects.map(p => `<option value="${esc(p.name)}" data-cust="${p.customer_id || ''}" ${qProject === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <div class="sub" id="q-project-hint" style="font-size:11.5px;color:var(--tx-muted);margin-top:4px;">Select a customer to associate a project.</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;" title="Let your customer know what this Quote is for"></i></label>
+            <div style="flex:1;max-width:440px;">
+              <input type="text" class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for">
+            </div>
+          </div>
+
+        </div>
+
+        <h3 style="font-size:15px;font-weight:700;margin:24px 0 10px;color:var(--tx);">Item Table</h3>
+        <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:var(--surface-glass-subtle);border-bottom:1px solid var(--bd);">
+                <th style="width:30px;"></th>
+                <th>ITEM DETAILS</th>
+                <th style="width:110px;" class="r">QUANTITY</th>
+                <th style="width:130px;" class="r">RATE <i class="fa-solid fa-table-cells" style="color:var(--tx-muted);font-size:12px;"></i></th>
+                <th style="width:130px;">DISCOUNT</th>
+                <th style="width:150px;">TAX <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;" title="GST rate"></i></th>
+                <th style="width:120px;" class="r">AMOUNT</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="quote-line-tbody">
+              ${qLines.map(rowHtml).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+          <button type="button" class="btn" id="btn-quote-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
+            <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
+          </button>
+          <button type="button" class="btn" id="btn-quote-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
+            <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
+          </button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+          <div>
+            <div class="fg" style="margin-bottom:16px;">
+              <label style="font-weight:600;font-size:13px;">Customer Notes</label>
+              <textarea class="in" id="q-notes" name="notes" rows="3">${esc(qNotes)}</textarea>
+            </div>
+            <div class="fg">
+              <label style="font-weight:600;font-size:13px;">Terms & Conditions</label>
+              <textarea class="in" id="q-terms" name="terms" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction">${esc(qTerms)}</textarea>
+            </div>
+          </div>
+
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;">Sub Total</span>
+              <span id="q-subtotal-val" style="font-size:16px;font-weight:700;">₹0.00</span>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                  <input type="radio" name="tax_type" value="tds" ${qTaxType === 'tds' ? 'checked' : ''}> TDS
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                  <input type="radio" name="tax_type" value="tcs" ${qTaxType === 'tcs' ? 'checked' : ''}> TCS
+                </label>
+              </div>
+              <select class="in" id="q-tds-tax" name="tds_tcs_tax" style="width:160px;">
+                <option value="0">Select a Tax</option>
+                <option value="1" ${qTdsTax === 1 ? 'selected' : ''}>1%</option>
+                <option value="2" ${qTdsTax === 2 ? 'selected' : ''}>2%</option>
+                <option value="5" ${qTdsTax === 5 ? 'selected' : ''}>5%</option>
+                <option value="10" ${qTdsTax === 10 ? 'selected' : ''}>10%</option>
+              </select>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <input type="text" class="in" id="q-adj-label" name="adjustment_label" value="${esc(qAdjLabel)}" style="width:110px;">
+                <i class="fa-regular fa-circle-question" style="color:var(--tx-muted);cursor:help;" title="Add or deduct custom adjustments from the total"></i>
+              </div>
+              <input type="number" step="0.01" class="in" id="q-adj-val" name="adjustment" value="${qAdj}" style="width:160px;text-align:right;">
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:2px solid var(--bd);margin-top:14px;">
+              <span style="font-size:16px;font-weight:700;">Total ( ₹ )</span>
+              <span id="q-grandtotal-val" style="font-size:22px;font-weight:800;color:var(--accent);">₹0.00</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:24px;padding:16px;background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div>
+              <div style="font-weight:600;font-size:13px;color:var(--tx);">Attach File(s) to Quote</div>
+              <div class="sub" style="font-size:11.5px;">You can upload a maximum of 5 files, 10MB each</div>
+            </div>
+            <input type="file" id="q-file-input" multiple style="display:none;">
+            <button type="button" class="btn" id="btn-quote-upload" style="font-size:12px;">
+              <i class="fa-solid fa-upload"></i> Upload File ▾
+            </button>
+          </div>
+          <div id="q-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+        </div>
+
+        <div class="sub" style="margin-top:20px;font-size:12px;color:var(--tx-muted);">
+          <b>Additional Fields:</b> Start adding custom fields for your quotes by going to <i>Settings ➡ Sales ➡ Quotes</i>.
+        </div>
+      </form>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;width:100%;">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn" id="btn-q-save-draft">Save as Draft</button>
+        <button type="button" class="btn p" id="btn-q-save-send">${id ? 'Update Quote' : 'Save and Send'}</button>
+      </div>
+    `
+  });
+
+  const form = $('#quote-form-element', m.el);
+  const tbody = $('#quote-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+
+  function updateProjectFilter() {
+    const custId = $('#q-customer', form).value;
+    const projSel = $('#q-project', form);
+    const hint = $('#q-project-hint', form);
+    if (!custId) {
+      if (hint) hint.textContent = 'Select a customer to associate a project.';
+      return;
+    }
+    const customerProjects = projects.filter(p => !p.customer_id || String(p.customer_id) === String(custId));
+    if (hint) {
+      hint.textContent = customerProjects.length ? `${customerProjects.length} project(s) available for this customer.` : 'No projects associated with this customer.';
+    }
+  }
+
+  function calcQuote() {
+    let subtotal = 0;
+    let totalTax = 0;
+    $$('.ln-quote', tbody).forEach(tr => {
+      const qty = num($('.l-qty', tr).value) || 0;
+      const rate = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value;
+      const gross = qty * rate;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const taxable = Math.max(0, gross - disc);
+      const gstRate = num($('.l-gst', tr).value) || 0;
+      const tax = taxable * gstRate / 100;
+      const lineTot = taxable + tax;
+      $('.l-amt', tr).textContent = inr(lineTot);
+      subtotal += taxable;
+      totalTax += tax;
+    });
+
+    const taxType = form.querySelector('input[name="tax_type"]:checked')?.value || 'tds';
+    const tdsRate = num($('#q-tds-tax', form).value) || 0;
+    const tdsAmt = subtotal * tdsRate / 100;
+    const adj = num($('#q-adj-val', form).value) || 0;
+
+    let grand = subtotal + totalTax;
+    if (taxType === 'tds') {
+      grand -= tdsAmt;
+    } else {
+      grand += tdsAmt;
+    }
+    grand = Math.max(0, grand + adj);
+
+    $('#q-subtotal-val', form).textContent = inr(subtotal);
+    $('#q-grandtotal-val', form).textContent = inr(grand);
+  }
+
+  function renderAttach() {
+    const box = $('#q-attach-badges', form);
+    let h = '';
+    if (rec && rec.attachments && rec.attachments.length) {
+      h += rec.attachments.map(a => `
+        <div class="attach-file-badge">
+          <span>📎 ${esc(a.filename)} (${fmtBytes(a.file_size)})</span>
+          <button type="button" data-del-att="${a.id}">×</button>
+        </div>
+      `).join('');
+    }
+    h += pendingFiles.map((f, i) => `
+      <div class="attach-file-badge" style="border-style:dashed;">
+        <span>📎 ${esc(f.name)} (${fmtBytes(f.size)}) <small style="color:var(--accent);">new</small></span>
+        <button type="button" data-rem-pen="${i}">×</button>
+      </div>
+    `).join('');
+    if (!h) h = '<span class="sub" style="font-size:12px;">No files attached yet.</span>';
+    box.innerHTML = h;
+  }
+
+  $('#btn-quote-cust-lookup', form).addEventListener('click', () => {
+    partyForm('customers', null, (newCust) => {
+      if (newCust && newCust.id) {
+        parties.push(newCust);
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        $('#q-customer', form).appendChild(opt);
+        updateProjectFilter();
+      }
+    });
+  });
+
+  $('#btn-quote-gear', form).addEventListener('click', () => {
+    Modal.open({
+      title: 'Configure Quote Number Sequence',
+      dialog: true,
+      body: `
+        <div style="padding:10px 0;">
+          <p class="sub" style="margin-bottom:12px;">Specify the prefix and sequence format for your sales quotes.</p>
+          <div class="fg">
+            <label>Prefix</label>
+            <input class="in" id="q-prefix-input" value="QT" style="width:120px;">
+          </div>
+          <div class="fg">
+            <label>Next Sequence Number</label>
+            <input class="in" id="q-next-seq-input" type="number" value="1" style="width:160px;">
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close>Cancel</button>
+        <button class="btn p" id="btn-save-q-seq">Save Sequence</button>
+      `
+    });
+    $('#btn-save-q-seq').addEventListener('click', () => {
+      const pfx = $('#q-prefix-input').value.trim() || 'QT';
+      const seq = Number($('#q-next-seq-input').value) || 1;
+      $('#q-number', form).value = `${pfx}-${String(seq).padStart(6, '0')}`;
+      Modal.close();
+      toast('Quote sequence updated');
+    });
+  });
+
+  $('#q-customer', form).addEventListener('change', () => {
+    updateProjectFilter();
+  });
+
+  tbody.addEventListener('change', e => {
+    if (e.target.classList.contains('l-item')) {
+      const it = byId[e.target.value];
+      const tr = e.target.closest('tr');
+      if (it && tr) {
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 0);
+      }
+      calcQuote();
+    }
+  });
+
+  form.addEventListener('input', () => calcQuote());
+  form.addEventListener('change', () => calcQuote());
+
+  $('#btn-quote-add-row', form).addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
+    calcQuote();
+  });
+
+  $('#btn-quote-bulk-items', form).addEventListener('click', () => {
+    bulkItemPickerModal(items, (selectedItems) => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml(it));
+      });
+      calcQuote();
+    });
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      if ($$('.ln-quote', tbody).length > 1) {
+        rm.closest('tr').remove();
+        calcQuote();
+      } else {
+        toast('At least one item line is required.', 'err');
+      }
+    }
+  });
+
+  const fileInput = $('#q-file-input', form);
+  $('#btn-quote-upload', form).addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    Array.from(fileInput.files).forEach(f => {
+      if (pendingFiles.length >= 5) {
+        toast('Maximum 5 files can be attached.', 'err');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        pendingFiles.push({ name: f.name, size: f.size, type: f.type, data: ev.target.result });
+        renderAttach();
+      };
+      reader.readAsDataURL(f);
+    });
+    fileInput.value = '';
+  });
+
+  $('#q-attach-badges', form).addEventListener('click', async e => {
+    const del = e.target.closest('[data-del-att]');
+    if (del) {
+      const attId = del.dataset.delAtt;
+      try {
+        await api(`attachments/${attId}/`, { method: 'DELETE' });
+        rec.attachments = (rec.attachments || []).filter(a => String(a.id) !== String(attId));
+        renderAttach();
+        toast('Attachment removed');
+      } catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    const rem = e.target.closest('[data-rem-pen]');
+    if (rem) {
+      pendingFiles.splice(Number(rem.dataset.remPen), 1);
+      renderAttach();
+    }
+  });
+
+  async function saveQuote(isSend = false) {
+    const custId = $('#q-customer', form).value;
+    if (!custId) {
+      toast('Please select a customer.', 'err');
+      $('#q-customer', form).focus();
+      return;
+    }
+    const dateVal = $('#q-date', form).value;
+    if (!dateVal) {
+      toast('Please enter a quote date.', 'err');
+      $('#q-date', form).focus();
+      return;
+    }
+
+    const lines = $$('.ln-quote', tbody).map((tr, idx) => ({
+      item: $('.l-item', tr).value || null,
+      description: $('.l-desc', tr).value.trim() || 'Item',
+      hsn_sac: $('.l-hsn', tr).value.trim(),
+      quantity: num($('.l-qty', tr).value) || 1,
+      rate: num($('.l-rate', tr).value) || 0,
+      discount_percent: $('.l-disc-type', tr).value === 'percent' ? (num($('.l-disc', tr).value) || 0) : 0,
+      gst_rate: num($('.l-gst', tr).value) || 0,
+      position: idx
+    }));
+
+    const custObj = parties.find(p => String(p.id) === String(custId));
+    const payload = {
+      customer: Number(custId),
+      number: $('#q-number', form).value.trim() || qNumber,
+      reference_number: $('#q-reference', form).value.trim(),
+      date: dateVal,
+      expiry_date: $('#q-expiry', form).value || null,
+      place_of_supply: (custObj && custObj.state) ? custObj.state : APP.org.state,
+      salesperson: $('#q-salesperson', form).value,
+      project_name: $('#q-project', form).value,
+      subject: $('#q-subject', form).value.trim(),
+      notes: $('#q-notes', form).value.trim(),
+      terms: $('#q-terms', form).value.trim(),
+      tax_type: form.querySelector('input[name="tax_type"]:checked')?.value || 'tds',
+      tds_tcs_tax: num($('#q-tds-tax', form).value) || 0,
+      adjustment: num($('#q-adj-val', form).value) || 0,
+      adjustment_label: $('#q-adj-label', form).value.trim() || 'Adjustment',
+      lines,
+      force: true
+    };
+
+    const saveBtns = $$('#btn-q-save-draft, #btn-q-save-send', m.el);
+    saveBtns.forEach(b => { b.disabled = true; });
+
+    try {
+      const saved = await api(id ? `quotes/${id}/` : 'quotes/', {
+        method: id ? 'PUT' : 'POST',
+        body: payload
+      });
+
+      for (const pf of pendingFiles) {
+        try {
+          await api('attachments/', {
+            method: 'POST',
+            body: {
+              entity_type: 'quote',
+              entity_id: saved.id,
+              filename: pf.name,
+              file_size: pf.size,
+              mime_type: pf.type,
+              file_data: pf.data
+            }
+          });
+        } catch (e) { console.error('Attachment upload error:', e); }
+      }
+
+      if (isSend) {
+        try {
+          await api(`quotes/${saved.id}/send/`, { method: 'POST', body: {} });
+          toast(`Quote ${saved.number} saved and sent to client!`);
+        } catch (e) {
+          toast(`Quote saved, but error sending: ${e.message}`, 'err');
+        }
+      } else {
+        toast(`Quote ${saved.number} saved as draft!`);
+      }
+
+      m.close();
+      if (onDone) onDone(saved);
+      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+      else refresh();
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      saveBtns.forEach(b => { b.disabled = false; });
+    }
+  }
+
+  $('#btn-q-save-draft', m.el).addEventListener('click', () => saveQuote(false));
+  $('#btn-q-save-send', m.el).addEventListener('click', () => saveQuote(true));
+
+  updateProjectFilter();
+  renderAttach();
+  calcQuote();
+}

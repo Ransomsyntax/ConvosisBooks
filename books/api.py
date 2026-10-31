@@ -26,9 +26,9 @@ from .models import (
     DeliveryChallanLine, DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTransaction,
-    PriceList, Project, PurchaseOrder, PurchaseOrderLine, ReceivedAllocation, RecurringInvoice,
+    PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, SalesOrder,
-    SalesOrderLine, SecurityBackupRecord, StockMovement, TimeLog, UserProfile, Vendor, VendorCredit,
+    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TimeLog, UserProfile, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
@@ -60,7 +60,7 @@ def body(request):
     return data
 
 CASHIER_ALLOWED_RESOURCES = {
-    'customers', 'items', 'item_categories', 'invoices', 'payments_received',
+    'customers', 'items', 'item_categories', 'quotes', 'invoices', 'payments_received',
     'sales_orders', 'delivery_challans', 'price_lists', 'attachments'
 }
 
@@ -343,7 +343,9 @@ class Resource:
             raise ApiError(405, 'Method not allowed.')
         obj = self.get_object(pk)
         with transaction.atomic():
-            self.action(request, obj, name)
+            res = self.action(request, obj, name)
+        if res is not None:
+            return res
         return j(self.detail(self.get_object(pk)))
 
 def party_stats(kind, ids):
@@ -701,6 +703,8 @@ def parse_lines(raw):
     for i, r in enumerate(raw, 1):
         c = Cleaner(r)
         iid = c.integer('item', lo=1, default=None)
+        if not iid:
+            iid = c.integer('item_id', lo=1, default=None)
         item = None
         if iid:
             item = Item.objects.filter(pk=iid).first()
@@ -713,7 +717,11 @@ def parse_lines(raw):
         qty = c.number('quantity', True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
         rate = c.number('rate', True, lo=Decimal('0'), hi=Decimal('999999999'))
         disc = c.number('discount_percent', lo=Decimal('0'), hi=Decimal('100'))
+        if disc == Decimal('0') and 'discount' in r:
+            disc = c.number('discount', lo=Decimal('0'), hi=Decimal('100'))
         gst = c.number('gst_rate', default=Decimal('0'))
+        if gst == Decimal('0') and 'tax_rate' in r:
+            gst = c.number('tax_rate', default=Decimal('0'))
         if gst < Decimal('0') or gst > Decimal('100'):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
         if c.errors:
@@ -754,11 +762,26 @@ class DocResource(Resource):
             return invoice_qs()
         if self.Model is RetainerInvoice:
             return retainer_qs()
+        if self.Model is Quote:
+            return Quote.objects.select_related('customer')
         return bill_qs()
 
     def filter_qs(self, qs, request):
         g, today, P = request.GET, timezone.localdate(), self.posted
         st = g.get('status', '')
+        if self.Model is Quote:
+            if st:
+                qs = qs.filter(status=st)
+            pid = g.get(self.party_attr) or g.get(self.party_attr + '_id')
+            if pid and str(pid).isdigit():
+                qs = qs.filter(**{self.party_attr + '_id': int(pid)})
+            c = Cleaner(g.dict())
+            d1, d2 = c.date('date_from'), c.date('date_to')
+            if d1:
+                qs = qs.filter(date__gte=d1)
+            if d2:
+                qs = qs.filter(date__lte=d2)
+            return qs
         if st == 'draft':
             qs = qs.filter(status='draft')
         elif st == 'void':
@@ -775,8 +798,8 @@ class DocResource(Resource):
             qs = qs.filter(status=P, paid_sum__lt=F('total'))
         if g.get('available') == '1' and self.Model is RetainerInvoice:
             qs = qs.filter(status__in=['sent', 'partial', 'paid'], paid_sum__gt=F('applied_sum'))
-        pid = g.get(self.party_attr)
-        if pid and pid.isdigit():
+        pid = g.get(self.party_attr) or g.get(self.party_attr + '_id')
+        if pid and str(pid).isdigit():
             qs = qs.filter(**{self.party_attr + '_id': int(pid)})
         c = Cleaner(g.dict())
         d1, d2 = c.date('date_from'), c.date('date_to')
@@ -791,12 +814,12 @@ class DocResource(Resource):
 
     def row(self, o):
         paid = q2(getattr(o, 'paid_sum', 0))
-        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else 'bill')
+        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else ('quote' if isinstance(o, Quote) else 'bill'))
         att_count = Attachment.objects.filter(entity_type=etype, entity_id=o.pk).count()
         r = {'id': o.pk, 'number': o.number, 'party_id': self.party(o).pk, 'party': self.party(o).name,
              'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
-             'status': display_status(o, self.posted, timezone.localdate()), 'raw_status': o.status,
+             'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
              'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
              'balance': o.total - paid if o.status in (self.posted, 'partial', 'paid') else Z}
         if isinstance(o, RetainerInvoice):
@@ -805,11 +828,23 @@ class DocResource(Resource):
             r['available_balance'] = max(Z, paid - applied)
             r['customer_id'] = o.customer_id
             r['customer_name'] = o.customer.name
+        elif isinstance(o, Quote):
+            r['customer_id'] = o.customer_id
+            r['customer_name'] = o.customer.name
+            r['reference_number'] = o.reference_number
+            r['expiry_date'] = o.expiry_date
+            r['salesperson'] = o.salesperson
+            r['project_name'] = o.project_name
+            r['subject'] = o.subject
+            r['adjustment'] = o.adjustment
+            r['adjustment_label'] = o.adjustment_label
+            r['tax_type'] = o.tax_type
+            r['tds_tcs_tax'] = o.tds_tcs_tax
         return r
 
     def detail(self, o):
         r = self.row(o)
-        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else 'bill')
+        etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else ('quote' if isinstance(o, Quote) else 'bill'))
         party = self.party(o)
         attachments = [
             {'id': a.pk, 'filename': a.filename, 'file_size': a.file_size, 'mime_type': a.mime_type,
@@ -840,9 +875,15 @@ class DocResource(Resource):
             allocations = [{'id': a.pk, 'invoice_id': a.invoice_id, 'number': a.invoice.number,
                             'date': a.date, 'amount': a.amount, 'notes': a.notes}
                            for a in o.allocations.select_related('invoice')]
-        else:
+        elif isinstance(o, Quote):
+            payments = []
+            allocations = []
+        elif hasattr(o, 'allocations'):
             payments = [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
                          'amount': a.amount} for a in o.allocations.select_related('payment')]
+        else:
+            payments = []
+            allocations = []
 
         r.update({'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst, 'notes': o.notes,
                   'order_number': getattr(o, 'order_number', '') or '',
@@ -866,16 +907,21 @@ class DocResource(Resource):
     def parse(self, data):
         c = Cleaner(data)
         org = Organization.get()
-        pid = c.integer(self.party_attr, lo=1, required=True)
+        pid = c.integer(self.party_attr, lo=1)
+        if not pid:
+            pid = c.integer(self.party_attr + '_id', lo=1)
+        if not pid:
+            c.err(self.party_attr, REQUIRED)
         party = self.Party.objects.filter(pk=pid).first() if pid else None
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
         date_ = c.date('date', required=True)
-        due = c.date('due_date')
+        due = c.date('due_date') or c.date('expiry_date')
         if party and not party.active:
             c.err(self.party_attr, 'This record is inactive.')
-        if date_ and not due and party:
-            due = date_ + timedelta(days=party.payment_terms)
+        if date_ and not due:
+            terms = getattr(party, 'payment_terms', 30) if party else 30
+            due = date_ + timedelta(days=terms or 30)
         if date_ and due and due < date_:
             c.err('due_date', 'Due date cannot be before the document date.')
         pos = c.text('place_of_supply', max_len=60) or (party.state if party and party.state else org.state)
@@ -892,6 +938,9 @@ class DocResource(Resource):
             setattr(obj, k, v)
         for k, v in tot.items():
             setattr(obj, k, v)
+        if isinstance(obj, Quote):
+            adj = getattr(obj, 'adjustment', Decimal('0.00')) or Decimal('0.00')
+            obj.total = max(Decimal('0.00'), obj.total + adj)
         obj.save()
         obj.lines.all().delete()
         self.Line.objects.bulk_create([self.Line(**{self.line_fk: obj}, item=l['item'], description=l['description'],
@@ -903,7 +952,10 @@ class DocResource(Resource):
     def create(self, data, user):
         head, lines = self.parse(data)
         services.check_transaction_lock(head['date'])
-        obj = self.Model(number=next_number(self.prefix), status='draft')
+        num = data.get('number')
+        if not num or self.Model.objects.filter(number=num).exists():
+            num = next_number(self.prefix)
+        obj = self.Model(number=num, status='draft')
         self.write(obj, head, lines)
         return obj
 
@@ -932,6 +984,10 @@ class DocResource(Resource):
 
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
+        if isinstance(obj, Quote):
+            Attachment.objects.filter(entity_type='quote', entity_id=obj.pk).delete()
+            obj.delete()
+            return
         is_inv = isinstance(obj, Invoice)
         is_ret = isinstance(obj, RetainerInvoice)
         if is_ret:
@@ -1031,6 +1087,147 @@ class RetainerInvoiceResource(DocResource):
             if not raw_allocs or not isinstance(raw_allocs, list):
                 raise ApiError(400, 'Expected non-empty allocations list.')
             services.apply_retainer_to_invoices(obj, raw_allocs, request.user, dt)
+        else:
+            raise ApiError(404, 'Unknown action.')
+
+class QuoteResource(DocResource):
+    name = 'quotes'
+    Model, Line, Party = Quote, QuoteLine, Customer
+    party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QT', 'sent'
+    search_fields = ('number', 'customer__name', 'reference_number', 'subject')
+    csv_cols = [
+        ('Quote#', 'number'), ('Customer', 'party'), ('Reference#', 'reference_number'),
+        ('Date', 'date'), ('Expiry date', 'expiry_date'), ('Status', 'status'),
+        ('Taxable', 'subtotal'), ('Adjustment', 'adjustment'), ('Total', 'total')
+    ]
+
+    def extra_clean(self, c):
+        tds_val = c.d.get('tds_tcs_tax')
+        if isinstance(tds_val, str) and ('%' in tds_val or '(' in tds_val):
+            import re
+            m = re.search(r'(\d+(?:\.\d+)?)%', tds_val)
+            if m:
+                c.d['tds_tcs_tax'] = m.group(1)
+            else:
+                c.d['tds_tcs_tax'] = '0.00'
+        return {
+            'reference_number': c.text('reference_number', max_len=100) or '',
+            'expiry_date': c.date('expiry_date'),
+            'salesperson': c.text('salesperson', max_len=120) or '',
+            'project_name': c.text('project_name', max_len=150) or '',
+            'subject': c.text('subject', max_len=2000) or '',
+            'terms': c.text('terms', max_len=2000) or '',
+            'tax_type': c.choice('tax_type', ['tds', 'tcs'], 'tds'),
+            'tds_tcs_tax': c.number('tds_tcs_tax', lo=0, default=Decimal('0.00')),
+            'adjustment': c.number('adjustment', default=Decimal('0.00')),
+            'adjustment_label': c.text('adjustment_label', max_len=50) or 'Adjustment',
+        }
+
+    def extra_detail(self, o):
+        return {
+            'reference_number': o.reference_number,
+            'expiry_date': o.expiry_date,
+            'salesperson': o.salesperson,
+            'project_name': o.project_name,
+            'subject': o.subject,
+            'terms': o.terms,
+            'tax_type': o.tax_type,
+            'tds_tcs_tax': o.tds_tcs_tax,
+            'adjustment': o.adjustment,
+            'adjustment_label': o.adjustment_label,
+            'sent_at': o.sent_at,
+        }
+
+    def action(self, request, obj, name):
+        if name == 'send':
+            obj.status = 'sent'
+            obj.sent_at = timezone.now()
+            obj.save(update_fields=['status', 'sent_at'])
+            services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} marked as sent')
+            return j({'status': 'sent', 'number': obj.number})
+        elif name == 'accept':
+            obj.status = 'accepted'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} accepted')
+            return j({'status': 'accepted', 'number': obj.number})
+        elif name == 'decline':
+            obj.status = 'declined'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} declined')
+            return j({'status': 'declined', 'number': obj.number})
+        elif name == 'convert-to-invoice':
+            inv = Invoice.objects.create(
+                customer=obj.customer,
+                number=next_number('INV'),
+                date=timezone.localdate(),
+                due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
+                place_of_supply=obj.place_of_supply,
+                status='draft',
+                subtotal=obj.subtotal,
+                cgst=obj.cgst,
+                sgst=obj.sgst,
+                igst=obj.igst,
+                total=obj.total,
+                order_number=obj.reference_number or obj.number,
+                notes=obj.notes,
+                terms=obj.terms
+            )
+            for l in obj.lines.all():
+                InvoiceLine.objects.create(
+                    invoice=inv,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=l.rate,
+                    discount_percent=l.discount_percent,
+                    gst_rate=l.gst_rate,
+                    taxable=l.taxable,
+                    tax_amount=l.tax_amount,
+                    line_total=l.line_total,
+                    position=l.position
+                )
+            obj.status = 'invoiced'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'create', 'invoice', inv.pk, f'Converted Quote {obj.number} to Invoice {inv.number}')
+            return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
+        elif name == 'convert-to-sales-order':
+            so = SalesOrder.objects.create(
+                customer=obj.customer,
+                number=next_number('SO'),
+                date=timezone.localdate(),
+                due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
+                expected_shipment_date=obj.expiry_date or timezone.localdate() + timedelta(days=7),
+                place_of_supply=obj.place_of_supply,
+                status='draft',
+                subtotal=obj.subtotal,
+                cgst=obj.cgst,
+                sgst=obj.sgst,
+                igst=obj.igst,
+                total=obj.total,
+                order_number=obj.reference_number or obj.number,
+                notes=obj.notes,
+                terms=obj.terms
+            )
+            for l in obj.lines.all():
+                SalesOrderLine.objects.create(
+                    order=so,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=l.rate,
+                    discount_percent=l.discount_percent,
+                    gst_rate=l.gst_rate,
+                    taxable=l.taxable,
+                    tax_amount=l.tax_amount,
+                    line_total=l.line_total,
+                    position=l.position
+                )
+            obj.status = 'accepted'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'create', 'sales_order', so.pk, f'Converted Quote {obj.number} to Sales Order {so.number}')
+            return j({'order_id': so.pk, 'sales_order_id': so.pk, 'number': so.number})
         else:
             raise ApiError(404, 'Unknown action.')
 
@@ -2399,7 +2596,7 @@ class FinancialAnomalyResource(Resource):
         }
 
 RESOURCES = {r.name: r for r in (
-    CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
+    CustomerResource(), VendorResource(), ItemResource(), QuoteResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
     AccountResource(), JournalResource(), AuditLogResource(), CustomFieldResource(), WorkflowRuleResource(),
     WebhookConfigResource(), BankAccountResource(), BankTransactionResource(), BankDepositResource(),
@@ -2637,6 +2834,14 @@ def lookup(request, name):
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
                 for o in PriceList.objects.filter(active=True).order_by('name')]
+    elif name == 'salespersons':
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in User.objects.filter(is_active=True).order_by('username')]
+    elif name == 'next-quote-number':
+        seq = Sequence.objects.filter(key='QT').first()
+        nxt = (seq.value + 1) if seq else 1
+        data = {'next_number': f'QT-{nxt:06d}'}
     else:
         raise ApiError(404, 'Unknown lookup.')
     return j(data)

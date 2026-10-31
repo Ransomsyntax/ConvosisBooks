@@ -613,3 +613,116 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertIsNotNone(item_entry)
         self.assertEqual(item_entry.get('warehouse_code'), 'WH-YARD')
 
+    def test_item_preferred_vendor_lookup_and_persistence(self):
+        """Verify Preferred Vendor selection from Vendor Master, persistence as FK, and retrieval."""
+        vendor1 = Vendor.objects.create(name='Srata Technologies', state='Kerala', active=True)
+        vendor2 = Vendor.objects.create(name='Global Components Ltd', state='Karnataka', active=True)
+
+        # 1. Create item with preferred vendor
+        res = self.client.post('/api/items/', data=json.dumps({
+            'name': 'Precision Microcontroller',
+            'sku': 'SKU-MCU-01',
+            'selling_price': '150.00',
+            'purchase_price': '95.00',
+            'track_inventory': True,
+            'preferred_vendor_id': vendor1.id,
+            'reorder_level': '10'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        item_id = res.json()['id']
+
+        # Verify DB foreign key
+        item = Item.objects.get(id=item_id)
+        self.assertEqual(item.preferred_vendor, vendor1)
+        self.assertEqual(item.preferred_vendor_id, vendor1.id)
+
+        # Verify API response contains preferred vendor id and name
+        res_get = self.client.get(f'/api/items/{item_id}/')
+        self.assertEqual(res_get.status_code, 200)
+        data = res_get.json()
+        self.assertEqual(data['preferred_vendor_id'], vendor1.id)
+        self.assertEqual(data['preferred_vendor_name'], 'Srata Technologies')
+
+        # 2. Update to a different preferred vendor
+        res_put = self.client.put(f'/api/items/{item_id}/', data=json.dumps({
+            'name': 'Precision Microcontroller',
+            'sku': 'SKU-MCU-01',
+            'selling_price': '150.00',
+            'purchase_price': '95.00',
+            'track_inventory': True,
+            'preferred_vendor_id': vendor2.id,
+            'reorder_level': '10'
+        }), content_type='application/json')
+        self.assertEqual(res_put.status_code, 200)
+
+        item.refresh_from_db()
+        self.assertEqual(item.preferred_vendor, vendor2)
+        self.assertEqual(res_put.json()['preferred_vendor_id'], vendor2.id)
+        self.assertEqual(res_put.json()['preferred_vendor_name'], 'Global Components Ltd')
+
+        # 3. Clear preferred vendor
+        res_clear = self.client.put(f'/api/items/{item_id}/', data=json.dumps({
+            'name': 'Precision Microcontroller',
+            'sku': 'SKU-MCU-01',
+            'selling_price': '150.00',
+            'purchase_price': '95.00',
+            'track_inventory': True,
+            'preferred_vendor_id': '',
+            'reorder_level': '10'
+        }), content_type='application/json')
+        self.assertEqual(res_clear.status_code, 200)
+
+        item.refresh_from_db()
+        self.assertIsNone(item.preferred_vendor)
+        self.assertIsNone(res_clear.json()['preferred_vendor_id'])
+        self.assertEqual(res_clear.json()['preferred_vendor_name'], '')
+
+    def test_reorder_point_precision_and_display(self):
+        """Test Reorder Point values (0, 1, 10, 10.5, 100) and verify exact DB and API precision without trailing zeros."""
+        test_values = [
+            ('0', Decimal('0.000'), '0'),
+            ('1', Decimal('1.000'), '1'),
+            ('10', Decimal('10.000'), '10'),
+            ('10.5', Decimal('10.500'), '10.5'),
+            ('100', Decimal('100.000'), '100'),
+        ]
+
+        for input_val, expected_db, expected_api in test_values:
+            with self.subTest(val=input_val):
+                res = self.client.post('/api/items/', data=json.dumps({
+                    'name': f'Reorder Test Item {input_val}',
+                    'sku': f'SKU-RP-{input_val}',
+                    'selling_price': '50.00',
+                    'track_inventory': True,
+                    'reorder_level': input_val
+                }), content_type='application/json')
+                self.assertEqual(res.status_code, 201)
+                item_id = res.json()['id']
+
+                # Verify database value is exact Decimal
+                item = Item.objects.get(id=item_id)
+                self.assertEqual(item.reorder_level, expected_db)
+                self.assertNotEqual(item.reorder_level, Decimal('9.999'))
+
+                # Verify API response has no trailing zeros
+                res_get = self.client.get(f'/api/items/{item_id}/')
+                self.assertEqual(res_get.status_code, 200)
+                data = res_get.json()
+                self.assertEqual(data['reorder_level'], expected_api)
+
+        # Verify low stock alert logic with exact values
+        item_reorder_10 = Item.objects.get(sku='SKU-RP-10')
+        item_reorder_10.stock = Decimal('10.000')
+        item_reorder_10.save()
+
+        # Stock = 10 and reorder_level = 10 should trigger 'Low stock'
+        res_stock = self.client.get(f'/api/items/{item_reorder_10.id}/')
+        self.assertEqual(res_stock.json()['status'], 'Low stock')
+
+        # Stock = 10.001 should NOT be low stock
+        item_reorder_10.stock = Decimal('10.001')
+        item_reorder_10.save()
+        res_stock2 = self.client.get(f'/api/items/{item_reorder_10.id}/')
+        self.assertEqual(res_stock2.json()['status'], 'Active')
+
+

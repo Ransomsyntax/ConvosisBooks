@@ -147,7 +147,7 @@ const LISTS = {
       { h: 'Item', s: 'name', f: r => esc(r.name) },
       { h: 'SKU', s: 'sku', f: r => esc(r.sku || '—') },
       { h: 'On hand', s: 'stock', r: 1, f: r => qty(r.stock) + ' ' + esc(r.unit) },
-      { h: 'Reorder at', r: 1, f: r => qty(r.reorder_level) },
+      { h: 'Reorder at', r: 1, f: r => r.reorder_level == null ? '—' : qty(r.reorder_level) },
       { h: 'Unit cost', ...money(r => inr(r.purchase_price)) },
       { h: 'Stock value', ...money(r => inr(r.valuation)) },
       { h: 'Status', f: r => badge(r.status) }

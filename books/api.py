@@ -38,6 +38,16 @@ MODE_LABEL = dict(MODES)
 REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other']
 
 
+def format_qty(val):
+    if val is None:
+        return None
+    d = Decimal(str(val))
+    s = f"{d:f}"
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s
+
+
 def j(data, status=200):
     return JsonResponse(data, status=status, encoder=DjangoJSONEncoder, safe=False)
 
@@ -510,6 +520,9 @@ class ItemResource(Resource):
                 ('GST %', 'gst_rate'), ('Stock', 'stock'), ('Reorder level', 'reorder_level'),
                 ('Stock value', 'valuation'), ('Status', 'status')]
 
+    def base_qs(self):
+        return self.model.objects.select_related('warehouse', 'preferred_vendor').all()
+
     def filter_qs(self, qs, request):
         g = request.GET
         if g.get('type') in ('goods', 'service'):
@@ -543,7 +556,8 @@ class ItemResource(Resource):
             'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'category': o.category, 'hsn_sac': o.hsn_sac,
             'unit': o.unit, 'description': o.description, 'selling_price': o.selling_price,
             'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate, 'track_inventory': tracked,
-            'stock': o.stock if tracked else None, 'reorder_level': o.reorder_level if tracked else None,
+            'stock': format_qty(o.stock) if tracked else None,
+            'reorder_level': format_qty(o.reorder_level) if tracked else None,
             'warehouse_id': o.warehouse_id,
             'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
             'warehouse_name': o.warehouse.name if o.warehouse else '',
@@ -614,6 +628,7 @@ class ItemResource(Resource):
             out['reorder_level'] = Decimal('0.000')
             opening = Decimal('0.000')
         if not out['track_inventory']:
+            out['reorder_level'] = Decimal('0.000')
             opening = Decimal('0.000')
         return out, opening
 
@@ -2609,8 +2624,8 @@ def lookup(request, name):
         data = [{'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,
                  'selling_price': o.selling_price, 'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate,
                  'warehouse_id': o.warehouse_id, 'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
-                 'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': o.stock, 'unit': o.unit}
-                for o in Item.objects.filter(active=True).select_related('warehouse').order_by('name')]
+                 'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': format_qty(o.stock), 'unit': o.unit}
+                for o in Item.objects.filter(active=True).select_related('warehouse', 'preferred_vendor').order_by('name')]
     elif name == 'accounts':
         services.ensure_default_accounts()
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
@@ -2776,9 +2791,9 @@ def reports_view(request, name):
             rows.append({
                 'item': it.name, 'sku': it.sku,
                 'warehouse_code': it.warehouse_code or (it.warehouse.code if it.warehouse else 'WH-MAIN'),
-                'stock': it.stock, 'unit': it.unit,
+                'stock': format_qty(it.stock), 'unit': it.unit,
                 'cost_price': it.purchase_price, 'valuation': val,
-                'reorder_level': it.reorder_level, 'status': status
+                'reorder_level': format_qty(it.reorder_level), 'status': status
             })
         return j({'results': rows, 'total_valuation': sum((r['valuation'] for r in rows), Z)})
     elif name == 'receivables-aging':

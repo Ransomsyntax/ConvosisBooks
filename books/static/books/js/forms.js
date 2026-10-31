@@ -1062,6 +1062,20 @@ async function partyForm(kind, id) {
 }
 
 
+function formatReorderPoint(val) {
+  if (val == null || val === '') return '';
+  const s = String(val).trim();
+  if (!s) return '';
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  if (Number.isInteger(n)) return String(n);
+  if (s.includes('.')) {
+    return s.replace(/\.?0+$/, '');
+  }
+  return String(n);
+}
+
+
 async function itemForm(id) {
   const [r, vendors, warehouses] = await Promise.all([
     id ? api(`items/${id}/`) : {
@@ -1080,6 +1094,7 @@ async function itemForm(id) {
       purchase_account: 'Cost of Goods Sold',
       inventory_account: 'Inventory Asset',
       preferred_vendor_id: null,
+      preferred_vendor_name: '',
       image_data: '',
       category: '',
       hsn_sac: '',
@@ -1087,7 +1102,7 @@ async function itemForm(id) {
       reorder_level: '',
       sku: ''
     },
-    api('lookup/vendors/').catch(() => []),
+    api('lookup/vendors/').catch(() => null),
     api('lookup/warehouses/').catch(() => [])
   ]);
 
@@ -1222,10 +1237,11 @@ async function itemForm(id) {
   const extraInvOpt = (!invFound && curInvAccount) ? `<option value="${esc(curInvAccount)}" selected>${esc(curInvAccount)}</option>` : '';
 
   const curVendorId = r.preferred_vendor_id != null ? String(r.preferred_vendor_id) : '';
-  const vendorOptsHtml = (vendors || []).map(v => {
-    const isSel = (String(v.id) === curVendorId);
-    return `<option value="${v.id}" ${isSel ? 'selected' : ''}>${esc(v.name)}</option>`;
-  }).join('');
+  let curVendorName = r.preferred_vendor_name || '';
+  if (!curVendorName && curVendorId && Array.isArray(vendors)) {
+    const matchedVendor = vendors.find(v => String(v.id) === curVendorId);
+    if (matchedVendor) curVendorName = matchedVendor.name;
+  }
 
   const DEFAULT_TAX_SLABS = [0, 5, 12, 18, 28, 40];
   const curRate = num(r.gst_rate != null ? r.gst_rate : 18);
@@ -1468,13 +1484,19 @@ async function itemForm(id) {
             </div>
           </div>
           <div class="zb-form-row">
-            <label for="item_preferred_vendor" class="zb-form-label">Preferred Vendor <span class="zb-info-tip" title="Choose default vendor for purchase orders">ⓘ</span></label>
+            <label for="item_preferred_vendor_search" class="zb-form-label">Preferred Vendor <span class="zb-info-tip" title="Choose default vendor for purchase orders">ⓘ</span></label>
             <div class="zb-form-ctrl">
-              <select class="in" id="item_preferred_vendor" name="preferred_vendor_id">
-                <option value="">Select a vendor (Optional)…</option>
-                ${vendorOptsHtml}
-                <option value="__add_new__" style="color:var(--accent); font-weight:600;">+ Add New Vendor…</option>
-              </select>
+              <div class="lookup-combobox-wrap" id="preferredVendorLookupWrap" style="position:relative;width:100%;max-width:380px;">
+                <input type="hidden" name="preferred_vendor_id" id="item_preferred_vendor" value="${curVendorId}">
+                <div class="lookup-input-box" style="position:relative;display:flex;align-items:center;width:100%;">
+                  <input class="in lookup-search-input" id="item_preferred_vendor_search" type="text" autocomplete="off" placeholder="Select or search a vendor…" value="${esc(curVendorName)}" style="padding-right:54px;cursor:pointer;">
+                  <div style="position:absolute;right:8px;display:flex;align-items:center;gap:4px;z-index:2;">
+                    <button type="button" class="lookup-clear-btn" id="item_preferred_vendor_clear" title="Clear vendor selection" aria-label="Clear vendor" style="background:none;border:none;cursor:pointer;color:var(--tx-muted);font-size:14px;padding:2px 4px;line-height:1;display:${curVendorId ? 'inline-block' : 'none'};">✕</button>
+                    <span class="lookup-caret" style="pointer-events:none;color:var(--tx-muted);font-size:10px;margin-right:2px;">▼</span>
+                  </div>
+                </div>
+                <div class="lookup-dropdown-menu pop" id="item_preferred_vendor_menu" role="listbox" style="position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:220px;overflow-y:auto;z-index:100;padding:4px;box-shadow:var(--shadow-glass-lg, 0 10px 25px rgba(0,0,0,0.15));border-radius:8px;background:var(--surface-glass-solid, #ffffff);border:1px solid var(--bd, #cbd5e1);display:none;"></div>
+              </div>
               <div class="er" data-err="preferred_vendor_id" role="alert"></div>
             </div>
           </div>
@@ -1512,14 +1534,14 @@ async function itemForm(id) {
             <div class="zb-form-row" id="openingStockWrap">
               <label class="zb-form-label">Opening Stock</label>
               <div class="zb-form-ctrl">
-                <input class="in" type="number" step="0.001" min="0" name="opening_stock" placeholder="0.000" style="max-width:220px;">
+                <input class="in" type="number" step="any" min="0" name="opening_stock" placeholder="0" style="max-width:220px;">
               </div>
             </div>
           `}
           <div class="zb-form-row">
-            <label class="zb-form-label">Reorder Point</label>
+            <label for="item_reorder_level" class="zb-form-label">Reorder Point</label>
             <div class="zb-form-ctrl">
-              <input class="in" type="number" step="0.001" min="0" name="reorder_level" value="${r.reorder_level == null ? '' : r.reorder_level}" placeholder="0.000" style="max-width:220px;">
+              <input class="in" type="number" step="any" min="0" id="item_reorder_level" name="reorder_level" value="${formatReorderPoint(r.reorder_level)}" placeholder="0" style="max-width:220px;">
             </div>
           </div>
           <div class="zb-form-row">
@@ -1776,18 +1798,176 @@ async function itemForm(id) {
         }
       });
 
-      const vendorSelect = $('#item_preferred_vendor', form);
-      setupAddNew(vendorSelect, {
-        promptText: 'Enter new vendor name:',
-        onAdd: async val => {
-          const v = await api('vendors/', {
-            method: 'POST',
-            body: { name: val, active: true, state: (APP.org && APP.org.state) || '' }
+      // Preferred Vendor Searchable Dropdown Lookup
+      const pvWrap = $('#preferredVendorLookupWrap', form);
+      const pvHidden = $('#item_preferred_vendor', form);
+      const pvSearch = $('#item_preferred_vendor_search', form);
+      const pvClear = $('#item_preferred_vendor_clear', form);
+      const pvMenu = $('#item_preferred_vendor_menu', form);
+
+      let vendorRecords = Array.isArray(vendors) ? [...vendors] : null;
+      let selectedVendorId = curVendorId;
+      let selectedVendorName = curVendorName;
+      let isPvMenuOpen = false;
+
+      const renderPvDropdown = (query = '') => {
+        const q = (query || '').trim().toLowerCase();
+        pvMenu.innerHTML = '';
+
+        if (vendorRecords === null) {
+          pvMenu.innerHTML = `
+            <div style="padding:12px;font-size:12px;color:var(--dn, #e11d48);text-align:center;">
+              Failed to load vendors. <button type="button" class="btn" id="btnRetryVendors" style="padding:2px 8px;font-size:11px;margin-left:6px;">Retry</button>
+            </div>
+          `;
+          const btnRetry = $('#btnRetryVendors', pvMenu);
+          if (btnRetry) {
+            btnRetry.addEventListener('click', async e => {
+              e.stopPropagation();
+              btnRetry.textContent = 'Loading…';
+              btnRetry.disabled = true;
+              try {
+                vendorRecords = await api('lookup/vendors/');
+                renderPvDropdown(pvSearch.value);
+              } catch (err) {
+                toast('Failed to load vendors', 'err');
+                renderPvDropdown(pvSearch.value);
+              }
+            });
+          }
+          return;
+        }
+
+        const filtered = q
+          ? vendorRecords.filter(v => (v.name || '').toLowerCase().includes(q) || (v.state || '').toLowerCase().includes(q))
+          : vendorRecords;
+
+        if (selectedVendorId) {
+          const clearOpt = document.createElement('div');
+          clearOpt.className = 'lookup-opt-clear';
+          clearOpt.style.cssText = 'padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--tx-muted);font-style:italic;';
+          clearOpt.textContent = '— None (No preferred vendor) —';
+          clearOpt.addEventListener('mousedown', e => {
+            e.preventDefault();
+            selectVendor('', '');
           });
-          toast(`Vendor "${v.name}" created!`);
-          return { value: v.id, text: v.name };
+          pvMenu.appendChild(clearOpt);
+        }
+
+        if (filtered.length === 0) {
+          const emptyMsg = document.createElement('div');
+          emptyMsg.style.cssText = 'padding:10px 12px;font-size:12px;color:var(--tx-muted);text-align:center;';
+          emptyMsg.textContent = vendorRecords.length === 0
+            ? 'No vendors registered in Vendor Master yet.'
+            : `No vendors found matching "${query}"`;
+          pvMenu.appendChild(emptyMsg);
+        } else {
+          filtered.forEach(v => {
+            const isSel = String(v.id) === selectedVendorId;
+            const opt = document.createElement('div');
+            opt.className = 'lookup-vendor-item' + (isSel ? ' selected' : '');
+            opt.style.cssText = `padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:space-between;${isSel ? 'background:var(--pastel-sky-bg, rgba(14,165,233,0.12));font-weight:600;color:var(--accent);' : 'color:var(--tx);'}`;
+            opt.innerHTML = `
+              <span>${esc(v.name)}</span>
+              ${v.state ? `<small style="font-size:11px;color:var(--tx-muted);">${esc(v.state)}</small>` : ''}
+            `;
+            opt.addEventListener('mouseenter', () => {
+              if (!isSel) opt.style.background = 'var(--surface-glass-subtle, rgba(0,0,0,0.04))';
+            });
+            opt.addEventListener('mouseleave', () => {
+              if (!isSel) opt.style.background = '';
+            });
+            opt.addEventListener('mousedown', e => {
+              e.preventDefault();
+              selectVendor(v.id, v.name);
+            });
+            pvMenu.appendChild(opt);
+          });
+        }
+
+        const addBtn = document.createElement('div');
+        addBtn.className = 'lookup-add-vendor-btn';
+        addBtn.style.cssText = 'padding:8px 10px;margin-top:4px;border-top:1px solid var(--bd-glass, rgba(0,0,0,0.08));color:var(--accent);font-weight:600;font-size:12.5px;cursor:pointer;display:flex;align-items:center;gap:6px;';
+        addBtn.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>+ Add New Vendor…</span>
+        `;
+        addBtn.addEventListener('mousedown', async e => {
+          e.preventDefault();
+          const val = window.prompt('Enter new vendor name:');
+          if (val && val.trim()) {
+            try {
+              const newV = await api('vendors/', {
+                method: 'POST',
+                body: { name: val.trim(), active: true, state: (APP.org && APP.org.state) || '' }
+              });
+              if (vendorRecords) vendorRecords.push(newV);
+              toast(`Vendor "${newV.name}" created!`);
+              selectVendor(newV.id, newV.name);
+            } catch (err) {
+              toast(err.message || 'Failed to create vendor', 'err');
+            }
+          }
+        });
+        pvMenu.appendChild(addBtn);
+      };
+
+      const selectVendor = (id, name) => {
+        selectedVendorId = id ? String(id) : '';
+        selectedVendorName = name || '';
+        pvHidden.value = selectedVendorId;
+        pvSearch.value = selectedVendorName;
+        pvClear.style.display = selectedVendorId ? 'inline-block' : 'none';
+        closePvMenu();
+        pvHidden.dispatchEvent(new Event('input', { bubbles: true }));
+        pvHidden.dispatchEvent(new Event('change', { bubbles: true }));
+        m.markDirty();
+      };
+
+      const openPvMenu = () => {
+        isPvMenuOpen = true;
+        pvMenu.style.display = 'block';
+        renderPvDropdown(pvSearch.value === selectedVendorName ? '' : pvSearch.value);
+      };
+
+      const closePvMenu = () => {
+        isPvMenuOpen = false;
+        pvMenu.style.display = 'none';
+        pvSearch.value = selectedVendorName;
+      };
+
+      pvSearch.addEventListener('focus', () => {
+        openPvMenu();
+      });
+
+      pvSearch.addEventListener('click', () => {
+        if (!isPvMenuOpen) openPvMenu();
+      });
+
+      pvSearch.addEventListener('input', e => {
+        if (!isPvMenuOpen) openPvMenu();
+        renderPvDropdown(e.target.value);
+      });
+
+      pvSearch.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+          closePvMenu();
         }
       });
+
+      pvClear.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectVendor('', '');
+        pvSearch.focus();
+      });
+
+      const onDocClickPv = e => {
+        if (pvWrap && !pvWrap.contains(e.target)) {
+          if (isPvMenuOpen) closePvMenu();
+        }
+      };
+      document.addEventListener('click', onDocClickPv);
 
       const invAcctSelect = $('#item_inventory_account', form);
       setupAddNew(invAcctSelect, {

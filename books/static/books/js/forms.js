@@ -136,6 +136,7 @@ function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const m = Modal.open({
       title, body: `<p>${esc(message)}</p>`, onClose: () => fin(false),
+
       footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn ${danger ? 'd' : 'p'}" type="button" data-ok>${esc(okText)}</button>`,
     });
     $('[data-ok]', m.el).addEventListener('click', () => { fin(true); m.close(); });
@@ -153,6 +154,7 @@ function fld(o) {
   else if (o.type === 'textarea') ctl = `<textarea class="in" id="${id}" name="${o.name}" rows="${o.rows || 2}" maxlength="${o.max || 2000}" ${at}>${esc(v)}</textarea>`;
   else ctl = `<input class="in" id="${id}" name="${o.name}" type="${o.type || 'text'}" value="${esc(v)}"${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${req} ${at}>`;
   return `<div class="zb-form-row fg ${o.type === 'textarea' ? 'align-top' : ''} ${o.col || ''}"><label class="zb-form-label" for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label><div class="zb-form-ctrl">${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">${esc(o.help)}</div>` : ''}</div></div>`;
+
 }
 function readForm(form) {
   const d = {};
@@ -212,8 +214,6 @@ function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmi
   if (onReady) onReady(form, m);
   return m;
 }
-
-
 
 const GST_STATE_OPTIONS = [
   ['', 'Select state / place of supply'],
@@ -346,8 +346,7 @@ async function partyForm(kind, id) {
 
   const formHtml = `
     <div class="party-form-wrap zb-form-wrap">
-      
-      <!-- Compact GST Prefill Banner (Zoho Books Style) -->
+
       <div class="gst-prefill-compact">
         <div class="gst-prefill-left">
           <svg class="gst-prefill-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
@@ -361,7 +360,6 @@ async function partyForm(kind, id) {
         </div>
       </div>
 
-      <!-- Top Primary Form Rows (Vertically Aligned) -->
       ${isCust ? `
         <div class="zb-form-row">
           <label class="zb-form-label">Customer Type <span class="zb-info-tip" title="Choose whether customer is a registered business or an individual consumer">ⓘ</span></label>
@@ -370,14 +368,21 @@ async function partyForm(kind, id) {
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
                 <input type="radio" name="customer_type" value="business" ${r.customer_type !== 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
                 <span>Business</span>
+
               </label>
+
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
                 <input type="radio" name="customer_type" value="individual" ${r.customer_type === 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
                 <span>Individual</span>
+
               </label>
+
             </div>
+
           </div>
+
         </div>
+
       ` : ''}
 
       <div class="zb-form-row">
@@ -457,23 +462,28 @@ async function partyForm(kind, id) {
             <select class="in" id="customer_language" name="customer_language">
               ${LANGUAGE_OPTIONS.map(([val, lbl]) => `<option value="${val}" ${r.customer_language === val ? 'selected' : ''}>${lbl}</option>`).join('')}
             </select>
+
           </div>
+
         </div>
+
       ` : ''}
 
-      <!-- Horizontal Tabs Section (Zoho Books Style) -->
       <div class="party-tabs-header" id="party_tabs_bar">
         <button type="button" class="party-tab-btn active" data-tab="tab_other_details">Other Details</button>
         <button type="button" class="party-tab-btn" data-tab="tab_address">Address</button>
         <button type="button" class="party-tab-btn" data-tab="tab_contacts">Contact Persons <span class="party-tab-badge" id="cnt_badge">${contactPersonsList.length}</span></button>
         ${!isCust ? `<button type="button" class="party-tab-btn" data-tab="tab_bank">Bank Details</button>` : ''}
+
         <button type="button" class="party-tab-btn" data-tab="tab_custom_fields">Custom Fields</button>
+
         <button type="button" class="party-tab-btn" data-tab="tab_remarks">Notes</button>
+
         <button type="button" class="party-tab-btn" data-tab="tab_documents">Attachments <span class="party-tab-badge" id="doc_badge">${documentsList.length}</span></button>
       </div>
 
       <div class="party-tabs-content">
-        <!-- Other Details Pane -->
+
         <div class="party-tab-pane active" id="tab_other_details">
           <div class="zb-form-row">
             <label class="zb-form-label" for="gst_treatment">GST Treatment<span class="rq">*</span></label>
@@ -483,7 +493,9 @@ async function partyForm(kind, id) {
                   <option value="${v}" ${r.gst_treatment === v ? 'selected' : ''}>${l}</option>
                 `).join('')}
               </select>
+
             </div>
+
           </div>
 
           <div class="zb-form-row">
@@ -496,23 +508,31 @@ async function partyForm(kind, id) {
                   return `<option value="${v}" ${isSel ? 'selected' : ''}>${l}</option>`;
                 }).join('')}
               </select>
+
             </div>
+
           </div>
 
           <div class="zb-form-row">
             <label class="zb-form-label" for="gstin">GSTIN</label>
+
             <div class="zb-form-ctrl">
               <input class="in" id="gstin" name="gstin" maxlength="15" placeholder="e.g. 32AANCC9298C1ZE" style="text-transform:uppercase;font-family:monospace;" value="${esc(r.gstin || '')}">
               <div class="er" data-err="gstin"></div>
+
             </div>
+
           </div>
 
           <div class="zb-form-row">
             <label class="zb-form-label" for="pan">PAN</label>
+
             <div class="zb-form-ctrl">
               <input class="in" id="pan" name="pan" maxlength="10" placeholder="e.g. AANCC9298C" style="text-transform:uppercase;font-family:monospace;max-width:240px;" value="${esc(r.pan || '')}">
               <div class="er" data-err="pan"></div>
+
             </div>
+
           </div>
 
           ${isCust ? `
@@ -555,14 +575,21 @@ async function partyForm(kind, id) {
                 <div style="display:flex;gap:16px;align-items:center;">
                   <select class="in" id="tds_section" name="tds_section" style="flex:1;">
                     ${TDS_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.tds_section === v ? 'selected' : ''}>${l}</option>`).join('')}
+
                   </select>
+
                   <label class="ck" style="white-space:nowrap;">
                     <input type="checkbox" id="apply_gst_tds" name="apply_gst_tds" ${r.apply_gst_tds ? 'checked' : ''}>
                     <span>GST TDS (Sec 51)</span>
+
                   </label>
+
                 </div>
+
               </div>
+
             </div>
+
           `}
 
           <div class="zb-form-row">
@@ -570,30 +597,42 @@ async function partyForm(kind, id) {
             <div class="zb-form-ctrl">
               <select class="in" id="currency" name="currency">
                 ${CURRENCY_OPTIONS.map(([v, l]) => `<option value="${v}" ${r.currency === v ? 'selected' : ''}>${l}</option>`).join('')}
+
               </select>
+
             </div>
+
           </div>
 
           <div class="zb-form-row">
             <label class="zb-form-label" for="opening_balance">Opening Balance</label>
+
             <div class="zb-form-ctrl">
               <div style="display:flex;gap:6px;max-width:280px;">
                 <input class="in" id="opening_balance" name="opening_balance" type="number" step="0.01" placeholder="0.00" value="${r.opening_balance || '0.00'}">
                 <select class="in" id="opening_balance_type" name="opening_balance_type" style="width:75px;flex-shrink:0;">
                   <option value="debit" ${r.opening_balance_type !== 'credit' ? 'selected' : ''}>Dr</option>
+
                   <option value="credit" ${r.opening_balance_type === 'credit' ? 'selected' : ''}>Cr</option>
+
                 </select>
+
               </div>
+
             </div>
+
           </div>
 
           <div class="zb-form-row">
             <label class="zb-form-label" for="payment_terms">Payment Terms</label>
+
             <div class="zb-form-ctrl">
               <select class="in" id="payment_terms" name="payment_terms">
                 ${PAYMENT_TERMS_OPTIONS.map(([v, l]) => `<option value="${v}" ${String(r.payment_terms) === v ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
+
             </div>
+
           </div>
 
           ${isCust ? `
@@ -610,11 +649,11 @@ async function partyForm(kind, id) {
           ` : ''}
         </div>
 
-        <!-- Address Pane -->
         <div class="party-tab-pane" id="tab_address">
           <div style="display:grid;grid-template-columns:${isCust ? '1fr 1fr' : '1fr'};gap:32px;">
             <div>
               <h4 style="margin:0 0 14px;font-size:13.5px;font-weight:700;color:var(--tx);border-bottom:1px solid var(--bd-glass);padding-bottom:6px;">Billing Address</h4>
+
               <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"></div></div>
               <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="billing_address" name="billing_address" rows="3" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea></div></div>
               <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_city">City</label><div class="zb-form-ctrl"><input class="in" id="billing_city" name="billing_city" placeholder="City" value="${esc(r.billing_city || '')}"></div></div>
@@ -642,7 +681,6 @@ async function partyForm(kind, id) {
           </div>
         </div>
 
-        <!-- Contact Persons Pane -->
         <div class="party-tab-pane" id="tab_contacts">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div class="sub" style="font-size:12px;">Add designated key contacts (sales, finance, dispatch) for this ${entityLabel}.</div>
@@ -651,7 +689,6 @@ async function partyForm(kind, id) {
           <div id="contact_persons_container"></div>
         </div>
 
-        <!-- Bank Details Pane (Vendors) -->
         ${!isCust ? `
           <div class="party-tab-pane" id="tab_bank">
             <div class="zb-form-row">
@@ -700,7 +737,6 @@ async function partyForm(kind, id) {
           </div>
         ` : ''}
 
-        <!-- Custom Fields Pane -->
         <div class="party-tab-pane" id="tab_custom_fields">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div class="sub" style="font-size:12px;">Add custom key-value metadata properties for this account.</div>
@@ -709,7 +745,6 @@ async function partyForm(kind, id) {
           <div id="custom_fields_container"></div>
         </div>
 
-        <!-- Remarks / Notes Pane -->
         <div class="party-tab-pane" id="tab_remarks">
           <div class="zb-form-row align-top">
             <label class="zb-form-label" for="notes">Notes</label>
@@ -719,7 +754,6 @@ async function partyForm(kind, id) {
           </div>
         </div>
 
-        <!-- Documents / Attachments Pane -->
         <div class="party-tab-pane" id="tab_documents">
           <div class="doc-upload-box" id="doc_drop_zone">
             <div style="font-size:26px;margin-bottom:4px;">📎</div>
@@ -1061,7 +1095,6 @@ async function partyForm(kind, id) {
   });
 }
 
-
 function formatReorderPoint(val) {
   if (val == null || val === '') return '';
   const s = String(val).trim();
@@ -1074,7 +1107,6 @@ function formatReorderPoint(val) {
   }
   return String(n);
 }
-
 
 async function itemForm(id) {
   const [r, vendors, warehouses] = await Promise.all([
@@ -1133,7 +1165,6 @@ async function itemForm(id) {
     return `<option value="${esc(val)}" ${isSel ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
   const extraUnitOpt = (!unitFound && curUnit) ? `<option value="${esc(curUnit)}" selected>${esc(curUnit)}</option>` : '';
-
 
   const SALES_ACCOUNT_GROUPS = [
     {
@@ -1278,8 +1309,7 @@ async function itemForm(id) {
     wide: true,
     body: `
     <div class="convosis-item-modal convo-item-modal zb-form-wrap">
-      
-      <!-- General Details -->
+
       <div class="zb-form-row">
         <label class="zb-form-label">Type <span class="zb-info-tip" title="Goods have physical inventory, services do not.">ⓘ</span></label>
         <div class="zb-form-ctrl">
@@ -1388,7 +1418,6 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <!-- Item Image -->
       <div class="zb-form-row align-top">
         <label class="zb-form-label">Item Image</label>
         <div class="zb-form-ctrl">
@@ -1415,7 +1444,6 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <!-- Sales Information -->
       <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
         <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;color:var(--tx);">Sales Information</h4>
         <div class="zb-form-row">
@@ -1447,8 +1475,6 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <!-- Purchase Information -->
-      <!-- Purchase Information -->
       <div style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
         <div class="zb-form-row">
           <div class="zb-form-label"></div>
@@ -1509,7 +1535,6 @@ async function itemForm(id) {
         </div>
       </div>
 
-      <!-- Inventory Tracking -->
       <div id="inventorySection" style="margin:20px 0 10px;padding-top:14px;border-top:1px solid var(--bd-glass);">
         <div class="zb-form-row">
           <div class="zb-form-label"></div>
@@ -1642,7 +1667,6 @@ async function itemForm(id) {
         }
       });
 
-      
       const setupAddNew = (selectEl, { promptText, placeholder, onAdd }) => {
         if (!selectEl) return;
         let prevVal = selectEl.value;
@@ -1745,7 +1769,7 @@ async function itemForm(id) {
           const group = intra.querySelector('optgroup') || intra;
           group.appendChild(opt);
         }
-    
+
         if (!inter.querySelector(`option[value="${rateStr}"]`)) {
           const opt = document.createElement('option');
           opt.value = rateStr;
@@ -1798,7 +1822,6 @@ async function itemForm(id) {
         }
       });
 
-      // Preferred Vendor Searchable Dropdown Lookup
       const pvWrap = $('#preferredVendorLookupWrap', form);
       const pvHidden = $('#item_preferred_vendor', form);
       const pvSearch = $('#item_preferred_vendor_search', form);
@@ -1978,7 +2001,6 @@ async function itemForm(id) {
         }
       });
 
-
       const invSec = $('#inventorySection', form);
       const trackInvCheck = $('#chkTrackInventory', form);
       const syncType = () => {
@@ -1990,9 +2012,6 @@ async function itemForm(id) {
       };
       $$('input[name="item_type"]', form).forEach(r => r.addEventListener('change', syncType));
 
-
-
-  
       const invBody = $('#inventoryBody', form);
       const syncTrackInv = () => {
         invBody.style.display = trackInvCheck.checked ? 'grid' : 'none';
@@ -2488,7 +2507,6 @@ async function docForm(kind, id, targetEl, onDone) {
   });
 }
 
-
 async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
@@ -2543,7 +2561,6 @@ async function paymentForm(kind, pre = {}) {
   });
 }
 
-
 async function adjustForm(preItem) {
   const [items, warehouses] = await Promise.all([
     api('lookup/items/').then(r => r.filter(i => i.track_inventory)),
@@ -2591,7 +2608,6 @@ async function adjustForm(preItem) {
     },
   });
 }
-
 
 function orgForm() {
   const o = APP.org;
@@ -2678,7 +2694,6 @@ function orgForm() {
     },
   });
 }
-
 
 async function accountForm(id) {
   const o = id ? await api(`accounts/${id}/`) : { code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', active: true };
@@ -3031,7 +3046,7 @@ async function matchBankTransactionModal(txnId, onDone) {
     dialog: true,
     body: `
       <div style="padding:4px 0 16px;">
-        <!-- Selected Bank Narration Summary -->
+
         <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:10px;padding:16px;margin-bottom:18px;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
             <div style="font-weight:700;font-size:15px;color:var(--tx);">${esc(txn.description)}</div>
@@ -3995,7 +4010,6 @@ async function viewDocumentOcrModal(doc) {
   });
 }
 
-
 async function rollbackBatchModal(baId) {
   const m = Modal.open({
     title: 'Rollback Statement Batch / Feed Recovery',
@@ -4041,7 +4055,7 @@ async function bankRulesModal() {
     wide: true,
     body: `
       <p class="sub">Create heuristic rules to automatically categorize narration text, link customers/vendors, and auto-reconcile recurring transactions.</p>
-      
+
       <div class="card" style="padding:16px;margin-bottom:16px;background:var(--surface-glass-subtle);">
         <h4 style="margin:0 0 10px;font-size:13px;">+ Create New Categorization Rule</h4>
         <div class="g">
@@ -4070,6 +4084,7 @@ async function bankRulesModal() {
                 <td><span class="pastel-chip ${r.auto_reconcile ? 'chip-mint' : 'chip-sky'}">${r.auto_reconcile ? 'Auto Reconciled' : 'Suggested Match'}</span></td>
                 <td class="r"><button type="button" class="btn dn" data-del-rule="${r.id}" style="padding:2px 8px;font-size:11px;">✕</button></td>
               </tr>
+
             `).join('') : '<tr><td colspan="5" class="sub" style="text-align:center;padding:16px;">No automated rules defined yet. Create your first rule above.</td></tr>'}
           </tbody>
         </table>
@@ -4110,7 +4125,6 @@ async function bankRulesModal() {
   });
 }
 
-
 async function fileGstrReturnModal(returnType = 'GSTR1') {
   const period = '042026';
   const fy = '2026-27';
@@ -4123,7 +4137,7 @@ async function fileGstrReturnModal(returnType = 'GSTR1') {
     wide: true,
     body: `
       <p class="sub">Direct API submission to Goods and Services Tax Network (GSTN). Generates digital signature authentication and 15-digit Application Reference Number (ARN).</p>
-      
+
       <div class="card" style="padding:16px;background:var(--surface-glass-subtle);margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
@@ -4213,7 +4227,7 @@ async function totpMfaModal() {
     wide: true,
     body: `
       <p class="sub">Scan the QR code with Google Authenticator, Microsoft Authenticator, or 1Password to enforce hardware-backed MFA security on your ConvosisBooks account.</p>
-      
+
       <div style="display:flex;gap:20px;align-items:center;background:var(--surface-glass-subtle);padding:16px;border-radius:10px;border:1px solid var(--bd);margin-bottom:16px;">
         <div style="width:140px;height:140px;background:#fff;padding:6px;border-radius:8px;display:grid;place-items:center;border:1px solid #cbd5e1;">
           <img src="${esc(setup.qr_data_uri)}" alt="MFA QR Code" style="width:128px;height:128px;">
@@ -4233,11 +4247,15 @@ async function totpMfaModal() {
       <h4 style="font-size:12.5px;margin:12px 0 6px;">Emergency Single-Use Recovery Codes:</h4>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
         ${setup.backup_codes.map(c => `<code style="padding:4px 6px;background:var(--card);border:1px solid var(--bd);border-radius:4px;font-size:11px;text-align:center;">${esc(c)}</code>`).join('')}
+
       </div>
+
     `,
     footer: `
       <button type="button" class="btn" data-close>Cancel</button>
+
       <button type="button" class="btn p" id="btn-confirm-mfa">Verify & Enforce MFA</button>
+
     `
   });
 
@@ -4263,14 +4281,21 @@ async function disasterRecoveryDrillModal() {
     wide: true,
     body: `
       <p class="sub">Executes an automated, non-destructive enterprise disaster recovery drill to validate full cryptographic snapshot checksum integrity, double-entry ledger balance parity, and recovery time metrics.</p>
+
       <div id="dr-drill-status-box" style="padding:24px;text-align:center;background:var(--surface-glass-subtle);border-radius:10px;border:1px solid var(--bd);">
         <div style="font-size:28px;margin-bottom:8px;">🛡️</div>
+
         <div style="font-weight:700;font-size:15px;margin-bottom:4px;">Ready to Execute DR Simulation</div>
+
         <div class="sub" style="font-size:12px;margin-bottom:14px;">Simulates recovery from primary region loss to standby replica with live integrity checks.</div>
+
         <button type="button" class="btn p" id="btn-trigger-dr-drill" style="padding:8px 20px;">Run Disaster Recovery Simulation</button>
+
       </div>
+
     `,
     footer: `<button type="button" class="btn" data-close>Close</button>`
+
   });
 
   $('#btn-trigger-dr-drill', m.el).addEventListener('click', async () => {
@@ -4326,7 +4351,7 @@ async function customerPortalModal(customerId) {
     wide: true,
     body: `
       <p class="sub">Give your clients instant self-service access to view open invoices, download statement histories, and pay balances directly.</p>
-      
+
       <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:16px;">
         <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px;">Secure Shareable Portal Link (Tokenized)</label>
         <div style="display:flex;gap:8px;">
@@ -4359,10 +4384,13 @@ async function customerPortalModal(customerId) {
               <tr>
                 <td><b>${esc(i.number)}</b></td>
                 <td>${fd(i.date)}</td>
+
                 <td>${fd(i.due_date)}</td>
+
                 <td class="r"><b>${inr(i.total)}</b></td>
                 <td><span class="pastel-chip chip-sky">${esc(i.status)}</span></td>
               </tr>
+
             `).join('')}
           </tbody>
         </table>
@@ -4383,9 +4411,9 @@ function zohoMigrationModal() {
     wide: true,
     body: `
       <p class="sub">Bidirectional data compatibility with Zoho Books. Seamlessly export your books into standard Zoho CSV schemas, or migrate Zoho data into ConvosisBooks with 1-click schema translation.</p>
-      
+
       <div class="g" style="margin-bottom:16px;">
-        
+
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📤</div>
@@ -4399,7 +4427,6 @@ function zohoMigrationModal() {
           </div>
         </div>
 
-        
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📥</div>
@@ -4471,6 +4498,3 @@ function zohoMigrationModal() {
     } catch (e) { toast(e.message, 'err'); }
   });
 }
-
-
-

@@ -35,30 +35,24 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
 DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
 
-
 def paid_expr():
     return Coalesce(Sum('allocations__amount'), Value(Z), output_field=DEC)
-
 
 def invoice_paid_expr():
     alloc_sub = ReceivedAllocation.objects.filter(invoice=OuterRef('pk')).values('invoice').annotate(s=Sum('amount')).values('s')
     ret_sub = RetainerInvoiceAllocation.objects.filter(invoice=OuterRef('pk')).values('invoice').annotate(s=Sum('amount')).values('s')
     return Coalesce(Subquery(alloc_sub, output_field=DEC), Value(Z)) + Coalesce(Subquery(ret_sub, output_field=DEC), Value(Z))
 
-
 def invoice_qs():
     return Invoice.objects.select_related('customer').annotate(paid_sum=invoice_paid_expr())
-
 
 def retainer_paid_expr():
     ret_pay_sub = RetainerPayment.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
     return Coalesce(Subquery(ret_pay_sub, output_field=DEC), Value(Z))
 
-
 def retainer_applied_expr():
     ret_alloc_sub = RetainerInvoiceAllocation.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
     return Coalesce(Subquery(ret_alloc_sub, output_field=DEC), Value(Z))
-
 
 def retainer_qs():
     return RetainerInvoice.objects.select_related('customer').annotate(
@@ -66,10 +60,8 @@ def retainer_qs():
         applied_sum=retainer_applied_expr(),
     )
 
-
 def bill_qs():
     return Bill.objects.select_related('vendor').annotate(paid_sum=paid_expr())
-
 
 def next_number(prefix):
     """Call inside the same transaction that creates the record so a rollback frees the number."""
@@ -79,10 +71,8 @@ def next_number(prefix):
         seq.save(update_fields=['value'])
         return f'{prefix}-{seq.value:06d}'
 
-
 def fmt_qty(d):
     return format(Decimal(d).normalize(), 'f')
-
 
 def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_address=''):
     try:
@@ -116,15 +106,12 @@ def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_ad
     except Exception:
         pass
 
-
 def check_transaction_lock(doc_date):
     if not doc_date:
         return
     lock = LockDate.get_lock()
     if lock and lock.lock_date and doc_date <= lock.lock_date:
         raise ApiError(403, f"Transactions dated on or prior to {lock.lock_date.strftime('%d/%m/%Y')} are locked for accounting compliance ({lock.reason}).")
-
-
 
 def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes='', warehouse=None, warehouse_code='', adjusted_at=None, to_warehouse=None, to_warehouse_code=''):
     check_transaction_lock(on)
@@ -154,7 +141,6 @@ def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes
         balance_after=new, reason=reason, notes=notes,
         created_by=user if getattr(user, 'pk', None) else None
     )
-
 
 @transaction.atomic
 def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjusted_at=None, user=None, reason='Warehouse Transfer', notes='', reference=''):
@@ -187,7 +173,6 @@ def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjuste
     log_audit(user, 'transfer', 'StockMovement', mv.pk, f'Transferred {fmt_qty(qty)} {item.unit} of {item.name} from {from_wh.code} to {to_wh.code}')
     return mv
 
-
 def stock_totals(doc):
     agg = {}
     for ln in doc.lines.select_related('item'):
@@ -196,15 +181,12 @@ def stock_totals(doc):
             agg[it.pk] = agg.get(it.pk, Decimal('0')) + ln.quantity
     return agg
 
-
 def apply_stock(doc, sign, kind, user):
     for item_id, qty in sorted(stock_totals(doc).items()):
         it = Item.objects.filter(pk=item_id).first()
         wh = it.warehouse if it else None
         wh_code = it.warehouse_code if it else ''
         move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wh_code)
-
-
 
 @transaction.atomic
 def send_invoice(inv, user):
@@ -217,7 +199,6 @@ def send_invoice(inv, user):
     inv.save(update_fields=['status', 'sent_at', 'updated_at'])
     post_invoice_journal(inv, user)
     log_audit(user, 'send', 'Invoice', inv.pk, f'Invoice {inv.number} posted and sent to {inv.customer.name} (₹{inv.total})')
-
 
 @transaction.atomic
 def void_invoice(inv, user):
@@ -232,7 +213,6 @@ def void_invoice(inv, user):
     post_invoice_void_journal(inv, user)
     log_audit(user, 'void', 'Invoice', inv.pk, f'Invoice {inv.number} voided and reversed in ledger')
 
-
 @transaction.atomic
 def approve_bill(bill, user):
     check_transaction_lock(bill.date)
@@ -243,7 +223,6 @@ def approve_bill(bill, user):
     bill.save(update_fields=['status', 'updated_at'])
     post_bill_journal(bill, user)
     log_audit(user, 'approve', 'Bill', bill.pk, f'Bill {bill.number} approved for {bill.vendor.name} (₹{bill.total})')
-
 
 @transaction.atomic
 def void_bill(bill, user):
@@ -258,7 +237,6 @@ def void_bill(bill, user):
     post_bill_void_journal(bill, user)
     log_audit(user, 'void', 'Bill', bill.pk, f'Bill {bill.number} voided and reversed in ledger')
 
-
 @transaction.atomic
 def send_retainer_invoice(retainer, user):
     check_transaction_lock(retainer.date)
@@ -268,7 +246,6 @@ def send_retainer_invoice(retainer, user):
     retainer.sent_at = timezone.now()
     retainer.save(update_fields=['status', 'sent_at', 'updated_at'])
     log_audit(user, 'send', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} sent to {retainer.customer.name} (₹{retainer.total})')
-
 
 @transaction.atomic
 def void_retainer_invoice(retainer, user):
@@ -282,7 +259,6 @@ def void_retainer_invoice(retainer, user):
     retainer.status = 'void'
     retainer.save(update_fields=['status', 'updated_at'])
     log_audit(user, 'void', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} voided')
-
 
 @transaction.atomic
 def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', account='Bank Account', reference='', notes='', user=None):
@@ -315,7 +291,6 @@ def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', accou
               f'Recorded payment of ₹{amount} for retainer invoice {retainer.number} ({retainer.customer.name})')
     return ret_pay
 
-
 def post_retainer_payment_journal(ret_pay, user):
     """Debit Bank/Cash, Credit Customer Advance / Retainer Liability."""
     acc_code = '1000' if ret_pay.mode == 'cash' else '1010'
@@ -325,7 +300,6 @@ def post_retainer_payment_journal(ret_pay, user):
     ]
     return post_journal_entry(ret_pay.date, 'retainer_payment', ret_pay.retainer.number,
                               f'Payment received for retainer {ret_pay.retainer.number}', items, user)
-
 
 @transaction.atomic
 def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
@@ -379,7 +353,6 @@ def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
     retainer.save(update_fields=['applied_amount', 'updated_at'])
     return created_allocs
 
-
 def post_retainer_apply_journal(alloc, user):
     """Debit Customer Advance / Retainer Liability, Credit Accounts Receivable."""
     items = [
@@ -388,7 +361,6 @@ def post_retainer_apply_journal(alloc, user):
     ]
     return post_journal_entry(alloc.date, 'retainer_applied', alloc.retainer.number,
                               f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user)
-
 
 @transaction.atomic
 def delete_retainer_payment(ret_pay, user):
@@ -406,7 +378,6 @@ def delete_retainer_payment(ret_pay, user):
     log_audit(user, 'delete_payment', 'RetainerInvoice', retainer.pk,
               f'Deleted payment of ₹{amt} on retainer {retainer.number}')
 
-
 @transaction.atomic
 def delete_retainer_allocation(alloc, user):
     retainer = alloc.retainer
@@ -418,11 +389,8 @@ def delete_retainer_allocation(alloc, user):
     log_audit(user, 'delete_allocation', 'RetainerInvoice', retainer.pk,
               f'Removed retainer application of ₹{amt} from {inv.number}')
 
-
-
 def _sum(qs, field):
     return qs.aggregate(t=Sum(field))['t'] or Z
-
 
 def _months(start, end):
     out, y, m = [], start.year, start.month
@@ -432,7 +400,6 @@ def _months(start, end):
         if m == 13:
             y, m = y + 1, 1
     return out
-
 
 def _aging(docs, today):
     b = [Z] * 5
@@ -445,7 +412,6 @@ def _aging(docs, today):
         b[idx] += bal
     return b
 
-
 def _period(s, e):
     inv = Invoice.objects.filter(status='sent', date__range=(s, e))
     bl = Bill.objects.filter(status='open', date__range=(s, e))
@@ -453,7 +419,6 @@ def _period(s, e):
     out_tax = _sum(inv, 'cgst') + _sum(inv, 'sgst') + _sum(inv, 'igst')
     in_tax = _sum(bl, 'cgst') + _sum(bl, 'sgst') + _sum(bl, 'igst')
     return {'revenue': rev, 'expenses': exp, 'profit': rev - exp, 'gst_payable': out_tax - in_tax}
-
 
 def dashboard(start, end):
     today = timezone.localdate()
@@ -542,7 +507,6 @@ def dashboard(start, end):
         'activity': recent_activity(8),
     }
 
-
 def recent_activity(limit=10):
     ev = []
     for o in Invoice.objects.select_related('customer').exclude(status='draft').order_by('-created_at')[:limit]:
@@ -562,9 +526,6 @@ def recent_activity(limit=10):
                    'amount': None, 'date': o.date, 'at': o.created_at})
     ev.sort(key=lambda e: e['at'], reverse=True)
     return ev[:limit]
-
-
-
 
 def ensure_default_accounts():
     """Seed the standard Chart of Accounts if empty or missing system accounts."""
@@ -607,7 +568,6 @@ def ensure_default_accounts():
             code=code,
             defaults={'name': name, 'account_type': atype, 'sub_type': subtype, 'description': desc, 'is_system': True}
         )
-
 
 def post_journal_entry(date, entry_type, reference, notes, items, user=None):
     """
@@ -658,7 +618,6 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None):
         JournalItem.objects.create(journal=jrn, account=acc, debit=deb, credit=cred, description=desc)
     return jrn
 
-
 def post_invoice_journal(inv, user):
     """Debit AR, Credit Sales Revenue, Credit Output Taxes."""
     items = [
@@ -672,7 +631,6 @@ def post_invoice_journal(inv, user):
     if inv.igst > 0:
         items.append(('2230', Decimal('0.00'), inv.igst, f'Output IGST on {inv.number}'))
     return post_journal_entry(inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}', items, user)
-
 
 def post_invoice_void_journal(inv, user):
     """Reversing journal entry on invoice void."""
@@ -688,7 +646,6 @@ def post_invoice_void_journal(inv, user):
         items.append(('2230', inv.igst, Decimal('0.00'), f'Reversal of Output IGST on {inv.number}'))
     return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user)
 
-
 def post_bill_journal(bill, user):
     """Debit COGS/Expense, Debit Input Taxes, Credit AP."""
     items = [
@@ -702,7 +659,6 @@ def post_bill_journal(bill, user):
     if bill.igst > 0:
         items.append(('2260', bill.igst, Decimal('0.00'), f'Input IGST ITC on {bill.number}'))
     return post_journal_entry(bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}', items, user)
-
 
 def post_bill_void_journal(bill, user):
     """Reversing journal entry on bill void."""
@@ -718,7 +674,6 @@ def post_bill_void_journal(bill, user):
         items.append(('2260', Decimal('0.00'), bill.igst, f'Reversal of Input IGST ITC on {bill.number}'))
     return post_journal_entry(bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}', items, user)
 
-
 def post_payment_received_journal(pay, user):
     """Debit Bank/Cash, Credit Accounts Receivable."""
     acc_code = '1000' if pay.mode == 'cash' else '1010'
@@ -728,7 +683,6 @@ def post_payment_received_journal(pay, user):
     ]
     return post_journal_entry(pay.date, 'payment_in', pay.number, f'Payment received {pay.number}', items, user)
 
-
 def post_payment_made_journal(pay, user):
     """Debit Accounts Payable, Credit Bank/Cash."""
     acc_code = '1000' if pay.mode == 'cash' else '1010'
@@ -737,7 +691,6 @@ def post_payment_made_journal(pay, user):
         (acc_code, Decimal('0.00'), pay.amount, f'Payment {pay.number} disbursed')
     ]
     return post_journal_entry(pay.date, 'payment_out', pay.number, f'Payment made {pay.number}', items, user)
-
 
 def post_expense_journal(exp, user):
     """Debit Expense Account, Debit Input Taxes (if any), Credit Bank/Cash."""
@@ -752,7 +705,6 @@ def post_expense_journal(exp, user):
         items.append(('2250', exp.tax_amount - half, Decimal('0.00'), f'Input SGST on {exp.number}'))
     return post_journal_entry(exp.date, 'expense', exp.number, f'Operating expense {exp.number}', items, user)
 
-
 def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user):
     """Record a transfer between bank accounts or cash."""
     check_transaction_lock(on_date)
@@ -763,8 +715,6 @@ def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user):
     jrn = post_journal_entry(on_date, 'transfer', ref, f'Fund transfer of ₹{amount}', items, user)
     log_audit(user, 'transfer', 'BankAccount', 0, f'Transferred ₹{amount} from {from_acc} to {to_acc}')
     return jrn
-
-
 
 def trial_balance_report(as_of_date=None, include_zero=True):
     """Compute real-time Trial Balance ensuring sum(Debits) == sum(Credits)."""
@@ -810,7 +760,6 @@ def trial_balance_report(as_of_date=None, include_zero=True):
         'difference': abs(tot_debit - tot_credit)
     }
 
-
 def general_ledger_report(account_id=None, start=None, end=None):
     """Chronological ledger transactions with running balances."""
     ensure_default_accounts()
@@ -829,7 +778,6 @@ def general_ledger_report(account_id=None, start=None, end=None):
         pre_c = pre_items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
         normal_is_debit = acc.account_type in ('asset', 'expense')
         opening_bal = (pre_d - pre_c) if normal_is_debit else (pre_c - pre_d)
-
 
         cur_items = JournalItem.objects.filter(account=acc, journal__date__range=(s, e)).select_related('journal').order_by('journal__date', 'journal__id', 'id')
         running = opening_bal
@@ -860,7 +808,6 @@ def general_ledger_report(account_id=None, start=None, end=None):
             })
 
     return {'start': s, 'end': e, 'accounts': ledger}
-
 
 def profit_and_loss_report(start, end):
     """Accrual and cash operating P&L."""
@@ -908,7 +855,6 @@ def profit_and_loss_report(start, end):
         'net_profit': net_profit,
         'margin_pct': float(net_profit / tot_income * 100) if tot_income > 0 else 0.0
     }
-
 
 def balance_sheet_report(as_of_date=None):
     """Assets = Liabilities + Equity (including net current earnings)."""
@@ -964,7 +910,6 @@ def balance_sheet_report(as_of_date=None):
         'is_balanced': tot_assets == (tot_liab + tot_eq)
     }
 
-
 def cash_flow_report(start, end):
     """Direct and indirect cash flow statement."""
     pnl = profit_and_loss_report(start, end)
@@ -988,9 +933,6 @@ def cash_flow_report(start, end):
         'financing_activities': Decimal('0.00'),
         'net_change_in_cash': operating_net
     }
-
-
-
 
 def gstr1_report(start, end):
     """
@@ -1071,7 +1013,6 @@ def gstr1_report(start, end):
         'hsn_summary': list(hsn_map.values())
     }
 
-
 def gstr3b_report(start, end):
     """GSTR-3B Summary: 3.1 Outward supplies, 4 Eligible ITC, 5 Net Tax Payable."""
     g1 = gstr1_report(start, end)
@@ -1119,7 +1060,6 @@ def gstr3b_report(start, end):
             'total_cash_payable': net_igst + net_cgst + net_sgst
         }
     }
-
 
 def itc_summary_report(start, end):
     """Input Tax Credit claimed from purchases and business expenses."""
@@ -1171,7 +1111,6 @@ def itc_summary_report(start, end):
         'total_itc': tot_cgst + tot_sgst + tot_igst
     }
 
-
 def tax_liability_report(start, end):
     g1 = gstr1_report(start, end)
     itc = itc_summary_report(start, end)
@@ -1189,7 +1128,6 @@ def tax_liability_report(start, end):
                         'igst': max(Decimal('0.00'), g1['summary']['igst'] - itc['total_igst']),
                         'total': max(Decimal('0.00'), out_tax - in_tax)}
     }
-
 
 def generate_eway_bill(doc_type, doc_id, transporter_id='', transporter_name='', vehicle_number='', distance_km=50, user=None):
     """Generate Indian GST E-Way Bill with 12-digit standard number and expiry."""
@@ -1236,7 +1174,6 @@ def generate_eway_bill(doc_type, doc_id, transporter_id='', transporter_name='',
     log_audit(user, 'create', 'EWayBill', ewb.bill_number, f'Generated e-Way Bill #{ewb.bill_number} for {doc_no}')
     return ewb
 
-
 def generate_einvoice(inv_id, user=None):
     """Generate 64-char IRN hash and QR payload for GST B2B e-Invoicing compliance."""
     inv = Invoice.objects.select_related('customer').filter(pk=inv_id).first()
@@ -1257,9 +1194,6 @@ def generate_einvoice(inv_id, user=None):
     )
     log_audit(user, 'generate', 'EInvoice', inv.pk, f'Generated e-Invoice IRN for Invoice {inv.number}')
     return rec
-
-
-
 
 def process_document_ocr(doc):
     """
@@ -1312,7 +1246,6 @@ def process_document_ocr(doc):
     doc.ocr_data = ocr
     doc.save(update_fields=['ocr_status', 'ocr_data'])
     return ocr
-
 
 @transaction.atomic
 def convert_scanned_document(doc_id, target_type, user):
@@ -1401,9 +1334,6 @@ def convert_scanned_document(doc_id, target_type, user):
     else:
         raise ApiError(400, f"Unsupported target type: {target_type}")
 
-
-
-
 def match_bank_transaction(bank_txn):
     """Contextual matching engine comparing live bank feeds with accounting records."""
     amt = bank_txn.deposit if bank_txn.deposit > 0 else bank_txn.withdrawal
@@ -1439,7 +1369,6 @@ def match_bank_transaction(bank_txn):
     candidates.sort(key=lambda x: -x['confidence'])
     return candidates
 
-
 def reconcile_bank_transaction(bank_txn_id, entity_type, entity_id, user=None):
     txn = BankTransaction.objects.filter(pk=bank_txn_id).first()
     if not txn:
@@ -1451,8 +1380,6 @@ def reconcile_bank_transaction(bank_txn_id, entity_type, entity_id, user=None):
     txn.save(update_fields=['status', 'matched_entity_type', 'matched_entity_id', 'reconciled_at'])
     log_audit(user, 'reconcile', 'BankTransaction', txn.pk, f'Reconciled bank transaction ₹{txn.deposit or txn.withdrawal} against {entity_type} #{entity_id}')
     return txn
-
-
 
 def detect_financial_anomalies():
     """
@@ -1508,9 +1435,6 @@ def detect_financial_anomalies():
         )
     return FinancialAnomaly.objects.filter(status='detected')
 
-
-
-
 def sanitize_ai_text(text):
     if not text or not isinstance(text, str):
         return text
@@ -1519,7 +1443,6 @@ def sanitize_ai_text(text):
     clean = re.sub(r'\bon[a-zA-Z]+\s*=\s*(?:["\'][^"\']*["\']|[^\s>]+)', '', clean, flags=re.IGNORECASE)
     clean = re.sub(r'href\s*=\s*(?:["\']\s*javascript:[^"\']*["\']|javascript:[^\s>]+)', 'href="#"', clean, flags=re.IGNORECASE)
     return clean
-
 
 def get_live_accounting_context():
     """
@@ -1592,7 +1515,6 @@ def get_live_accounting_context():
         'anomalies_count': anomalies_count,
     }
 
-
 def _convobot_deterministic_reasoning(query, category=None, history=None, user=None):
     """Handles questions about accounting, GST, bank reconciliation, financial reports, and account security."""
     raw_query = (query or '').strip()
@@ -1600,7 +1522,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
     today = timezone.localdate()
     m_start = today.replace(day=1)
 
-    # 0. Live Bank Accounts & Available Cash Balance Grounding
     if any(k in q for k in ['bank account', 'bank balance', 'how much money', 'cash balance', 'bank cash', 'in the bank', 'available cash']):
         ctx = get_live_accounting_context()
         accs = ctx['bank_accounts_list']
@@ -1644,7 +1565,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
             ]
         }
 
-    # Specific Document Lookup: Invoice Number
     inv_match = re.search(r'\b(INV-?\d+)\b', raw_query, re.IGNORECASE)
     if inv_match:
         inv_num = inv_match.group(1).upper()
@@ -1686,7 +1606,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
                 ]
             }
 
-    # Expense & Spending Breakdown Grounding
     if any(k in q for k in ['expense', 'spending', 'what did we spend', 'expenditure']) and not any(k in q for k in ['spike', 'anomal']):
         exps = Expense.objects.select_related('expense_account', 'vendor').order_by('-date')
         tot_exp = exps.aggregate(s=Sum('total'))['s'] or Decimal('0.00')
@@ -1720,7 +1639,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
             ]
         }
 
-    # Accounts Payable / Vendor Bills Grounding
     if any(k in q for k in ['open bill', 'vendor bill', 'payable', 'what do we owe', 'vendor dues']) and not any(k in q for k in ['duplicate', 'eway']):
         b_unpaid = list(bill_qs().filter(status__in=['open', 'partially_paid']))
         tot_payable = sum((b.total - b.paid_sum) for b in b_unpaid)
@@ -2294,7 +2212,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
             ]
         }
 
-
     if 'bank feed' in q or 'reconcil' in q or 'statement' in q or 'gateway' in q or 'upi' in q or 'payment' in q:
         return {
             'query': raw_query,
@@ -2382,7 +2299,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
             ]
         }
 
-
     if 'recurring' in q or 'subscription' in q or 'inventory' in q or 'challan' in q or 'credit note' in q:
         return {
             'query': raw_query,
@@ -2458,7 +2374,6 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
         ]
     }
 
-
 def call_convobot_llm_api(prompt, system_prompt=None, history=None):
     api_key = getattr(settings, 'LLM_API_KEY', '') or os.environ.get('CONVOBOT_LLM_API_KEY') or os.environ.get('OPENAI_API_KEY')
     if not api_key:
@@ -2516,7 +2431,6 @@ def call_convobot_llm_api(prompt, system_prompt=None, history=None):
         except Exception:
             return None
     return None
-
 
 def process_convobot_query(query, category=None, history=None, user=None):
     """
@@ -2580,7 +2494,6 @@ def process_convobot_query(query, category=None, history=None, user=None):
     res['provider'] = getattr(settings, 'LLM_PROVIDER', 'openai')
     res['llm_grounded'] = True
 
-    # Sanitize all text fields to ensure secure HTML rendering
     for k in ('answer', 'summary', 'doubt_topic', 'rule_formula'):
         if k in res and isinstance(res[k], str):
             res[k] = sanitize_ai_text(res[k])
@@ -2589,20 +2502,15 @@ def process_convobot_query(query, category=None, history=None, user=None):
 
     return res
 
-
 def process_doubt_clearance(query, category=None, history=None, user=None):
     return process_convobot_query(query, category=category, history=history, user=user)
-
 
 def process_zia_query(query, user=None):
     return process_convobot_query(query, user=user)
 
-
-
 def compute_txn_hash(dt, withdrawal, deposit, ref, desc):
     raw = f"{dt}|{Decimal(withdrawal):.2f}|{Decimal(deposit):.2f}|{ref.strip().upper()}|{desc.strip().lower()}"
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
-
 
 def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
     """
@@ -2712,7 +2620,6 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
         'last_synced_at': feed.last_synced_at.isoformat()
     }
 
-
 def apply_bank_rules_to_transaction(txn):
     """Evaluate active BankRules against an unreconciled transaction."""
     rules = BankRule.objects.filter(active=True).order_by('priority')
@@ -2757,7 +2664,6 @@ def apply_bank_rules_to_transaction(txn):
             return rule
     return None
 
-
 def get_advanced_bank_match_suggestions(txn_id):
     """
     Multi-way auto-match reconciliation suggestions with confidence score:
@@ -2775,7 +2681,7 @@ def get_advanced_bank_match_suggestions(txn_id):
     ref_clean = txn.reference.strip().upper()
 
     if txn.deposit > Decimal('0.00'):
-        # 1. Customer Payments Received
+
         for pay in PaymentReceived.objects.all().order_by('-date')[:40]:
             confidence = 0
             reasons = []
@@ -2806,7 +2712,6 @@ def get_advanced_bank_match_suggestions(txn_id):
                     'reasons': reasons
                 })
 
-        # 2. Open Invoices
         open_invoices = Invoice.objects.filter(status__in=['sent', 'draft', 'partial']).order_by('-date')[:40]
         for inv in open_invoices:
             confidence = 0
@@ -2841,7 +2746,6 @@ def get_advanced_bank_match_suggestions(txn_id):
                     'reasons': reasons
                 })
 
-        # 3. Bank Deposits
         for dep in BankDeposit.objects.filter(bank_account=txn.bank_account).order_by('-date')[:20]:
             confidence = 0
             reasons = []
@@ -2869,7 +2773,7 @@ def get_advanced_bank_match_suggestions(txn_id):
                 })
 
     elif txn.withdrawal > Decimal('0.00'):
-        # 1. Vendor Payments Made
+
         for pay in PaymentMade.objects.all().order_by('-date')[:40]:
             confidence = 0
             reasons = []
@@ -2900,7 +2804,6 @@ def get_advanced_bank_match_suggestions(txn_id):
                     'reasons': reasons
                 })
 
-        # 2. Open Bills
         open_bills = Bill.objects.filter(status__in=['open', 'draft', 'partial']).order_by('-date')[:40]
         for b in open_bills:
             confidence = 0
@@ -2932,7 +2835,6 @@ def get_advanced_bank_match_suggestions(txn_id):
                     'reasons': reasons
                 })
 
-        # 3. Expenses
         for exp in Expense.objects.all().order_by('-date')[:40]:
             confidence = 0
             reasons = []
@@ -2961,7 +2863,6 @@ def get_advanced_bank_match_suggestions(txn_id):
 
     suggestions.sort(key=lambda s: s['confidence_score'], reverse=True)
     return suggestions
-
 
 def ensure_default_bank_rules(force=False):
     """Seed comprehensive standard bank rules for automated categorization."""
@@ -3079,7 +2980,6 @@ def ensure_default_bank_rules(force=False):
         created_rules.append(r)
     return created_rules
 
-
 def run_banking_automation(bank_account_id=None, user=None):
     """
     Automated banking engine:
@@ -3100,7 +3000,7 @@ def run_banking_automation(bank_account_id=None, user=None):
     action_details = []
 
     for txn in list(txns_qs):
-        # 1. Try Bank Rules first
+
         rule = apply_bank_rules_to_transaction(txn)
         if rule:
             rule_applied_count += 1
@@ -3114,7 +3014,6 @@ def run_banking_automation(bank_account_id=None, user=None):
             })
             continue
 
-        # 2. Try High-Confidence Auto-Match
         try:
             suggestions = get_advanced_bank_match_suggestions(txn.pk)
             if suggestions and suggestions[0].get('confidence_score', 0) >= 75:
@@ -3154,7 +3053,6 @@ def run_banking_automation(bank_account_id=None, user=None):
         'message': msg
     }
 
-
 def export_bank_transactions_csv(bank_account_id=None, status=None):
     import csv
     import io
@@ -3188,8 +3086,6 @@ def export_bank_transactions_csv(bank_account_id=None, status=None):
             t.category_account.name if t.category_account else ''
         ])
     return output.getvalue()
-
-
 
 def rollback_statement_batch(batch_id, user=None):
     """
@@ -3230,7 +3126,6 @@ def rollback_statement_batch(batch_id, user=None):
         'balance_adjusted': str(balance_delta),
         'current_account_balance': str(acc.current_balance)
     }
-
 
 def get_bank_dashboard_summary(bank_account_id=None):
     acc = None
@@ -3330,7 +3225,6 @@ def get_bank_dashboard_summary(bank_account_id=None):
         'recent_transactions': recent_txns
     }
 
-
 @transaction.atomic
 def record_bank_deposit(data, user=None):
     acc_id = data.get('bank_account') or data.get('bank_account_id')
@@ -3408,7 +3302,6 @@ def record_bank_deposit(data, user=None):
         'new_balance': str(acc.current_balance),
         'message': f"Deposit {deposit.number} recorded successfully."
     }
-
 
 @transaction.atomic
 def record_bank_transfer(data, user=None):
@@ -3502,7 +3395,6 @@ def record_bank_transfer(data, user=None):
         'message': f"Transfer {transfer.number} completed successfully."
     }
 
-
 @transaction.atomic
 def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0.00'), notes='', user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
@@ -3556,7 +3448,6 @@ def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0
         'message': f"Transaction matched to {entity_label}"
     }
 
-
 @transaction.atomic
 def unmatch_bank_transaction_action(txn_id, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
@@ -3580,7 +3471,6 @@ def unmatch_bank_transaction_action(txn_id, user=None):
         'status': txn.status,
         'message': f"Transaction unmatched from {prev_label}"
     }
-
 
 @transaction.atomic
 def quick_categorize_bank_transaction(txn_id, data, user=None):
@@ -3614,7 +3504,6 @@ def quick_categorize_bank_transaction(txn_id, data, user=None):
         'message': f"Transaction categorized as {ttype}"
     }
 
-
 @transaction.atomic
 def bulk_categorize_bank_transactions(txn_ids, data, user=None):
     results = []
@@ -3625,7 +3514,6 @@ def bulk_categorize_bank_transactions(txn_ids, data, user=None):
         except Exception:
             pass
     return {'count': len(results), 'message': f"Categorized {len(results)} transactions"}
-
 
 def toggle_exclude_bank_transaction(txn_id, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
@@ -3641,7 +3529,6 @@ def toggle_exclude_bank_transaction(txn_id, user=None):
     txn.save(update_fields=['status'])
     log_audit(user, 'exclude', 'BankTransaction', txn.pk, f"{msg} ({txn.reference or txn.id})")
     return {'id': txn.pk, 'status': txn.status, 'message': msg}
-
 
 @transaction.atomic
 def complete_bank_reconciliation(data, user=None):
@@ -3694,7 +3581,6 @@ def complete_bank_reconciliation(data, user=None):
         'cleared_count': len(cleared_ids),
         'message': f"Reconciliation {rec.reconciliation_number} completed."
     }
-
 
 def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
 
@@ -3827,7 +3713,6 @@ def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
         }
     }
 
-
     ret_obj, _ = GSTRReturn.objects.update_or_create(
         return_type='GSTR1',
         tax_period=tax_period,
@@ -3869,7 +3754,6 @@ def generate_official_gstr1(tax_period='042026', financial_year='2026-27'):
         },
         'gstn_json': gstn_payload
     }
-
 
 def generate_official_gstr3b(tax_period='042026', financial_year='2026-27'):
     """
@@ -3975,7 +3859,6 @@ def generate_official_gstr3b(tax_period='042026', financial_year='2026-27'):
         'gstn_json': gstn_3b
     }
 
-
 def file_gstr_return(return_id, e_sign_method='PAN_OTP', user=None):
     """
     Execute statutory filing with the GSTN portal.
@@ -4004,7 +3887,6 @@ def file_gstr_return(return_id, e_sign_method='PAN_OTP', user=None):
               f"Filed {ret.return_type} ({ret.tax_period}) with ARN {arn} via {e_sign_method}.")
 
     return ret.response_json
-
 
 def generate_authenticated_irn(inv_id):
     """
@@ -4065,7 +3947,6 @@ def generate_authenticated_irn(inv_id):
         'portal_verifier_url': f"https://einvoice1.gst.gov.in/Others/QRCodeVerify?irn={irn}"
     }
 
-
 def verify_audit_trail_chain():
     """
     Verify tamper-evident hash chain of AuditLog records for MCA Rule 3 compliance.
@@ -4101,8 +3982,6 @@ def verify_audit_trail_chain():
         'algorithm': 'SHA-256 Merkle-Chained Ledger Logs'
     }
 
-
-
 def generate_mfa_setup(user):
     """Generate Base32 RFC 6238 secret, otpauth QR URI and 8 backup recovery codes."""
     secret = secrets.token_hex(16).upper()[:32]
@@ -4122,7 +4001,6 @@ def generate_mfa_setup(user):
         'backup_codes': backup_codes,
         'qr_data_uri': f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={base64.b64encode(otpauth_url.encode()).decode()}"
     }
-
 
 def verify_mfa_code(user, token):
     """
@@ -4156,7 +4034,6 @@ def verify_mfa_code(user, token):
         pass
 
     return {'verified': False, 'valid': False, 'mfa_enabled': False, 'error': 'Invalid or expired authentication code.'}
-
 
 def create_security_snapshot(user=None, backup_type='automated'):
     """
@@ -4217,7 +4094,6 @@ def create_security_snapshot(user=None, backup_type='automated'):
         'created_at': rec.created_at.isoformat()
     }
 
-
 def run_disaster_recovery_simulation(snapshot_id=None):
     """
     Execute non-destructive disaster recovery drill.
@@ -4263,9 +4139,6 @@ def run_disaster_recovery_simulation(snapshot_id=None):
         'summary': 'Disaster recovery simulation completed successfully. 100% data integrity and double-entry balance parity verified.'
     }
 
-
-
-
 def start_background_job(task_type, details=None, user=None):
     """
     Initialize and execute an enterprise asynchronous background task
@@ -4293,7 +4166,6 @@ def start_background_job(task_type, details=None, user=None):
         'completed_at': task.completed_at.isoformat()
     }
 
-
 def get_background_job_status(task_id):
     task = BackgroundTask.objects.filter(task_id=task_id).first()
     if not task:
@@ -4307,8 +4179,6 @@ def get_background_job_status(task_id):
         'summary': task.summary,
         'error_message': task.error_message
     }
-
-
 
 def get_customer_portal_data(token_or_id):
     """Fetch self-service portal data for a customer using access token or customer ID."""
@@ -4376,7 +4246,6 @@ def get_customer_portal_data(token_or_id):
         ]
     }
 
-
 def get_vendor_portal_data(token_or_id):
     """Fetch self-service portal data for a vendor."""
     if str(token_or_id).isdigit():
@@ -4429,7 +4298,6 @@ def get_vendor_portal_data(token_or_id):
             for p in payments
         ]
     }
-
 
 def export_zoho_compatible_data(entity='invoices'):
     """Export records into standard Zoho Books CSV format with column mappings."""
@@ -4493,7 +4361,6 @@ def export_zoho_compatible_data(entity='invoices'):
 
     return {'status': 'error', 'error': 'Unsupported entity for Zoho export.', 'data': []}
 
-
 def import_zoho_compatible_data(entity, records, user=None):
     """Import records from Zoho Books / Tally exports into ConvosisBooks."""
     imported_count = 0
@@ -4544,7 +4411,6 @@ def import_zoho_compatible_data(entity, records, user=None):
 
     return {'status': 'unsupported_entity', 'imported': 0, 'imported_count': 0}
 
-
 def generate_system_notifications(user=None):
     today = timezone.localdate()
     
@@ -4593,7 +4459,6 @@ def generate_system_notifications(user=None):
             link='#/filing/gst-filing'
         )
 
-
 def list_notifications(user=None):
     generate_system_notifications(user)
     qs = Notification.objects.all()
@@ -4617,7 +4482,6 @@ def list_notifications(user=None):
         ]
     }
 
-
 def mark_notification_read(notif_id, user=None):
     notif = Notification.objects.filter(pk=notif_id).first()
     if notif:
@@ -4625,14 +4489,12 @@ def mark_notification_read(notif_id, user=None):
         notif.save(update_fields=['is_read'])
     return {'status': 'success', 'notif_id': notif_id}
 
-
 def mark_all_notifications_read(user=None):
     qs = Notification.objects.filter(is_read=False)
     if user and user.is_authenticated:
         qs = qs.filter(Q(user=user) | Q(user__isnull=True))
     count = qs.update(is_read=True)
     return {'status': 'success', 'marked_count': count}
-
 
 def get_tenant_subscription_summary():
     sub = TenantSubscription.objects.first()
@@ -4679,7 +4541,6 @@ def get_tenant_subscription_summary():
         ]
     }
 
-
 def update_tenant_subscription(tier, billing_cycle='annual'):
     sub = TenantSubscription.objects.first()
     if not sub:
@@ -4698,7 +4559,6 @@ def update_tenant_subscription(tier, billing_cycle='annual'):
     sub.storage_limit_mb = lim['storage']
     sub.save()
     return get_tenant_subscription_summary()
-
 
 def get_tenant_admin_summary():
     from django.contrib.auth import get_user_model
@@ -4742,7 +4602,6 @@ def get_tenant_admin_summary():
         'members': users
     }
 
-
 def invite_tenant_user(username, email, role='accountant', phone=''):
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -4752,7 +4611,6 @@ def invite_tenant_user(username, email, role='accountant', phone=''):
     u = User.objects.create_user(username=username, email=email, password=secrets.token_urlsafe(12))
     UserProfile.objects.create(user=u, role=role, phone=phone, mfa_enabled=True)
     return {'status': 'success', 'user_id': u.id, 'username': u.username, 'role': role}
-
 
 def update_tenant_user_role(user_id, role):
     from django.contrib.auth import get_user_model
@@ -4767,7 +4625,6 @@ def update_tenant_user_role(user_id, role):
         profile.role = role
         profile.save(update_fields=['role'])
     return {'status': 'success', 'user_id': u.id, 'role': role}
-
 
 def list_developer_api_keys():
     keys = DeveloperApiKey.objects.all()
@@ -4796,7 +4653,6 @@ def list_developer_api_keys():
         for k in keys
     ]
 
-
 def create_developer_api_key(name, scopes=None):
     raw_key = 'sk_live_' + secrets.token_hex(20)
     h = hashlib.sha256(raw_key.encode()).hexdigest()
@@ -4817,13 +4673,11 @@ def create_developer_api_key(name, scopes=None):
         'created_at': k.created_at.strftime('%d %b %Y')
     }
 
-
 def revoke_developer_api_key(key_id):
     k = DeveloperApiKey.objects.filter(pk=key_id).first()
     if k:
         k.delete()
     return {'status': 'success', 'revoked_id': key_id}
-
 
 def list_webhook_subscriptions():
     hooks = WebhookSubscription.objects.all()
@@ -4851,7 +4705,6 @@ def list_webhook_subscriptions():
         for h in hooks
     ]
 
-
 def create_webhook_subscription(endpoint_url, events=None):
     secret = 'whsec_' + secrets.token_hex(16)
     wh = WebhookSubscription.objects.create(
@@ -4869,7 +4722,6 @@ def create_webhook_subscription(endpoint_url, events=None):
         'events': wh.events,
         'status': 'created'
     }
-
 
 def test_webhook_delivery(webhook_id):
     wh = WebhookSubscription.objects.filter(pk=webhook_id).first()
@@ -4897,7 +4749,6 @@ def test_webhook_delivery(webhook_id):
         'endpoint': wh.endpoint_url,
         'payload_dispatched': sample_payload
     }
-
 
 GST_STATE_CODES = {
     '01': 'Jammu and Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh',
@@ -4993,7 +4844,6 @@ KNOWN_GST_REGISTRY = {
     }
 }
 
-
 def lookup_gstin_details(raw_gstin):
     """
     Validates GSTIN and returns prefilled taxpayer profile
@@ -5077,7 +4927,4 @@ def lookup_gstin_details(raw_gstin):
         'status': 'Active',
         'taxpayer_type': 'Taxpayer (Regular)'
     }
-
-
-
 

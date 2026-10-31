@@ -338,32 +338,44 @@
           <div class="ap-desc">Dynamic color for active pills, links, glowing borders & highlights.</div>
           <div class="swatches">
             ${ACCENTS.map(a => `<button class="sw ${s.accent === a.id ? 'on' : ''}" style="--c:${a.base}" title="${a.name}" onclick="ThemeEngine.setAccent('${a.id}')"></button>`).join('')}
+
           </div>
+
           <div class="sw-label">${accent.name}</div>
+
         </div>
 
         <div class="ap-sec wide">
           <div class="ap-h">Theme Wallpaper</div>
+
           <div class="ap-desc">Translucent glass shines through the Mist backdrop.</div>
+
           <div class="wp-grid" style="grid-template-columns: 1fr;">
             <button class="wp-tile on" style="background:${WALLPAPERS[0].css}; height:54px;" title="Mist" onclick="ThemeEngine.setWallpaper('mist')">
               <span class="wp-check">${check}</span><span class="wp-name">Mist (Active Theme)</span>
             </button>
+
           </div>
+
           ${slider('wpBlur', 'Wallpaper Blur', 0, 40, 1)}
           ${slider('wpDim', 'Wallpaper Dimming', 0, 60, 1)}
           <div class="ap-row">
             <span>Slowly drift wallpaper</span>
+
             <label class="mac-switch"><input type="checkbox" ${s.animate ? 'checked' : ''} onchange="ThemeEngine.setAnimate(this.checked)"><i></i></label>
           </div>
+
         </div>
 
         <div class="ap-sec wide">
           <div class="ap-h">Glassmorphism Engine</div>
+
           <div class="ap-desc">Tune optical blur, specular opacity and background vibrancy in real time.</div>
+
           <div class="seg">
             ${Object.keys(GLASS_PRESETS).map(id => `<button data-preset="${id}" class="${s.glassPreset === id ? 'on' : ''}" onclick="ThemeEngine.setGlassPreset('${id}')">${GLASS_PRESETS[id].name}</button>`).join('')}
           </div>
+
           ${slider('glassBlur', 'Optical Blur', 0, 60, 1)}
           ${slider('glassOpacity', 'Surface Opacity', 20, 100, 1)}
           ${slider('glassSat', 'Color Vibrancy', 100, 260, 5)}
@@ -371,9 +383,13 @@
 
         <div class="ap-footer wide">
           <span class="ap-desc" style="margin:0">Preferences persisted locally</span>
+
           <button class="btn btn-secondary btn-sm" onclick="ThemeEngine.reset()">Reset to Defaults</button>
+
         </div>
+
       </div>`;
+
     }
   };
 

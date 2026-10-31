@@ -34,7 +34,6 @@ urlpatterns = [
     path('banking/generate-default-rules/', api.banking_generate_default_rules_view),
     path('banking/export-transactions/', api.banking_export_transactions_view),
 
-
     path('documents/<int:pk>/ocr/', api.document_ocr_view),
     path('documents/<int:pk>/convert/', api.document_convert_view),
     path('documents/<int:pk>/restore/', api.document_restore_view),

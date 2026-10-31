@@ -81,6 +81,7 @@ async function renderDashboard(root) {
 ${DASH.period === 'custom' ? `<input class="btn" type="date" id="d1" aria-label="From" value="${esc(s)}"><input class="btn" type="date" id="d2" aria-label="To" value="${esc(e)}">` : ''}
 <button class="btn" id="rf" type="button">Refresh</button><button class="btn" id="ex" type="button">Export</button><button class="btn" id="cu" type="button" aria-haspopup="true">Customize</button>
 <div class="pop right" id="cum" style="top:36px">${WID.map(w => `<label class="ck" style="padding:6px 10px"><input type="checkbox" data-w="${w[0]}" ${DASH.hidden.includes(w[0]) ? '' : 'checked'}> ${esc(w[1])}</label>`).join('')}<button class="mi" data-rl type="button">Reset layout</button></div></div></div>
+
 <div class="tabs"><a class="on" href="#/home/dashboard">Dashboard</a><a href="#/home/getting-started">Getting Started</a><a href="#/home/recent-updates">Recent Updates</a></div><div id="dbody">${spinner}</div>`;
   root.innerHTML = head;
   const wire = D => {

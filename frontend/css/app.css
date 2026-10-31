@@ -1,6 +1,5 @@
 @import './glass.css';
 
-
 :root {
   --navy: #0f172a;
   --blue: var(--accent);
@@ -50,7 +49,6 @@ a:hover {
 .rel { position: relative; }
 .sp  { flex: 1; }
 
-
 .g {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -99,7 +97,6 @@ h2 {
   align-items: center;
 }
 
-
 .up { color: var(--ok); font-weight: 600; }
 .dn { color: var(--bad); font-weight: 600; }
 .nu { color: var(--tx-muted); }
@@ -135,7 +132,6 @@ h2 {
   font-weight: 700;
   color: var(--tx);
 }
-
 
 .cv {
   position: relative;
@@ -440,7 +436,6 @@ body.modal-open {
   color: #fff;
 }
 
-
 .split-view-container {
   display: flex;
   height: calc(100vh - 48px);
@@ -553,7 +548,6 @@ body.modal-open {
   letter-spacing: 0.3px;
 }
 
-
 .detail-col {
   flex: 1;
   min-width: 0;
@@ -623,7 +617,6 @@ body.modal-open {
   box-sizing: border-box;
 }
 
-
 .doc-ribbon {
   position: absolute;
   top: 0;
@@ -654,7 +647,6 @@ body.modal-open {
 .doc-ribbon.overdue span { background: #ef4444; }
 .doc-ribbon.sent span, .doc-ribbon.open span { background: #3b82f6; }
 .doc-ribbon.draft span { background: #64748b; }
-
 
 .doc-sheet-header {
   display: flex;
@@ -718,7 +710,6 @@ body.modal-open {
   text-align: left;
 }
 
-
 .doc-meta-box-table {
   width: 100%;
   border-collapse: collapse;
@@ -739,7 +730,6 @@ body.modal-open {
   font-weight: 600;
   color: #0f172a;
 }
-
 
 .doc-party-sec {
   margin-bottom: 22px;
@@ -978,4 +968,3 @@ body.modal-open {
 }
 
 .hidden { display: none !important; }
-

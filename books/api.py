@@ -2,6 +2,7 @@
 import csv
 import datetime
 from datetime import timedelta
+import io
 import json
 from decimal import Decimal
 from functools import wraps
@@ -37,7 +38,6 @@ MODE_KEYS = [m[0] for m in MODES]
 MODE_LABEL = dict(MODES)
 REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other']
 
-
 def format_qty(val):
     if val is None:
         return None
@@ -47,10 +47,8 @@ def format_qty(val):
         s = s.rstrip('0').rstrip('.')
     return s
 
-
 def j(data, status=200):
     return JsonResponse(data, status=status, encoder=DjangoJSONEncoder, safe=False)
-
 
 def body(request):
     try:
@@ -61,12 +59,10 @@ def body(request):
         raise ApiError(400, 'Expected a JSON object.')
     return data
 
-
 CASHIER_ALLOWED_RESOURCES = {
     'customers', 'items', 'item_categories', 'invoices', 'payments_received',
     'sales_orders', 'delivery_challans', 'price_lists', 'attachments'
 }
-
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -80,7 +76,6 @@ def get_user_role(user):
             defaults={'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT}
         )
     return profile.role
-
 
 def check_permission(request, allowed_roles=None, resource_name=None, action_name=None):
     user = request.user
@@ -113,7 +108,6 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
 
     return True
 
-
 def role_required(*allowed_roles):
     def decorator(fn):
         @wraps(fn)
@@ -127,7 +121,6 @@ def role_required(*allowed_roles):
             return fn(request, *args, **kwargs)
         return wrapper
     return decorator
-
 
 def api_view(fn):
     @wraps(fn)
@@ -167,12 +160,10 @@ def api_view(fn):
             return j({'error': 'Internal server error.', 'message': str(e) if settings.DEBUG else 'An unexpected error occurred.', 'errors': {}}, 500)
     return wrapper
 
-
 def safe_cell(v):
     if isinstance(v, str) and v[:1] in ('=', '+', '-', '@', '\t', '\r'):
         return "'" + v
     return v
-
 
 def parse_range(request):
     today = timezone.localdate()
@@ -186,7 +177,6 @@ def parse_range(request):
     if (end.year - start.year) * 12 + end.month - start.month >= 24:
         raise ApiError(400, 'Choose a range of 24 months or less.')
     return start, end
-
 
 class Resource:
     name = ''
@@ -254,12 +244,23 @@ class Resource:
             w.writerow([safe_cell(r.get(k, '')) for _, k in self.csv_cols])
         return resp
 
+    def export_template(self):
+        resp = HttpResponse(content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="{self.name}_template.csv"'
+        w = csv.writer(resp)
+        w.writerow([h for h, _ in self.csv_cols])
+        return resp
+
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
         if request.method == 'GET':
             qs = self.queryset(request)
             if request.GET.get('export') == 'csv':
                 return self.export(qs)
+            if request.GET.get('export') == 'json':
+                return j(self.rows(list(qs)))
+            if request.GET.get('export') == 'template':
+                return self.export_template()
             try:
                 size = min(max(int(request.GET.get('page_size', 10)), 1), 100)
             except ValueError:
@@ -269,8 +270,55 @@ class Resource:
             return j({'count': pag.count, 'page': page.number, 'pages': pag.num_pages,
                       'page_size': size, 'results': self.rows(list(page.object_list))})
         if request.method == 'POST':
+            if request.FILES.get('file'):
+                try:
+                    content = request.FILES['file'].read().decode('utf-8-sig', errors='ignore')
+                    reader = csv.DictReader(io.StringIO(content))
+                    col_map = {h.lower(): k for h, k in self.csv_cols}
+                    records = []
+                    for row in reader:
+                        rec = {}
+                        for col_name, val in row.items():
+                            if not col_name:
+                                continue
+                            key = col_map.get(col_name.strip().lower(), col_name.strip())
+                            rec[key] = val.strip() if isinstance(val, str) else val
+                        records.append(rec)
+                    created_count = 0
+                    errors = []
+                    for idx, item_data in enumerate(records):
+                        try:
+                            with transaction.atomic():
+                                self.create(item_data, request.user)
+                            created_count += 1
+                        except Exception as e:
+                            errors.append(f'Row {idx + 1}: {str(e)}')
+                    return j({'status': 'ok', 'imported': created_count, 'total': len(records), 'errors': errors})
+                except Exception as e:
+                    raise ApiError(400, f'Failed to import CSV: {str(e)}')
+
+            data = body(request)
+            if isinstance(data, dict) and 'import_records' in data:
+                records = data['import_records']
+            elif isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
+                records = data
+            else:
+                records = None
+
+            if records is not None:
+                created_count = 0
+                errors = []
+                for idx, item_data in enumerate(records):
+                    try:
+                        with transaction.atomic():
+                            self.create(item_data, request.user)
+                        created_count += 1
+                    except Exception as e:
+                        errors.append(f'Row {idx + 1}: {str(e)}')
+                return j({'status': 'ok', 'imported': created_count, 'total': len(records), 'errors': errors})
+
             with transaction.atomic():
-                obj = self.create(body(request), request.user)
+                obj = self.create(data, request.user)
             return j(self.detail(self.get_object(obj.pk)), 201)
         raise ApiError(405, 'Method not allowed.')
 
@@ -298,7 +346,6 @@ class Resource:
             self.action(request, obj, name)
         return j(self.detail(self.get_object(pk)))
 
-
 def party_stats(kind, ids):
     """kind 'customer'|'vendor' -> {id: {billed, outstanding, overdue}} from posted documents."""
     today = timezone.localdate()
@@ -317,7 +364,6 @@ def party_stats(kind, ids):
         if bal > 0 and d.due_date and d.due_date < today:
             s['overdue'] += bal
     return out
-
 
 class PartyResource(Resource):
     kind = ''
@@ -458,7 +504,6 @@ class PartyResource(Resource):
             })
         return r
 
-
 class CustomerResource(PartyResource):
     name = 'customers'
     model = Customer
@@ -483,7 +528,6 @@ class CustomerResource(PartyResource):
             'portal_language': c.text('portal_language', max_len=40, default='English'),
         }
 
-
 class VendorResource(PartyResource):
     name = 'vendors'
     model = Vendor
@@ -507,7 +551,6 @@ class VendorResource(PartyResource):
             'bank_branch': c.text('bank_branch', max_len=100),
             'bank_upi_id': c.text('bank_upi_id', max_len=100),
         }
-
 
 class ItemResource(Resource):
     name = 'items'
@@ -648,7 +691,6 @@ class ItemResource(Resource):
             setattr(obj, k, v)
         obj.save()
 
-
 def parse_lines(raw):
     msg = 'Add at least one line item.'
     if not isinstance(raw, list) or not raw:
@@ -683,7 +725,6 @@ def parse_lines(raw):
         raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
     return out
 
-
 def display_status(doc, posted, today):
     if doc.status == 'draft':
         return 'Draft'
@@ -695,7 +736,6 @@ def display_status(doc, posted, today):
     if doc.due_date and doc.due_date < today:
         return 'Overdue'
     return 'Partially Paid' if paid > 0 else ('Sent' if posted == 'sent' else 'Open')
-
 
 class DocResource(Resource):
     Model = Line = Party = None
@@ -911,7 +951,6 @@ class DocResource(Resource):
         Attachment.objects.filter(entity_type='invoice' if is_inv else 'bill', entity_id=obj.pk).delete()
         obj.delete()
 
-
 class InvoiceResource(DocResource):
     name = 'invoices'
     Model, Line, Party = Invoice, InvoiceLine, Customer
@@ -946,7 +985,6 @@ class InvoiceResource(DocResource):
                 services.apply_retainer_to_invoices(ret, [{'invoice': obj, 'amount': amt, 'notes': it.get('notes', '')}], request.user, dt)
         else:
             raise ApiError(404, 'Unknown action.')
-
 
 class RetainerInvoiceResource(DocResource):
     name = 'retainer-invoices'
@@ -996,8 +1034,6 @@ class RetainerInvoiceResource(DocResource):
         else:
             raise ApiError(404, 'Unknown action.')
 
-
-
 class BillResource(DocResource):
     name = 'bills'
     Model, Line, Party = Bill, BillLine, Vendor
@@ -1019,7 +1055,6 @@ class BillResource(DocResource):
             services.void_bill(obj, request.user)
         else:
             raise ApiError(404, 'Unknown action.')
-
 
 class PaymentResource(Resource):
     Model = Doc = Alloc = Party = None
@@ -1121,7 +1156,6 @@ class PaymentResource(Resource):
             raise ApiError(404, 'Unknown action.')
         self.allocate(obj, body(request).get('allocations'))
 
-
 class PaymentReceivedResource(PaymentResource):
     name = 'payments-received'
     Model, Doc, Alloc, Party = PaymentReceived, Invoice, ReceivedAllocation, Customer
@@ -1130,7 +1164,6 @@ class PaymentReceivedResource(PaymentResource):
     csv_cols = [('Receipt#', 'number'), ('Customer', 'party'), ('Date', 'date'), ('Mode', 'mode_label'),
                 ('Reference', 'reference'), ('Amount', 'amount'), ('Applied', 'applied'), ('Unapplied', 'unapplied')]
 
-
 class PaymentMadeResource(PaymentResource):
     name = 'payments-made'
     Model, Doc, Alloc, Party = PaymentMade, Bill, BillAllocation, Vendor
@@ -1138,7 +1171,6 @@ class PaymentMadeResource(PaymentResource):
     search_fields = ('number', 'vendor__name', 'reference')
     csv_cols = [('Payment#', 'number'), ('Vendor', 'party'), ('Date', 'date'), ('Mode', 'mode_label'),
                 ('Reference', 'reference'), ('Amount', 'amount'), ('Applied', 'applied'), ('Unapplied', 'unapplied')]
-
 
 class StockMovementResource(Resource):
     name = 'stock-movements'
@@ -1185,7 +1217,6 @@ class StockMovementResource(Resource):
             'balance_after': o.balance_after, 'reason': o.reason, 'notes': o.notes
         }
 
-
 class StockAdjustmentResource(StockMovementResource):
     name = 'stock-adjustments'
 
@@ -1229,7 +1260,6 @@ class StockAdjustmentResource(StockMovementResource):
         services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes,
                             warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
         return StockMovement.objects.filter(reference=ref).first()
-
 
 @api_view
 def stock_move_action_view(request):
@@ -1277,8 +1307,6 @@ def stock_move_action_view(request):
                                  adjusted_at=adjusted_at, user=request.user,
                                  reason=reason, notes=notes)
     return j(StockMovementResource().row(mv))
-
-
 
 class AccountResource(Resource):
     name = 'accounts'
@@ -1348,7 +1376,6 @@ class AccountResource(Resource):
             raise ApiError(409, 'Account has posted journal transactions. Mark it inactive instead.')
         obj.delete()
 
-
 class JournalResource(Resource):
     name = 'manual-journals'
     model = Journal
@@ -1397,7 +1424,6 @@ class JournalResource(Resource):
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
         return jrn
 
-
 class AuditLogResource(Resource):
     name = 'audit-logs'
     model = AuditLog
@@ -1410,8 +1436,6 @@ class AuditLogResource(Resource):
             'action': o.action, 'entity_type': o.entity_type, 'entity_id': o.entity_id,
             'summary': o.summary, 'details': o.details, 'ip_address': o.ip_address
         }
-
-
 
 class CustomFieldResource(Resource):
     name = 'custom-fields'
@@ -1452,7 +1476,6 @@ class CustomFieldResource(Resource):
         c.done()
         obj.save()
 
-
 class WorkflowRuleResource(Resource):
     name = 'workflow-rules'
     model = WorkflowRule
@@ -1480,7 +1503,6 @@ class WorkflowRuleResource(Resource):
         c.done()
         return WorkflowRule.objects.create(name=nm, event=ev, condition_field=fld, condition_op=op, condition_val=val, action_type=act_type, action_payload=payload)
 
-
 class WebhookConfigResource(Resource):
     name = 'webhooks'
     model = WebhookConfig
@@ -1498,9 +1520,6 @@ class WebhookConfigResource(Resource):
         evs = c.text('events', default='*', max_len=255)
         c.done()
         return WebhookConfig.objects.create(name=nm, url=url, secret=secret, events=evs)
-
-
-
 
 class BankAccountResource(Resource):
     name = 'bank-accounts'
@@ -1578,7 +1597,6 @@ class BankAccountResource(Resource):
         obj.save()
         services.log_audit(user, 'update', 'BankAccount', obj.pk, f"Updated bank account {obj.name}")
 
-
 class BankTransactionResource(Resource):
     name = 'bank-transactions'
     model = BankTransaction
@@ -1631,7 +1649,6 @@ class BankTransactionResource(Resource):
             'reconciled_at': o.reconciled_at
         }
 
-
 class BankDepositResource(Resource):
     name = 'bank-deposits'
     model = BankDeposit
@@ -1665,7 +1682,6 @@ class BankDepositResource(Resource):
         res = services.record_bank_deposit(data, user)
         return BankDeposit.objects.get(pk=res['id'])
 
-
 class BankTransferResource(Resource):
     name = 'bank-transfers'
     model = BankTransfer
@@ -1690,7 +1706,6 @@ class BankTransferResource(Resource):
     def create(self, data, user):
         res = services.record_bank_transfer(data, user)
         return BankTransfer.objects.get(pk=res['id'])
-
 
 class BankReconciliationResource(Resource):
     name = 'bank-reconciliations'
@@ -1722,7 +1737,6 @@ class BankReconciliationResource(Resource):
             'created_at': o.created_at
         }
 
-
 class BankStatementBatchResource(Resource):
     name = 'statement-batches'
     model = BankStatementBatch
@@ -1750,8 +1764,6 @@ class BankStatementBatchResource(Resource):
             'reconciled_count': o.reconciled_count
         }
 
-
-
 class DocumentFolderResource(Resource):
     name = 'folders'
     model = DocumentFolder
@@ -1777,7 +1789,6 @@ class DocumentFolderResource(Resource):
         obj.color = c.text('color', default=obj.color, max_len=30)
         c.done()
         obj.save()
-
 
 class ManagedDocumentResource(Resource):
     name = 'documents'
@@ -1840,7 +1851,6 @@ class ManagedDocumentResource(Resource):
             obj.deleted_at = timezone.now()
             obj.save(update_fields=['is_deleted', 'deleted_at'])
 
-
 class SalesOrderResource(Resource):
     name = 'sales-orders'
     model = SalesOrder
@@ -1898,7 +1908,6 @@ class SalesOrderResource(Resource):
         services.log_audit(user, 'create', 'SalesOrder', so.number, f"Created sales order {so.number} for {cust.name} (₹{so.total})")
         return so
 
-
 class PurchaseOrderResource(Resource):
     name = 'purchase-orders'
     model = PurchaseOrder
@@ -1954,7 +1963,6 @@ class PurchaseOrderResource(Resource):
         services.log_audit(user, 'create', 'PurchaseOrder', po.number, f"Created purchase order {po.number} for {ven.name} (₹{po.total})")
         return po
 
-
 class ExpenseResource(Resource):
     name = 'expenses'
     model = Expense
@@ -2001,7 +2009,6 @@ class ExpenseResource(Resource):
         services.log_audit(user, 'create', 'Expense', exp.number, f"Recorded expense {exp.number} for ₹{exp.total}")
         return exp
 
-
 class CreditNoteResource(Resource):
     name = 'credit-notes'
     model = CreditNote
@@ -2045,7 +2052,6 @@ class CreditNoteResource(Resource):
                                          taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'CreditNote', cn.number, f"Created credit note {cn.number} for {cust.name} (₹{cn.total})")
         return cn
-
 
 class VendorCreditResource(Resource):
     name = 'vendor-credits'
@@ -2091,7 +2097,6 @@ class VendorCreditResource(Resource):
         services.log_audit(user, 'create', 'VendorCredit', vc.number, f"Created vendor credit {vc.number} for {ven.name} (₹{vc.total})")
         return vc
 
-
 class RecurringInvoiceResource(Resource):
     name = 'recurring-invoices'
     model = RecurringInvoice
@@ -2124,7 +2129,6 @@ class RecurringInvoiceResource(Resource):
             start_date=sdate, end_date=edate, next_date=next_d,
             total=tot, subtotal=tot
         )
-
 
 class DeliveryChallanResource(Resource):
     name = 'delivery-challans'
@@ -2176,7 +2180,6 @@ class DeliveryChallanResource(Resource):
         services.log_audit(user, 'create', 'DeliveryChallan', dc.number, f"Created delivery challan {dc.number}")
         return dc
 
-
 class EWayBillResource(Resource):
     name = 'e-way-bills'
     model = EWayBill
@@ -2207,8 +2210,6 @@ class EWayBillResource(Resource):
         doc_id = inv.pk if inv else 1
         return services.generate_eway_bill(dtype, doc_id, '', trans_name, veh, dist, user)
 
-
-
 class ProjectResource(Resource):
     name = 'projects'
     model = Project
@@ -2238,7 +2239,6 @@ class ProjectResource(Resource):
         c.done()
         return Project.objects.create(name=name, code=code, customer=cust, billing_method=bmethod, rate_per_hour=rate, budget_hours=budget, description=desc)
 
-
 class TimeLogResource(Resource):
     name = 'timesheets'
     model = TimeLog
@@ -2267,7 +2267,6 @@ class TimeLogResource(Resource):
         c.done()
         return TimeLog.objects.create(project=proj, user=user, date=dt, hours=hrs, task=task, billable=bill, notes=notes)
 
-
 class ItemCategoryResource(Resource):
     name = 'item-categories'
     model = ItemCategory
@@ -2285,7 +2284,6 @@ class ItemCategoryResource(Resource):
         c.done()
         return ItemCategory.objects.create(name=name, description=desc)
 
-
 class PriceListResource(Resource):
     name = 'price-lists'
     model = PriceList
@@ -2302,7 +2300,6 @@ class PriceListResource(Resource):
         pct = c.number('percentage', default=Decimal('0.00'))
         c.done()
         return PriceList.objects.create(name=name, description=desc, percentage=pct)
-
 
 class WarehouseResource(Resource):
     name = 'warehouses'
@@ -2369,7 +2366,6 @@ class WarehouseResource(Resource):
         obj.save()
         return obj
 
-
 class PaymentTransactionResource(Resource):
     name = 'payment-transactions'
     model = PaymentTransaction
@@ -2383,7 +2379,6 @@ class PaymentTransactionResource(Resource):
             'amount': o.amount, 'fee': o.fee, 'status': o.status,
             'customer_email': o.customer_email, 'created_at': o.created_at
         }
-
 
 class FinancialAnomalyResource(Resource):
     name = 'anomalies'
@@ -2403,7 +2398,6 @@ class FinancialAnomalyResource(Resource):
             'status': o.status, 'detected_at': o.detected_at
         }
 
-
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
@@ -2416,14 +2410,12 @@ RESOURCES = {r.name: r for r in (
     WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource()
 )}
 
-
 @api_view
 def collection(request, name):
     res = RESOURCES.get(name)
     if res is None:
         raise ApiError(404, 'Unknown resource.')
     return res.handle_collection(request)
-
 
 @api_view
 def item(request, name, pk):
@@ -2432,15 +2424,12 @@ def item(request, name, pk):
         raise ApiError(404, 'Unknown resource.')
     return res.handle_item(request, pk)
 
-
 @api_view
 def action(request, name, pk, act):
     res = RESOURCES.get(name)
     if res is None:
         raise ApiError(404, 'Unknown resource.')
     return res.handle_action(request, pk, act)
-
-
 
 def org_json(o):
     return {
@@ -2463,7 +2452,6 @@ def org_json(o):
         'terms_default': o.terms_default or 'Due on Receipt',
         'opening_cash': o.opening_cash,
     }
-
 
 @api_view
 def me(request):
@@ -2504,7 +2492,6 @@ def me(request):
         }
     })
 
-
 @api_view
 def organization(request):
     org = Organization.get()
@@ -2541,7 +2528,6 @@ def organization(request):
         setattr(org, k, v)
     org.save()
     return j(org_json(org))
-
 
 @api_view
 def attachments_view(request, pk=None):
@@ -2611,7 +2597,6 @@ def attachments_view(request, pk=None):
         return HttpResponse(status=204)
     raise ApiError(405, 'Method not allowed.')
 
-
 @api_view
 def lookup(request, name):
     if name == 'customers':
@@ -2656,12 +2641,10 @@ def lookup(request, name):
         raise ApiError(404, 'Unknown lookup.')
     return j(data)
 
-
 @api_view
 def dashboard_view(request):
     start, end = parse_range(request)
     return j(services.dashboard(start, end))
-
 
 @api_view
 def activity_view(request):
@@ -2670,7 +2653,6 @@ def activity_view(request):
     except ValueError:
         limit = 30
     return j(services.recent_activity(limit))
-
 
 @api_view
 def search_view(request):
@@ -2692,9 +2674,6 @@ def search_view(request):
         out.append({'type': 'document', 'id': o.pk, 'label': o.title, 'sub': f'Document · {o.category}'})
     return j(out)
 
-
-
-
 def health_view(request):
     import time
     t0 = time.time()
@@ -2713,9 +2692,6 @@ def health_view(request):
             'infrastructure': 'Optimized container cluster with active keep-alive and zero cold-start delay'
         }
     })
-
-
-
 
 @api_view
 def reports_view(request, name):
@@ -2807,8 +2783,6 @@ def reports_view(request, name):
     else:
         raise ApiError(404, f"Report '{name}' not found.")
 
-
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_import_view(request):
@@ -2854,12 +2828,10 @@ def banking_import_view(request):
     services.log_audit(request.user, 'import', 'BankAccount', ba.pk, f"Imported {len(created)} bank transactions for {ba.name}")
     return j({'count': len(created), 'current_balance': bal})
 
-
 @api_view
 def banking_match_suggestions_view(request, txn_id):
     matches = services.get_advanced_bank_match_suggestions(txn_id)
     return j(matches)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -2874,7 +2846,6 @@ def banking_match_action_view(request, txn_id):
     res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_unmatch_action_view(request, txn_id):
@@ -2882,7 +2853,6 @@ def banking_unmatch_action_view(request, txn_id):
         raise ApiError(405, 'Method not allowed.')
     res = services.unmatch_bank_transaction_action(txn_id, user=request.user)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -2892,7 +2862,6 @@ def banking_quick_categorize_view(request, txn_id):
     d = body(request)
     res = services.quick_categorize_bank_transaction(txn_id, d, user=request.user)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -2904,7 +2873,6 @@ def banking_bulk_categorize_view(request):
     res = services.bulk_categorize_bank_transactions(txn_ids, d, user=request.user)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_exclude_view(request, txn_id):
@@ -2912,7 +2880,6 @@ def banking_exclude_view(request, txn_id):
         raise ApiError(405, 'Method not allowed.')
     res = services.toggle_exclude_bank_transaction(txn_id, user=request.user)
     return j(res)
-
 
 @api_view
 def banking_dashboard_summary_view(request):
@@ -2923,7 +2890,6 @@ def banking_dashboard_summary_view(request):
         ba_id = None
     res = services.get_bank_dashboard_summary(ba_id)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -2938,7 +2904,6 @@ def banking_reconcile_view(request, txn_id):
     res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_reconcile_complete_view(request):
@@ -2947,7 +2912,6 @@ def banking_reconcile_complete_view(request):
     d = body(request)
     res = services.complete_bank_reconciliation(d, user=request.user)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -2958,7 +2922,6 @@ def banking_transfer_view(request):
     res = services.record_bank_transfer(d, user=request.user)
     return j(res)
 
-
 @api_view
 def document_ocr_view(request, pk):
     doc = ManagedDocument.objects.filter(pk=pk).first()
@@ -2966,7 +2929,6 @@ def document_ocr_view(request, pk):
         raise ApiError(404, 'Document not found.')
     data = services.process_document_ocr(doc)
     return j(data)
-
 
 @api_view
 def document_convert_view(request, pk):
@@ -2976,7 +2938,6 @@ def document_convert_view(request, pk):
     target = d.get('target', 'bill')
     result = services.convert_scanned_document(pk, target, request.user)
     return j(result)
-
 
 @api_view
 def document_restore_view(request, pk):
@@ -2991,7 +2952,6 @@ def document_restore_view(request, pk):
     services.log_audit(request.user, 'restore', 'ManagedDocument', doc.pk, f"Restored document {doc.title} from trash")
     return j({'status': 'restored', 'id': doc.pk})
 
-
 @api_view
 def document_purge_view(request, pk):
     if request.method != 'POST' and request.method != 'DELETE':
@@ -3003,9 +2963,6 @@ def document_purge_view(request, pk):
     doc.delete()
     return HttpResponse(status=204)
 
-
-
-
 @api_view
 def einvoice_generate_view(request, inv_id):
     if request.method != 'POST':
@@ -3016,7 +2973,6 @@ def einvoice_generate_view(request, inv_id):
         'ack_date': rec.ack_date, 'signed_qr_code': rec.signed_qr_code,
         'status': rec.status
     })
-
 
 @api_view
 def ewaybill_generate_view(request, doc_type, doc_id):
@@ -3035,7 +2991,6 @@ def ewaybill_generate_view(request, doc_type, doc_id):
         'distance_km': ewb.distance_km, 'valid_until': ewb.valid_until,
         'status': ewb.status
     })
-
 
 @api_view
 def transaction_locking_view(request):
@@ -3073,8 +3028,6 @@ def transaction_locking_view(request):
         return j({'is_locked': True, 'lock_date': lock.lock_date, 'reason': lock.reason})
     raise ApiError(405, 'Method not allowed.')
 
-
-
 @api_view
 def convobot_doubt_clearance_view(request):
     if request.method != 'POST':
@@ -3086,7 +3039,6 @@ def convobot_doubt_clearance_view(request):
     res = services.process_convobot_query(q, category=category, history=history, user=request.user)
     return j(res)
 
-
 @api_view
 def convobot_query_view(request):
     if request.method != 'POST':
@@ -3096,10 +3048,8 @@ def convobot_query_view(request):
     res = services.process_convobot_query(q, user=request.user)
     return j(res)
 
-
 ai_doubt_clearance_view = convobot_doubt_clearance_view
 ai_query_view = convobot_query_view
-
 
 @api_view
 def ai_anomalies_view(request):
@@ -3111,7 +3061,6 @@ def ai_anomalies_view(request):
         for a in anoms
     ])
 
-
 @api_view
 def ai_anomalies_resolve_view(request, pk):
     if request.method != 'POST':
@@ -3122,9 +3071,6 @@ def ai_anomalies_resolve_view(request, pk):
     anom.status = 'resolved'
     anom.save(update_fields=['status'])
     return j({'status': 'resolved', 'id': anom.pk})
-
-
-
 
 @api_view
 def security_compliance_summary_view(request):
@@ -3197,7 +3143,6 @@ def security_compliance_summary_view(request):
     }
     return j(data)
 
-
 @api_view
 def security_mfa_toggle_view(request):
     if request.method != 'POST':
@@ -3217,7 +3162,6 @@ def security_mfa_toggle_view(request):
         ip_address=request.META.get('REMOTE_ADDR', '127.0.0.1')
     )
     return j({'mfa_enabled': new_state, 'message': f"MFA {'enabled' if new_state else 'disabled'} successfully."})
-
 
 @api_view
 def security_gdpr_export_view(request):
@@ -3266,8 +3210,6 @@ def security_gdpr_export_view(request):
     )
 
     return j(export_payload)
-
-
 
 @api_view
 def mcp_view(request):
@@ -3381,7 +3323,6 @@ def mcp_view(request):
     else:
         return j({'jsonrpc': '2.0', 'id': msg_id, 'error': {'code': -32601, 'message': f"Unknown MCP method: {method}"}})
 
-
 @api_view
 def banking_feed_sync_view(request, bank_account_id):
     if request.method != 'POST':
@@ -3390,7 +3331,6 @@ def banking_feed_sync_view(request, bank_account_id):
     provider = d.get('provider', 'setu_aa')
     res = services.sync_live_bank_feed(bank_account_id, provider=provider, user=request.user)
     return j(res)
-
 
 @api_view
 def banking_rules_view(request):
@@ -3433,7 +3373,6 @@ def banking_rules_view(request):
         return j({'id': rule.pk, 'name': rule.name, 'status': 'created'}, 201)
     raise ApiError(405, 'Method not allowed.')
 
-
 @api_view
 def banking_rules_detail_view(request, pk):
     rule = BankRule.objects.filter(pk=pk).first()
@@ -3453,7 +3392,6 @@ def banking_rules_detail_view(request, pk):
         return j({'status': 'updated', 'id': rule.pk})
     raise ApiError(405, 'Method not allowed.')
 
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_rollback_view(request, batch_id):
@@ -3461,7 +3399,6 @@ def banking_rollback_view(request, batch_id):
         raise ApiError(405, 'Method not allowed.')
     res = services.rollback_statement_batch(batch_id, user=request.user)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
@@ -3478,7 +3415,6 @@ def banking_run_automation_view(request):
     res = services.run_banking_automation(bank_account_id=ba_id, user=request.user)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_generate_default_rules_view(request):
@@ -3490,7 +3426,6 @@ def banking_generate_default_rules_view(request):
         'count': len(rules),
         'message': f'{len(rules)} recommended bank rules deployed successfully.'
     })
-
 
 @api_view
 def banking_export_transactions_view(request):
@@ -3505,9 +3440,6 @@ def banking_export_transactions_view(request):
     resp['Content-Disposition'] = 'attachment; filename="bank_feed_transactions.csv"'
     return resp
 
-
-
-
 @api_view
 def gst_returns_gstr1_view(request):
     period = request.GET.get('period', '042026')
@@ -3515,14 +3447,12 @@ def gst_returns_gstr1_view(request):
     res = services.generate_official_gstr1(tax_period=period, financial_year=fy)
     return j(res)
 
-
 @api_view
 def gst_returns_gstr3b_view(request):
     period = request.GET.get('period', '042026')
     fy = request.GET.get('fy', '2026-27')
     res = services.generate_official_gstr3b(tax_period=period, financial_year=fy)
     return j(res)
-
 
 @api_view
 def gst_returns_file_view(request, pk):
@@ -3532,7 +3462,6 @@ def gst_returns_file_view(request, pk):
     method = d.get('e_sign_type', 'PAN_OTP')
     res = services.file_gstr_return(pk, e_sign_method=method, user=request.user)
     return j(res)
-
 
 @api_view
 def gst_returns_history_view(request):
@@ -3548,7 +3477,6 @@ def gst_returns_history_view(request):
         for r in returns
     ])
 
-
 @api_view
 def einvoice_authenticated_view(request, inv_id):
     if request.method != 'POST':
@@ -3556,13 +3484,10 @@ def einvoice_authenticated_view(request, inv_id):
     res = services.generate_authenticated_irn(inv_id)
     return j(res)
 
-
-
 @api_view
 def security_verify_audit_chain_view(request):
     res = services.verify_audit_trail_chain()
     return j(res)
-
 
 @api_view
 def security_mfa_setup_view(request):
@@ -3570,7 +3495,6 @@ def security_mfa_setup_view(request):
         raise ApiError(405, 'Method not allowed.')
     res = services.generate_mfa_setup(request.user)
     return j(res)
-
 
 @api_view
 def security_mfa_verify_view(request):
@@ -3581,7 +3505,6 @@ def security_mfa_verify_view(request):
     res = services.verify_mfa_code(request.user, token)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def security_backup_create_view(request):
@@ -3591,7 +3514,6 @@ def security_backup_create_view(request):
     btype = d.get('type', 'manual_snapshot')
     res = services.create_security_snapshot(user=request.user, backup_type=btype)
     return j(res)
-
 
 @api_view
 def security_backup_list_view(request):
@@ -3608,7 +3530,6 @@ def security_backup_list_view(request):
         for b in backups
     ])
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def security_disaster_recovery_drill_view(request):
@@ -3619,8 +3540,6 @@ def security_disaster_recovery_drill_view(request):
     res = services.run_disaster_recovery_simulation(snapshot_id=snap_id)
     return j(res)
 
-
-
 @api_view
 def jobs_create_view(request):
     if request.method != 'POST':
@@ -3630,31 +3549,25 @@ def jobs_create_view(request):
     res = services.start_background_job(task_type, details=d, user=request.user)
     return j(res)
 
-
 @api_view
 def jobs_status_view(request, task_id):
     res = services.get_background_job_status(task_id)
     return j(res)
-
-
 
 def portal_customer_view(request, token_or_id):
     """Accessible either by authenticated operator or via self-service portal token."""
     res = services.get_customer_portal_data(token_or_id)
     return j(res)
 
-
 def portal_vendor_view(request, token_or_id):
     """Accessible either by authenticated operator or via self-service portal token."""
     res = services.get_vendor_portal_data(token_or_id)
     return j(res)
 
-
 @api_view
 def interop_zoho_export_view(request, entity):
     res = services.export_zoho_compatible_data(entity=entity)
     return j(res)
-
 
 @api_view
 def interop_zoho_import_view(request, entity):
@@ -3665,12 +3578,10 @@ def interop_zoho_import_view(request, entity):
     res = services.import_zoho_compatible_data(entity, records, user=request.user)
     return j(res)
 
-
 @api_view
 def notifications_list_view(request):
     res = services.list_notifications(user=request.user)
     return j(res)
-
 
 @api_view
 def notification_mark_read_view(request, pk):
@@ -3679,7 +3590,6 @@ def notification_mark_read_view(request, pk):
     res = services.mark_notification_read(pk, user=request.user)
     return j(res)
 
-
 @api_view
 def notifications_mark_all_read_view(request):
     if request.method != 'POST':
@@ -3687,12 +3597,10 @@ def notifications_mark_all_read_view(request):
     res = services.mark_all_notifications_read(user=request.user)
     return j(res)
 
-
 @api_view
 def subscription_summary_view(request):
     res = services.get_tenant_subscription_summary()
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN)
@@ -3705,13 +3613,11 @@ def subscription_update_view(request):
     res = services.update_tenant_subscription(tier, billing_cycle=cycle)
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def tenant_admin_summary_view(request):
     res = services.get_tenant_admin_summary()
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN)
@@ -3727,7 +3633,6 @@ def tenant_admin_invite_user_view(request):
     )
     return j(res)
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def tenant_admin_update_role_view(request, pk):
@@ -3736,7 +3641,6 @@ def tenant_admin_update_role_view(request, pk):
     d = body(request)
     res = services.update_tenant_user_role(pk, d.get('role', 'accountant'))
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN)
@@ -3748,7 +3652,6 @@ def developer_keys_list_create_view(request):
     res = services.list_developer_api_keys()
     return j({'keys': res})
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def developer_key_revoke_view(request, pk):
@@ -3756,7 +3659,6 @@ def developer_key_revoke_view(request, pk):
         raise ApiError(405, 'Method not allowed.')
     res = services.revoke_developer_api_key(pk)
     return j(res)
-
 
 @api_view
 @role_required(UserProfile.ADMIN)
@@ -3768,7 +3670,6 @@ def developer_webhooks_list_create_view(request):
     res = services.list_webhook_subscriptions()
     return j({'webhooks': res})
 
-
 @api_view
 @role_required(UserProfile.ADMIN)
 def developer_webhook_test_view(request, pk):
@@ -3777,16 +3678,13 @@ def developer_webhook_test_view(request, pk):
     res = services.test_webhook_delivery(pk)
     return j(res)
 
-
 @api_view
 def assistant_accounting_context_view(request):
     res = services.get_live_accounting_context()
     return j(res)
 
-
 @api_view
 def gstin_lookup_view(request, gstin):
     res = services.lookup_gstin_details(gstin)
     return j(res)
-
 

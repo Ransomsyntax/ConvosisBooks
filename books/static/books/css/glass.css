@@ -554,7 +554,6 @@ html, body {
   user-select: none;
 }
 
-/* Display + on hover of any sub-item, or when active (as in screenshot) */
 .ch a:hover .nav-add-btn,
 .ch a.on .nav-add-btn,
 .nav-sub-item:hover .nav-add-btn,
@@ -582,7 +581,6 @@ html, body {
   color: var(--accent);
   transform: scale(1.15);
 }
-
 
 .nav-pastel-icon {
   width: 28px;
@@ -2145,7 +2143,6 @@ select option {
   gap: 4px;
 }
 
-/* Small Prefill Banner (Zoho Books Style) */
 .gst-prefill-compact,
 .gst-prefill-banner {
   display: flex;
@@ -2293,7 +2290,6 @@ select option {
   justify-content: center;
 }
 
-/* Zoho Books Style Vertical Alignment System */
 .zb-form-wrap {
   display: flex;
   flex-direction: column;
@@ -2473,7 +2469,6 @@ select option {
   font-weight: 600;
 }
 
-/* Horizontal Tabs (Zoho Books Style) */
 .party-tabs-header {
   display: flex;
   align-items: center;
@@ -2564,8 +2559,6 @@ select option {
   background: var(--surface-glass);
 }
 
-
-/* On-Screen Form Interface (Zoho Books Style) */
 .on-screen-form-view {
   width: 100%;
   min-height: calc(100vh - 48px);
@@ -2678,7 +2671,6 @@ select option {
   border-radius: 6px;
 }
 
-/* Horizontal Party Tabs matching Zoho Books interface */
 .party-details-split {
   display: flex;
   flex-direction: column;
@@ -2769,9 +2761,6 @@ select option {
   }
 }
 
-/* ==========================================================================
-   BANKING MODULE STYLES (MATCHING REFERENCE ACCOUNTING DESIGN)
-   ========================================================================== */
 .banking-page-container {
   width: 100%;
   max-width: 1400px;
@@ -2955,7 +2944,6 @@ select option {
   color: #ffffff;
 }
 
-/* 4 Summary Cards */
 .banking-summary-cards-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -3081,7 +3069,6 @@ select option {
   text-decoration: underline;
 }
 
-/* Tabs Bar */
 .banking-tabs-row {
   display: flex;
   align-items: stretch;
@@ -3140,7 +3127,6 @@ select option {
   font-weight: 700;
 }
 
-/* Transactions Table */
 .banking-table-container {
   background: var(--surface-glass-solid, #ffffff);
   border: 1px solid var(--bd-glass, #e2e8f0);
@@ -3199,7 +3185,6 @@ select option {
   margin-top: 2px;
 }
 
-/* Status colors matching reference screenshot */
 .status-matched {
   color: #ea580c;
   font-weight: 600;
@@ -3230,7 +3215,6 @@ select option {
   font-size: 12px;
 }
 
-/* Bottom pagination bar */
 .banking-pagination-bar {
   display: flex;
   align-items: center;
@@ -3312,7 +3296,6 @@ select option {
   color: var(--tx);
 }
 
-/* Transaction Details Drawer */
 .banking-detail-panel {
   background: rgba(248, 250, 252, 0.95);
   border-bottom: 2px solid var(--bd-glass);
@@ -3323,7 +3306,6 @@ select option {
   background: rgba(15, 23, 42, 0.95);
 }
 
-/* Match Modal Candidate Card */
 .match-candidate-card {
   border: 1px solid var(--bd-glass);
   border-radius: 8px;
@@ -3346,7 +3328,6 @@ select option {
   background: rgba(2, 132, 199, 0.05);
 }
 
-/* Banking Automation & Smart Match UI */
 .banking-btn-auto {
   background: linear-gradient(135deg, #2563eb, #7c3aed);
   color: #ffffff;
@@ -3484,9 +3465,6 @@ select option {
   color: #34d399;
 }
 
-/* ==========================================================================
-   CONVOSIS BOOKS - UNIFIED BANKING MODULE STYLES
-   ========================================================================== */
 .glass-card {
   background: var(--surface-glass, rgba(255, 255, 255, 0.75));
   backdrop-filter: blur(14px);
@@ -3593,6 +3571,3 @@ select option {
   justify-content: center;
   padding: 16px;
 }
-
-
-

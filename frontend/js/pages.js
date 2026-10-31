@@ -2,10 +2,217 @@
 
 const PAGE = { reload: null };
 
+function parseCsvString(text) {
+  const lines = [];
+  let row = [''];
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === '"') {
+      if (inQuotes && next === '"') {
+        row[row.length - 1] += '"';
+        i += 2;
+        continue;
+      }
+      inQuotes = !inQuotes;
+    } else if (c === ',' && !inQuotes) {
+      row.push('');
+    } else if ((c === '\r' || c === '\n') && !inQuotes) {
+      if (c === '\r' && next === '\n') i++;
+      lines.push(row);
+      row = [''];
+    } else {
+      row[row.length - 1] += c;
+    }
+    i++;
+  }
+  if (row.length > 1 || row[0] !== '') lines.push(row);
+  if (!lines.length) return [];
+  const headers = lines[0].map(h => h.trim());
+  const records = [];
+  for (let r = 1; r < lines.length; r++) {
+    const vals = lines[r];
+    if (!vals || vals.every(v => !v.trim())) continue;
+    const obj = {};
+    for (let c = 0; c < headers.length; c++) {
+      if (headers[c]) obj[headers[c]] = vals[c] != null ? vals[c].trim() : '';
+    }
+    records.push(obj);
+  }
+  return records;
+}
+
+function openUniversalImportModal(resourceName, title) {
+  let parsedRecords = [];
+
+  const modal = Modal.open({
+    title: `Import ${title}`,
+    wide: true,
+    body: `
+      <div style="padding:4px 0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:12px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--tx);">Standard CSV Template</div>
+            <div class="sub" style="font-size:11.5px;">Download a pre-formatted template with exact header columns for ${esc(title)}.</div>
+          </div>
+          <a href="/api/${resourceName}/?export=template" class="btn" download="${resourceName}_template.csv" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;text-decoration:none;">
+            <i class="fa-solid fa-download"></i> Download Template
+          </a>
+        </div>
+
+        <div id="importDropZone" style="border:2px dashed var(--bd);border-radius:10px;padding:28px 16px;text-align:center;cursor:pointer;background:var(--surface-glass-subtle);transition:border-color 0.2s, background 0.2s;">
+          <input type="file" id="importFileInput" accept=".csv,.json,text/csv,application/json" style="display:none;" />
+          <i class="fa-solid fa-cloud-arrow-up" style="font-size:32px;color:var(--accent);margin-bottom:8px;"></i>
+          <div style="font-weight:600;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag & Drop CSV or JSON file here</div>
+          <div class="sub" style="font-size:12px;margin-bottom:12px;">or click to browse your computer</div>
+          <button type="button" class="btn p" style="font-size:12px;pointer-events:none;">Browse File</button>
+        </div>
+
+        <div id="importFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--surface-glass);border-radius:8px;border:1px solid var(--bd);align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <i class="fa-solid fa-file-lines" style="color:var(--accent);"></i>
+            <span id="importFileName" style="font-weight:600;font-size:12.5px;"></span>
+            <span id="importRecordCount" class="pastel-chip chip-mint" style="font-size:11px;"></span>
+          </div>
+          <button type="button" class="btn" id="importClearBtn" style="padding:2px 8px;font-size:11px;">Change File</button>
+        </div>
+
+        <div id="importPreviewWrap" style="display:none;margin-top:14px;">
+          <div style="font-weight:600;font-size:12px;color:var(--tx-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Data Preview (First 5 Rows)</div>
+          <div class="tw" style="max-height:180px;overflow:auto;border:1px solid var(--bd);border-radius:6px;">
+            <table id="importPreviewTable" style="font-size:11.5px;"></table>
+          </div>
+        </div>
+
+        <div id="importErrorAlert" style="display:none;margin-top:12px;" class="er" role="alert"></div>
+      </div>
+    `,
+    footer: `
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn p" id="importSubmitBtn" type="button" disabled style="display:inline-flex;align-items:center;gap:6px;">
+        <i class="fa-solid fa-check"></i> Import Records
+      </button>
+    `
+  });
+
+  const dropZone = $('#importDropZone', modal.el);
+  const fileInput = $('#importFileInput', modal.el);
+  const fileInfo = $('#importFileInfo', modal.el);
+  const fileName = $('#importFileName', modal.el);
+  const recordCount = $('#importRecordCount', modal.el);
+  const previewWrap = $('#importPreviewWrap', modal.el);
+  const previewTable = $('#importPreviewTable', modal.el);
+  const submitBtn = $('#importSubmitBtn', modal.el);
+  const errAlert = $('#importErrorAlert', modal.el);
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--bd)'; });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--bd)';
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+  $('#importClearBtn', modal.el).addEventListener('click', () => {
+    fileInput.value = '';
+    parsedRecords = [];
+    dropZone.style.display = 'block';
+    fileInfo.style.display = 'none';
+    previewWrap.style.display = 'none';
+    submitBtn.disabled = true;
+    errAlert.style.display = 'none';
+  });
+
+  function handleFile(file) {
+    errAlert.style.display = 'none';
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        if (file.name.endsWith('.json')) {
+          const json = JSON.parse(text);
+          parsedRecords = Array.isArray(json) ? json : (json.records || json.data || json.results || [json]);
+        } else {
+          parsedRecords = parseCsvString(text);
+        }
+
+        if (!parsedRecords.length) {
+          throw new Error('No valid records found in the uploaded file.');
+        }
+
+        dropZone.style.display = 'none';
+        fileInfo.style.display = 'flex';
+        fileName.textContent = file.name;
+        recordCount.textContent = `${parsedRecords.length} record${parsedRecords.length === 1 ? '' : 's'}`;
+
+        const previewRows = parsedRecords.slice(0, 5);
+        const headers = Object.keys(previewRows[0] || {});
+        previewTable.innerHTML = `
+          <thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+          <tbody>${previewRows.map(r => `<tr>${headers.map(h => `<td>${esc(r[h] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>
+        `;
+        previewWrap.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = `Import ${parsedRecords.length} Record${parsedRecords.length === 1 ? '' : 's'}`;
+      } catch (err) {
+        errAlert.textContent = err.message || 'Failed to read file.';
+        errAlert.style.display = 'block';
+        submitBtn.disabled = true;
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  submitBtn.addEventListener('click', async () => {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `${spinner} Importing...`;
+    try {
+      const res = await api(resourceName + '/', {
+        method: 'POST',
+        body: { import_records: parsedRecords }
+      });
+      toast(`Successfully imported ${res.imported ?? parsedRecords.length} record(s)!`, 'ok');
+      modal.close();
+      if (typeof PAGE.reload === 'function') PAGE.reload();
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Retry Import';
+      errAlert.textContent = err.message || 'Import failed.';
+      errAlert.style.display = 'block';
+    }
+  });
+}
+
+function exportTableToCsv(containerEl, filename = 'report.csv') {
+  const rows = containerEl ? Array.from(containerEl.querySelectorAll('tr')) : [];
+  if (!rows.length) {
+    toast('No data to export', 'err');
+    return;
+  }
+  const csvLines = rows.map(r => {
+    const cells = Array.from(r.querySelectorAll('th, td'));
+    return cells.map(cell => {
+      const text = cell.innerText.replace(/"/g, '""').trim();
+      return `"${text}"`;
+    }).join(',');
+  });
+  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  toast('Exported to CSV!', 'ok');
+}
+
 function listPage(root, cfg) {
   const st = { q: '', page: 1, size: 10, ordering: cfg.ordering || '', f: {} };
   let cache = {};
-  root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act"><button class="btn" data-x="csv" type="button">Export CSV</button>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
+  root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act"><button class="btn" data-x="import" type="button" title="Import ${esc(cfg.title)}"><i class="fa-solid fa-file-import"></i> Import</button><div class="export-dropdown-wrap" style="position:relative;display:inline-block;"><button class="btn" data-x="export-toggle" type="button" title="Export ${esc(cfg.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button><div class="pop right export-menu-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);"><button type="button" class="btn" data-x="csv" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button><button type="button" class="btn" data-x="json" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button></div></div>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
 <div class="card" style="margin-top:14px"><div class="tb"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts || [], '')}</select>`).join('')}<span class="sub" id="cnt"></span></div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
   if (cfg.filters) {
     for (const f of cfg.filters) {
@@ -34,6 +241,7 @@ function listPage(root, cfg) {
       $('#lt', root).innerHTML = `<table><thead><tr>${cfg.cols.map(c => `<th ${c.s ? `data-s="${c.s}" tabindex="0" aria-sort="${st.ordering === c.s ? 'ascending' : st.ordering === '-' + c.s ? 'descending' : 'none'}"` : ''} class="${c.r ? 'r' : ''}">${esc(c.h)}${sortMark(c)}</th>`).join('')}${cfg.actions ? '<th></th>' : ''}</tr></thead><tbody>${p.results.map(r => `<tr>${cfg.cols.map(c => `<td class="${c.r ? 'r' : ''}">${c.f(r)}</td>`).join('')}${cfg.actions ? `<td class="rowa">${cfg.actions(r).map(([a, l, k]) => `<button type="button" class="${k || ''}" data-act="${a}" data-id="${r.id}">${esc(l)}</button>`).join('')}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${cfg.cols.length + 1}"><div class="empty">${empty}${!p.count && !st.q && cfg.onNew ? `<br><button class="btn p" data-x="new" type="button" style="margin-top:8px">+ ${esc(cfg.newLabel)}</button>` : ''}</div></td></tr>`}</tbody></table>`;
       $('#cnt', root).textContent = p.count + (p.count === 1 ? ' record' : ' records');
       $('#pgr', root).innerHTML = `<span class="sub">Page ${p.page} of ${p.pages}</span><span class="act"><select class="btn" data-size aria-label="Rows per page">${opts([10, 25, 50, 100].map(n => [n, n + ' / page']), st.size)}</select><button class="btn" data-x="pv" type="button" ${p.page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn" data-x="nx" type="button" ${p.page >= p.pages ? 'disabled' : ''}>Next</button></span>`;
+
     } catch (e) { if (root.isConnected) $('#lt', root).innerHTML = errBox(e.message, true); }
   }
   let t;
@@ -47,12 +255,37 @@ function listPage(root, cfg) {
   root.addEventListener('click', async e => {
     const th = e.target.closest('th[data-s]'); if (th) return sortBy(th);
     if (e.target.closest('[data-retry]')) return load();
+    if (!e.target.closest('.export-dropdown-wrap')) {
+      const pop = $('.export-menu-pop', root);
+      if (pop) pop.style.display = 'none';
+    }
     const x = e.target.closest('[data-x]');
     if (x) {
       const a = x.dataset.x;
       if (a === 'nx') { st.page++; load(); } else if (a === 'pv') { st.page--; load(); }
       else if (a === 'new') cfg.onNew();
-      else if (a === 'csv') location.href = '/api/' + cfg.api + '/?' + qs({ ...params(), export: 'csv' });
+      else if (a === 'import') openUniversalImportModal(cfg.api, cfg.title);
+      else if (a === 'export-toggle') {
+        const pop = $('.export-menu-pop', root);
+        if (pop) pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
+      }
+      else if (a === 'csv') {
+        const pop = $('.export-menu-pop', root);
+        if (pop) pop.style.display = 'none';
+        location.href = '/api/' + cfg.api + '/?' + qs({ ...params(), export: 'csv' });
+      }
+      else if (a === 'json') {
+        const pop = $('.export-menu-pop', root);
+        if (pop) pop.style.display = 'none';
+        try {
+          const res = await api(cfg.api + '/?' + qs({ ...params(), export: 'json', page_size: 500 }));
+          const blob = new Blob([JSON.stringify(res.results || res, null, 2)], { type: 'application/json' });
+          const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob);
+          dl.download = `${cfg.api}_export_${iso(new Date())}.json`;
+          dl.click();
+          toast(`Exported ${cfg.title} as JSON!`, 'ok');
+        } catch(err) { toast(err.message, 'err'); }
+      }
       return;
     }
     const b = e.target.closest('[data-act]');
@@ -92,11 +325,16 @@ const LISTS = {
         h: 'Item name', s: 'name', f: r => `
           <div style="display:flex;align-items:center;gap:10px;">
             ${r.image_data ? `<img src="${esc(r.image_data)}" alt="${esc(r.name)}" style="width:32px;height:32px;border-radius:7px;object-fit:cover;border:1px solid var(--bd-glass);box-shadow:0 2px 6px rgba(0,0,0,0.1);flex-shrink:0;">` : `<div style="width:32px;height:32px;border-radius:7px;background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--accent);flex-shrink:0;">${esc((r.name || 'I')[0].toUpperCase())}</div>`}
+
             <div>
               <div style="font-weight:600;color:var(--tx);">${esc(r.name)}</div>
+
               <div class="sub" style="font-size:11px;">${esc(r.unit || 'nos')}${r.hsn_sac ? ' · HSN ' + esc(r.hsn_sac) : ''}</div>
+
             </div>
+
           </div>`
+
       },
       { h: 'SKU', s: 'sku', f: r => esc(r.sku) },
       { h: 'Type', f: r => r.type === 'goods' ? 'Goods' : 'Service' },
@@ -161,6 +399,7 @@ const LISTS = {
     ],
     cols: [
       { h: 'Date & Time', s: 'date', f: r => `${fd(r.date)} ${r.adjusted_time ? `<small style="color:var(--tx-muted);font-weight:600;margin-left:4px;">${esc(r.adjusted_time)}</small>` : ''}` },
+
       { h: 'Warehouse Code', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')}</span>` },
       { h: 'Reference', f: r => esc(r.reference) },
       { h: 'Item', s: 'item', f: r => esc(r.item) },
@@ -177,6 +416,7 @@ const LISTS = {
     ],
     cols: [
       { h: 'Date & Time', s: 'date', f: r => `${fd(r.date)} ${r.adjusted_time ? `<small style="color:var(--tx-muted);font-weight:600;margin-left:4px;">${esc(r.adjusted_time)}</small>` : ''}` },
+
       { h: 'Item', s: 'item', f: r => esc(r.item) },
       { h: 'Warehouse', f: r => r.to_warehouse_code ? `<span class="pastel-chip chip-sky" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')} → ${esc(r.to_warehouse_code)}</span>` : `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || '—')}</span>` },
       { h: 'Type', f: r => badge(r.kind_label || r.kind) },
@@ -314,6 +554,7 @@ const LISTS = {
       { h: 'Date', s: 'date', f: r => fd(r.date) },
       { h: 'Bank Account', f: r => esc(r.bank_account_name) },
       { h: 'Description', f: r => `<b>${esc(r.description)}</b>${r.reference ? `<div class="sub" style="font-size:11px;">Ref: ${esc(r.reference)}</div>` : ''}` },
+
       { h: 'Withdrawal (Dr)', ...money(r => num(r.withdrawal) > 0 ? `<span class="dn">${inr(r.withdrawal)}</span>` : '—') },
       { h: 'Deposit (Cr)', ...money(r => num(r.deposit) > 0 ? `<span class="up">+${inr(r.deposit)}</span>` : '—') },
       { h: 'Running Balance', ...money(r => inr(r.balance)) },
@@ -400,9 +641,7 @@ const LISTS = {
   }
 };
 
-
 const kvBox = pairs => `<div class="kv">${pairs.map(([k, v]) => `<div><span>${esc(k)}</span>${v}</div>`).join('')}</div>`;
-
 
 function renderDocSheet(d, kind, customOpts = {}) {
   const isRetainer = kind === 'retainer-invoices';
@@ -431,10 +670,15 @@ function renderDocSheet(d, kind, customOpts = {}) {
         <div style="font-weight:600;color:#0f172a;">${esc(l.description)}</div>
       </td>
       ${showHsn ? `<td style="color:#475569;">${esc(l.hsn_sac || '—')}</td>` : ''}
+
       <td class="r" style="font-weight:600;">${qty(l.quantity)}</td>
+
       <td class="r">${inr(l.rate).replace('₹', '')}</td>
+
       <td class="r" style="font-weight:700;">${inr(l.line_total).replace('₹', '')}</td>
+
     </tr>
+
   `).join('');
 
   const party = d.party_details || {};
@@ -479,42 +723,58 @@ function renderDocSheet(d, kind, customOpts = {}) {
         <div class="doc-title-box">
           <div class="doc-main-heading" style="color:${color};">${esc(title)}</div>
           ${isBill ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Bill# ${esc(d.number)}</div><div style="font-size:12px;color:#475569;margin-bottom:8px;">Balance Due <b style="color:${color};font-size:14px;">${inr(d.balance)}</b></div>` : ''}
+
           ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
             ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
             ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
             <tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>
+
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
+
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
           </table>
+
         </div>
+
       </div>
 
       <div class="doc-party-sec">
         <div class="doc-party-title">${!isBill ? 'Bill To' : 'Bill From'}</div>
+
         <div class="doc-party-name" style="color:${color};">${partyName}</div>
+
         <div class="doc-party-detail">
           ${partyAddr ? `<div>${partyAddr}</div>` : ''}
           ${partyState}
           ${partyGstin}
         </div>
+
       </div>
 
       <table class="doc-items-tbl ${isDarkHead ? 'dark-head' : ''}">
         <thead>
           <tr>
             <th>#</th>
+
             <th>Item &amp; Description</th>
+
             ${showHsn ? '<th>HSN/SAC</th>' : ''}
             <th class="r">Qty</th>
+
             <th class="r">Rate</th>
+
             <th class="r">Amount</th>
+
           </tr>
+
         </thead>
+
         <tbody>
           ${linesHtml}
         </tbody>
+
       </table>
 
       <div class="doc-bottom-split">
@@ -543,16 +803,22 @@ function renderDocSheet(d, kind, customOpts = {}) {
           <div class="doc-totals-box">
             <div class="doc-totals-row">
               <span>Sub Total</span>
+
               <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
+
             </div>
+
             ${d.intra_state ? `
               <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
               <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
             ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
             <div class="doc-totals-row main-total">
               <span>Total</span>
+
               <span>${inr(d.total)}</span>
+
             </div>
+
             ${num(d.paid) > 0 ? `
               <div class="doc-totals-row">
                 <span>Payment Made / Credits</span>
@@ -561,8 +827,11 @@ function renderDocSheet(d, kind, customOpts = {}) {
             ` : ''}
             <div class="doc-totals-row bal-due" style="color:${color};">
               <span>Balance Due</span>
+
               <span>${inr(d.balance)}</span>
+
             </div>
+
             ${isRetainer && num(d.applied_amount) > 0 ? `
               <div class="doc-totals-row" style="margin-top:6px;border-top:1px dashed var(--bd-glass);padding-top:6px;">
                 <span>Retainer Applied</span>
@@ -576,7 +845,9 @@ function renderDocSheet(d, kind, customOpts = {}) {
               </div>
             ` : ''}
           </div>
+
         </div>
+
       </div>
 
       ${showSig ? `
@@ -593,28 +864,38 @@ function renderDocSheet(d, kind, customOpts = {}) {
           ${d.payments && d.payments.length ? `
             <div style="margin-bottom:14px;">
               <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Payments Received</h4>
+
               <table class="lt" style="font-size:12px;">
                 <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th>Account</th><th class="r">Amount</th></tr></thead>
+
                 <tbody>
                   ${d.payments.map(p => `<tr><td>${fd(p.date)}</td><td>${esc(p.mode || 'bank_transfer')}</td><td>${esc(p.number || p.reference || '—')}</td><td>${esc(p.account || 'Bank Account')}</td><td class="r" style="font-weight:600;color:#059669;">${inr(p.amount)}</td></tr>`).join('')}
                 </tbody>
+
               </table>
+
             </div>
+
           ` : ''}
           ${d.allocations && d.allocations.length ? `
             <div>
               <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Applied to Invoices</h4>
+
               <table class="lt" style="font-size:12px;">
                 <thead><tr><th>Invoice#</th><th>Date</th><th>Notes</th><th class="r">Amount Applied</th></tr></thead>
                 <tbody>
                   ${d.allocations.map(a => `<tr><td><b>${esc(a.number)}</b></td><td>${fd(a.date)}</td><td>${esc(a.notes || '—')}</td><td class="r" style="font-weight:600;color:#6366f1;">${inr(a.amount)}</td></tr>`).join('')}
                 </tbody>
+
               </table>
+
             </div>
+
           ` : ''}
         </div>
       ` : ''}
     </div>
+
   `;
 }
 
@@ -632,6 +913,7 @@ function openTemplateCustomizer(doc, kind, onUpdate) {
       <div style="margin-bottom:14px;padding:12px;background:var(--surface-glass-subtle);border-radius:8px;font-size:12.5px;color:var(--sub);">
         Select template layouts, colors, and configure company details displayed on your invoices and bills.
       </div>
+
       <div class="fgrid">
         ${fld({ name: 'template_theme', label: 'Template Layout Style', type: 'select', opts: [
           ['convosis', 'Convosis Classic (Standard Boxed Meta — Image 1)'],
@@ -658,6 +940,7 @@ function openTemplateCustomizer(doc, kind, onUpdate) {
         ${fld({ name: 'terms_default', label: 'Default Terms', type: 'textarea', value: org.terms_default || 'Due on Receipt', col: 'c2' })}
         ${fld({ name: 'notes_default', label: 'Default Notes', type: 'textarea', value: org.notes_default || 'Thanks for your business.', col: 'c2' })}
       </div>
+
     `,
     onSubmit: async d => {
       APP.org = await api('organization/', { method: 'PUT', body: d });
@@ -683,14 +966,21 @@ async function openAttachmentsModal(kind, id, docNumber, onCountChange) {
         <div class="dropzone" id="att-dropzone">
           <input type="file" id="att-file-picker" multiple style="display:none">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom:6px;color:var(--accent);"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+
           <div style="font-weight:600;font-size:13px;color:var(--tx);margin-bottom:2px;">Click to upload or drag & drop files</div>
+
           <div style="font-size:11px;color:var(--sub);">PDF, PNG, JPG, DOC up to 10MB</div>
+
         </div>
+
       </div>
+
       <h3 style="font-size:13px;font-weight:700;margin:16px 0 8px;color:var(--tx);">Attached Files (<span id="att-count-txt">${attList.length}</span>)</h3>
       <div id="att-items-box">${renderList()}</div>
+
     `,
     footer: `<button class="btn" type="button" data-close>Close</button>`
+
   });
 
   function renderList() {
@@ -699,16 +989,25 @@ async function openAttachmentsModal(kind, id, docNumber, onCountChange) {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface-glass);border:1px solid var(--bd-glass);border-radius:6px;">
         <div style="display:flex;align-items:center;gap:10px;min-width:0;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent);flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+
           <div style="min-width:0;">
             <div style="font-weight:600;font-size:12.5px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.filename)}</div>
+
             <div style="font-size:11px;color:var(--sub);">${fmtBytes(a.file_size)} · ${fd(a.created_at ? a.created_at.split('T')[0] : '')}</div>
+
           </div>
+
         </div>
+
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
           <a class="btn" href="${esc(a.url || a.file_data)}" download="${esc(a.filename)}" target="_blank" style="padding:3px 8px;font-size:11px;">View</a>
+
           <button class="btn d" type="button" data-del-att="${a.id}" style="padding:3px 8px;font-size:11px;">Delete</button>
+
         </div>
+
       </div>
+
     `).join('')}</div>`;
   }
 
@@ -811,8 +1110,16 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
             </select>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
-            <button class="btn p" id="master-new-btn" type="button" title="Create New">+ New</button>
+            <button class="btn" id="master-import-btn" type="button" title="Import ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}"><i class="fa-solid fa-file-import"></i> Import</button>
+            <div class="export-dropdown-wrap" style="position:relative;display:inline-block;">
+              <button class="btn" id="master-export-toggle-btn" type="button" title="Export"><i class="fa-solid fa-file-export"></i> Export ▾</button>
+              <div class="pop right" id="master-export-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);">
+                <button type="button" class="btn" id="master-export-csv-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button>
+                <button type="button" class="btn" id="master-export-json-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button>
+              </div>
+            </div>
             <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View">≡ Table</button>
+            <button class="btn p" id="master-new-btn" type="button" title="Create New">+ New</button>
           </div>
         </div>
         <div class="master-search-bar">
@@ -917,9 +1224,12 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           <div class="doc-detail-actions">
             <button class="btn" type="button" data-act="edit">Edit</button>
             ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
+
             <button class="btn" type="button" data-act="print">PDF/Print</button>
+
             ${isRetainer ? `
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
+
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
             ` : `
               ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
@@ -1014,6 +1324,40 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   }
   const nBtn = $('#master-new-btn', root);
   if (nBtn) nBtn.addEventListener('click', () => openForm(null));
+  const impBtn = $('#master-import-btn', root);
+  if (impBtn) impBtn.addEventListener('click', () => openUniversalImportModal(kind, isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'));
+  const expToggleBtn = $('#master-export-toggle-btn', root);
+  const expPop = $('#master-export-pop', root);
+  if (expToggleBtn && expPop) {
+    expToggleBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      expPop.style.display = expPop.style.display === 'none' ? 'block' : 'none';
+    });
+    root.addEventListener('click', e => {
+      if (!e.target.closest('.export-dropdown-wrap')) expPop.style.display = 'none';
+    });
+  }
+  const expCsvBtn = $('#master-export-csv-btn', root);
+  if (expCsvBtn) {
+    expCsvBtn.addEventListener('click', () => {
+      if (expPop) expPop.style.display = 'none';
+      location.href = '/api/' + kind + '/?export=csv';
+    });
+  }
+  const expJsonBtn = $('#master-export-json-btn', root);
+  if (expJsonBtn) {
+    expJsonBtn.addEventListener('click', async () => {
+      if (expPop) expPop.style.display = 'none';
+      try {
+        const res = await api(kind + '/?export=json&page_size=500');
+        const blob = new Blob([JSON.stringify(res.results || res, null, 2)], { type: 'application/json' });
+        const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob);
+        dl.download = `${kind}_export_${iso(new Date())}.json`;
+        dl.click();
+        toast('Exported as JSON!', 'ok');
+      } catch(err) { toast(err.message, 'err'); }
+    });
+  }
   const vmBtn = $('#master-view-mode-btn', root);
   if (vmBtn) {
     vmBtn.addEventListener('click', () => {
@@ -1050,17 +1394,22 @@ async function docDetail(kind, id) {
         <button class="btn" type="button" data-do="custom">Customize Template</button>
         <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
         ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${!isBill ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
+
         ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
         ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
         ${!isRetainer && posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
         ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
         <button class="btn d" type="button" data-do="delete">Delete</button>
+
       </div>
+
       <div id="modal-sheet-viewport" style="display:flex;justify-content:center;background:rgba(0,0,0,0.02);padding:14px;border-radius:6px;max-height:75vh;overflow-y:auto;">
         ${renderDocSheet(d, kind)}
       </div>
+
     `,
     footer: `<button class="btn" type="button" data-close>Close</button>`,
+
   });
 
   m.el.addEventListener('click', async e => {
@@ -1087,7 +1436,6 @@ async function docDetail(kind, id) {
     } catch (err) { toast(err.message, 'err'); }
   });
 }
-
 
 async function recordRetainerPaymentModal(doc, onDone) {
   let bankOpts = [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash']];
@@ -1190,16 +1538,24 @@ async function applyRetainerModal(retainerDoc, onDone) {
             <tr data-inv-id="${inv.id}" data-bal="${inv.balance}">
               <td><b>${esc(inv.number)}</b></td>
               <td>${fd(inv.date)}</td>
+
               <td>${fd(inv.due_date)}</td>
+
               <td class="r">${inr(inv.total)}</td>
+
               <td class="r" style="font-weight:600;">${inr(inv.balance)}</td>
+
               <td class="r">
                 <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;">
                   <input type="number" class="in r alloc-val" data-id="${inv.id}" step="0.01" min="0" max="${inv.balance}" placeholder="0.00" style="width:110px;padding:4px 6px;">
                   <button type="button" class="btn btn-sm alloc-max" data-id="${inv.id}" style="padding:2px 8px;font-size:11px;">Max</button>
+
                 </div>
+
               </td>
+
             </tr>
+
           `).join('')}
         </tbody>
       </table>
@@ -1426,8 +1782,10 @@ async function partyDetail(kind, id) {
   const m = Modal.open({
     title: p.name, wide: true,
     body: `${kvBox([['Billed', inr(p.billed)], [cust ? 'Receivable' : 'Payable', inr(p.outstanding)], ['Overdue', `<span class="${num(p.overdue) > 0 ? 'dn' : ''}">${inr(p.overdue)}</span>`], ['Email', esc(p.email || '—')], ['Phone', esc(p.phone || '—')], ['State', esc(p.state || '—')], ['GSTIN', esc(p.gstin || '—')], ['Payment terms', p.payment_terms + ' days']])}
+
 <h3 style="font-size:14px;margin:12px 0 6px">${cust ? 'Invoices' : 'Bills'}</h3>${dl.results.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Date</th><th>Status</th><th class="r">Total</th><th class="r">Balance</th></tr></thead><tbody>${dl.results.map(d => `<tr><td><button class="lk" type="button" data-open="${d.id}">${esc(d.number)}</button></td><td>${fd(d.date)}</td><td>${badge(d.status)}</td><td class="r">${inr(d.total)}</td><td class="r">${inr(d.balance)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">None yet.</p>'}
 <h3 style="font-size:14px;margin:12px 0 6px">Payments</h3>${pl.results.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Date</th><th>Mode</th><th class="r">Amount</th></tr></thead><tbody>${pl.results.map(x => `<tr><td>${esc(x.number)}</td><td>${fd(x.date)}</td><td>${esc(x.mode_label)}</td><td class="r">${inr(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">None yet.</p>'}`,
+
     footer: `<button class="btn" type="button" data-close>Close</button><button class="btn" type="button" data-do="edit">Edit</button><button class="btn" type="button" data-do="pay">Record payment</button>`,
   });
   m.el.addEventListener('click', e => {
@@ -1437,7 +1795,6 @@ async function partyDetail(kind, id) {
     if (a && a.dataset.do === 'pay') { m.close(); paymentForm(pay, { party: id }); }
   });
 }
-
 
 function gettingStarted(root) {
   const c = APP.counts;
@@ -1458,7 +1815,6 @@ function plannedPage(root, group, name) {
   PAGE.reload = null;
 }
 
-
 async function documentsPage(root, mode = 'all') {
   PAGE.reload = () => documentsPage(root, mode);
   const isTrash = mode === 'trash';
@@ -1478,6 +1834,7 @@ async function documentsPage(root, mode = 'all') {
         <div class="sub" style="margin-top:2px;">Centralized ingestion pipeline with auto-scan OCR, line item extraction, and trash lifecycle management</div>
       </div>
       <div class="act">
+        <button class="btn" id="doc-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
         <button class="btn" id="doc-refresh-btn" type="button">Refresh</button>
         ${isTrash ? '' : `<button class="btn p" id="doc-new-btn" type="button">+ Upload Document</button>`}
       </div>
@@ -1511,6 +1868,35 @@ async function documentsPage(root, mode = 'all') {
       <div class="tw" id="doc-table">${spinner}</div>
     </div>
   `;
+
+  const docExpBtn = $('#doc-export-csv', root);
+  if (docExpBtn) {
+    docExpBtn.addEventListener('click', async () => {
+      try {
+        const docs = await api('documents/?page_size=200');
+        const items = docs.results || docs;
+        if (!items.length) { toast('No documents found to export', 'err'); return; }
+        const headers = ['ID', 'Title', 'File Name', 'Doc Type', 'Status', 'File Size', 'Created At'];
+        const lines = [headers.join(',')];
+        for (const d of items) {
+          lines.push([
+            d.id,
+            `"${(d.title || '').replace(/"/g, '""')}"`,
+            `"${(d.file_name || d.name || '').replace(/"/g, '""')}"`,
+            d.doc_type || 'file',
+            d.status || 'active',
+            d.file_size || 0,
+            d.created_at || ''
+          ].join(','));
+        }
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = `documents_metadata_${iso(new Date())}.csv`;
+        a.click();
+        toast('Documents metadata exported to CSV!', 'ok');
+      } catch(e) { toast(e.message, 'err'); }
+    });
+  }
 
   $('#doc-refresh-btn', root).addEventListener('click', () => documentsPage(root, mode));
   const newBtn = $('#doc-new-btn', root);
@@ -1564,8 +1950,8 @@ async function documentsPage(root, mode = 'all') {
           <tbody>
             ${data.results.map(d => {
               const ocr = d.ocr_data || {};
-              const ocrBadge = d.ocr_status === 'processed' 
-                ? `<span class="badge up">✓ Extracted</span>` 
+              const ocrBadge = d.ocr_status === 'processed'
+                ? `<span class="badge up">✓ Extracted</span>`
                 : (d.ocr_status === 'pending' ? `<span class="badge warn">Scanning...</span>` : `<span class="badge">None</span>`);
               const catLabel = (d.category || 'other').replace('_', ' ');
 
@@ -1673,17 +2059,12 @@ async function documentsPage(root, mode = 'all') {
   loadDocs();
 }
 
-/* ==========================================================================
-   CONVOSIS BOOKS - UNIFIED BANKING MODULE
-   ========================================================================== */
-
 async function renderBankingModule(root, initialTabId = 'dashboard') {
   let currentTab = initialTabId || 'dashboard';
   PAGE.reload = () => renderBankingModule(root, currentTab);
 
   root.innerHTML = `<div class="banking-module-container"><div class="glass-card" style="padding:48px;text-align:center;color:var(--tx-muted);">${spinner} Loading Banking Workspace...</div></div>`;
 
-  // 15 Modules Definitions
   const modules = [
     { id: 'dashboard', name: 'Banking Dashboard', icon: 'fa-chart-pie' },
     { id: 'bank-accounts', name: 'Bank Accounts', icon: 'fa-building-columns' },
@@ -1746,13 +2127,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     console.error('Banking load error:', e);
   }
 
-  // Categorize real transactions
   let uncategorizedFeeds = allTransactions.filter(t => t.status === 'unmatched' || t.status === 'unreconciled');
   let matchedTransactions = allTransactions.filter(t => t.status === 'matched');
   let categorizedTransactions = allTransactions.filter(t => t.status === 'categorized');
   let unmatchedTransactions = allTransactions.filter(t => t.status === 'unmatched');
 
-  // Load real candidate match suggestions for uncategorized feeds
   for (const feed of uncategorizedFeeds) {
     try {
       const sug = await api(`banking/match-suggestions/${feed.id}/`);
@@ -1783,25 +2162,26 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   const autoMatchReadyCount = uncategorizedFeeds.filter(f => f.candidate).length;
   const spotlightCandidate = uncategorizedFeeds.find(f => f.candidate);
 
-  // Master Layout Template without the mentioned pic portion (logo, name and text removed)
   root.innerHTML = `
     <div class="banking-module-container">
-      <!-- TOP ACTION & SEARCH HEADER (Logo, name and subtitle text removed) -->
+
       <div class="glass-card" style="padding:12px 18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-          <!-- Left: Quick Search -->
+
           <div style="position:relative;flex:1;max-width:320px;min-width:200px;">
             <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:11px;top:9px;color:var(--tx-muted);font-size:12px;"></i>
             <input type="text" id="bnkGlobalSearch" placeholder="Search transactions, accounts, ref #..." class="in" style="width:100%;padding-left:32px;font-size:12px;height:32px;border-radius:8px;"/>
           </div>
 
-          <!-- Right: Quick Actions -->
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <button type="button" class="btn p" id="bnkActAddAccount" style="font-size:12px;display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-plus"></i> Bank Account
             </button>
             <button type="button" class="btn" id="bnkActImportStmt" style="font-size:12px;background:#10b981;color:#fff;border-color:#10b981;display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-file-import"></i> Import Statement
+            </button>
+            <button type="button" class="btn" id="bnkActExportTxns" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-file-export"></i> Export CSV
             </button>
             <button type="button" class="btn" id="bnkActAddRule" style="font-size:12px;display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> Add Rule
@@ -1813,7 +2193,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- HORIZONTAL MODULE SUB-NAVIGATION RIBBON (15 SUBMODULES) -->
       <nav class="banking-subnav-ribbon" id="bnkNavigationRibbon">
         ${modules.map(m => `
           <button type="button" class="banking-nav-tab ${m.id === currentTab ? 'active' : ''} ${m.highlight ? 'highlight' : ''}" data-tab="${m.id}" id="bnk-tab-btn-${m.id}">
@@ -1824,7 +2203,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         `).join('')}
       </nav>
 
-      <!-- 1. BANKING DASHBOARD -->
       <div id="bnk-panel-dashboard" class="bnk-panel" style="display:${currentTab === 'dashboard' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
@@ -1839,7 +2217,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           </div>
         </div>
 
-        <!-- 4 Quick Metric Cards -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:16px;margin-bottom:20px;">
           <div class="glass-card" style="padding:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx-muted);font-weight:600;">
@@ -1882,9 +2259,8 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           </div>
         </div>
 
-        <!-- Accounts Summary & Fast-Match Spotlight -->
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:20px;">
-          <!-- Bank Accounts Quick List -->
+
           <div class="glass-card" style="padding:20px;">
             <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:14px;">
               <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;display:flex;align-items:center;gap:8px;">
@@ -1893,11 +2269,10 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               <button type="button" class="btn" style="font-size:11px;padding:3px 8px;color:var(--accent);" id="bnkDashViewAllAccounts">View All Accounts</button>
             </div>
             <div id="bnkDashAccountsList" style="display:flex;flex-direction:column;gap:10px;">
-              <!-- Rendered via JS -->
+
             </div>
           </div>
 
-          <!-- Fast-Card Spotlight Match -->
           ${spotlightCandidate ? `
           <div class="glass-card" style="padding:20px;border-left:4px solid #2563eb;display:flex;flex-direction:column;justify-content:space-between;">
             <div>
@@ -1938,7 +2313,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 2. BANK ACCOUNTS -->
       <div id="bnk-panel-bank-accounts" class="bnk-panel" style="display:${currentTab === 'bank-accounts' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
@@ -1952,7 +2326,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         <div id="bnkAccountsGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;"></div>
       </div>
 
-      <!-- 3. BANK STATEMENTS -->
       <div id="bnk-panel-bank-statements" class="bnk-panel" style="display:${currentTab === 'bank-statements' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
@@ -1981,7 +2354,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 4. ALL TRANSACTIONS -->
       <div id="bnk-panel-all-transactions" class="bnk-panel" style="display:${currentTab === 'all-transactions' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
           <div>
@@ -2011,7 +2383,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 5. UNCATEGORIZED TRANSACTIONS (VERTICAL SPLIT VIEW CANDIDATES) -->
       <div id="bnk-panel-uncategorized-transactions" class="bnk-panel" style="display:${currentTab === 'uncategorized-transactions' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
           <div>
@@ -2028,7 +2399,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         <div id="bnkSplitMatchContainer"></div>
       </div>
 
-      <!-- 6. MATCHED TRANSACTIONS -->
       <div id="bnk-panel-matched-transactions" class="bnk-panel" style="display:${currentTab === 'matched-transactions' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Matched Transactions</h2>
@@ -2051,7 +2421,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 7. CATEGORIZED TRANSACTIONS -->
       <div id="bnk-panel-categorized-transactions" class="bnk-panel" style="display:${currentTab === 'categorized-transactions' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Categorized Transactions</h2>
@@ -2074,7 +2443,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 8. UNMATCHED TRANSACTIONS -->
       <div id="bnk-panel-unmatched-transactions" class="bnk-panel" style="display:${currentTab === 'unmatched-transactions' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Unmatched Transactions</h2>
@@ -2096,7 +2464,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 9. BANK RECONCILIATION -->
       <div id="bnk-panel-bank-reconciliation" class="bnk-panel" style="display:${currentTab === 'bank-reconciliation' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Reconciliation Tool</h2>
@@ -2104,7 +2471,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 2fr;gap:20px;">
-          <!-- Setup Card -->
+
           <div class="glass-card" style="padding:20px;display:flex;flex-direction:column;gap:14px;">
             <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;border-bottom:1px solid var(--bd-glass);padding-bottom:10px;">Reconciliation Setup</h3>
             <div>
@@ -2138,7 +2505,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
             </button>
           </div>
 
-          <!-- Uncleared Checklist -->
           <div class="glass-card" style="padding:20px;">
             <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bd-glass);padding-bottom:10px;margin-bottom:14px;">
               <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">Uncleared Transactions Checklist</h3>
@@ -2149,7 +2515,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 10. TRANSFERS -->
       <div id="bnk-panel-transfers-between-accounts" class="bnk-panel" style="display:${currentTab === 'transfers-between-accounts' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
@@ -2177,7 +2542,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 11. DEPOSITS -->
       <div id="bnk-panel-deposits" class="bnk-panel" style="display:${currentTab === 'deposits' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Bank Deposits</h2>
@@ -2200,7 +2564,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 12. BANK RULES -->
       <div id="bnk-panel-bank-rules" class="bnk-panel" style="display:${currentTab === 'bank-rules' ? 'block' : 'none'};">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div>
@@ -2214,7 +2577,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         <div id="bnkRulesGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;"></div>
       </div>
 
-      <!-- 13. IMPORT BANK STATEMENTS -->
       <div id="bnk-panel-import-bank-statements" class="bnk-panel" style="display:${currentTab === 'import-bank-statements' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Import Bank Statements</h2>
@@ -2241,7 +2603,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 14. BANKING REPORTS -->
       <div id="bnk-panel-banking-reports" class="bnk-panel" style="display:${currentTab === 'banking-reports' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Banking Financial Analytics</h2>
@@ -2264,7 +2625,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       </div>
 
-      <!-- 15. RECONCILIATION HISTORY -->
       <div id="bnk-panel-reconciliation-history" class="bnk-panel" style="display:${currentTab === 'reconciliation-history' ? 'block' : 'none'};">
         <div style="margin-bottom:16px;">
           <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Reconciliation Audit Trail</h2>
@@ -2288,7 +2648,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       </div>
     </div>
 
-    <!-- MODAL 1: ADD BANK ACCOUNT -->
     <div id="bnkAddAccountModal" class="banking-modal-overlay" style="display:none;">
       <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
@@ -2329,7 +2688,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       </div>
     </div>
 
-    <!-- MODAL 2: ADD BANK RULE -->
     <div id="bnkAddRuleModal" class="banking-modal-overlay" style="display:none;">
       <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
@@ -2357,7 +2715,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       </div>
     </div>
 
-    <!-- MODAL 3: RECORD TRANSFER -->
     <div id="bnkTransferModal" class="banking-modal-overlay" style="display:none;">
       <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
@@ -2390,7 +2747,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     </div>
   `;
 
-  // UI RENDERERS & EVENT BINDINGS
   function switchTab(tabId) {
     currentTab = tabId;
     root.querySelectorAll('.bnk-panel').forEach(p => p.style.display = 'none');
@@ -2515,7 +2871,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           </div>
 
           <div class="banking-split-grid">
-            <!-- Left: Bank Statement Feed -->
+
             <div class="banking-panel-box" style="display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
               <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--tx-muted);font-weight:600;text-transform:uppercase;margin-bottom:6px;">
@@ -2533,7 +2889,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
               </div>
             </div>
 
-            <!-- Right: System Match Candidate -->
             <div class="banking-panel-box" style="display:flex;flex-direction:column;justify-content:space-between;gap:8px;background:var(--surface-glass-solid);">
               ${hasMatch ? `
                 <div>
@@ -2821,7 +3176,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     `).join('');
   }
 
-  // Interactive Match / Reconcile Functions
   async function confirmMatch(feedId) {
     const feed = uncategorizedFeeds.find(f => String(f.id) === String(feedId));
     try {
@@ -2909,7 +3263,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   }
 
-  // Modal open/close
   function openModal(modalId) {
     const m = root.querySelector('#' + modalId);
     if (m) m.style.display = 'flex';
@@ -2919,7 +3272,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     if (m) m.style.display = 'none';
   }
 
-  // Chart.js initialization
   let chartCashflowInstance = null;
   let chartDistributionInstance = null;
 
@@ -2930,14 +3282,14 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
     if (ctx1) {
       if (chartCashflowInstance) chartCashflowInstance.destroy();
-      // Aggregate monthly inflow and outflow from real transactions
+
       const months = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
       const inflow = [0, 0, 0, 0, 0, 0];
       const outflow = [0, 0, 0, 0, 0, 0];
 
       allTransactions.forEach(t => {
         const d = new Date(t.date);
-        const m = d.getMonth(); // 0 to 11
+        const m = d.getMonth();
         const cr = parseFloat(t.deposit || 0);
         const dr = parseFloat(t.withdrawal || 0);
         if (m >= 4 && m <= 9) {
@@ -2975,7 +3327,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   }
 
-  // Event Listeners Registration
   root.addEventListener('click', e => {
     const btn = e.target.closest('button, [data-tab], [data-close-modal], [data-act]');
     if (!btn) return;
@@ -2995,6 +3346,10 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
     if (btn.id === 'bnkActImportStmt' || btn.id === 'bnkUploadStmtBtn') {
       switchTab('import-bank-statements');
+      return;
+    }
+    if (btn.id === 'bnkActExportTxns') {
+      location.href = '/api/banking/export-transactions/';
       return;
     }
     if (btn.id === 'bnkActAddRule' || btn.id === 'bnkRulesAddBtn' || btn.dataset.act === 'open-rule-modal') {
@@ -3080,7 +3435,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   });
 
-  // Form Submits
   const addAccountForm = root.querySelector('#bnkAddAccountForm');
   if (addAccountForm) {
     addAccountForm.addEventListener('submit', async e => {
@@ -3165,7 +3519,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     });
   }
 
-  // File Upload Handlers
   const fileInput = root.querySelector('#bnkFileInput');
   if (fileInput) {
     fileInput.addEventListener('change', e => {
@@ -3179,7 +3532,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     });
   }
 
-  // Search input
   const searchInput = root.querySelector('#bnkGlobalSearch');
   if (searchInput) {
     searchInput.addEventListener('keyup', () => {
@@ -3215,7 +3567,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     });
   }
 
-  // Reconciliation inputs
   const reconBalInput = root.querySelector('#bnkReconStmtBalInput');
   if (reconBalInput) {
     reconBalInput.addEventListener('input', calculateReconDifference);
@@ -3230,7 +3581,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   });
 
-  // Initial Content Population
   renderDashboardAccounts();
   renderAccountsGrid();
   renderStatements();
@@ -3249,10 +3599,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   }
 }
 
-
-/* ==========================================================================
-   BANKING COMPATIBILITY DELEGATES & WRAPPERS
-   ========================================================================== */
 function fmtBankDate(dStr) {
   if (!dStr) return '—';
   if (dStr.includes('/')) return dStr;
@@ -3302,7 +3648,9 @@ async function gstFilingPage(root, tab = 'overview') {
       <div class="act">
         <button class="btn p" id="gst-file-gstr1" type="button" style="background:linear-gradient(135deg,#10b981,#059669);border:none;">Sign & File GSTR-1</button>
         <button class="btn p" id="gst-file-gstr3b" type="button" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);border:none;">Sign & File GSTR-3B</button>
-        <button class="btn" id="gst-export-json" type="button">Official GSTN JSON</button>
+        <button class="btn" id="gst-export-json" type="button"><i class="fa-solid fa-code"></i> Official GSTN JSON</button>
+        <button class="btn" id="gst-import-json" type="button"><i class="fa-solid fa-file-import"></i> Import Returns JSON</button>
+        <button class="btn" id="gst-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
         <button class="btn" id="gst-returns-hist" type="button">Filing History</button>
       </div>
     </div>
@@ -3316,6 +3664,8 @@ async function gstFilingPage(root, tab = 'overview') {
 
   $('#gst-file-gstr1', root).addEventListener('click', () => fileGstrReturnModal('GSTR1'));
   $('#gst-file-gstr3b', root).addEventListener('click', () => fileGstrReturnModal('GSTR3B'));
+  $('#gst-import-json', root).addEventListener('click', () => openUniversalImportModal('invoices', 'GST Returns & Supplies'));
+  $('#gst-export-csv', root).addEventListener('click', () => { location.href = '/api/invoices/?export=csv'; });
   $('#gst-export-json', root).addEventListener('click', async () => {
     try {
       const data = await api('gst/returns/gstr1/?period=042026&fy=2026-27');
@@ -3456,6 +3806,7 @@ async function trialBalancePage(root) {
         <div class="sub" style="margin-top:2px;">Double-entry general ledger trial balance with debit & credit verification</div>
       </div>
       <div class="act">
+        <button class="btn" id="tb-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
         <button class="btn" id="tb-print-btn" type="button">Print / PDF</button>
       </div>
     </div>
@@ -3471,14 +3822,16 @@ async function trialBalancePage(root) {
   $('#tb-print-btn', root).addEventListener('click', () => window.print());
   const dInp = $('#tb-date', root);
   dInp.addEventListener('change', () => loadTB());
+  const tbExp = $('#tb-export-csv', root);
+  if (tbExp) tbExp.addEventListener('click', () => exportTableToCsv($('#tb-table', root), `trial_balance_${dInp.value}.csv`));
 
   async function loadTB() {
     $('#tb-table', root).innerHTML = spinner;
     try {
       const res = await api(`reports/trial-balance/?as_of=${dInp.value}`);
       if (!root.isConnected) return;
-      $('#tb-bal-badge', root).innerHTML = res.is_balanced 
-        ? `<span class="badge up">✓ Double-Entry Balanced</span>` 
+      $('#tb-bal-badge', root).innerHTML = res.is_balanced
+        ? `<span class="badge up">✓ Double-Entry Balanced</span>`
         : `<span class="badge dn">⚠ Discrepancy: Debits ≠ Credits</span>`;
 
       $('#tb-table', root).innerHTML = `
@@ -3511,11 +3864,14 @@ async function profitAndLossPage(root) {
         <div class="sub" style="margin-top:2px;">Operating income, cost of goods sold, overhead expenses and net profit margin</div>
       </div>
       <div class="act">
+        <button class="btn" id="pl-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
         <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="pl-container">${spinner}</div>
   `;
+  const plExp = $('#pl-export-csv', root);
+  if (plExp) plExp.addEventListener('click', () => exportTableToCsv($('#pl-container', root), `profit_and_loss_${iso(new Date())}.csv`));
 
   try {
     const res = await api('reports/profit-loss/');
@@ -3531,7 +3887,7 @@ async function profitAndLossPage(root) {
           <tr style="background:var(--surface-glass-subtle);"><td colspan="2"><b>Operating Revenue / Sales Income</b></td></tr>
           ${(res.income_accounts || []).map(a => `<tr><td style="padding-left:24px;">${esc(a.name)}</td><td class="r">${inr(a.amount)}</td></tr>`).join('') || '<tr><td style="padding-left:24px;">Sales Revenue</td><td class="r">₹0.00</td></tr>'}
           <tr style="font-weight:600;"><td style="padding-left:12px;">Total Income</td><td class="r" style="color:var(--accent);">${inr(res.total_income || 0)}</td></tr>
-          
+
           <tr style="background:var(--surface-glass-subtle);"><td colspan="2"><b>Cost of Goods Sold (COGS)</b></td></tr>
           <tr><td style="padding-left:24px;">Direct Material & Purchases Cost</td><td class="r">${inr(res.cogs || 0)}</td></tr>
           <tr style="font-weight:600;"><td style="padding-left:12px;">Gross Profit</td><td class="r" style="color:var(--up);">${inr(res.gross_profit || 0)}</td></tr>
@@ -3557,10 +3913,16 @@ async function balanceSheetPage(root) {
     <div class="bc">Home / Reports / Accounting</div>
     <div class="hd">
       <h1>Balance Sheet</h1>
-      <div class="act"><button class="btn" onclick="window.print()" type="button">Print / PDF</button></div>
+      <div class="act">
+        <button class="btn" id="bs-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="bs-container">${spinner}</div>
   `;
+  const bsExp = $('#bs-export-csv', root);
+  if (bsExp) bsExp.addEventListener('click', () => exportTableToCsv($('#bs-container', root), `balance_sheet_${iso(new Date())}.csv`));
+
   try {
     const res = await api('reports/balance-sheet/');
     if (!root.isConnected) return;
@@ -3590,10 +3952,15 @@ async function cashFlowPage(root) {
     <div class="bc">Home / Reports / Cash Flow</div>
     <div class="hd">
       <h1>Statement of Cash Flows</h1>
-      <div class="act"><button class="btn" onclick="window.print()" type="button">Print / PDF</button></div>
+      <div class="act">
+        <button class="btn" id="cf-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="cf-container">${spinner}</div>
   `;
+  const cfExp = $('#cf-export-csv', root);
+  if (cfExp) cfExp.addEventListener('click', () => exportTableToCsv($('#cf-container', root), `cash_flow_${iso(new Date())}.csv`));
   try {
     const res = await api('reports/cash-flow/');
     if (!root.isConnected) return;
@@ -3659,13 +4026,18 @@ async function reportTablePage(root, reportName, title, bc) {
     <div class="bc">Home / Reports / ${esc(bc)}</div>
     <div class="hd">
       <h1>${esc(title)}</h1>
-      <div class="act"><button class="btn" onclick="window.print()" type="button">Print / PDF</button></div>
+      <div class="act">
+        <button class="btn" id="rt-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
     </div>
     <div class="card" style="margin-top:14px;">
       <div class="tb"><h3 style="margin:0;font-size:14px;">Report Summary</h3></div>
       <div class="tw" id="rt-table">${spinner}</div>
     </div>
   `;
+  const rtExp = $('#rt-export-csv', root);
+  if (rtExp) rtExp.addEventListener('click', () => exportTableToCsv($('#rt-table', root), `${reportName}_report_${iso(new Date())}.csv`));
   try {
     const res = await api(`reports/${reportName}/`);
     if (!root.isConnected) return;
@@ -3682,7 +4054,6 @@ async function reportTablePage(root, reportName, title, bc) {
     `;
   } catch (e) { $('#rt-table', root).innerHTML = errBox(e.message, true); }
 }
-
 
 async function transactionLockingPage(root) {
   PAGE.reload = () => transactionLockingPage(root);
@@ -3872,7 +4243,6 @@ async function securityCompliancePage(root) {
         </div>
       </div>
 
-      
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:16px;">
         <div class="card" style="padding:18px;">
           <div class="sub" style="font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">SOC 2 Type II Posture</div>
@@ -3901,9 +4271,8 @@ async function securityCompliancePage(root) {
         </div>
       </div>
 
-      
       <div class="g" style="margin-top:16px;">
-        
+
         <div class="s6">
           <div class="card" style="padding:22px;height:100%;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -3965,7 +4334,6 @@ async function securityCompliancePage(root) {
           </div>
         </div>
 
-        
         <div class="s6">
           <div class="card" style="padding:22px;height:100%;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -3993,7 +4361,6 @@ async function securityCompliancePage(root) {
               `).join('')}
             </div>
 
-            
             <div style="border-top:1px solid var(--bd);padding-top:16px;margin-top:16px;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                 <div>
@@ -4012,7 +4379,6 @@ async function securityCompliancePage(root) {
           </div>
         </div>
 
-        
         <div class="s12">
           <div class="card" style="padding:22px;">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
@@ -4142,7 +4508,6 @@ async function securityCompliancePage(root) {
   }
 }
 
-
 async function subscriptionBillingPage(root) {
   root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Subscription & Usage Metrics…</div>`;
   try {
@@ -4164,7 +4529,6 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      
       <div class="card" style="margin-top:14px;padding:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;background:var(--surface-glass-elevated);">
         <div style="display:flex;align-items:center;gap:14px;">
           <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(168,85,247,0.18));color:var(--accent);display:grid;place-items:center;font-size:22px;">⚡</div>
@@ -4183,7 +4547,6 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
         <div class="card" style="padding:16px;">
           <div class="sub" style="font-size:12px;">Monthly Invoices Generated</div>
@@ -4213,10 +4576,9 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      
       <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Available SaaS Edition Tiers</h2>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
-        
+
         <div class="card" style="padding:22px;border:${data.tier === 'starter' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <b style="font-size:16px;">Starter Edition</b>
@@ -4235,7 +4597,6 @@ async function subscriptionBillingPage(root) {
           </button>
         </div>
 
-        
         <div class="card" style="padding:22px;border:${data.tier === 'growth' ? '2px solid var(--accent)' : '1px solid var(--bd)'};background:var(--surface-glass-elevated);position:relative;">
           <div style="position:absolute;top:-10px;right:20px;background:linear-gradient(135deg,var(--accent),var(--accent-to));color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;text-transform:uppercase;">Most Popular</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -4257,7 +4618,6 @@ async function subscriptionBillingPage(root) {
           </button>
         </div>
 
-        
         <div class="card" style="padding:22px;border:${data.tier === 'enterprise' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <b style="font-size:16px;">Enterprise Scale</b>
@@ -4279,7 +4639,6 @@ async function subscriptionBillingPage(root) {
         </div>
       </div>
 
-      
       <h2 style="font-size:16px;margin:28px 0 12px;font-weight:700;">Billing Invoices & Payment Statements</h2>
       <div class="card" style="padding:0;overflow:hidden;">
         <table>
@@ -4371,7 +4730,6 @@ async function subscriptionBillingPage(root) {
   }
 }
 
-
 async function tenantAdminPage(root) {
   root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Tenant Administration…</div>`;
   try {
@@ -4387,13 +4745,13 @@ async function tenantAdminPage(root) {
           </div>
         </div>
         <div class="act">
+          <button class="btn" id="btnExportMembers" type="button"><i class="fa-solid fa-file-export"></i> Export Members CSV</button>
           <button class="btn p" id="btnInviteMember" type="button" style="background:linear-gradient(135deg,var(--accent),var(--accent-to));border:none;">
             + Invite Team Member
           </button>
         </div>
       </div>
 
-      
       <div class="card" style="margin-top:14px;padding:20px;background:var(--surface-glass-elevated);">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
           <div>
@@ -4431,10 +4789,9 @@ async function tenantAdminPage(root) {
         </div>
       </div>
 
-      
       <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Team Members & Role Access Control</h2>
       <div class="card" style="padding:0;overflow:hidden;">
-        <table>
+        <table id="tenant-members-table">
           <thead>
             <tr>
               <th>Member Name</th>
@@ -4475,6 +4832,9 @@ async function tenantAdminPage(root) {
         </table>
       </div>
     `;
+
+    const btnExpMembers = $('#btnExportMembers', root);
+    if (btnExpMembers) btnExpMembers.addEventListener('click', () => exportTableToCsv($('#tenant-members-table', root), `team_members_${iso(new Date())}.csv`));
 
     window.changeRoleModal = (userId, username, currentRole) => {
       Modal.open({
@@ -4565,7 +4925,6 @@ async function tenantAdminPage(root) {
     if (btn) btn.addEventListener('click', () => tenantAdminPage(root));
   }
 }
-
 
 async function developerPlatformPage(root, tab = 'keys') {
   PAGE.reload = () => developerPlatformPage(root, tab);
@@ -4778,22 +5137,33 @@ async function developerPlatformPage(root, tab = 'keys') {
             <div style="padding:10px 0;">
               <div class="fg" style="margin-bottom:12px;">
                 <label>HTTPS Endpoint URL</label>
-                <input class="in" id="modalWebhookUrl" placeholder="https://api.yourdomain.com/webhooks/convosis" required>
+                <input class="in" id="modalWebhookUrl" placeholder="https:
               </div>
+
               <div class="fg">
                 <label>Events to Deliver</label>
+
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;font-size:12px;">
                   <label><input type="checkbox" checked value="invoice.created" class="chk-event"> invoice.created</label>
+
                   <label><input type="checkbox" checked value="payment.received" class="chk-event"> payment.received</label>
+
                   <label><input type="checkbox" checked value="bank.reconciled" class="chk-event"> bank.reconciled</label>
+
                   <label><input type="checkbox" value="einvoice.generated" class="chk-event"> einvoice.generated</label>
+
                 </div>
+
               </div>
+
             </div>
+
           `,
           footer: `
             <button class="btn" data-close>Cancel</button>
+
             <button class="btn p" id="btnSubmitWebhook">Create Webhook</button>
+
           `
         });
 
@@ -4816,18 +5186,23 @@ async function developerPlatformPage(root, tab = 'keys') {
         <div style="display:flex;flex-direction:column;gap:16px;">
           <div class="card" style="padding:20px;">
             <h3 style="font-size:15px;margin:0 0 8px;">Authenticating API Requests</h3>
+
             <p class="sub" style="font-size:12.5px;margin:0 0 12px;line-height:1.5;">
               Convosis Books accepts API keys via standard HTTP <code>Authorization: Bearer sk_live_...</code> headers. All API endpoints respond with structured JSON.
+
             </p>
+
             <div style="background:var(--surface-glass-subtle);padding:14px;border-radius:8px;border:1px solid var(--bd);font-family:monospace;font-size:12px;line-height:1.6;">
-              curl -X GET https://books-d8i1.onrender.com/api/invoices/ \\<br>
+              curl -X GET https:
               &nbsp;&nbsp;-H "Authorization: Bearer sk_live_your_api_key_here" \\<br>
               &nbsp;&nbsp;-H "Accept: application/json"
             </div>
+
           </div>
 
           <div class="card" style="padding:20px;">
             <h3 style="font-size:15px;margin:0 0 8px;">Python SDK Quickstart</h3>
+
             <div style="background:var(--surface-glass-subtle);padding:14px;border-radius:8px;border:1px solid var(--bd);font-family:monospace;font-size:12px;line-height:1.6;">
               import requests<br><br>
               client = requests.Session()<br>
@@ -4836,8 +5211,11 @@ async function developerPlatformPage(root, tab = 'keys') {
               invoices = client.get('https://books-d8i1.onrender.com/api/invoices/?status=sent').json()<br>
               print(f"Total pending invoices: {len(invoices['results'])}")
             </div>
+
           </div>
+
         </div>
+
       `;
     }
 
@@ -4847,6 +5225,3 @@ async function developerPlatformPage(root, tab = 'keys') {
     if (btn) btn.addEventListener('click', () => developerPlatformPage(root, tab));
   }
 }
-
-
-

@@ -24,7 +24,6 @@ from books.models import (
 
 User = get_user_model()
 
-
 class BaseAccountingTestCase(TestCase):
     def setUp(self):
         super().setUp()
@@ -34,14 +33,12 @@ class BaseAccountingTestCase(TestCase):
         self.org.gstin = '32AANCC9298C1ZE'
         self.org.save()
 
-        # Create GL Accounts
         self.gl_cash = Account.objects.create(code='1010', name='Cash & Bank Equivalents', account_type='asset')
         self.gl_ar = Account.objects.create(code='1020', name='Accounts Receivable', account_type='asset')
         self.gl_ap = Account.objects.create(code='2010', name='Accounts Payable', account_type='liability')
         self.gl_sales = Account.objects.create(code='4010', name='Sales Revenue', account_type='income')
         self.gl_exp = Account.objects.create(code='5010', name='Office & Tech Expense', account_type='expense')
 
-        # Create Users with Roles
         self.admin_user = User.objects.create_user(username='admin_test', password='TestPassword123!', is_staff=True, is_superuser=True)
         self.admin_profile = UserProfile.objects.create(user=self.admin_user, role=UserProfile.ADMIN)
 
@@ -60,11 +57,9 @@ class BaseAccountingTestCase(TestCase):
         self.locked_user = User.objects.create_user(username='locked_test', password='TestPassword123!')
         self.locked_profile = UserProfile.objects.create(user=self.locked_user, role=UserProfile.ACCOUNTANT, is_locked=True)
 
-        # Create Sample Customer & Vendor
         self.customer = Customer.objects.create(name='Acme Infotech', state='Kerala', gstin='32AANCC9298C1ZE')
         self.vendor = Vendor.objects.create(name='Cloud AWS Services', state='Karnataka')
 
-        # Create Sample Items
         self.cat = ItemCategory.objects.create(name='SaaS Licenses')
         self.item = Item.objects.create(
             name='Pro Subscription',
@@ -75,7 +70,6 @@ class BaseAccountingTestCase(TestCase):
             category='SaaS Licenses'
         )
 
-        # Create Sample Bank Accounts
         self.bank_hdfc = BankAccount.objects.create(
             name='HDFC Corporate Current A/c',
             bank_name='HDFC Bank',
@@ -94,7 +88,6 @@ class BaseAccountingTestCase(TestCase):
             bank_balance=Decimal('100000.00'),
             gl_account=self.gl_cash
         )
-
 
 class TestAuthAndRBAC(BaseAccountingTestCase):
     """Test login, session management, and role-based access control."""
@@ -155,11 +148,10 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
     def test_auditor_has_read_only_access(self):
         client = Client()
         client.force_login(self.auditor_user)
-        # GET should succeed
+
         res = client.get('/api/invoices/')
         self.assertEqual(res.status_code, 200)
 
-        # POST should be blocked with 403
         payload = {
             'customer': self.customer.pk,
             'date': str(timezone.localdate()),
@@ -174,19 +166,15 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
         client = Client()
         client.force_login(self.cashier_user)
 
-        # Allowed on customers
         res_cust = client.get('/api/customers/')
         self.assertEqual(res_cust.status_code, 200)
 
-        # Allowed on invoices
         res_inv = client.get('/api/invoices/')
         self.assertEqual(res_inv.status_code, 200)
 
-        # Blocked on bills (purchases)
         res_bills = client.get('/api/bills/')
         self.assertEqual(res_bills.status_code, 403)
 
-        # Blocked on bank transfer
         res_xfer = client.post('/api/banking/transfer/', data=json.dumps({}), content_type='application/json')
         self.assertEqual(res_xfer.status_code, 403)
 
@@ -195,7 +183,6 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
         client.force_login(self.portal_user)
         res = client.get('/api/invoices/')
         self.assertEqual(res.status_code, 403)
-
 
 class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
     """Test transaction integrity, bank transfers, reconciliation, payments, and period locks."""
@@ -288,7 +275,6 @@ class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
         self.assertEqual(self.bank_hdfc.current_balance, Decimal('200000.00'))
         self.assertEqual(self.bank_icici.current_balance, Decimal('150000.00'))
 
-        # Check Journal Entry Parity
         jnl = Journal.objects.filter(reference=f"TXF {res['number']}").first()
         self.assertIsNotNone(jnl)
         items = list(jnl.items.all())
@@ -350,7 +336,6 @@ class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
         self.assertEqual(ctx.exception.status, 403)
         self.assertIn('locked for accounting compliance', str(ctx.exception))
 
-
 class TestChatbotGroundingAndSecurity(BaseAccountingTestCase):
     """Test AI Copilot grounding in real DB ledger figures and secure HTML rendering."""
 
@@ -404,7 +389,6 @@ class TestChatbotGroundingAndSecurity(BaseAccountingTestCase):
         self.assertNotIn('onerror', clean)
         self.assertIn('Normal text', clean)
 
-
 class TestApiConsistencyAndErrorHandling(BaseAccountingTestCase):
     """Test consistent JSON error responses across API endpoints."""
 
@@ -429,12 +413,11 @@ class TestApiConsistencyAndErrorHandling(BaseAccountingTestCase):
     def test_api_405_method_not_allowed_json_structure(self):
         client = Client()
         client.force_login(self.admin_user)
-        # Reports only support GET
+
         res = client.post('/api/reports/profit-loss/', data=json.dumps({}), content_type='application/json')
         self.assertEqual(res.status_code, 405)
         data = res.json()
         self.assertEqual(data['error'], 'Method not allowed.')
-
 
 class TestInventoryAndWarehouses(BaseAccountingTestCase):
     """Test inventory enhancements, warehouse hierarchies, stock adjustments, and movements."""
@@ -463,7 +446,7 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_item_hsn_sac_validation(self):
         """HSN/SAC must be exactly 6 digits."""
-        # Non-6-digit should fail
+
         res = self.client.post('/api/items/', data=json.dumps({
             'name': 'Invalid HSN Item',
             'hsn_sac': '1234',
@@ -472,7 +455,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn('6-digit', res.json().get('errors', {}).get('hsn_sac', ''))
 
-        # Non-digit should fail
         res = self.client.post('/api/items/', data=json.dumps({
             'name': 'Non-numeric HSN Item',
             'hsn_sac': 'ABCDEF',
@@ -480,7 +462,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         }), content_type='application/json')
         self.assertEqual(res.status_code, 400)
 
-        # 6 digits should succeed
         res = self.client.post('/api/items/', data=json.dumps({
             'name': 'Valid HSN Item',
             'hsn_sac': '847130',
@@ -490,7 +471,7 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_sub_warehouse_creation_and_shared_database(self):
         """Warehouse can have sub-warehouses and shared database architecture."""
-        # Create Main Warehouse
+
         res_main = self.client.post('/api/warehouses/', data=json.dumps({
             'name': 'Main Central Distribution Hub',
             'code': 'WH-CENTRAL',
@@ -500,7 +481,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(res_main.status_code, 201)
         main_wh_id = res_main.json()['id']
 
-        # Create Sub Warehouse
         res_sub = self.client.post('/api/warehouses/', data=json.dumps({
             'name': 'Rack Zone A - Sub Hub',
             'code': 'WH-RACK-A',
@@ -514,7 +494,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(sub_wh.parent_id, main_wh_id)
         self.assertTrue(sub_wh.shared_database)
 
-        # Verify listing shows hierarchy info
         res_list = self.client.get('/api/warehouses/')
         self.assertEqual(res_list.status_code, 200)
         items = res_list.json()['results']
@@ -548,7 +527,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         }), content_type='application/json')
         self.assertEqual(res.status_code, 201)
 
-        # Check latest stock movement
         movement = StockMovement.objects.filter(item=item, kind='adjustment').latest('id')
         self.assertEqual(movement.warehouse_code, 'WH-SEC')
         self.assertIsNotNone(movement.adjusted_at)
@@ -581,7 +559,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         }), content_type='application/json')
         self.assertEqual(res.status_code, 200)
 
-        # Verify movements logged
         movements = StockMovement.objects.filter(item=item, kind='transfer')
         self.assertTrue(movements.exists())
         latest_movement = movements.latest('id')
@@ -589,7 +566,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(latest_movement.to_warehouse_code, 'WH-DST')
         self.assertEqual(latest_movement.change, Decimal('15.000'))
 
-        # Verify item warehouse updated
         item.refresh_from_db()
         self.assertEqual(item.warehouse, wh_dst)
         self.assertEqual(item.warehouse_code, 'WH-DST')
@@ -618,7 +594,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         vendor1 = Vendor.objects.create(name='Srata Technologies', state='Kerala', active=True)
         vendor2 = Vendor.objects.create(name='Global Components Ltd', state='Karnataka', active=True)
 
-        # 1. Create item with preferred vendor
         res = self.client.post('/api/items/', data=json.dumps({
             'name': 'Precision Microcontroller',
             'sku': 'SKU-MCU-01',
@@ -631,19 +606,16 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(res.status_code, 201)
         item_id = res.json()['id']
 
-        # Verify DB foreign key
         item = Item.objects.get(id=item_id)
         self.assertEqual(item.preferred_vendor, vendor1)
         self.assertEqual(item.preferred_vendor_id, vendor1.id)
 
-        # Verify API response contains preferred vendor id and name
         res_get = self.client.get(f'/api/items/{item_id}/')
         self.assertEqual(res_get.status_code, 200)
         data = res_get.json()
         self.assertEqual(data['preferred_vendor_id'], vendor1.id)
         self.assertEqual(data['preferred_vendor_name'], 'Srata Technologies')
 
-        # 2. Update to a different preferred vendor
         res_put = self.client.put(f'/api/items/{item_id}/', data=json.dumps({
             'name': 'Precision Microcontroller',
             'sku': 'SKU-MCU-01',
@@ -660,7 +632,6 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.assertEqual(res_put.json()['preferred_vendor_id'], vendor2.id)
         self.assertEqual(res_put.json()['preferred_vendor_name'], 'Global Components Ltd')
 
-        # 3. Clear preferred vendor
         res_clear = self.client.put(f'/api/items/{item_id}/', data=json.dumps({
             'name': 'Precision Microcontroller',
             'sku': 'SKU-MCU-01',
@@ -699,30 +670,24 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
                 self.assertEqual(res.status_code, 201)
                 item_id = res.json()['id']
 
-                # Verify database value is exact Decimal
                 item = Item.objects.get(id=item_id)
                 self.assertEqual(item.reorder_level, expected_db)
                 self.assertNotEqual(item.reorder_level, Decimal('9.999'))
 
-                # Verify API response has no trailing zeros
                 res_get = self.client.get(f'/api/items/{item_id}/')
                 self.assertEqual(res_get.status_code, 200)
                 data = res_get.json()
                 self.assertEqual(data['reorder_level'], expected_api)
 
-        # Verify low stock alert logic with exact values
         item_reorder_10 = Item.objects.get(sku='SKU-RP-10')
         item_reorder_10.stock = Decimal('10.000')
         item_reorder_10.save()
 
-        # Stock = 10 and reorder_level = 10 should trigger 'Low stock'
         res_stock = self.client.get(f'/api/items/{item_reorder_10.id}/')
         self.assertEqual(res_stock.json()['status'], 'Low stock')
 
-        # Stock = 10.001 should NOT be low stock
         item_reorder_10.stock = Decimal('10.001')
         item_reorder_10.save()
         res_stock2 = self.client.get(f'/api/items/{item_reorder_10.id}/')
         self.assertEqual(res_stock2.json()['status'], 'Active')
-
 

@@ -11,14 +11,12 @@ PAN_RE = re.compile(r'^[A-Z]{5}\d{4}[A-Z]$')
 PHONE_RE = re.compile(r'^[0-9+()\-\s]{7,20}$')
 REQUIRED = 'This field is required.'
 
-
 class ApiError(Exception):
     def __init__(self, status=400, message='Bad request.', errors=None):
         super().__init__(message)
         self.status = status
         self.message = message
         self.errors = errors or {}
-
 
 class Cleaner:
     def __init__(self, data):

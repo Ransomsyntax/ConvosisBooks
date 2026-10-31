@@ -60,7 +60,7 @@
     const style = document.createElement('style');
     style.id = 'convobot-chat-styles';
     style.textContent = `
-      
+
       #convobot-launcher {
         position: fixed;
         bottom: 24px;
@@ -141,7 +141,6 @@
         font-weight: 600;
       }
 
-      
       #convobot-widget {
         position: fixed;
         bottom: 84px;
@@ -183,7 +182,6 @@
         border-radius: 20px;
       }
 
-      
       .convobot-header {
         padding: 14px 18px;
         border-bottom: 1.5px solid rgba(234, 88, 12, 0.2);
@@ -267,7 +265,6 @@
         stroke: currentColor;
       }
 
-      
       .convobot-categories {
         padding: 8px 14px;
         display: flex;
@@ -303,7 +300,6 @@
         box-shadow: 0 2px 8px rgba(234, 88, 12, 0.18);
       }
 
-      
       .convobot-messages {
         flex: 1;
         overflow-y: auto;
@@ -317,7 +313,6 @@
       .convobot-messages::-webkit-scrollbar { width: 5px; }
       .convobot-messages::-webkit-scrollbar-thumb { background: rgba(234, 88, 12, 0.3); border-radius: 4px; }
 
-      
       .convobot-msg-row {
         display: flex;
         gap: 10px;
@@ -351,7 +346,6 @@
         box-shadow: 0 3px 14px rgba(0, 0, 0, 0.05);
       }
 
-      
       .convobot-msg-bubble p {
         margin: 0 0 8px;
         color: #000000;
@@ -430,7 +424,6 @@
         color: #000000;
       }
 
-      
       .convobot-takeaways {
         margin-top: 12px;
         padding: 10px 14px;
@@ -462,7 +455,6 @@
         color: #000000;
       }
 
-      
       .convobot-formula-box {
         margin-top: 10px;
         padding: 8px 12px;
@@ -475,7 +467,6 @@
         font-weight: 600;
       }
 
-      
       .convobot-actions-row {
         display: flex;
         flex-wrap: wrap;
@@ -506,7 +497,6 @@
         stroke: currentColor;
       }
 
-      
       .convobot-msg-toolbar {
         display: flex;
         align-items: center;
@@ -537,7 +527,6 @@
         stroke: currentColor;
       }
 
-      
       .convobot-typing-dots {
         display: inline-flex;
         align-items: center;
@@ -558,7 +547,6 @@
         40% { transform: scale(1); opacity: 1; }
       }
 
-      
       .convobot-prompts-grid {
         display: flex;
         flex-direction: column;
@@ -590,7 +578,6 @@
         transform: translateX(3px);
       }
 
-      
       .convobot-input-area {
         padding: 12px 16px;
         border-top: 1.5px solid rgba(234, 88, 12, 0.2);
@@ -706,7 +693,7 @@
     const widget = document.createElement('div');
     widget.id = 'convobot-widget';
     widget.innerHTML = `
-      
+
       <div class="convobot-header">
         <div class="convobot-header-left">
           <div class="convobot-avatar">C</div>
@@ -731,7 +718,6 @@
         </div>
       </div>
 
-      
       <div class="convobot-categories">
         <button class="convobot-cat-btn active" data-cat="all" type="button">⚡ All Doubts</button>
         <button class="convobot-cat-btn" data-cat="accounting" type="button">📖 Accounting & Ledger</button>
@@ -741,10 +727,8 @@
         <button class="convobot-cat-btn" data-cat="live" type="button">📊 Live Business Data</button>
       </div>
 
-      
       <div class="convobot-messages" id="convobot-messages-stream"></div>
 
-      
       <div class="convobot-input-area">
         <div class="convobot-input-row">
           <textarea id="convobot-textarea" rows="1" placeholder="Ask your accounting or tax doubt..." autocomplete="off"></textarea>
@@ -943,7 +927,6 @@
         return;
       }
 
-      // Sanitize attributes
       const attrs = Array.from(node.attributes);
       for (const attr of attrs) {
         const name = attr.name.toLowerCase();
@@ -968,7 +951,6 @@
         }
       }
 
-      // Recursively clean children
       Array.from(node.childNodes).forEach(cleanNode);
     }
 
@@ -979,47 +961,39 @@
   function parseMarkdown(md) {
     if (!md) return '';
 
-    // Step 1: Extract code blocks and formulas to protect them from regex mangling
     const placeholders = [];
     let text = String(md);
 
-    // Multi-line code blocks
     text = text.replace(/```([a-z0-9_-]*)\s*\n?([\s\S]*?)```/gi, function(match, lang, codeContent) {
       const idx = placeholders.length;
       placeholders.push('<pre class="convobot-code-block"><code>' + esc(codeContent.trim()) + '</code></pre>');
       return '@@@CB_BLOCK_' + idx + '@@@';
     });
 
-    // Inline code
     text = text.replace(/`([^`\n]+)`/g, function(match, codeContent) {
       const idx = placeholders.length;
       placeholders.push('<code class="convobot-inline-code">' + esc(codeContent) + '</code>');
       return '@@@CB_BLOCK_' + idx + '@@@';
     });
 
-    // Math formulas
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, function(match, formula) {
       const idx = placeholders.length;
       placeholders.push('<div class="convobot-formula-box">' + esc(formula.trim()) + '</div>');
       return '@@@CB_BLOCK_' + idx + '@@@';
     });
 
-    // Step 2: Escape raw HTML in the remaining text
     let out = esc(text);
 
-    // Step 3: Markdown Headings
     out = out.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
     out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
     out = out.replace(/^## (.*$)/gim, '<h3>$1</h3>');
     out = out.replace(/^# (.*$)/gim, '<h3>$1</h3>');
 
-    // Step 4: Bold and Italic
     out = out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
     out = out.replace(/__(.+?)__/g, '<b>$1</b>');
     out = out.replace(/\*([^\*\n]+)\*/g, '<i>$1</i>');
     out = out.replace(/_([^_\n]+)_/g, '<i>$1</i>');
 
-    // Step 5: Safe Markdown Links [text](url)
     out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(match, label, href) {
       const hrefClean = href.trim();
       const hrefLower = hrefClean.toLowerCase();
@@ -1029,7 +1003,6 @@
       return label;
     });
 
-    // Step 6: Markdown Tables
     const tableRegex = /\|(.+)\|[\r\n]+\|[-:| ]+\|[\r\n]+((?:\|.+|[\r\n]*)+)/g;
     out = out.replace(tableRegex, function(match, header, rows) {
       const ths = header.split('|').map(c => c.trim()).filter(Boolean).map(c => '<th>' + c + '</th>').join('');
@@ -1040,7 +1013,6 @@
       return '<div class="convobot-table-wrap"><table><thead><tr>' + ths + '</tr></thead><tbody>' + trs + '</tbody></table></div>';
     });
 
-    // Step 7: Unordered and Ordered Lists
     const lines = out.split('\n');
     let inUl = false;
     let inOl = false;
@@ -1069,15 +1041,12 @@
     if (inOl) processedLines.push('</ol>');
     out = processedLines.join('\n');
 
-    // Step 8: Paragraphs and Line Breaks
     out = out.replace(/\n\n+/g, '<br><br>');
 
-    // Step 9: Restore placeholders
     out = out.replace(/@@@CB_BLOCK_(\d+)@@@/g, function(match, idx) {
       return placeholders[Number(idx)] || '';
     });
 
-    // Step 10: Run full DOM sanitizer to guarantee XSS immunity
     return sanitizeBotHtml(out);
   }
 
@@ -1133,8 +1102,11 @@
             ${res.cards.map(c => `
               <div style="background:#fff7ed;border:1px solid rgba(234,88,12,0.3);padding:8px 10px;border-radius:8px;">
                 <div style="font-size:11px;color:#000000;font-weight:600;">${esc(c.label)}</div>
+
                 <div style="font-size:15px;font-weight:800;color:#ea580c;margin-top:2px;">${esc(c.value)}</div>
+
               </div>
+
             `).join('')}
           </div>
         `;
@@ -1148,13 +1120,18 @@
               <thead>
                 <tr style="background:#fff7ed;">
                   ${keys.map(k => `<th style="padding:6px 8px;text-align:left;color:#ea580c;font-weight:700;border-bottom:1px solid rgba(234,88,12,0.25);">${esc(k)}</th>`).join('')}
+
                 </tr>
+
               </thead>
+
               <tbody>
                 ${res.data.map(row => `
                   <tr>
                     ${keys.map(k => `<td style="padding:6px 8px;border-top:1px solid rgba(234,88,12,0.15);color:#000000;">${esc(row[k])}</td>`).join('')}
+
                   </tr>
+
                 `).join('')}
               </tbody>
             </table>
@@ -1175,8 +1152,11 @@
             </div>
             <ul>
               ${res.key_takeaways.map(t => `<li style="color:#000000;">${esc(t)}</li>`).join('')}
+
             </ul>
+
           </div>
+
         `;
       }
 
@@ -1190,17 +1170,20 @@
               </span>
             `).join('')}
           </div>
+
         `;
       }
 
       if (res.related_doubts && res.related_doubts.length) {
         extraContentHtml += `
           <div style="font-size:11.5px;font-weight:700;color:#ea580c;margin:12px 0 6px;">Related Questions You Can Ask:</div>
+
           <div style="display:flex;flex-wrap:wrap;gap:6px;">
             ${res.related_doubts.map(rd => `
               <button class="convobot-prompt-btn" style="padding:4px 8px;font-size:11px;color:#000000;" data-query="${esc(rd)}" type="button">${esc(rd)}</button>
             `).join('')}
           </div>
+
         `;
       }
 
@@ -1208,30 +1191,41 @@
         <div class="convobot-msg-toolbar">
           <button class="convobot-copy-btn" type="button">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+
             Copy
           </button>
+
           <span>·</span>
+
           <span>Cleared your doubt?</span>
+
           <button class="convobot-fb-btn" type="button">👍 Yes</button>
+
           <button class="convobot-fb-btn" type="button">👎 More info</button>
+
         </div>
+
       `;
 
       botRow.innerHTML = `
         <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;">C</div>
+
         <div class="convobot-msg-bubble">
           ${parseMarkdown(res.answer || res.summary)}
           ${extraContentHtml}
           ${toolbarHtml}
         </div>
+
       `;
 
     } catch (e) {
       botRow.innerHTML = `
         <div class="convobot-avatar" style="width:30px;height:30px;font-size:13px;flex-shrink:0;background:#ea580c;color:#000000;">!</div>
+
         <div class="convobot-msg-bubble" style="color:#ea580c;border:1.5px solid #ea580c;background:#fff7ed;">
           <b style="color:#000000;">Error reaching ConvoBot service:</b> <span style="color:#ea580c;">${esc(e.message || 'Please check your connection and try again.')}</span>
         </div>
+
       `;
     } finally {
       isTyping = false;

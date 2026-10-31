@@ -6,7 +6,6 @@ from django.db import models
 MONEY = {'max_digits': 14, 'decimal_places': 2}
 QTY = {'max_digits': 14, 'decimal_places': 3}
 
-
 class Organization(models.Model):
     """Single-tenant company profile (always pk=1)."""
     name = models.CharField(max_length=200, default='Convosis Technologies Pvt Ltd')
@@ -40,11 +39,9 @@ class Organization(models.Model):
     def __str__(self):
         return self.name
 
-
 class Sequence(models.Model):
     key = models.CharField(max_length=20, primary_key=True)
     value = models.PositiveIntegerField(default=0)
-
 
 class Party(models.Model):
     name = models.CharField(max_length=200)
@@ -86,7 +83,6 @@ class Party(models.Model):
     def __str__(self):
         return self.name
 
-
 class Customer(Party):
     customer_type = models.CharField(max_length=20, default='business', choices=[('business', 'Business'), ('individual', 'Individual')])
     customer_language = models.CharField(max_length=40, default='English', blank=True)
@@ -101,7 +97,6 @@ class Customer(Party):
     portal_enabled = models.BooleanField(default=False)
     portal_language = models.CharField(max_length=40, default='English', blank=True)
 
-
 class Vendor(Party):
     source_of_supply = models.CharField(max_length=80, blank=True)
     is_msme_registered = models.BooleanField(default=False)
@@ -115,7 +110,6 @@ class Vendor(Party):
     bank_ifsc = models.CharField(max_length=20, blank=True)
     bank_branch = models.CharField(max_length=100, blank=True)
     bank_upi_id = models.CharField(max_length=100, blank=True)
-
 
 class Item(models.Model):
     GOODS, SERVICE = 'goods', 'service'
@@ -149,7 +143,6 @@ class Item(models.Model):
     def __str__(self):
         return f'{self.name} ({self.sku})'
 
-
 class Document(models.Model):
     DRAFT, VOID = 'draft', 'void'
     number = models.CharField(max_length=30, unique=True)
@@ -170,7 +163,6 @@ class Document(models.Model):
     class Meta:
         abstract = True
 
-
 class Invoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='invoices')
     terms = models.TextField(blank=True)
@@ -179,14 +171,12 @@ class Invoice(Document):
     def __str__(self):
         return self.number
 
-
 class Bill(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='bills')
     vendor_ref = models.CharField(max_length=60, blank=True)
 
     def __str__(self):
         return self.number
-
 
 class Line(models.Model):
     item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
@@ -205,18 +195,14 @@ class Line(models.Model):
         abstract = True
         ordering = ['position', 'id']
 
-
 class InvoiceLine(Line):
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='lines')
-
 
 class BillLine(Line):
     bill = models.ForeignKey(Bill, on_delete=models.CASCADE, related_name='lines')
 
-
 MODES = [('cash', 'Cash'), ('bank_transfer', 'Bank transfer'), ('upi', 'UPI'),
          ('cheque', 'Cheque'), ('card', 'Card'), ('other', 'Other')]
-
 
 class Payment(models.Model):
     number = models.CharField(max_length=30, unique=True)
@@ -232,14 +218,11 @@ class Payment(models.Model):
     class Meta:
         abstract = True
 
-
 class PaymentReceived(Payment):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='payments')
 
-
 class PaymentMade(Payment):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='payments')
-
 
 class ReceivedAllocation(models.Model):
     payment = models.ForeignKey(PaymentReceived, on_delete=models.CASCADE, related_name='allocations')
@@ -249,7 +232,6 @@ class ReceivedAllocation(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['payment', 'invoice'], name='uniq_received_alloc')]
 
-
 class BillAllocation(models.Model):
     payment = models.ForeignKey(PaymentMade, on_delete=models.CASCADE, related_name='allocations')
     bill = models.ForeignKey(Bill, on_delete=models.PROTECT, related_name='allocations')
@@ -257,7 +239,6 @@ class BillAllocation(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['payment', 'bill'], name='uniq_bill_alloc')]
-
 
 class StockMovement(models.Model):
     KINDS = [('opening', 'Opening stock'), ('sale', 'Sale'), ('sale_void', 'Sale voided'),
@@ -282,7 +263,6 @@ class StockMovement(models.Model):
     class Meta:
         ordering = ['-date', '-id']
 
-
 class Attachment(models.Model):
     entity_type = models.CharField(max_length=40, db_index=True)   
     entity_id = models.PositiveIntegerField(db_index=True)
@@ -299,8 +279,6 @@ class Attachment(models.Model):
 
     def __str__(self):
         return f'{self.filename} ({self.entity_type} #{self.entity_id})'
-
-
 
 class Account(models.Model):
     ASSET, LIABILITY, EQUITY, INCOME, EXPENSE = 'asset', 'liability', 'equity', 'income', 'expense'
@@ -327,7 +305,6 @@ class Account(models.Model):
     def __str__(self):
         return f'{self.code} - {self.name}'
 
-
 class Journal(models.Model):
     number = models.CharField(max_length=40, unique=True)
     date = models.DateField()
@@ -343,7 +320,6 @@ class Journal(models.Model):
     def __str__(self):
         return f'{self.number} ({self.date})'
 
-
 class JournalItem(models.Model):
     journal = models.ForeignKey(Journal, on_delete=models.CASCADE, related_name='items')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='journal_items')
@@ -353,7 +329,6 @@ class JournalItem(models.Model):
 
     class Meta:
         ordering = ['id']
-
 
 class LockDate(models.Model):
     """Enforce transaction locking prior to this date for compliance and auditing."""
@@ -365,7 +340,6 @@ class LockDate(models.Model):
     @classmethod
     def get_lock(cls):
         return cls.objects.first()
-
 
 class AuditLog(models.Model):
     """Immutable statutory audit trail of all transactions and system events."""
@@ -387,7 +361,6 @@ class AuditLog(models.Model):
     def __str__(self):
         return f'[{self.timestamp:%Y-%m-%d %H:%M}] {self.action} {self.entity_type} #{self.entity_id}'
 
-
 class CustomField(models.Model):
     module = models.CharField(max_length=40) 
     name = models.CharField(max_length=60)
@@ -400,7 +373,6 @@ class CustomField(models.Model):
     class Meta:
         ordering = ['module', 'label']
 
-
 class WorkflowRule(models.Model):
     name = models.CharField(max_length=150)
     event = models.CharField(max_length=60) 
@@ -411,7 +383,6 @@ class WorkflowRule(models.Model):
     action_payload = models.TextField(blank=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
 
 class WebhookConfig(models.Model):
     name = models.CharField(max_length=100)
@@ -455,7 +426,6 @@ class BankAccount(models.Model):
     def __str__(self):
         return f'{self.name} ({self.bank_name})'
 
-
 class BankTransaction(models.Model):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='transactions')
     date = models.DateField()
@@ -483,7 +453,6 @@ class BankTransaction(models.Model):
     class Meta:
         ordering = ['-date', '-id']
 
-
 class DocumentFolder(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
@@ -495,7 +464,6 @@ class DocumentFolder(models.Model):
 
     def __str__(self):
         return self.name
-
 
 class ManagedDocument(models.Model):
     CATEGORIES = [
@@ -532,16 +500,13 @@ class ManagedDocument(models.Model):
     def __str__(self):
         return f'{self.title} ({self.filename})'
 
-
 class SalesOrder(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='sales_orders')
     expected_shipment_date = models.DateField(null=True, blank=True)
     terms = models.TextField(blank=True)
 
-
 class SalesOrderLine(Line):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
-
 
 class RecurringInvoice(models.Model):
     FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
@@ -556,7 +521,6 @@ class RecurringInvoice(models.Model):
     total = models.DecimalField(default=Decimal('0.00'), **MONEY)
     lines_data = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
 
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
@@ -575,10 +539,8 @@ class RetainerInvoice(Document):
     def available_balance(self):
         return max(Decimal('0.00'), self.paid_amount - self.applied_amount)
 
-
 class RetainerInvoiceLine(Line):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='lines')
-
 
 class RetainerPayment(models.Model):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='payments')
@@ -594,7 +556,6 @@ class RetainerPayment(models.Model):
     def __str__(self):
         return f'{self.retainer.number} - ₹{self.amount}'
 
-
 class RetainerInvoiceAllocation(models.Model):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='allocations')
     invoice = models.ForeignKey('books.Invoice', on_delete=models.CASCADE, related_name='retainer_allocations')
@@ -605,7 +566,6 @@ class RetainerInvoiceAllocation(models.Model):
 
     def __str__(self):
         return f'{self.retainer.number} -> {self.invoice.number} (₹{self.amount})'
-
 
 class DeliveryChallan(models.Model):
     CHALLAN_TYPES = [('supply_on_approval', 'Supply on Approval'), ('job_work', 'Job Work'), ('other', 'Other')]
@@ -618,7 +578,6 @@ class DeliveryChallan(models.Model):
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-
 class DeliveryChallanLine(models.Model):
     challan = models.ForeignKey(DeliveryChallan, on_delete=models.CASCADE, related_name='lines')
     item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
@@ -626,25 +585,20 @@ class DeliveryChallanLine(models.Model):
     hsn_sac = models.CharField(max_length=10, blank=True)
     quantity = models.DecimalField(**QTY)
 
-
 class CreditNote(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='credit_notes')
     invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL, related_name='credit_notes')
     reason = models.CharField(max_length=150, blank=True)
 
-
 class CreditNoteLine(Line):
     credit_note = models.ForeignKey(CreditNote, on_delete=models.CASCADE, related_name='lines')
-
 
 class PurchaseOrder(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='purchase_orders')
     delivery_date = models.DateField(null=True, blank=True)
 
-
 class PurchaseOrderLine(Line):
     order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')
-
 
 class Expense(models.Model):
     number = models.CharField(max_length=40, unique=True)
@@ -669,21 +623,16 @@ class Expense(models.Model):
     def __str__(self):
         return f'{self.number} ({inr_amount(self.total)})'
 
-
 def inr_amount(v):
     return f'₹{v}'
-
 
 class VendorCredit(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='vendor_credits')
     bill = models.ForeignKey(Bill, null=True, blank=True, on_delete=models.SET_NULL, related_name='vendor_credits')
     reason = models.CharField(max_length=150, blank=True)
 
-
 class VendorCreditLine(Line):
     vendor_credit = models.ForeignKey(VendorCredit, on_delete=models.CASCADE, related_name='lines')
-
-
 
 class EWayBill(models.Model):
     bill_number = models.CharField(max_length=16, unique=True)
@@ -708,7 +657,6 @@ class EWayBill(models.Model):
     def __str__(self):
         return f'EWB #{self.bill_number} for {self.doc_number}'
 
-
 class EInvoiceRecord(models.Model):
     invoice = models.OneToOneField(Invoice, on_delete=models.CASCADE, related_name='einvoice')
     irn = models.CharField(max_length=64, unique=True)
@@ -717,8 +665,6 @@ class EInvoiceRecord(models.Model):
     signed_qr_code = models.TextField(blank=True)
     status = models.CharField(max_length=20, default='generated')
     created_at = models.DateTimeField(auto_now_add=True)
-
-
 
 class Project(models.Model):
     name = models.CharField(max_length=150)
@@ -737,7 +683,6 @@ class Project(models.Model):
     def __str__(self):
         return self.name
 
-
 class TimeLog(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='timelogs')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
@@ -751,7 +696,6 @@ class TimeLog(models.Model):
     class Meta:
         ordering = ['-date', '-id']
 
-
 class ItemCategory(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
@@ -762,7 +706,6 @@ class ItemCategory(models.Model):
 
     def __str__(self):
         return self.name
-
 
 class PriceList(models.Model):
     name = models.CharField(max_length=100)
@@ -777,7 +720,6 @@ class PriceList(models.Model):
 
     def __str__(self):
         return self.name
-
 
 class Warehouse(models.Model):
     name = models.CharField(max_length=100)
@@ -798,8 +740,6 @@ class Warehouse(models.Model):
             return f'{self.name} ({self.code}) [Sub-warehouse of {self.parent.code}]'
         return f'{self.name} ({self.code})'
 
-
-
 class PaymentTransaction(models.Model):
     gateway = models.CharField(max_length=40, default='upi')
     transaction_id = models.CharField(max_length=100, unique=True)
@@ -813,9 +753,6 @@ class PaymentTransaction(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-
-
-
 
 class FinancialAnomaly(models.Model):
     TYPES = [
@@ -840,8 +777,6 @@ class FinancialAnomaly(models.Model):
     def __str__(self):
         return f'[{self.severity.upper()}] {self.title}'
 
-
-
 class BankFeedConnection(models.Model):
     bank_account = models.OneToOneField(BankAccount, on_delete=models.CASCADE, related_name='feed_connection')
     provider = models.CharField(max_length=50, default='setu_aa')
@@ -857,7 +792,6 @@ class BankFeedConnection(models.Model):
 
     def __str__(self):
         return f'{self.provider} feed for {self.bank_account.name}'
-
 
 class BankStatementBatch(models.Model):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='statement_batches')
@@ -876,7 +810,6 @@ class BankStatementBatch(models.Model):
 
     def __str__(self):
         return f'{self.batch_number} ({self.source}) - {self.imported_count} imported'
-
 
 class BankRule(models.Model):
     name = models.CharField(max_length=150)
@@ -898,7 +831,6 @@ class BankRule(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.field} {self.operator} "{self.value}")'
-
 
 class BankReconciliation(models.Model):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='reconciliations')
@@ -922,7 +854,6 @@ class BankReconciliation(models.Model):
     def __str__(self):
         return f'{self.reconciliation_number} - {self.bank_account.name} ({self.statement_date})'
 
-
 class BankDeposit(models.Model):
     number = models.CharField(max_length=40, unique=True)
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits')
@@ -944,7 +875,6 @@ class BankDeposit(models.Model):
     def __str__(self):
         return f'{self.number} (₹{self.amount}) -> {self.bank_account.name}'
 
-
 class BankTransfer(models.Model):
     number = models.CharField(max_length=40, unique=True)
     from_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='outgoing_transfers')
@@ -963,8 +893,6 @@ class BankTransfer(models.Model):
 
     def __str__(self):
         return f'{self.number} ({self.from_account.name} -> {self.to_account.name}: ₹{self.amount})'
-
-
 
 class GSTRReturn(models.Model):
     GSTR1, GSTR3B = 'GSTR1', 'GSTR3B'
@@ -991,7 +919,6 @@ class GSTRReturn(models.Model):
     def __str__(self):
         return f'{self.return_type} ({self.tax_period}) - {self.status}'
 
-
 class UserProfile(models.Model):
     ADMIN, ACCOUNTANT, AUDITOR, CASHIER, PORTAL = 'admin', 'accountant', 'auditor', 'cashier', 'portal'
     ROLES = [
@@ -1015,7 +942,6 @@ class UserProfile(models.Model):
     def __str__(self):
         return f'{self.user.username} ({self.role})'
 
-
 class SecurityBackupRecord(models.Model):
     snapshot_id = models.CharField(max_length=60, unique=True)
     filename = models.CharField(max_length=255)
@@ -1032,7 +958,6 @@ class SecurityBackupRecord(models.Model):
 
     def __str__(self):
         return f'Backup {self.snapshot_id} ({self.status})'
-
 
 class BackgroundTask(models.Model):
     task_id = models.CharField(max_length=50, unique=True)
@@ -1051,8 +976,6 @@ class BackgroundTask(models.Model):
     def __str__(self):
         return f'Task {self.task_id} ({self.task_type}: {self.status})'
 
-
-
 class CustomerPortalAccess(models.Model):
     token = models.CharField(max_length=64, unique=True)
     customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='portal_access')
@@ -1067,7 +990,6 @@ class CustomerPortalAccess(models.Model):
     def __str__(self):
         return f'Portal for {self.customer.name}'
 
-
 class VendorPortalAccess(models.Model):
     token = models.CharField(max_length=64, unique=True)
     vendor = models.OneToOneField(Vendor, on_delete=models.CASCADE, related_name='portal_access')
@@ -1078,7 +1000,6 @@ class VendorPortalAccess(models.Model):
 
     def __str__(self):
         return f'Portal for {self.vendor.name}'
-
 
 class Notification(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
@@ -1094,7 +1015,6 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'{self.title} ({self.category})'
-
 
 class TenantSubscription(models.Model):
     STARTER, GROWTH, ENTERPRISE = 'starter', 'growth', 'enterprise'
@@ -1119,7 +1039,6 @@ class TenantSubscription(models.Model):
     def __str__(self):
         return f'{self.tier} ({self.status})'
 
-
 class DeveloperApiKey(models.Model):
     name = models.CharField(max_length=100)
     key_prefix = models.CharField(max_length=16, default='sk_live_')
@@ -1136,7 +1055,6 @@ class DeveloperApiKey(models.Model):
     def __str__(self):
         return f'{self.name} ({self.masked_key})'
 
-
 class WebhookSubscription(models.Model):
     endpoint_url = models.URLField()
     secret = models.CharField(max_length=64)
@@ -1151,6 +1069,4 @@ class WebhookSubscription(models.Model):
 
     def __str__(self):
         return f'{self.endpoint_url}'
-
-
 

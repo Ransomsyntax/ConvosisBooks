@@ -172,6 +172,7 @@ function drawNav(cur) {
       const hasAdd = Boolean(getNavAddAction(k, c));
       return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
     }).join('')}</div>` : ''}</div>`;
+
   }).join('');
   const roleName = APP.user.role_display || (APP.user.role ? APP.user.role.toUpperCase() : 'Administrator');
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag" id="sidebarUserRoleTag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span id="sidebarUserRole">${esc(roleName)}</span></span></div></div></div>`;
@@ -192,7 +193,6 @@ function route() {
   let h = DEFAULT_ROUTES[raw] || raw;
   if (!h || h === 'home') h = 'home/dashboard';
 
-  // Ensure only one dropdown is open; previously opened dropdowns collapse to normal
   const curGroup = h.split('/')[0];
   if (curGroup) {
     openG = [curGroup];
@@ -227,7 +227,6 @@ function applyOrg() {
   const un = $('#sidebarUserName'); if (un) un.textContent = APP.user.name || APP.user.username || 'Admin';
   const ur = $('#sidebarUserRole'); if (ur) ur.textContent = rDisp;
 
-  // Role-based UI visibility
   if (APP.user && APP.user.permissions) {
     if (APP.user.permissions.is_read_only) {
       document.body.classList.add('role-auditor');

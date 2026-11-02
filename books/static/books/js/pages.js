@@ -1130,26 +1130,26 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     <div class="split-view-container">
       <div class="master-col">
         <div class="master-col-hd">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <select class="btn" id="master-filter-sel" style="font-weight:700;font-size:14px;border:none;background:transparent;padding:4px 0;cursor:pointer;">
-              <option value="">All ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}</option>
+          <div style="display:flex;align-items:center;min-width:0;flex:1;">
+            <select class="master-filter-sel" id="master-filter-sel" aria-label="Filter status">
+              <option value="">All ${isRetainer ? 'Retainers' : inv ? 'Invoices' : 'Bills'}</option>
               <option value="draft">Draft</option>
               <option value="unpaid">${!isBill ? 'Sent' : 'Open'}</option>
               <option value="overdue">Overdue</option>
               <option value="paid">Paid</option>
             </select>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;">
+          <div class="master-hd-actions">
             <button class="btn" id="master-import-btn" type="button" title="Import ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}"><i class="fa-solid fa-file-import"></i> Import</button>
-            <div class="export-dropdown-wrap" style="position:relative;display:inline-block;">
-              <button class="btn" id="master-export-toggle-btn" type="button" title="Export"><i class="fa-solid fa-file-export"></i> Export ▾</button>
-              <div class="pop right" id="master-export-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);">
+            <div class="export-dropdown-wrap">
+              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}"><i class="fa-solid fa-file-export"></i> Export ▾</button>
+              <div class="pop right export-menu-pop" id="master-export-pop" style="display:none;position:absolute;">
                 <button type="button" class="btn" id="master-export-csv-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button>
                 <button type="button" class="btn" id="master-export-json-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button>
               </div>
             </div>
-            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View">≡ Table</button>
-            <button class="btn p" id="master-new-btn" type="button" title="Create New">+ New</button>
+            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i> Table</button>
+            <button class="btn p" id="master-new-btn" type="button" title="Create New"><i class="fa-solid fa-plus"></i> New</button>
           </div>
         </div>
         <div class="master-search-bar">

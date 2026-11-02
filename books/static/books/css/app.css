@@ -444,9 +444,9 @@ body.modal-open {
   position: relative;
 }
 .master-col {
-  width: 340px;
-  min-width: 300px;
-  max-width: 400px;
+  width: 400px;
+  min-width: 370px;
+  max-width: 460px;
   border-right: 1px solid var(--bd-glass);
   background: var(--surface-glass);
   backdrop-filter: blur(20px);
@@ -456,12 +456,14 @@ body.modal-open {
   height: 100%;
 }
 .master-col-hd {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--bd-glass);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 48px;
+  box-sizing: border-box;
 }
 .master-col-hd h2 {
   font-size: 15px;
@@ -472,8 +474,74 @@ body.modal-open {
   gap: 6px;
   color: var(--tx);
 }
+.master-filter-sel {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--tx);
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+  max-width: 135px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.master-filter-sel:hover,
+.master-filter-sel:focus {
+  background: var(--surface-glass-subtle);
+  border-color: var(--bd-glass);
+}
+.master-hd-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.master-hd-actions .btn {
+  height: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  padding: 0 7px !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  line-height: 1 !important;
+  border-radius: 6px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+.master-hd-actions .btn i {
+  font-size: 11px;
+  line-height: 1;
+}
+.master-hd-actions .btn.p {
+  padding: 0 9px !important;
+  font-weight: 600 !important;
+}
+.master-hd-actions .export-dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.master-hd-actions .export-menu-pop {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface-glass-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--bd);
+  z-index: 100;
+}
 .master-search-bar {
-  padding: 8px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--bd-glass-subtle);
   display: flex;
   gap: 8px;

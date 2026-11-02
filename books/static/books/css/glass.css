@@ -799,6 +799,7 @@ main, .main-wrapper {
   gap: 7px;
   font-weight: 500;
   font-size: 13.5px;
+  white-space: nowrap;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), var(--specular-sheen);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }

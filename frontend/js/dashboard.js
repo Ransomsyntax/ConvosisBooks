@@ -34,6 +34,10 @@ function rangeFor(k) {
 }
 function destroyCharts() {
   try {
+    if (DASH._ro) {
+      DASH._ro.disconnect();
+      DASH._ro = null;
+    }
     Object.values(DASH.charts).forEach(c => { if (c && c.destroy) c.destroy(); });
   } catch(e) {}
   DASH.charts = {};
@@ -52,20 +56,29 @@ function mkChart(root, id, cfg, has) {
   const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
   const ticks = v => '₹' + (Math.abs(v) >= 1e5 ? (v / 1e5).toFixed(1) + 'L' : Math.abs(v) >= 1e3 ? (v / 1e3) + 'K' : v);
   try {
-    DASH.charts[id] = new Chart(cv, {
+    const chart = new Chart(cv, {
       ...cfg,
-    options: {
-      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 10, color: textColor } },
-        tooltip: { callbacks: { label: c => ' ' + (c.dataset.label || c.label) + ': ' + inr(c.parsed.y != null ? c.parsed.y : c.parsed) } }
+      options: {
+        responsive: true, maintainAspectRatio: false, resizeDelay: 0, interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, color: textColor } },
+          tooltip: { callbacks: { label: c => ' ' + (c.dataset.label || c.label) + ': ' + inr(c.parsed.y != null ? c.parsed.y : c.parsed) } }
+        },
+        scales: cfg.type === 'doughnut' ? {} : {
+          y: { ticks: { callback: ticks, color: textColor }, grid: { color: gridColor } },
+          x: { ticks: { color: textColor }, grid: { display: false } }
+        },
       },
-      scales: cfg.type === 'doughnut' ? {} : {
-        y: { ticks: { callback: ticks, color: textColor }, grid: { color: gridColor } },
-        x: { ticks: { color: textColor }, grid: { display: false } }
-      },
-    },
-  });
+    });
+    DASH.charts[id] = chart;
+    if (window.ResizeObserver && cv.parentElement) {
+      if (!DASH._ro) {
+        DASH._ro = new ResizeObserver(() => {
+          Object.values(DASH.charts).forEach(c => { if (c && c.resize) c.resize(); });
+        });
+      }
+      DASH._ro.observe(cv.parentElement);
+    }
   } catch(err) {
     if (cv.parentElement) cv.parentElement.innerHTML = '<div class="empty" style="font-size:12px;color:var(--tx-muted);padding:20px 0;">Chart rendering error</div>';
   }

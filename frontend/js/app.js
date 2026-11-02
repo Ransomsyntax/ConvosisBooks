@@ -457,7 +457,23 @@ document.addEventListener('click', async e => {
     }
     return;
   }
-  if (t.closest('#burger')) { innerWidth <= 900 ? document.body.classList.toggle('mo') : document.body.classList.toggle('col'); return; }
+  if (t.closest('#burger')) {
+    if (innerWidth <= 900) {
+      document.body.classList.toggle('mo');
+    } else {
+      document.body.classList.toggle('col');
+      try { pref.set('sidebar_collapsed', document.body.classList.contains('col')); } catch(e) {}
+    }
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 120);
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+      if (window.DASH && DASH.charts) {
+        Object.values(DASH.charts).forEach(c => { if (c && c.resize) c.resize(); });
+      }
+    }, 260);
+    return;
+  }
   if (t.closest('#orgbtn')) orgForm();
   if (t.closest('[data-retry]') && PAGE.reload) PAGE.reload();
 });
@@ -492,6 +508,9 @@ document.addEventListener('keydown', e => {
 });
 
 loadMe().then(() => {
+  if (pref.get('sidebar_collapsed', false) && innerWidth > 900) {
+    document.body.classList.add('col');
+  }
   route();
   addEventListener('hashchange', route);
   NotificationCenter.fetch();

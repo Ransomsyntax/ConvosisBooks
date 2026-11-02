@@ -51,8 +51,13 @@ a:hover {
 
 .g {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 16px;
+  width: 100%;
+}
+.g > * {
+  min-width: 0;
+  max-width: 100%;
 }
 .s12 { grid-column: span 12; }
 .s8  { grid-column: span 8; }
@@ -136,9 +141,16 @@ h2 {
 .cv {
   position: relative;
   height: 270px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .cv.sm {
   height: 230px;
+}
+.cv canvas {
+  width: 100% !important;
+  max-width: 100% !important;
 }
 .empty {
   display: grid;
@@ -991,9 +1003,17 @@ body.modal-open {
   color: var(--dn);
 }
 
-@media (max-width: 1100px) {
-  .s8, .s6, .s4 { grid-column: span 12; }
-  .s3 { grid-column: span 6; }
+@media (max-width: 1250px) {
+  body:not(.col) .s8,
+  body:not(.col) .s6,
+  body:not(.col) .s4 { grid-column: span 12; }
+  body:not(.col) .s3 { grid-column: span 6; }
+}
+@media (max-width: 1050px) {
+  body.col .s8,
+  body.col .s6,
+  body.col .s4 { grid-column: span 12; }
+  body.col .s3 { grid-column: span 6; }
 }
 @media (max-width: 900px) {
   #side { transform: translateX(-100%); width: 218px; }

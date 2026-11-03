@@ -92,3 +92,11 @@ const BADGE = { Paid: 'ok', Overdue: 'ba', 'Partially Paid': 'wa', Sent: 'in', O
 const badge = s => `<span class="st ${BADGE[s] || 'gr'}">${esc(s)}</span>`;
 const spinner = '<div class="spin" role="status">Loading…</div>';
 const errBox = (msg, retry) => `<div class="empty" role="alert"><div>${esc(msg)}${retry ? '<br><button class="btn" data-retry type="button" style="margin-top:8px">Retry</button>' : ''}</div></div>`;
+
+function opts(list, sel) {
+  return (list || []).map(o => {
+    const [v, l] = Array.isArray(o) ? o : [o, o];
+    return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`;
+  }).join('');
+}
+window.opts = opts;

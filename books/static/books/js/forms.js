@@ -145,7 +145,7 @@ function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
 }
 
 let uid = 0;
-const opts = (list, sel) => list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join('');
+var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
 function fld(o) {
   const id = 'i' + (++uid), v = o.value == null ? '' : o.value, req = o.req ? ' required aria-required="true"' : '', at = o.attrs || '';
   let ctl;
@@ -3825,7 +3825,7 @@ async function priceListModal() {
   });
 }
 
-async async function warehouseModal(id) {
+async function warehouseModal(id) {
   const [existingWh, rec] = await Promise.all([
     api('lookup/warehouses/').catch(() => []),
     id ? api(`warehouses/${id}/`).catch(() => null) : Promise.resolve(null)

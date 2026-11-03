@@ -90,7 +90,7 @@ async function renderDashboard(root) {
   PAGE.reload = load;
   const [s, e] = rangeFor(DASH.period);
   const head = `<div class="hd"><div><h1>Hello, ${esc(APP.user.name || 'admin')}</h1><div class="sub">${esc(APP.org.name)} · ${fd(s)} – ${fd(e)}</div></div>
-<div class="act"><select class="btn" id="per" aria-label="Date range">${opts(PERIODS, DASH.period)}</select>
+<div class="act"><select class="btn" id="per" aria-label="Date range">${(typeof opts === "function" ? opts : (list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''))(PERIODS, DASH.period)}</select>
 ${DASH.period === 'custom' ? `<input class="btn" type="date" id="d1" aria-label="From" value="${esc(s)}"><input class="btn" type="date" id="d2" aria-label="To" value="${esc(e)}">` : ''}
 <button class="btn" id="rf" type="button">Refresh</button><button class="btn" id="ex" type="button">Export</button><button class="btn" id="cu" type="button" aria-haspopup="true">Customize</button>
 <div class="pop right" id="cum" style="top:36px">${WID.map(w => `<label class="ck" style="padding:6px 10px"><input type="checkbox" data-w="${w[0]}" ${DASH.hidden.includes(w[0]) ? '' : 'checked'}> ${esc(w[1])}</label>`).join('')}<button class="mi" data-rl type="button">Reset layout</button></div></div></div>

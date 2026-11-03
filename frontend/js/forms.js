@@ -768,11 +768,13 @@ async function partyForm(kind, id) {
     </div>
   `;
 
+  let modalInstance = null;
   formModal({
     title: (id ? 'Edit ' : 'New ') + entityLabel,
     wide: true,
     body: formHtml,
     onReady: (form, modal) => {
+      modalInstance = modal;
       const tabs = $$('.party-tab-btn', modal.el);
       const panes = $$('.party-tab-pane', modal.el);
       tabs.forEach(btn => {
@@ -1062,7 +1064,8 @@ async function partyForm(kind, id) {
     onSubmit: async d => {
       if (!isCust) {
         const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
-        const cfAcc = ($('#bank_account_number_confirm', modal.el) ? $('#bank_account_number_confirm', modal.el).value : '').trim();
+        const cfAccEl = document.getElementById('bank_account_number_confirm') || (modalInstance?.el ? $('#bank_account_number_confirm', modalInstance.el) : null);
+        const cfAcc = (cfAccEl ? cfAccEl.value : '').trim();
         if (acc && cfAcc && acc !== cfAcc) {
           throw new ApiErr(400, { bank_account_number: 'Bank account numbers do not match.' }, 'Bank account numbers do not match.');
         }
@@ -1085,6 +1088,9 @@ async function partyForm(kind, id) {
       } else if (!isCust && d.source_of_supply) {
         const stMatch = d.source_of_supply.replace(/^\[\d+\]\s*/, '').trim();
         if (stMatch) d.state = stMatch;
+      }
+      if (!d.state && d.billing_state) {
+        d.state = d.billing_state;
       }
 
       if (!id) d.active = true;
@@ -3819,23 +3825,55 @@ async function priceListModal() {
   });
 }
 
-async function warehouseModal() {
-  const existingWh = await api('lookup/warehouses/').catch(() => []);
+async async function warehouseModal(id) {
+  const [existingWh, rec] = await Promise.all([
+    api('lookup/warehouses/').catch(() => []),
+    id ? api(`warehouses/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+  const otherPrimary = existingWh.find(w => w.is_primary && String(w.id) !== String(id || ''));
+
   formModal({
-    title: 'New Inventory Warehouse',
+    title: (id ? 'Edit ' : 'New ') + 'Inventory Warehouse',
     body: `<div class="g">
-      ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', ph: 'e.g. Kottayam Central Warehouse' })}
-      ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', ph: 'WH-KTY-01' })}
-      ${fld({ name: 'parent_id', label: 'Parent Warehouse (Sub-warehouse of)', type: 'select', opts: [['', 'None (Main Warehouse)'], ...existingWh.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
-      ${fld({ name: 'city', label: 'City', col: 's6', ph: 'Kottayam' })}
-      ${fld({ name: 'state', label: 'State', type: 'select', opts: STATES, value: APP.org.state || 'Kerala', col: 's6' })}
-      ${fld({ name: 'address', label: 'Address', type: 'textarea', col: 's12', ph: 'Anugraha Complex, Kottayam West...' })}
-      ${fld({ name: 'is_primary', label: 'Set as Primary Warehouse', type: 'checkbox', value: false, col: 's6' })}
-      ${fld({ name: 'shared_database', label: 'Shared Database Architecture (Unified inventory catalog)', type: 'checkbox', value: true, col: 's6' })}
+      ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', value: rec?.name || '', ph: 'e.g. Kottayam Central Warehouse' })}
+      ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', value: rec?.code || '', ph: 'WH-KTY-01' })}
+      ${fld({ name: 'parent_id', label: 'Parent Warehouse (Sub-warehouse of)', type: 'select', value: rec?.parent_id || '', opts: [['', 'None (Main Warehouse)'], ...existingWh.filter(w => String(w.id) !== String(id || '')).map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
+      ${fld({ name: 'city', label: 'City', col: 's6', value: rec?.city || '', ph: 'Kottayam' })}
+      ${fld({ name: 'state', label: 'State', type: 'select', opts: STATES, value: rec?.state || APP.org.state || 'Kerala', col: 's6' })}
+      ${fld({ name: 'address', label: 'Address', type: 'textarea', col: 's12', value: rec?.address || '', ph: 'Anugraha Complex, Kottayam West...' })}
+      ${fld({ name: 'is_primary', label: 'Set as Primary Warehouse', type: 'checkbox', value: !!rec?.is_primary, col: 's6' })}
+      ${fld({ name: 'shared_database', label: 'Shared Database Architecture (Unified inventory catalog)', type: 'checkbox', value: rec ? !!rec.shared_database : true, col: 's6' })}
     </div>`,
+    onReady: (form, modal) => {
+      const isPrimaryCk = $('input[name="is_primary"]', form);
+      if (isPrimaryCk && otherPrimary) {
+        isPrimaryCk.addEventListener('change', async () => {
+          if (isPrimaryCk.checked) {
+            const ok = await confirmBox({
+              title: 'Warning: Replace Primary Warehouse?',
+              message: `Warehouse "${otherPrimary.name} (${otherPrimary.code})" is currently designated as the Primary Warehouse. Setting this warehouse as Primary will replace it. Do you want to proceed?`,
+              okText: 'Yes, Change Primary',
+              cancelText: 'Cancel'
+            });
+            if (!ok) {
+              isPrimaryCk.checked = false;
+            }
+          }
+        });
+      }
+    },
     onSubmit: async d => {
-      await api('warehouses/', { method: 'POST', body: d });
-      toast('Warehouse created');
+      if (d.is_primary && otherPrimary) {
+        const ok = await confirmBox({
+          title: 'Warning: Replace Primary Warehouse?',
+          message: `Warehouse "${otherPrimary.name} (${otherPrimary.code})" is currently designated as the Primary Warehouse. Setting this warehouse as Primary will replace it. Do you want to proceed?`,
+          okText: 'Yes, Change Primary',
+          cancelText: 'Cancel'
+        });
+        if (!ok) return;
+      }
+      await api(id ? `warehouses/${id}/` : 'warehouses/', { method: id ? 'PUT' : 'POST', body: d });
+      toast(`Warehouse ${id ? 'updated' : 'created'}`);
       refresh();
     }
   });
@@ -5026,20 +5064,25 @@ async function quoteForm(id, onDone) {
     });
   });
 
-  $('#btn-quote-gear', form).addEventListener('click', () => {
+  $('#btn-quote-gear', form).addEventListener('click', async () => {
+    let currentConfig = { prefix: 'QT', next_sequence: 1 };
+    try {
+      currentConfig = await api('quotes/sequence/');
+    } catch (_) {}
+
     Modal.open({
       title: 'Configure Quote Number Sequence',
       dialog: true,
       body: `
         <div style="padding:10px 0;">
-          <p class="sub" style="margin-bottom:12px;">Specify the prefix and sequence format for your sales quotes.</p>
+          <p class="sub" style="margin-bottom:12px;">Specify the prefix and sequence format for your sales quotes. Serial numbers will auto-increment from this setting.</p>
           <div class="fg">
             <label>Prefix</label>
-            <input class="in" id="q-prefix-input" value="QT" style="width:120px;">
+            <input class="in" id="q-prefix-input" value="${esc(currentConfig.prefix || 'QT')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. QT or EST">
           </div>
-          <div class="fg">
+          <div class="fg" style="margin-top:12px;">
             <label>Next Sequence Number</label>
-            <input class="in" id="q-next-seq-input" type="number" value="1" style="width:160px;">
+            <input class="in" id="q-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
           </div>
         </div>
       `,
@@ -5048,12 +5091,21 @@ async function quoteForm(id, onDone) {
         <button class="btn p" id="btn-save-q-seq">Save Sequence</button>
       `
     });
-    $('#btn-save-q-seq').addEventListener('click', () => {
-      const pfx = $('#q-prefix-input').value.trim() || 'QT';
-      const seq = Number($('#q-next-seq-input').value) || 1;
-      $('#q-number', form).value = `${pfx}-${String(seq).padStart(6, '0')}`;
-      Modal.close();
-      toast('Quote sequence updated');
+
+    $('#btn-save-q-seq').addEventListener('click', async () => {
+      const pfx = ($('#q-prefix-input').value || '').trim().toUpperCase() || 'QT';
+      const seq = Math.max(1, parseInt($('#q-next-seq-input').value, 10) || 1);
+      try {
+        const res = await api('quotes/sequence/', {
+          method: 'POST',
+          body: { prefix: pfx, next_sequence: seq }
+        });
+        $('#q-number', form).value = res.formatted;
+        Modal.close();
+        toast(`Quote sequence updated to ${res.formatted}`, 'ok');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
     });
   });
 

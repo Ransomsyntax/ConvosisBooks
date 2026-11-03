@@ -93,6 +93,7 @@ urlpatterns = [
     path('ai/context/', api.assistant_accounting_context_view),
     path('stock-movements/move/', api.stock_move_action_view),
 
+    path('quotes/sequence/', api.quote_sequence_view),
     path('<slug:name>/', api.collection),
     path('<slug:name>/<int:pk>/', api.item),
     path('<slug:name>/<int:pk>/<slug:act>/', api.action),

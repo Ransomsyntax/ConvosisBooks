@@ -26,6 +26,7 @@ class Organization(models.Model):
     notes_default = models.TextField(blank=True, default='Thanks for your business.')
     terms_default = models.TextField(blank=True, default='Due on Receipt')
     opening_cash = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    quote_prefix = models.CharField(max_length=20, blank=True, default='QT')
 
     def save(self, *args, **kwargs):
         self.pk = 1
@@ -521,6 +522,9 @@ class Quote(Document):
     adjustment = models.DecimalField(default=Decimal('0.00'), **MONEY)
     adjustment_label = models.CharField(max_length=50, blank=True, default='Adjustment')
     sent_at = models.DateTimeField(null=True, blank=True)
+    converted_to_invoice = models.ForeignKey('Invoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='source_quotes')
+    converted_to_sales_order = models.ForeignKey('SalesOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='source_quotes')
+    converted_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.number

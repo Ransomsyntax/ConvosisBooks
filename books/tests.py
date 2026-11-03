@@ -187,6 +187,41 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
 class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
     """Test transaction integrity, bank transfers, reconciliation, payments, and period locks."""
 
+    def test_vendor_creation_with_bank_and_details(self):
+        # Issue 1: Vendor Creation Issue fix verification
+        self.client.force_login(self.admin_user)
+        payload = {
+            'name': 'Apex Cloud Solutions',
+            'company': 'Apex Cloud Solutions LLP',
+            'contact_person': 'Rohan Sharma',
+            'email': 'rohan@apexcloud.in',
+            'phone': '9876543210',
+            'billing_address': '404 Cyber City, Phase 2',
+            'billing_city': 'Gurugram',
+            'billing_pincode': '122002',
+            'billing_country': 'India',
+            'source_of_supply': '[06] Haryana',
+            'gstin': '06AABCA1234A1Z5',
+            'pan': 'AABCA1234A',
+            'bank_name': 'HDFC Bank',
+            'bank_account_holder': 'Apex Cloud Solutions LLP',
+            'bank_account_number': '50100234567890',
+            'bank_ifsc': 'HDFC0001234',
+            'bank_branch': 'Cyber City',
+            'contact_persons_data': [
+                {'first_name': 'Rohan', 'last_name': 'Sharma', 'email': 'rohan@apexcloud.in', 'phone': '9876543210'}
+            ],
+            'custom_fields_data': {'Vendor Category': 'IT Hardware'},
+            'active': True
+        }
+        res = self.client.post('/api/vendors/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertEqual(data['name'], 'Apex Cloud Solutions')
+        self.assertEqual(data['state'], 'Haryana')
+        self.assertEqual(data['bank_account_number'], '50100234567890')
+        self.assertEqual(data['bank_ifsc'], 'HDFC0001234')
+
     def test_invoice_creation_and_status(self):
         today = timezone.localdate()
         inv = Invoice.objects.create(
@@ -844,6 +879,72 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(Decimal(str(so_data['lines'][0]['quantity'])), Decimal('5'))
 
         q_res = self.client.get(f'/api/quotes/{quote_id}/')
-        self.assertEqual(q_res.json()['status'], 'accepted')
+        self.assertEqual(q_res.json()['status'], 'ordered')
+
+        # Test duplicate conversion prevention (Issue 4)
+        # Cannot convert already converted quote to sales order again
+        dup_so = self.client.post(f'/api/quotes/{quote_id}/convert-to-sales-order/')
+        self.assertEqual(dup_so.status_code, 400)
+        self.assertIn('already been converted', dup_so.json().get('error', ''))
+
+        # Cannot convert quote already converted to SO into an invoice
+        dup_inv = self.client.post(f'/api/quotes/{quote_id}/convert-to-invoice/')
+        self.assertEqual(dup_inv.status_code, 400)
+        self.assertIn('already been converted', dup_inv.json().get('error', ''))
+
+    def test_quote_sequence_configuration(self):
+        # Issue 3: Quotation serial number configuration
+        # 1. Get current sequence
+        res_get = self.client.get('/api/quotes/sequence/')
+        self.assertEqual(res_get.status_code, 200)
+        self.assertIn('prefix', res_get.json())
+
+        # 2. Configure prefix and next sequence
+        res_set = self.client.post('/api/quotes/sequence/', data=json.dumps({
+            'prefix': 'EST',
+            'next_sequence': 100
+        }), content_type='application/json')
+        self.assertEqual(res_set.status_code, 200)
+        self.assertEqual(res_set.json()['prefix'], 'EST')
+        self.assertEqual(res_set.json()['formatted'], 'EST-000100')
+
+        # 3. Next quote lookup returns configured sequence
+        lookup_res = self.client.get('/api/lookup/next-quote-number/')
+        self.assertEqual(lookup_res.status_code, 200)
+        self.assertEqual(lookup_res.json()['next_number'], 'EST-000100')
+
+        # 4. Creating quote without manual number uses EST-000100
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'lines': [{'item_id': self.item.id, 'quantity': '1', 'rate': '500.00'}]
+        }
+        res_q = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res_q.status_code, 201)
+        self.assertEqual(res_q.json()['number'], 'EST-000100')
+
+        # 5. Next quote is EST-000101
+        lookup_res2 = self.client.get('/api/lookup/next-quote-number/')
+        self.assertEqual(lookup_res2.json()['next_number'], 'EST-000101')
+
+    def test_duplicate_quote_convert_to_invoice(self):
+        # Issue 4: Prevent multiple conversions to invoice
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'lines': [{'item_id': self.item.id, 'quantity': '1', 'rate': '100.00'}]
+        }
+        res = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        qid = res.json()['id']
+
+        # First conversion succeeds
+        c1 = self.client.post(f'/api/quotes/{qid}/convert-to-invoice/')
+        self.assertEqual(c1.status_code, 200)
+
+        # Second conversion fails
+        c2 = self.client.post(f'/api/quotes/{qid}/convert-to-invoice/')
+        self.assertEqual(c2.status_code, 400)
+        self.assertIn('already been converted', c2.json().get('error', ''))
 
 

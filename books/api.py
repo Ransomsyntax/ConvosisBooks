@@ -1149,6 +1149,11 @@ class DocResource(Resource):
             r['adjustment_label'] = o.adjustment_label
             r['tax_type'] = o.tax_type
             r['tds_tcs_tax'] = o.tds_tcs_tax
+            r['converted_to_invoice_id'] = o.converted_to_invoice_id
+            r['converted_to_invoice_number'] = o.converted_to_invoice.number if o.converted_to_invoice else ''
+            r['converted_to_sales_order_id'] = o.converted_to_sales_order_id
+            r['converted_to_sales_order_number'] = o.converted_to_sales_order.number if o.converted_to_sales_order else ''
+            r['converted_at'] = o.converted_at
         return r
 
     def detail(self, o):
@@ -1262,8 +1267,18 @@ class DocResource(Resource):
         head, lines = self.parse(data)
         services.check_transaction_lock(head['date'])
         num = data.get('number')
+        pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
         if not num or self.Model.objects.filter(number=num).exists():
-            num = next_number(self.prefix)
+            num = next_number(pfx)
+        else:
+            import re
+            m = re.match(rf'^{re.escape(pfx)}-(\d+)$', num)
+            if m:
+                val = int(m.group(1))
+                seq, _ = Sequence.objects.get_or_create(key=pfx)
+                if seq.value < val:
+                    seq.value = val
+                    seq.save(update_fields=['value'])
         obj = self.Model(number=num, status='draft')
         self.write(obj, head, lines)
         return obj
@@ -1407,6 +1422,13 @@ class QuoteResource(DocResource):
     name = 'quotes'
     Model, Line, Party = Quote, QuoteLine, Customer
     party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QT', 'sent'
+
+    @property
+    def prefix(self):
+        return Organization.get().quote_prefix or 'QT'
+
+    def get_prefix(self):
+        return Organization.get().quote_prefix or 'QT'
     search_fields = ('number', 'customer__name', 'reference_number', 'subject')
     csv_cols = [
         ('Quote#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'),
@@ -1452,26 +1474,45 @@ class QuoteResource(DocResource):
             'adjustment': o.adjustment,
             'adjustment_label': o.adjustment_label,
             'sent_at': o.sent_at,
+            'converted_to_invoice_id': o.converted_to_invoice_id,
+            'converted_to_invoice_number': o.converted_to_invoice.number if o.converted_to_invoice else '',
+            'converted_to_sales_order_id': o.converted_to_sales_order_id,
+            'converted_to_sales_order_number': o.converted_to_sales_order.number if o.converted_to_sales_order else '',
+            'converted_at': o.converted_at,
         }
 
     def action(self, request, obj, name):
         if name == 'send':
+            if obj.status in ('invoiced', 'ordered'):
+                raise ApiError(400, 'Cannot mark converted quote as sent.')
             obj.status = 'sent'
             obj.sent_at = timezone.now()
             obj.save(update_fields=['status', 'sent_at'])
             services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} marked as sent')
             return j({'status': 'sent', 'number': obj.number})
         elif name == 'accept':
+            if obj.status in ('invoiced', 'ordered') or obj.converted_to_invoice_id or obj.converted_to_sales_order_id:
+                raise ApiError(400, f'Quote {obj.number} has already been converted ({obj.status}).')
             obj.status = 'accepted'
             obj.save(update_fields=['status'])
             services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} accepted')
             return j({'status': 'accepted', 'number': obj.number})
         elif name == 'decline':
+            if obj.status in ('invoiced', 'ordered') or obj.converted_to_invoice_id or obj.converted_to_sales_order_id:
+                raise ApiError(400, f'Cannot decline converted quote {obj.number}.')
             obj.status = 'declined'
             obj.save(update_fields=['status'])
             services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} declined')
             return j({'status': 'declined', 'number': obj.number})
         elif name == 'convert-to-invoice':
+            if obj.status == 'invoiced' or obj.converted_to_invoice_id:
+                target = obj.converted_to_invoice.number if obj.converted_to_invoice else ''
+                raise ApiError(400, f'Quote {obj.number} has already been converted to Invoice {target}. A quote cannot be converted multiple times.')
+            if obj.status == 'ordered' or obj.converted_to_sales_order_id:
+                target = obj.converted_to_sales_order.number if obj.converted_to_sales_order else ''
+                raise ApiError(400, f'Quote {obj.number} has already been converted to Sales Order {target}. A quote cannot be converted multiple times.')
+            if obj.status == 'declined':
+                raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
             inv = Invoice.objects.create(
                 customer=obj.customer,
                 number=next_number('INV'),
@@ -1504,10 +1545,20 @@ class QuoteResource(DocResource):
                     position=l.position
                 )
             obj.status = 'invoiced'
-            obj.save(update_fields=['status'])
+            obj.converted_to_invoice = inv
+            obj.converted_at = timezone.now()
+            obj.save(update_fields=['status', 'converted_to_invoice', 'converted_at'])
             services.log_audit(request.user, 'create', 'invoice', inv.pk, f'Converted Quote {obj.number} to Invoice {inv.number}')
             return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
         elif name == 'convert-to-sales-order':
+            if obj.status == 'ordered' or obj.converted_to_sales_order_id:
+                target = obj.converted_to_sales_order.number if obj.converted_to_sales_order else ''
+                raise ApiError(400, f'Quote {obj.number} has already been converted to Sales Order {target}. A quote cannot be converted multiple times.')
+            if obj.status == 'invoiced' or obj.converted_to_invoice_id:
+                target = obj.converted_to_invoice.number if obj.converted_to_invoice else ''
+                raise ApiError(400, f'Quote {obj.number} has already been converted to Invoice {target}. A quote cannot be converted multiple times.')
+            if obj.status == 'declined':
+                raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
             so = SalesOrder.objects.create(
                 customer=obj.customer,
                 number=next_number('SO'),
@@ -1540,8 +1591,10 @@ class QuoteResource(DocResource):
                     line_total=l.line_total,
                     position=l.position
                 )
-            obj.status = 'accepted'
-            obj.save(update_fields=['status'])
+            obj.status = 'ordered'
+            obj.converted_to_sales_order = so
+            obj.converted_at = timezone.now()
+            obj.save(update_fields=['status', 'converted_to_sales_order', 'converted_at'])
             services.log_audit(request.user, 'create', 'sales_order', so.pk, f'Converted Quote {obj.number} to Sales Order {so.number}')
             return j({'order_id': so.pk, 'sales_order_id': so.pk, 'number': so.number})
         else:
@@ -3215,14 +3268,60 @@ def lookup(request, name):
         User = get_user_model()
         data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in User.objects.filter(is_active=True).order_by('username')]
     elif name == 'next-quote-number':
-        seq = Sequence.objects.filter(key='QT').first()
+        org = Organization.get()
+        pfx = org.quote_prefix or 'QT'
+        seq = Sequence.objects.filter(key=pfx).first()
         nxt = (seq.value + 1) if seq else 1
-        data = {'next_number': f'QT-{nxt:06d}'}
+        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
     else:
         raise ApiError(404, 'Unknown lookup.')
     return j(data)
 
 @api_view
+
+
+@api_view
+def quote_sequence_view(request):
+    org = Organization.get()
+    pfx = org.quote_prefix or 'QT'
+    if request.method == 'GET':
+        seq = Sequence.objects.filter(key=pfx).first()
+        nxt = (seq.value + 1) if seq else 1
+        return j({
+            'prefix': pfx,
+            'next_sequence': nxt,
+            'formatted': f'{pfx}-{nxt:06d}'
+        })
+    elif request.method == 'POST':
+        import json, re
+        try:
+            body = json.loads(request.body.decode('utf-8')) if request.body else {}
+        except Exception:
+            raise ApiError(400, 'Invalid JSON body.')
+        new_pfx = (body.get('prefix') or '').strip().upper()
+        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
+            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
+        next_seq = body.get('next_sequence') or body.get('next_number') or 1
+        try:
+            next_seq = int(next_seq)
+            if next_seq < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Next sequence number must be a positive integer.')
+
+        org.quote_prefix = new_pfx
+        org.save(update_fields=['quote_prefix'])
+
+        seq, _ = Sequence.objects.get_or_create(key=new_pfx)
+        seq.value = max(0, next_seq - 1)
+        seq.save(update_fields=['value'])
+
+        return j({
+            'prefix': new_pfx,
+            'next_sequence': next_seq,
+            'formatted': f'{new_pfx}-{next_seq:06d}'
+        })
+
 def dashboard_view(request):
     start, end = parse_range(request)
     return j(services.dashboard(start, end))

@@ -1051,27 +1051,70 @@ const LISTS = {
     api: 'quotes', title: 'Quotes', bc: 'Sales', newLabel: 'New Quote',
     onNew: () => quoteForm(), ordering: '-date', empty: 'No quotes yet. Click + New Quote to create your first sales quotation.',
     filters: [
-      { name: 'status', label: 'Status', opts: [['', 'All Quotes'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['invoiced', 'Invoiced']] }
+      { name: 'status', label: 'Status', opts: [['', 'All Quotes'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['ordered', 'Sales Order Created'], ['invoiced', 'Invoiced']] }
     ],
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
       { h: 'Quote#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}"><b>${esc(r.number)}</b></button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
       { h: 'Customer Name', f: r => esc(r.party || r.customer_name) },
       { h: 'Reference#', f: r => esc(r.reference_number || '—') },
-      { h: 'Status', f: r => `<span class="pastel-chip ${r.status === 'accepted' ? 'chip-mint' : r.status === 'declined' ? 'chip-rose' : r.status === 'sent' ? 'chip-sky' : r.status === 'invoiced' ? 'chip-indigo' : 'chip-lavender'}">${esc(r.status ? r.status.toUpperCase() : 'DRAFT')}</span>` },
+      { h: 'Status', f: r => {
+        const map = {
+          draft: ['chip-lavender', 'DRAFT'],
+          sent: ['chip-sky', 'SENT'],
+          accepted: ['chip-mint', 'ACCEPTED'],
+          declined: ['chip-rose', 'DECLINED'],
+          ordered: ['chip-indigo', 'CONVERTED TO SO'],
+          invoiced: ['chip-indigo', 'INVOICED']
+        };
+        const [cls, label] = map[r.status] || ['chip-lavender', (r.status || 'DRAFT').toUpperCase()];
+        return `<span class="pastel-chip ${cls}">${label}</span>`;
+      }},
       { h: 'Expiry Date', s: 'expiry_date', f: r => r.expiry_date ? fd(r.expiry_date) : '—' },
       { h: 'Amount', s: 'total', ...money(r => inr(r.total)) }
     ],
-    actions: () => [
-      ['view', 'View'],
-      ['edit', 'Edit'],
-      ['convert-inv', 'Convert to Invoice'],
-      ['convert-so', 'Convert to Sales Order'],
-      ['delete', 'Delete', 'd']
-    ],
-    onAction: (a, r) => {
+    actions: r => {
+      const isConverted = r.status === 'invoiced' || r.status === 'ordered' || !!r.converted_to_invoice_id || !!r.converted_to_sales_order_id;
+      const acts = [
+        ['view', 'View'],
+        ['edit', 'Edit']
+      ];
+      if (r.status === 'draft') {
+        acts.push(['send', 'Mark as Sent']);
+      }
+      if (!isConverted && r.status !== 'declined') {
+        if (r.status !== 'accepted') acts.push(['accept', 'Mark as Accepted']);
+        acts.push(['decline', 'Mark as Declined']);
+        acts.push(['convert-inv', 'Convert to Invoice']);
+        acts.push(['convert-so', 'Convert to Sales Order']);
+      }
+      acts.push(['delete', 'Delete', 'd']);
+      return acts;
+    },
+    onAction: async (a, r) => {
       if (a === 'view') viewQuoteDetail(r.id);
       else if (a === 'edit') quoteForm(r.id);
+      else if (a === 'send') {
+        try {
+          await api(`quotes/${r.id}/send/`, { method: 'POST', body: {} });
+          toast(`Quote ${r.number} marked as sent!`, 'ok');
+          refresh();
+        } catch (e) { toast(e.message, 'err'); }
+      }
+      else if (a === 'accept') {
+        try {
+          await api(`quotes/${r.id}/accept/`, { method: 'POST', body: {} });
+          toast(`Quote ${r.number} marked as accepted!`, 'ok');
+          refresh();
+        } catch (e) { toast(e.message, 'err'); }
+      }
+      else if (a === 'decline') {
+        try {
+          await api(`quotes/${r.id}/decline/`, { method: 'POST', body: {} });
+          toast(`Quote ${r.number} marked as declined.`, 'ok');
+          refresh();
+        } catch (e) { toast(e.message, 'err'); }
+      }
       else if (a === 'convert-inv') convertQuoteToInvoice(r.id);
       else if (a === 'convert-so') convertQuoteToSalesOrder(r.id);
       else if (a === 'delete') deleteRecord('quotes', r, 'quote');
@@ -1265,8 +1308,8 @@ const LISTS = {
       { h: 'City', f: r => esc(r.city || '—') },
       { h: 'State', f: r => esc(r.state || '—') }
     ],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('warehouses', r, 'warehouse'),
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? warehouseModal(r.id) : deleteRecord('warehouses', r, 'warehouse'),
   },
   'payment-transactions': {
     api: 'payment-transactions', title: 'Payment Gateway Transactions', bc: 'Convosis Payments', ordering: '-created_at', empty: 'No online payment transactions yet.',
@@ -5879,14 +5922,27 @@ async function developerPlatformPage(root, tab = 'keys') {
 }
 
 async function convertQuoteToInvoice(id) {
-  const conf = await confirmBox({
-    title: 'Convert Quote to Invoice',
-    message: 'Are you sure you want to convert this quote into an invoice? A draft invoice will be created with all items from this quote.'
-  });
-  if (!conf) return;
   try {
+    const q = await api(`quotes/${id}/`);
+    if (q.status === 'invoiced' || q.converted_to_invoice_id) {
+      toast('This quote has already been converted to an invoice.', 'err');
+      return;
+    }
+    if (q.status === 'ordered' || q.converted_to_sales_order_id) {
+      toast(`This quote has already been converted to Sales Order ${q.converted_to_sales_order_number || ''}. It cannot be converted multiple times.`, 'err');
+      return;
+    }
+    if (q.status === 'declined') {
+      toast('Cannot convert a declined quote.', 'err');
+      return;
+    }
+    const conf = await confirmBox({
+      title: 'Convert Quote to Invoice',
+      message: `Are you sure you want to convert quote ${q.number} into an invoice? A draft invoice will be created with all items from this quote.`
+    });
+    if (!conf) return;
     const res = await api(`quotes/${id}/convert-to-invoice/`, { method: 'POST', body: {} });
-    toast(`Successfully converted to Invoice ${res.number}!`);
+    toast(`Successfully converted to Invoice ${res.number}!`, 'ok');
     location.hash = '#/sales/invoices';
   } catch (e) {
     toast(e.message, 'err');
@@ -5894,14 +5950,27 @@ async function convertQuoteToInvoice(id) {
 }
 
 async function convertQuoteToSalesOrder(id) {
-  const conf = await confirmBox({
-    title: 'Convert Quote to Sales Order',
-    message: 'Are you sure you want to convert this quote into a confirmed sales order?'
-  });
-  if (!conf) return;
   try {
+    const q = await api(`quotes/${id}/`);
+    if (q.status === 'ordered' || q.converted_to_sales_order_id) {
+      toast('This quote has already been converted to a sales order.', 'err');
+      return;
+    }
+    if (q.status === 'invoiced' || q.converted_to_invoice_id) {
+      toast(`This quote has already been converted to Invoice ${q.converted_to_invoice_number || ''}. It cannot be converted multiple times.`, 'err');
+      return;
+    }
+    if (q.status === 'declined') {
+      toast('Cannot convert a declined quote.', 'err');
+      return;
+    }
+    const conf = await confirmBox({
+      title: 'Convert Quote to Sales Order',
+      message: `Are you sure you want to convert quote ${q.number} into a confirmed sales order?`
+    });
+    if (!conf) return;
     const res = await api(`quotes/${id}/convert-to-sales-order/`, { method: 'POST', body: {} });
-    toast(`Successfully converted to Sales Order ${res.number}!`);
+    toast(`Successfully converted to Sales Order ${res.number}!`, 'ok');
     location.hash = '#/sales/sales-orders';
   } catch (e) {
     toast(e.message, 'err');
@@ -5911,6 +5980,7 @@ async function convertQuoteToSalesOrder(id) {
 async function viewQuoteDetail(id) {
   try {
     const q = await api(`quotes/${id}/`);
+    const isConverted = q.status === 'invoiced' || q.status === 'ordered' || !!q.converted_to_invoice_id || !!q.converted_to_sales_order_id;
     Modal.open({
       title: `Quote ${q.number}`,
       dialog: true,
@@ -5929,8 +5999,8 @@ async function viewQuoteDetail(id) {
               <div style="font-size:26px;font-weight:800;color:#2563eb;letter-spacing:1px;text-transform:uppercase;">QUOTATION</div>
               <div style="font-size:16px;font-weight:700;color:#334155;margin-top:2px;"># ${esc(q.number)}</div>
               <div style="margin-top:6px;">
-                <span class="pastel-chip ${q.status === 'accepted' ? 'chip-mint' : q.status === 'declined' ? 'chip-rose' : q.status === 'sent' ? 'chip-sky' : q.status === 'invoiced' ? 'chip-indigo' : 'chip-lavender'}" style="font-size:11px;font-weight:700;text-transform:uppercase;">
-                  ${esc(q.status)}
+                <span class="pastel-chip ${q.status === 'accepted' ? 'chip-mint' : q.status === 'declined' ? 'chip-rose' : q.status === 'sent' ? 'chip-sky' : q.status === 'ordered' ? 'chip-indigo' : q.status === 'invoiced' ? 'chip-indigo' : 'chip-lavender'}" style="font-size:11px;font-weight:700;text-transform:uppercase;">
+                  ${esc(q.status === 'ordered' ? 'Converted to SO' : q.status)}
                 </span>
               </div>
             </div>
@@ -5969,10 +6039,10 @@ async function viewQuoteDetail(id) {
                 <th style="padding:10px 12px;">#</th>
                 <th style="padding:10px 12px;">Item & Description</th>
                 <th style="padding:10px 12px;text-align:right;">Qty</th>
-                <th style="padding:10px 12px;text-align:right;">Rate (₹)</th>
-                <th style="padding:10px 12px;text-align:right;">Disc %</th>
+                <th style="padding:10px 12px;text-align:right;">Rate</th>
+                <th style="padding:10px 12px;text-align:right;">Discount</th>
                 <th style="padding:10px 12px;text-align:right;">GST</th>
-                <th style="padding:10px 12px;text-align:right;">Amount (₹)</th>
+                <th style="padding:10px 12px;text-align:right;">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -6027,15 +6097,24 @@ async function viewQuoteDetail(id) {
         <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:10px;">
           <div>
             <button type="button" class="btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
-            <button type="button" class="btn" id="btn-view-edit-q"><i class="fa-solid fa-pen"></i> Edit Quote</button>
+            ${!isConverted ? `<button type="button" class="btn" id="btn-view-edit-q"><i class="fa-solid fa-pen"></i> Edit Quote</button>` : ''}
           </div>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="btn p" id="btn-q-to-inv" style="background:#059669;border:none;">
-              <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
-            </button>
-            <button type="button" class="btn" id="btn-q-to-so">
-              <i class="fa-solid fa-cart-shopping"></i> Convert to Sales Order
-            </button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${(q.status === 'invoiced' || q.converted_to_invoice_number) ? `
+              <span class="pastel-chip chip-indigo" style="font-size:12px;padding:6px 12px;"><i class="fa-solid fa-check"></i> Converted to Invoice ${esc(q.converted_to_invoice_number || '')}</span>
+            ` : (q.status === 'ordered' || q.converted_to_sales_order_number) ? `
+              <span class="pastel-chip chip-indigo" style="font-size:12px;padding:6px 12px;"><i class="fa-solid fa-check"></i> Converted to Sales Order ${esc(q.converted_to_sales_order_number || '')}</span>
+            ` : `
+              ${q.status === 'draft' ? `<button type="button" class="btn" id="btn-q-mark-sent"><i class="fa-solid fa-paper-plane"></i> Mark Sent</button>` : ''}
+              ${q.status !== 'accepted' && q.status !== 'declined' ? `<button type="button" class="btn" id="btn-q-mark-accepted" style="color:#059669;"><i class="fa-solid fa-check"></i> Accept</button>` : ''}
+              ${q.status !== 'declined' ? `<button type="button" class="btn" id="btn-q-mark-declined" style="color:#dc2626;"><i class="fa-solid fa-xmark"></i> Decline</button>` : ''}
+              <button type="button" class="btn p" id="btn-q-to-inv" style="background:#059669;border:none;">
+                <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
+              </button>
+              <button type="button" class="btn" id="btn-q-to-so">
+                <i class="fa-solid fa-cart-shopping"></i> Convert to Sales Order
+              </button>
+            `}
             <button type="button" class="btn" data-close>Close</button>
           </div>
         </div>
@@ -6045,6 +6124,30 @@ async function viewQuoteDetail(id) {
     $('#btn-view-edit-q')?.addEventListener('click', () => {
       Modal.close();
       quoteForm(q.id);
+    });
+    $('#btn-q-mark-sent')?.addEventListener('click', async () => {
+      try {
+        await api(`quotes/${q.id}/send/`, { method: 'POST', body: {} });
+        toast(`Quote ${q.number} marked as sent!`, 'ok');
+        Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-q-mark-accepted')?.addEventListener('click', async () => {
+      try {
+        await api(`quotes/${q.id}/accept/`, { method: 'POST', body: {} });
+        toast(`Quote ${q.number} marked as accepted!`, 'ok');
+        Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-q-mark-declined')?.addEventListener('click', async () => {
+      try {
+        await api(`quotes/${q.id}/decline/`, { method: 'POST', body: {} });
+        toast(`Quote ${q.number} marked as declined.`, 'ok');
+        Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
     });
     $('#btn-q-to-inv')?.addEventListener('click', () => {
       Modal.close();

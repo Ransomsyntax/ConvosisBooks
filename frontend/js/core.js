@@ -70,7 +70,14 @@ const qs = o => { const p = new URLSearchParams(); Object.entries(o).forEach(([k
 async function api(path, opt = {}) {
   const method = opt.method || 'GET';
   const init = { method, credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-CSRFToken': csrf() } };
-  if (opt.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opt.body); }
+  if (opt.body !== undefined) {
+    if (typeof FormData !== 'undefined' && opt.body instanceof FormData) {
+      init.body = opt.body;
+    } else {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(opt.body);
+    }
+  }
   let res;
   try { res = await fetch('/api/' + path, init); } catch (e) { throw new ApiErr(0, { message: 'Network error: could not reach the server.' }); }
   if (res.status === 401) { location.href = '/accounts/login/?next=/'; throw new ApiErr(401, { message: 'Session expired.' }); }

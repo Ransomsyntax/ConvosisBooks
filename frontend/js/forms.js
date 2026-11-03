@@ -3354,31 +3354,48 @@ async function statementImportWizardModal(defaultAccId) {
 
   const fileInp = $('#wiz-file-inp', m.el);
   const submitBtn = $('#wiz-import-submit-btn', m.el);
+  let selectedFile = null;
 
   fileInp.addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
+    selectedFile = file;
     $('#wiz-file-name', m.el).textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB)`;
     $('#wiz-preview-section', m.el).style.display = 'block';
 
-    const sampleRows = [
-      { date: '24/10/2026', ref: 'IMPS/981273948', desc: 'Transfer from Cloud Systems Tech Pvt Ltd', dr: '—', cr: '₹25,000.00', bal: '₹2,59,077.40' },
-      { date: '23/10/2026', ref: 'UPI/6612984920', desc: 'Coffee and Refreshments Expense', dr: '₹450.00', cr: '—', bal: '₹2,34,077.40' },
-      { date: '22/10/2026', ref: 'NEFT/110293849', desc: 'Vendor Settlement Tech Services', dr: '₹14,500.00', cr: '—', bal: '₹2,34,527.40' }
-    ];
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const text = ev.target.result;
+        const parsed = (typeof parseCsvString === 'function') ? parseCsvString(text) : { headers: [], rows: [] };
+        const headers = (parsed.headers || []).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+        const dateIdx = headers.findIndex(h => h.includes('date'));
+        const descIdx = headers.findIndex(h => h.includes('desc') || h.includes('narr') || h.includes('remark') || h.includes('partic'));
+        const refIdx = headers.findIndex(h => h.includes('ref') || h.includes('chq') || h.includes('utr'));
+        const drIdx = headers.findIndex(h => h.includes('dr') || h.includes('withdr') || h.includes('debit'));
+        const crIdx = headers.findIndex(h => h.includes('cr') || h.includes('dep') || h.includes('credit'));
+        const balIdx = headers.findIndex(h => h.includes('bal'));
 
-    $('#wiz-preview-tbody', m.el).innerHTML = sampleRows.map(r => `
-      <tr>
-        <td>${r.date}</td>
-        <td><code>${r.ref}</code></td>
-        <td><b>${esc(r.desc)}</b></td>
-        <td class="r" style="color:#dc2626;">${r.dr}</td>
-        <td class="r" style="color:#059669;">${r.cr}</td>
-        <td class="r"><b>${r.bal}</b></td>
-      </tr>
-    `).join('');
-
-    submitBtn.disabled = false;
+        const previewRows = (parsed.rows || []).slice(0, 5);
+        if (previewRows.length > 0) {
+          $('#wiz-preview-tbody', m.el).innerHTML = previewRows.map(r => `
+            <tr>
+              <td>${esc(dateIdx >= 0 ? r[dateIdx] : (r[0] || '—'))}</td>
+              <td><code>${esc(refIdx >= 0 ? r[refIdx] : (r[1] || '—'))}</code></td>
+              <td><b>${esc(descIdx >= 0 ? r[descIdx] : (r[2] || 'Bank Transaction'))}</b></td>
+              <td class="r" style="color:#dc2626;">${esc(drIdx >= 0 ? r[drIdx] : '—')}</td>
+              <td class="r" style="color:#059669;">${esc(crIdx >= 0 ? r[crIdx] : '—')}</td>
+              <td class="r"><b>${esc(balIdx >= 0 ? r[balIdx] : '—')}</b></td>
+            </tr>
+          `).join('');
+          $('#wiz-stats-txt', m.el).textContent = `${parsed.rows.length} rows detected · Ready to import`;
+        }
+        submitBtn.disabled = false;
+      } catch (err) {
+        submitBtn.disabled = false;
+      }
+    };
+    reader.readAsText(file);
   });
 
   submitBtn.addEventListener('click', async () => {
@@ -3386,11 +3403,19 @@ async function statementImportWizardModal(defaultAccId) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Importing Statement...';
     try {
-      const res = await api('banking/statement-import/', {
-        method: 'POST',
-        body: { bank_account: Number(accId) }
-      });
-      toast(`Statement imported! ${res.count || 3} transactions successfully ingested.`);
+      let res;
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append('file', selectedFile);
+        fd.append('bank_account', accId);
+        res = await api('banking/statement-import/', { method: 'POST', body: fd });
+      } else {
+        res = await api('banking/statement-import/', {
+          method: 'POST',
+          body: { bank_account: Number(accId) }
+        });
+      }
+      toast(res.message || `Statement imported! ${res.count || 0} transactions successfully ingested.`);
       m.close();
       location.hash = '#/banking/all-transactions';
       refresh();
@@ -3499,10 +3524,13 @@ async function importStatementModal(baId) {
     const file = e.target.files[0];
     if (!file) return;
     const accId = $('#imp-ba', m.el).value;
-    toast(`Parsing ${file.name}...`);
+    toast(`Uploading & parsing ${file.name}...`);
     try {
-      const res = await api('banking/statement-import/', { method: 'POST', body: { bank_account: accId } });
-      toast(`Successfully imported ${res.count} transactions from ${file.name}`);
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('bank_account', accId);
+      const res = await api('banking/statement-import/', { method: 'POST', body: fd });
+      toast(res.message || `Successfully imported ${res.count} transactions from ${file.name}`);
       m.close();
       location.hash = '#/banking/transactions';
       refresh();

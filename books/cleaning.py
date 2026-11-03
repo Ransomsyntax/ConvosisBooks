@@ -73,8 +73,9 @@ class Cleaner:
             self.err(key, 'Enter a valid number.')
             return default
         try:
-            n = Decimal(str(v).strip())
-        except InvalidOperation:
+            clean_str = str(v).replace('₹', '').replace('$', '').replace('€', '').replace(',', '').replace('%', '').strip()
+            n = Decimal(clean_str)
+        except (InvalidOperation, ValueError):
             self.err(key, 'Enter a valid number.')
             return default
         if not n.is_finite():
@@ -98,8 +99,9 @@ class Cleaner:
             self.err(key, 'Enter a whole number.')
             return default
         try:
-            n = int(str(v).strip())
-        except ValueError:
+            clean_str = str(v).replace('₹', '').replace('$', '').replace('€', '').replace(',', '').strip()
+            n = int(float(clean_str))
+        except (ValueError, OverflowError):
             self.err(key, 'Enter a whole number.')
             return default
         if (lo is not None and n < lo) or (hi is not None and n > hi):
@@ -113,10 +115,17 @@ class Cleaner:
             if required:
                 self.err(key, REQUIRED)
             return default
-        try:
-            d = date.fromisoformat(str(v).strip())
-        except ValueError:
-            self.err(key, 'Enter a valid date (YYYY-MM-DD).')
+        v_str = str(v).strip()
+        d = None
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m/%d/%Y'):
+            try:
+                import datetime
+                d = datetime.datetime.strptime(v_str, fmt).date()
+                break
+            except ValueError:
+                pass
+        if not d:
+            self.err(key, 'Enter a valid date (YYYY-MM-DD or DD/MM/YYYY).')
             return default
         if not 2000 <= d.year <= 2100:
             self.err(key, 'Date out of range.')

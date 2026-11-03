@@ -4,6 +4,7 @@ import datetime
 from datetime import timedelta
 import io
 import json
+import re
 from decimal import Decimal
 from functools import wraps
 
@@ -244,12 +245,150 @@ class Resource:
             w.writerow([safe_cell(r.get(k, '')) for _, k in self.csv_cols])
         return resp
 
+    def get_template_sample(self):
+        return None
+
     def export_template(self):
         resp = HttpResponse(content_type='text/csv; charset=utf-8')
         resp['Content-Disposition'] = f'attachment; filename="{self.name}_template.csv"'
         w = csv.writer(resp)
         w.writerow([h for h, _ in self.csv_cols])
+        sample = self.get_template_sample()
+        if sample:
+            w.writerow(sample)
         return resp
+
+    def get_col_map(self):
+        mapping = {}
+        for h, k in self.csv_cols:
+            hl = h.lower().strip()
+            mapping[hl] = k
+            mapping[re.sub(r'[^a-z0-9]', '', hl)] = k
+            mapping[k.lower()] = k
+            mapping[re.sub(r'[^a-z0-9]', '', k.lower())] = k
+        aliases = {
+            'name': ['name', 'display_name', 'customer_name', 'vendor_name', 'party_name', 'party', 'title', 'item_name', 'product_name', 'account_name', 'full_name', 'client', 'client_name', 'supplier', 'supplier_name'],
+            'company': ['company', 'company_name', 'business_name', 'organization', 'org'],
+            'email': ['email', 'email_address', 'mail', 'contact_email'],
+            'phone': ['phone', 'phone_number', 'mobile', 'mobile_number', 'telephone', 'contact_number', 'contact_no', 'phone_no'],
+            'gstin': ['gstin', 'gst_number', 'gst_no', 'gst', 'tax_id', 'tax_number'],
+            'pan': ['pan', 'pan_number', 'pan_no'],
+            'state': ['state', 'state_name', 'region', 'place_of_supply', 'pos'],
+            'billing_address': ['billing_address', 'address', 'street', 'street_address'],
+            'billing_city': ['billing_city', 'city'],
+            'billing_pincode': ['billing_pincode', 'pincode', 'pin_code', 'postal_code', 'zip', 'zip_code'],
+            'payment_terms': ['payment_terms', 'payment_terms_days', 'terms', 'payment_term', 'credit_days'],
+            'sku': ['sku', 'item_code', 'product_code', 'code', 'barcode', 'part_number'],
+            'item_type': ['item_type', 'type', 'product_type'],
+            'category': ['category', 'item_category', 'group', 'item_group'],
+            'hsn_sac': ['hsn_sac', 'hsn', 'sac', 'hsn_code', 'sac_code'],
+            'unit': ['unit', 'uom', 'measurement_unit', 'usage_unit'],
+            'selling_price': ['selling_price', 'price', 'sales_price', 'rate', 'selling_rate', 'unit_price', 'mrp'],
+            'purchase_price': ['purchase_price', 'cost', 'purchase_rate', 'cost_price', 'cost_rate'],
+            'gst_rate': ['gst_rate', 'gst_%', 'gst_percent', 'gst_percentage', 'tax_rate', 'tax_%', 'tax', 'tax_percent'],
+            'reorder_level': ['reorder_level', 'reorder_point', 'minimum_stock', 'min_stock'],
+            'opening_stock': ['opening_stock', 'stock', 'initial_stock', 'quantity', 'qty', 'opening_qty'],
+            'code': ['code', 'account_code', 'number', 'gl_code'],
+            'account_type': ['account_type', 'account_category', 'type'],
+            'sub_type': ['sub_type', 'subtype', 'detail_type', 'sub_category'],
+            'description': ['description', 'notes', 'remarks', 'desc', 'narration', 'item_description'],
+            'active': ['active', 'status', 'is_active'],
+            'bank_name': ['bank_name', 'bank', 'institution'],
+            'account_number': ['account_number', 'acc_number', 'account_no', 'acc_no', 'bank_account_number'],
+            'ifsc': ['ifsc', 'ifsc_code', 'bank_ifsc', 'branch_ifsc'],
+            'opening_balance': ['opening_balance', 'balance', 'opening_bal', 'initial_balance'],
+            'branch_name': ['branch_name', 'branch', 'bank_branch'],
+            'amount': ['amount', 'total_amount', 'expense_amount', 'amt', 'total', 'subtotal'],
+            'expense_account': ['expense_account', 'expense_account_id', 'expense_account_code', 'account', 'category_account'],
+            'vendor': ['vendor', 'vendor_id', 'vendor_name', 'payee', 'supplier', 'party', 'merchant'],
+            'customer': ['customer', 'customer_id', 'customer_name', 'client', 'client_name', 'party'],
+            'date': ['date', 'txn_date', 'transaction_date', 'expense_date', 'invoice_date', 'bill_date', 'doc_date'],
+            'due_date': ['due_date', 'expiry_date', 'payment_due_date'],
+            'reference': ['reference', 'ref', 'ref_no', 'reference_number', 'cheque_no', 'utr', 'order_number'],
+            'paid_through': ['paid_through', 'paid_via', 'payment_mode', 'mode', 'payment_method'],
+            'item': ['item', 'item_name', 'product', 'product_name', 'item_id'],
+            'quantity': ['quantity', 'qty', 'units', 'count'],
+            'rate': ['rate', 'unit_rate', 'price', 'unit_price', 'cost'],
+            'discount_percent': ['discount_percent', 'discount', 'disc_%', 'discount_%']
+        }
+        for target, names in aliases.items():
+            for n in names:
+                mapping.setdefault(n, target)
+                mapping.setdefault(re.sub(r'[^a-z0-9]', '', n), target)
+        return mapping
+
+    def prepare_import_record(self, rec):
+        pass
+
+    def preprocess_import_records(self, records):
+        return records
+
+    def find_existing(self, clean_item):
+        if not hasattr(self, 'model') or self.model is None:
+            return None
+        try:
+            if hasattr(self.model, 'sku') and clean_item.get('sku'):
+                obj = self.model.objects.filter(sku__iexact=str(clean_item['sku']).strip()).first()
+                if obj: return obj
+            if hasattr(self.model, 'code') and clean_item.get('code'):
+                obj = self.model.objects.filter(code__iexact=str(clean_item['code']).strip()).first()
+                if obj: return obj
+            if hasattr(self.model, 'account_number') and clean_item.get('account_number'):
+                obj = self.model.objects.filter(account_number__iexact=str(clean_item['account_number']).strip()).first()
+                if obj: return obj
+            if hasattr(self.model, 'number') and clean_item.get('number'):
+                obj = self.model.objects.filter(number__iexact=str(clean_item['number']).strip()).first()
+                if obj: return obj
+            if hasattr(self.model, 'email') and clean_item.get('email'):
+                obj = self.model.objects.filter(email__iexact=str(clean_item['email']).strip()).first()
+                if obj: return obj
+            if hasattr(self.model, 'name') and clean_item.get('name'):
+                obj = self.model.objects.filter(name__iexact=str(clean_item['name']).strip()).first()
+                if obj: return obj
+        except Exception:
+            pass
+        return None
+
+    def normalize_record(self, raw_record):
+        if not isinstance(raw_record, dict):
+            return {}
+        col_map = self.get_col_map()
+        rec = {}
+        for col, val in raw_record.items():
+            if not col:
+                continue
+            col_str = str(col).replace('﻿', '').strip()
+            col_lower = col_str.lower()
+            key = col_map.get(col_lower) or col_map.get(re.sub(r'[^a-z0-9]', '', col_lower)) or col_str
+            if isinstance(val, str):
+                v_strip = val.replace('﻿', '').strip()
+                if v_strip.lower() in ('', 'none', 'null', 'n/a', '-'):
+                    rec[key] = ''
+                else:
+                    rec[key] = v_strip
+            else:
+                rec[key] = val
+
+        if 'active' in rec:
+            act_val = str(rec['active']).lower().strip()
+            if act_val in ('true', 'yes', '1', 'active', 'y'):
+                rec['active'] = True
+            elif act_val in ('false', 'no', '0', 'inactive', 'n'):
+                rec['active'] = False
+
+        for num_f in ('selling_price', 'purchase_price', 'gst_rate', 'reorder_level', 'opening_stock', 'amount', 'opening_balance', 'current_balance', 'payment_terms', 'quantity', 'rate', 'discount_percent'):
+            if num_f in rec and isinstance(rec[num_f], str):
+                clean_num = rec[num_f].replace('₹', '').replace('$', '').replace('€', '').replace(',', '').replace('%', '').strip()
+                if clean_num:
+                    try:
+                        rec[num_f] = int(float(clean_num)) if num_f == 'payment_terms' else Decimal(clean_num)
+                    except Exception:
+                        pass
+                else:
+                    rec.pop(num_f, None)
+
+        self.prepare_import_record(rec)
+        return rec
 
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
@@ -270,56 +409,98 @@ class Resource:
             return j({'count': pag.count, 'page': page.number, 'pages': pag.num_pages,
                       'page_size': size, 'results': self.rows(list(page.object_list))})
         if request.method == 'POST':
+            records = None
             if request.FILES.get('file'):
                 try:
-                    content = request.FILES['file'].read().decode('utf-8-sig', errors='ignore')
-                    reader = csv.DictReader(io.StringIO(content))
-                    col_map = {h.lower(): k for h, k in self.csv_cols}
-                    records = []
-                    for row in reader:
-                        rec = {}
-                        for col_name, val in row.items():
-                            if not col_name:
-                                continue
-                            key = col_map.get(col_name.strip().lower(), col_name.strip())
-                            rec[key] = val.strip() if isinstance(val, str) else val
-                        records.append(rec)
-                    created_count = 0
-                    errors = []
-                    for idx, item_data in enumerate(records):
-                        try:
-                            with transaction.atomic():
-                                self.create(item_data, request.user)
-                            created_count += 1
-                        except Exception as e:
-                            errors.append(f'Row {idx + 1}: {str(e)}')
-                    return j({'status': 'ok', 'imported': created_count, 'total': len(records), 'errors': errors})
+                    file_obj = request.FILES['file']
+                    content = file_obj.read().decode('utf-8-sig', errors='ignore')
+                    if file_obj.name.lower().endswith('.json'):
+                        parsed_json = json.loads(content)
+                        records = parsed_json if isinstance(parsed_json, list) else (parsed_json.get('records') or parsed_json.get('data') or parsed_json.get('results') or [parsed_json])
+                    else:
+                        sample = content[:2048]
+                        delim = '\t' if '\t' in sample and ',' not in sample else (';' if ';' in sample and ',' not in sample else ',')
+                        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+                        records = list(reader)
                 except Exception as e:
-                    raise ApiError(400, f'Failed to import CSV: {str(e)}')
-
-            data = body(request)
-            if isinstance(data, dict) and 'import_records' in data:
-                records = data['import_records']
-            elif isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
-                records = data
+                    raise ApiError(400, f'Failed to parse uploaded file: {str(e)}')
             else:
-                records = None
+                data = body(request)
+                if isinstance(data, dict) and 'import_records' in data:
+                    records = data['import_records']
+                elif isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
+                    records = data
+                else:
+                    with transaction.atomic():
+                        obj = self.create(data, request.user)
+                    return j(self.detail(self.get_object(obj.pk)), 201)
 
             if records is not None:
-                created_count = 0
-                errors = []
-                for idx, item_data in enumerate(records):
-                    try:
-                        with transaction.atomic():
-                            self.create(item_data, request.user)
-                        created_count += 1
-                    except Exception as e:
-                        errors.append(f'Row {idx + 1}: {str(e)}')
-                return j({'status': 'ok', 'imported': created_count, 'total': len(records), 'errors': errors})
+                if not records:
+                    return j({'status': 'failed', 'imported': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'total': 0, 'errors': [{'row': 0, 'identifier': 'File', 'error': 'No records found in the imported file.'}], 'message': 'No records found in the imported file.'})
 
-            with transaction.atomic():
-                obj = self.create(data, request.user)
-            return j(self.detail(self.get_object(obj.pk)), 201)
+                dup_mode = 'skip'
+                if isinstance(data, dict) and 'duplicate_mode' in data:
+                    dup_mode = data['duplicate_mode']
+                elif request.POST.get('duplicate_mode'):
+                    dup_mode = request.POST.get('duplicate_mode')
+
+                records = self.preprocess_import_records(records)
+
+                created_count = 0
+                updated_count = 0
+                skipped_count = 0
+                errors = []
+
+                for idx, raw_item in enumerate(records):
+                    try:
+                        clean_item = self.normalize_record(raw_item)
+                        existing = self.find_existing(clean_item)
+
+                        if existing and dup_mode == 'skip':
+                            skipped_count += 1
+                            continue
+                        elif existing and dup_mode == 'update':
+                            with transaction.atomic():
+                                self.update(existing, clean_item, request.user)
+                            updated_count += 1
+                        else:
+                            with transaction.atomic():
+                                self.create(clean_item, request.user)
+                            created_count += 1
+                    except Exception as e:
+                        row_identifier = raw_item.get('name') or raw_item.get('Name') or raw_item.get('sku') or raw_item.get('SKU') or raw_item.get('code') or raw_item.get('Code') or raw_item.get('number') or raw_item.get('item') or f'Row {idx + 1}'
+                        err_msg = str(e)
+                        if hasattr(e, 'errors') and e.errors:
+                            err_msg = '; '.join(f"{k}: {v}" for k, v in e.errors.items())
+                        elif hasattr(e, 'message') and e.message:
+                            err_msg = e.message
+                        errors.append({'row': idx + 1, 'identifier': str(row_identifier), 'error': err_msg})
+
+                status_label = 'ok' if not errors else ('partial' if (created_count > 0 or updated_count > 0) else 'failed')
+                parts = []
+                if created_count:
+                    parts.append(f"{created_count} imported")
+                if updated_count:
+                    parts.append(f"{updated_count} updated")
+                if skipped_count:
+                    parts.append(f"{skipped_count} skipped")
+                summary_action = ', '.join(parts) or "0 records processed"
+
+                msg = f"Import completed: {summary_action}."
+                if errors:
+                    msg += f" {len(errors)} record(s) failed."
+                return j({
+                    'status': status_label,
+                    'imported': created_count,
+                    'updated': updated_count,
+                    'skipped': skipped_count,
+                    'failed': len(errors),
+                    'total': len(records),
+                    'errors': errors,
+                    'message': msg
+                })
+
         raise ApiError(405, 'Method not allowed.')
 
     def handle_item(self, request, pk):
@@ -431,6 +612,19 @@ class PartyResource(Resource):
         c.done()
         return out
 
+    def prepare_import_record(self, rec):
+        if not rec.get('name') and rec.get('company'):
+            rec['name'] = rec['company']
+        if rec.get('gstin') and not rec.get('pan') and len(rec['gstin']) >= 12:
+            rec['pan'] = rec['gstin'][2:12].upper()
+        if rec.get('gstin') and not rec.get('state') and len(rec['gstin']) >= 2:
+            rec['state'] = services.GST_STATE_CODES.get(rec['gstin'][:2], '')
+        if 'payment_terms' in rec and not isinstance(rec['payment_terms'], int):
+            try:
+                rec['payment_terms'] = int(rec['payment_terms'])
+            except Exception:
+                rec['payment_terms'] = 30
+
     def create(self, data, user):
         obj = self.model.objects.create(**self.clean(data))
         services.log_audit(user, 'create', self.kind, obj.pk, f"Created {self.kind} {obj.name}")
@@ -511,8 +705,11 @@ class CustomerResource(PartyResource):
     model = Customer
     kind = 'customer'
     csv_cols = [('Name', 'name'), ('Company', 'company'), ('Email', 'email'), ('Phone', 'phone'), ('State', 'state'),
-                ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Payment terms (days)', 'payment_terms'),
-                ('Billed', 'billed'), ('Receivable', 'outstanding'), ('Overdue', 'overdue'), ('Active', 'active')]
+                ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Billing Address', 'billing_address'), ('City', 'billing_city'),
+                ('Pincode', 'billing_pincode'), ('Payment terms (days)', 'payment_terms'), ('Opening Balance', 'opening_balance')]
+
+    def get_template_sample(self):
+        return ['Acme Infotech Ltd', 'Acme Infotech Private Limited', 'accounts@acmeinfotech.in', '9876543210', 'Karnataka', '29AABCA1234B1Z5', 'AABCA1234B', '123 MG Road', 'Bengaluru', '560001', '30', '0.00']
 
     def extra(self, c, data):
         return {
@@ -535,8 +732,11 @@ class VendorResource(PartyResource):
     model = Vendor
     kind = 'vendor'
     csv_cols = [('Name', 'name'), ('Company', 'company'), ('Email', 'email'), ('Phone', 'phone'), ('State', 'state'),
-                ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Payment terms (days)', 'payment_terms'),
-                ('Billed', 'billed'), ('Payable', 'outstanding'), ('Overdue', 'overdue'), ('Active', 'active')]
+                ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Billing Address', 'billing_address'), ('City', 'billing_city'),
+                ('Pincode', 'billing_pincode'), ('Payment terms (days)', 'payment_terms'), ('Opening Balance', 'opening_balance')]
+
+    def get_template_sample(self):
+        return ['Reliable Hardware Supplies', 'Reliable Hardware Supplies Ltd', 'billing@reliablehardware.in', '9812345678', 'Maharashtra', '27AABCR5678D1Z2', 'AABCR5678D', '45 Industrial Area', 'Mumbai', '400001', '30', '0.00']
 
     def extra(self, c, data):
         return {
@@ -560,10 +760,47 @@ class ItemResource(Resource):
     search_fields = ('name', 'sku', 'category', 'hsn_sac', 'warehouse_code')
     orderings = {'name': 'name', 'sku': 'sku', 'selling_price': 'selling_price', 'stock': 'stock', 'created': 'created_at'}
     default_ordering = ('name',)
-    csv_cols = [('Name', 'name'), ('SKU', 'sku'), ('Type', 'type'), ('Category', 'category'), ('HSN/SAC', 'hsn_sac'),
+    csv_cols = [('Name', 'name'), ('SKU', 'sku'), ('Type', 'item_type'), ('Category', 'category'), ('HSN/SAC', 'hsn_sac'),
                 ('Warehouse', 'warehouse_code'), ('Unit', 'unit'), ('Selling price', 'selling_price'), ('Purchase price', 'purchase_price'),
-                ('GST %', 'gst_rate'), ('Stock', 'stock'), ('Reorder level', 'reorder_level'),
-                ('Stock value', 'valuation'), ('Status', 'status')]
+                ('GST %', 'gst_rate'), ('Opening Stock', 'opening_stock'), ('Reorder level', 'reorder_level'), ('Status', 'active')]
+
+    def get_template_sample(self):
+        return ['Ergonomic Mesh Chair', 'SKU-CHR-01', 'goods', 'Furniture', '940310', 'WH-MAIN', 'nos', '8500.00', '5200.00', '18.00', '40', '10', 'Active']
+
+    def prepare_import_record(self, rec):
+        if 'type' in rec and 'item_type' not in rec:
+            rec['item_type'] = rec['type']
+        t = str(rec.get('item_type', '')).lower().strip()
+        rec['item_type'] = 'service' if t in ('service', 'services') else 'goods'
+
+        if 'stock' in rec and 'opening_stock' not in rec:
+            rec['opening_stock'] = rec['stock']
+
+        if rec['item_type'] == 'goods':
+            rec['track_inventory'] = True
+
+        if rec.get('hsn_sac'):
+            raw_hsn = re.sub(r'[^0-9]', '', str(rec['hsn_sac']))
+            if len(raw_hsn) == 4:
+                raw_hsn += '00'
+            elif len(raw_hsn) == 8:
+                raw_hsn = raw_hsn[:6]
+            rec['hsn_sac'] = raw_hsn
+
+        rec.setdefault('selling_price', Decimal('0.00'))
+        rec.setdefault('purchase_price', Decimal('0.00'))
+        rec.setdefault('gst_rate', Decimal('18.00'))
+        rec.setdefault('unit', 'nos')
+
+        if not rec.get('sku'):
+            rec['sku'] = next_number('SKU')
+
+        wh_val = rec.get('warehouse') or rec.get('warehouse_code')
+        if wh_val:
+            wh = Warehouse.objects.filter(Q(code__iexact=str(wh_val).strip()) | Q(name__iexact=str(wh_val).strip())).first()
+            if wh:
+                rec['warehouse_id'] = wh.pk
+                rec['warehouse_code'] = wh.code
 
     def base_qs(self):
         return self.model.objects.select_related('warehouse', 'preferred_vendor').all()
@@ -756,6 +993,78 @@ class DocResource(Resource):
     @property
     def model(self):
         return self.Model
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('invoice_number') or r.get('bill_number') or r.get('quote_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or r.get('total') or Decimal('0.00')
+        gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'General Supply / Service'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+        if it and (rate is None or rate == Decimal('0.00')):
+            rate = it.selling_price if self.party_attr == 'customer' else it.purchase_price
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty,
+            'rate': rate,
+            'discount_percent': disc,
+            'gst_rate': gst
+        }
+
+    def prepare_import_record(self, rec):
+        party_val = rec.get(self.party_attr) or rec.get('party') or rec.get('customer') or rec.get('vendor') or rec.get('client')
+        if party_val and not str(party_val).isdigit():
+            p_str = str(party_val).strip()
+            p = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str)).first()
+            if not p:
+                org = Organization.get()
+                p = self.Party.objects.create(name=p_str, active=True, state=org.state)
+            rec[self.party_attr] = p.pk
+        elif not party_val:
+            first_p = self.Party.objects.first()
+            if first_p:
+                rec[self.party_attr] = first_p.pk
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            rec['lines'] = [line]
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('due_date'):
+            rec['due_date'] = (timezone.localdate() + timedelta(days=30)).isoformat()
 
     def base_qs(self):
         if self.Model is Invoice:
@@ -1012,8 +1321,12 @@ class InvoiceResource(DocResource):
     Model, Line, Party = Invoice, InvoiceLine, Customer
     party_attr, line_fk, prefix, posted = 'customer', 'invoice', 'INV', 'sent'
     search_fields = ('number', 'customer__name')
-    csv_cols = [('Invoice#', 'number'), ('Customer', 'party'), ('Date', 'date'), ('Due date', 'due_date'),
-                ('Status', 'status'), ('Taxable', 'subtotal'), ('Total', 'total'), ('Paid', 'paid'), ('Balance', 'balance')]
+    csv_cols = [('Invoice#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'), ('Due date', 'due_date'),
+                ('Item Name', 'item'), ('Description', 'description'), ('HSN/SAC', 'hsn_sac'), ('Quantity', 'quantity'),
+                ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')]
+
+    def get_template_sample(self):
+        return ['INV-00101', 'Acme Infotech Ltd', '2026-10-15', '2026-11-14', 'Ergonomic Mesh Chair', 'Ergonomic office chair with lumbar support', '940310', '2', '8500.00', '18.00', 'Thanks for your business.']
 
     def extra_clean(self, c):
         return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
@@ -1096,10 +1409,13 @@ class QuoteResource(DocResource):
     party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QT', 'sent'
     search_fields = ('number', 'customer__name', 'reference_number', 'subject')
     csv_cols = [
-        ('Quote#', 'number'), ('Customer', 'party'), ('Reference#', 'reference_number'),
-        ('Date', 'date'), ('Expiry date', 'expiry_date'), ('Status', 'status'),
-        ('Taxable', 'subtotal'), ('Adjustment', 'adjustment'), ('Total', 'total')
+        ('Quote#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'),
+        ('Expiry date', 'expiry_date'), ('Item Name', 'item'), ('Description', 'description'),
+        ('Quantity', 'quantity'), ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')
     ]
+
+    def get_template_sample(self):
+        return ['EST-00050', 'Acme Infotech Ltd', '2026-10-12', '2026-11-12', 'Consulting Services', 'Software audit and advisory', '1', '45000.00', '18.00', 'Valid for 30 days']
 
     def extra_clean(self, c):
         tds_val = c.d.get('tds_tcs_tax')
@@ -1236,8 +1552,12 @@ class BillResource(DocResource):
     Model, Line, Party = Bill, BillLine, Vendor
     party_attr, line_fk, prefix, posted = 'vendor', 'bill', 'BILL', 'open'
     search_fields = ('number', 'vendor__name', 'vendor_ref')
-    csv_cols = [('Bill#', 'number'), ('Vendor', 'party'), ('Date', 'date'), ('Due date', 'due_date'),
-                ('Status', 'status'), ('Taxable', 'subtotal'), ('Total', 'total'), ('Paid', 'paid'), ('Balance', 'balance')]
+    csv_cols = [('Bill#', 'number'), ('Vendor Name', 'vendor'), ('Date', 'date'), ('Due date', 'due_date'),
+                ('Item Name', 'item'), ('Description', 'description'), ('HSN/SAC', 'hsn_sac'), ('Quantity', 'quantity'),
+                ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')]
+
+    def get_template_sample(self):
+        return ['BILL-00201', 'Reliable Hardware Supplies', '2026-10-10', '2026-11-09', 'Ergonomic Mesh Chair', 'Raw frame materials', '940310', '10', '5200.00', '18.00', 'Standard supplies bill']
 
     def extra_clean(self, c):
         return {'vendor_ref': c.text('vendor_ref', max_len=60), 'order_number': c.text('order_number', max_len=60)}
@@ -1511,6 +1831,17 @@ class AccountResource(Resource):
     search_fields = ('code', 'name', 'account_type', 'sub_type')
     orderings = {'code': 'code', 'name': 'name', 'type': 'account_type'}
     default_ordering = ('code',)
+    csv_cols = [('Account Code', 'code'), ('Account Name', 'name'), ('Account Type', 'account_type'),
+                ('Sub Type', 'sub_type'), ('Description', 'description')]
+
+    def get_template_sample(self):
+        return ['5100', 'Office Electricity & Power', 'expense', 'operating_expense', 'Monthly office electricity charges']
+
+    def prepare_import_record(self, rec):
+        if 'account_type' in rec:
+            rec['account_type'] = str(rec['account_type']).lower().strip()
+        if not rec.get('code'):
+            rec['code'] = next_number('ACC')
 
     def base_qs(self):
         services.ensure_default_accounts()
@@ -1723,6 +2054,12 @@ class BankAccountResource(Resource):
     model = BankAccount
     search_fields = ('name', 'bank_name', 'account_number', 'ifsc', 'branch_name')
     default_ordering = ('name',)
+    csv_cols = [('Account Name', 'name'), ('Bank Name', 'bank_name'), ('Account Number', 'account_number'),
+                ('IFSC Code', 'ifsc'), ('Account Type', 'account_type'), ('Opening Balance', 'opening_balance'),
+                ('Branch', 'branch_name')]
+
+    def get_template_sample(self):
+        return ['HDFC Current Account', 'HDFC Bank', '50200012345678', 'HDFC0001234', 'current', '50000.00', 'MG Road Branch']
 
     def row(self, o):
         unrec = o.transactions.filter(status__in=['unmatched', 'unreconciled']).count()
@@ -2165,6 +2502,36 @@ class ExpenseResource(Resource):
     model = Expense
     search_fields = ('number', 'vendor__name', 'notes', 'reference')
     default_ordering = ('-date', '-id')
+    csv_cols = [('Date', 'date'), ('Expense Account', 'expense_account'), ('Vendor', 'vendor'),
+                ('Amount', 'amount'), ('GST Rate (%)', 'gst_rate'), ('Paid Through', 'paid_through'),
+                ('Reference', 'reference'), ('Notes', 'notes')]
+
+    def get_template_sample(self):
+        return ['2026-10-20', 'Office Supplies', 'Reliable Hardware Supplies', '2450.00', '18.00', 'Bank Account', 'REF-98120', 'Office stationery']
+
+    def prepare_import_record(self, rec):
+        acc_val = rec.get('expense_account') or rec.get('account')
+        if acc_val and not str(acc_val).isdigit():
+            acc = Account.objects.filter(Q(name__iexact=str(acc_val).strip()) | Q(code__iexact=str(acc_val).strip())).first()
+            if not acc:
+                acc = Account.objects.filter(account_type='expense').first()
+            if acc:
+                rec['expense_account'] = acc.pk
+        elif not acc_val:
+            first_exp = Account.objects.filter(account_type='expense').first()
+            if first_exp:
+                rec['expense_account'] = first_exp.pk
+
+        ven_val = rec.get('vendor') or rec.get('vendor_name') or rec.get('payee')
+        if ven_val and not str(ven_val).isdigit():
+            ven = Vendor.objects.filter(Q(name__iexact=str(ven_val).strip()) | Q(company__iexact=str(ven_val).strip())).first()
+            if not ven:
+                org = Organization.get()
+                ven = Vendor.objects.create(name=str(ven_val).strip(), active=True, state=org.state)
+            rec['vendor'] = ven.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
 
     def row(self, o):
         return {
@@ -2469,6 +2836,10 @@ class ItemCategoryResource(Resource):
     model = ItemCategory
     search_fields = ('name', 'description')
     default_ordering = ('name',)
+    csv_cols = [('Name', 'name'), ('Description', 'description')]
+
+    def get_template_sample(self):
+        return ['Hardware', 'Computer hardware and office peripherals']
 
     def row(self, o):
         cnt = Item.objects.filter(category=o.name).count()
@@ -2503,6 +2874,11 @@ class WarehouseResource(Resource):
     model = Warehouse
     search_fields = ('name', 'code', 'city', 'parent__name', 'parent__code')
     default_ordering = ('name',)
+    csv_cols = [('Warehouse Name', 'name'), ('Warehouse Code', 'code'), ('Address', 'address'),
+                ('City', 'city'), ('State', 'state'), ('Pincode', 'pincode')]
+
+    def get_template_sample(self):
+        return ['Central Warehouse', 'WH-MAIN', 'Plot 12, Industrial Area', 'Bengaluru', 'Karnataka', '560058']
 
     def base_qs(self):
         return Warehouse.objects.select_related('parent')
@@ -2993,16 +3369,78 @@ def reports_view(request, name):
 def banking_import_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
-    d = body(request)
-    ba_id = d.get('bank_account')
-    ba = BankAccount.objects.filter(pk=ba_id).first()
+
+    ba_id = request.POST.get('bank_account') or request.GET.get('bank_account')
+    rows = []
+    file_obj = request.FILES.get('file')
+    filename = 'statement.csv'
+
+    if file_obj:
+        filename = file_obj.name
+        content = file_obj.read().decode('utf-8-sig', errors='ignore')
+        sample = content[:2048]
+        delim = '\t' if '\t' in sample and ',' not in sample else (';' if ';' in sample and ',' not in sample else ',')
+        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+        for raw in reader:
+            if not raw or all(not str(v).strip() for v in raw.values() if v is not None):
+                continue
+            col_map = {re.sub(r'[^a-z0-9]', '', str(k).lower()): v for k, v in raw.items() if k}
+            date_val = None
+            for dk in ('date', 'txndate', 'valuedate', 'transactiondate', 'bookingdate'):
+                if dk in col_map and col_map[dk]:
+                    date_val = col_map[dk]
+                    break
+            desc_val = ''
+            for nk in ('narration', 'description', 'remarks', 'particulars', 'details', 'transdesc'):
+                if nk in col_map and col_map[nk]:
+                    desc_val = col_map[nk]
+                    break
+            ref_val = ''
+            for rk in ('reference', 'ref', 'chq', 'chequeno', 'utr', 'refno', 'transactionid'):
+                if rk in col_map and col_map[rk]:
+                    ref_val = col_map[rk]
+                    break
+            dep_val = '0.00'
+            for ck in ('deposit', 'credit', 'cr', 'depositamount', 'creditamount'):
+                if ck in col_map and col_map[ck]:
+                    dep_val = str(col_map[ck])
+                    break
+            wd_val = '0.00'
+            for wk in ('withdrawal', 'debit', 'dr', 'withdrawalamount', 'debitamount'):
+                if wk in col_map and col_map[wk]:
+                    wd_val = str(col_map[wk])
+                    break
+            if dep_val == '0.00' and wd_val == '0.00':
+                for ak in ('amount', 'total'):
+                    if ak in col_map and col_map[ak]:
+                        amt_str = str(col_map[ak]).replace('₹', '').replace('$', '').replace(',', '').strip()
+                        try:
+                            a_num = Decimal(amt_str)
+                            if a_num > 0: dep_val = str(a_num)
+                            else: wd_val = str(abs(a_num))
+                        except Exception: pass
+                        break
+
+            rows.append({
+                'date': date_val,
+                'description': desc_val or 'Bank Transaction',
+                'reference': ref_val,
+                'deposit': dep_val,
+                'withdrawal': wd_val
+            })
+    else:
+        try:
+            d = body(request)
+            ba_id = ba_id or d.get('bank_account')
+            rows = d.get('transactions', [])
+        except Exception:
+            pass
+
+    ba = BankAccount.objects.filter(pk=ba_id).first() if ba_id else BankAccount.objects.first()
     if not ba:
         raise ApiError(404, 'Bank account not found.')
-    rows = d.get('transactions', [])
-    created = []
-    bal = ba.current_balance
-    today = timezone.localdate()
 
+    today = timezone.localdate()
     if not rows:
         feed_samples = [
             {'date': today.isoformat(), 'description': 'NEFT/Customer Inward Remittance', 'deposit': '15000.00', 'withdrawal': '0.00', 'reference': 'N10293848'},
@@ -3012,26 +3450,73 @@ def banking_import_view(request):
         ]
         rows = feed_samples
 
+    batch = BankStatementBatch.objects.create(
+        bank_account=ba,
+        batch_number=next_number('STMT'),
+        filename=filename,
+        source='csv_import',
+        total_rows=len(rows),
+        status='completed'
+    )
+
+    created = []
+    duplicates = 0
+    bal = ba.current_balance
+
     for r in rows:
-        dep = Decimal(str(r.get('deposit', 0)))
-        wth = Decimal(str(r.get('withdrawal', 0)))
+        dt = None
+        raw_dt = str(r.get('date') or '').strip()
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m/%d/%Y'):
+            try:
+                import datetime
+                dt = datetime.datetime.strptime(raw_dt, fmt).date()
+                break
+            except Exception:
+                pass
+        if not dt:
+            dt = today
+
+        dep = Decimal(str(r.get('deposit') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+        wth = Decimal(str(r.get('withdrawal') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+        ref = str(r.get('reference') or '')
+        desc = str(r.get('description') or 'Bank Transaction')
+
+        thash = services.compute_txn_hash(dt, wth, dep, ref, desc)
+        if BankTransaction.objects.filter(bank_account=ba, transaction_hash=thash).exists():
+            duplicates += 1
+            continue
+
         bal = bal + dep - wth
         txn = BankTransaction.objects.create(
             bank_account=ba,
-            date=r.get('date', today),
-            description=r.get('description', 'Bank Transfer'),
-            reference=r.get('reference', ''),
+            date=dt,
+            description=desc,
+            reference=ref,
             deposit=dep,
             withdrawal=wth,
             balance=bal,
-            status='unreconciled'
+            status='unreconciled',
+            transaction_hash=thash,
+            batch=batch
         )
+        services.apply_bank_rules_to_transaction(txn)
         created.append(txn.pk)
 
     ba.current_balance = bal
     ba.save(update_fields=['current_balance'])
+    batch.imported_count = len(created)
+    batch.duplicate_count = duplicates
+    batch.save(update_fields=['imported_count', 'duplicate_count'])
+
     services.log_audit(request.user, 'import', 'BankAccount', ba.pk, f"Imported {len(created)} bank transactions for {ba.name}")
-    return j({'count': len(created), 'current_balance': bal})
+    return j({
+        'status': 'ok',
+        'count': len(created),
+        'imported': len(created),
+        'duplicates_skipped': duplicates,
+        'current_balance': str(bal),
+        'message': f"Statement imported! {len(created)} transactions ingested, {duplicates} duplicate entries skipped."
+    })
 
 @api_view
 def banking_match_suggestions_view(request, txn_id):

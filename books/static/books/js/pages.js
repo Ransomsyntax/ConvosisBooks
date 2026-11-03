@@ -3,6 +3,25 @@
 const PAGE = { reload: null };
 
 function parseCsvString(text) {
+  if (!text) return { headers: [], rows: [] };
+  text = text.replace(/^\uFEFF/, '');
+  const sample = text.slice(0, 4096);
+  const firstLines = sample.split(/\r?\n/).filter(l => l.trim()).slice(0, 5);
+  let delimiter = ',';
+  if (firstLines.length > 0) {
+    const counts = { ',': 0, ';': 0, '\t': 0 };
+    for (const l of firstLines) {
+      let inQ = false;
+      for (let i = 0; i < l.length; i++) {
+        const ch = l[i];
+        if (ch === '"') inQ = !inQ;
+        else if (!inQ && ch in counts) counts[ch]++;
+      }
+    }
+    if (counts['\t'] > counts[','] && counts['\t'] > counts[';']) delimiter = '\t';
+    else if (counts[';'] > counts[','] && counts[';'] > counts['\t']) delimiter = ';';
+  }
+
   const lines = [];
   let row = [''];
   let inQuotes = false;
@@ -17,7 +36,7 @@ function parseCsvString(text) {
         continue;
       }
       inQuotes = !inQuotes;
-    } else if (c === ',' && !inQuotes) {
+    } else if (c === delimiter && !inQuotes) {
       row.push('');
     } else if ((c === '\r' || c === '\n') && !inQuotes) {
       if (c === '\r' && next === '\n') i++;
@@ -28,165 +47,768 @@ function parseCsvString(text) {
     }
     i++;
   }
-  if (row.length > 1 || row[0] !== '') lines.push(row);
-  if (!lines.length) return [];
-  const headers = lines[0].map(h => h.trim());
-  const records = [];
+  if (row.length > 1 || (row.length === 1 && row[0] !== '')) lines.push(row);
+  if (!lines.length) return { headers: [], rows: [] };
+
+  const headers = lines[0].map(h => String(h || '').trim());
+  const rows = [];
   for (let r = 1; r < lines.length; r++) {
     const vals = lines[r];
-    if (!vals || vals.every(v => !v.trim())) continue;
-    const obj = {};
-    for (let c = 0; c < headers.length; c++) {
-      if (headers[c]) obj[headers[c]] = vals[c] != null ? vals[c].trim() : '';
-    }
-    records.push(obj);
+    if (!vals || vals.every(v => !String(v || '').trim())) continue;
+    rows.push(vals.map(v => String(v == null ? '' : v).trim()));
   }
-  return records;
+  return { headers, rows };
 }
 
+const IMPORT_SPECS = {
+  customers: [
+    { key: 'name', label: 'Customer Name', req: true, aliases: ['name', 'customer_name', 'customer', 'client', 'party', 'display_name', 'full_name'] },
+    { key: 'company', label: 'Company Name', aliases: ['company', 'company_name', 'business_name', 'organization', 'org'] },
+    { key: 'email', label: 'Email Address', aliases: ['email', 'email_address', 'mail', 'contact_email'] },
+    { key: 'phone', label: 'Phone Number', aliases: ['phone', 'phone_number', 'mobile', 'mobile_number', 'contact_number', 'phone_no'] },
+    { key: 'gstin', label: 'GSTIN', aliases: ['gstin', 'gst_number', 'gst_no', 'gst'] },
+    { key: 'pan', label: 'PAN', aliases: ['pan', 'pan_number', 'pan_no'] },
+    { key: 'state', label: 'State / Place of Supply', aliases: ['state', 'state_name', 'place_of_supply', 'pos', 'region'] },
+    { key: 'billing_address', label: 'Billing Address', aliases: ['billing_address', 'address', 'street', 'street_address'] },
+    { key: 'billing_city', label: 'City', aliases: ['billing_city', 'city', 'town'] },
+    { key: 'billing_pincode', label: 'Pincode', aliases: ['billing_pincode', 'pincode', 'pin_code', 'postal_code', 'zip'] },
+    { key: 'payment_terms', label: 'Payment Terms (Days)', aliases: ['payment_terms', 'terms', 'payment_terms_days', 'credit_days'] },
+    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance', 'opening_bal'] }
+  ],
+  vendors: [
+    { key: 'name', label: 'Vendor Name', req: true, aliases: ['name', 'vendor_name', 'vendor', 'supplier', 'payee', 'merchant'] },
+    { key: 'company', label: 'Company Name', aliases: ['company', 'company_name', 'business_name', 'organization'] },
+    { key: 'email', label: 'Email Address', aliases: ['email', 'email_address', 'mail'] },
+    { key: 'phone', label: 'Phone Number', aliases: ['phone', 'phone_number', 'mobile', 'contact_number'] },
+    { key: 'gstin', label: 'GSTIN', aliases: ['gstin', 'gst_number', 'gst_no', 'gst'] },
+    { key: 'pan', label: 'PAN', aliases: ['pan', 'pan_number', 'pan_no'] },
+    { key: 'state', label: 'State', aliases: ['state', 'state_name', 'region'] },
+    { key: 'billing_address', label: 'Address', aliases: ['billing_address', 'address', 'street'] },
+    { key: 'billing_city', label: 'City', aliases: ['billing_city', 'city'] },
+    { key: 'billing_pincode', label: 'Pincode', aliases: ['billing_pincode', 'pincode', 'pin_code', 'zip'] },
+    { key: 'payment_terms', label: 'Payment Terms (Days)', aliases: ['payment_terms', 'terms', 'credit_days'] },
+    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance'] }
+  ],
+  items: [
+    { key: 'name', label: 'Item Name', req: true, aliases: ['name', 'item_name', 'product_name', 'product', 'title'] },
+    { key: 'sku', label: 'SKU / Item Code', aliases: ['sku', 'item_code', 'code', 'product_code', 'part_number'] },
+    { key: 'item_type', label: 'Type (goods / service)', aliases: ['item_type', 'type', 'product_type'] },
+    { key: 'category', label: 'Category', aliases: ['category', 'item_category', 'group'] },
+    { key: 'hsn_sac', label: 'HSN / SAC Code', aliases: ['hsn_sac', 'hsn', 'sac', 'hsn_code'] },
+    { key: 'unit', label: 'Unit of Measure', aliases: ['unit', 'uom', 'measurement_unit', 'usage_unit'] },
+    { key: 'selling_price', label: 'Selling Price / Rate', req: true, aliases: ['selling_price', 'price', 'rate', 'sales_price', 'unit_price', 'mrp'] },
+    { key: 'purchase_price', label: 'Purchase Price / Cost', aliases: ['purchase_price', 'cost', 'cost_price', 'purchase_rate'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'gst_%', 'tax_rate', 'tax_%', 'gst'] },
+    { key: 'opening_stock', label: 'Opening Stock', aliases: ['opening_stock', 'stock', 'initial_stock', 'qty', 'quantity'] },
+    { key: 'reorder_level', label: 'Reorder Level', aliases: ['reorder_level', 'min_stock', 'reorder_point'] },
+    { key: 'active', label: 'Status (Active/Inactive)', aliases: ['active', 'status', 'is_active'] }
+  ],
+  accounts: [
+    { key: 'code', label: 'Account Code', req: true, aliases: ['code', 'account_code', 'number', 'gl_code'] },
+    { key: 'name', label: 'Account Name', req: true, aliases: ['name', 'account_name', 'title'] },
+    { key: 'account_type', label: 'Account Type (asset/liability/equity/income/expense)', req: true, aliases: ['account_type', 'type', 'category'] },
+    { key: 'sub_type', label: 'Sub Type', aliases: ['sub_type', 'subtype', 'detail_type'] },
+    { key: 'description', label: 'Description', aliases: ['description', 'notes', 'desc'] }
+  ],
+  'bank-accounts': [
+    { key: 'name', label: 'Account Display Name', req: true, aliases: ['name', 'account_name', 'title'] },
+    { key: 'bank_name', label: 'Bank Name', req: true, aliases: ['bank_name', 'bank', 'institution'] },
+    { key: 'account_number', label: 'Account Number', req: true, aliases: ['account_number', 'account_no', 'acc_number', 'acc_no'] },
+    { key: 'ifsc', label: 'IFSC Code', aliases: ['ifsc', 'ifsc_code', 'branch_ifsc'] },
+    { key: 'account_type', label: 'Account Type', aliases: ['account_type', 'type'] },
+    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance'] },
+    { key: 'branch_name', label: 'Branch Name', aliases: ['branch_name', 'branch'] }
+  ],
+  expenses: [
+    { key: 'date', label: 'Expense Date', req: true, aliases: ['date', 'expense_date', 'txn_date', 'transaction_date'] },
+    { key: 'expense_account', label: 'Expense Account', req: true, aliases: ['expense_account', 'account', 'category', 'category_account'] },
+    { key: 'amount', label: 'Amount (₹)', req: true, aliases: ['amount', 'total_amount', 'amt', 'total'] },
+    { key: 'vendor', label: 'Vendor / Payee', aliases: ['vendor', 'vendor_name', 'payee', 'supplier'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'paid_through', label: 'Paid Through (Bank/Cash)', aliases: ['paid_through', 'mode', 'paid_via', 'payment_mode'] },
+    { key: 'reference', label: 'Reference / Voucher#', aliases: ['reference', 'ref', 'ref_no'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'description', 'remarks'] }
+  ],
+  invoices: [
+    { key: 'number', label: 'Invoice Number', aliases: ['number', 'invoice_number', 'invoice#', 'inv_no'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Invoice Date', req: true, aliases: ['date', 'invoice_date', 'doc_date'] },
+    { key: 'due_date', label: 'Due Date', aliases: ['due_date', 'payment_due_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'line_description', 'desc'] },
+    { key: 'hsn_sac', label: 'HSN / SAC Code', aliases: ['hsn_sac', 'hsn', 'sac'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price', 'amount', 'total'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'notes', label: 'Notes / Remarks', aliases: ['notes', 'remarks'] }
+  ],
+  bills: [
+    { key: 'number', label: 'Bill Number', aliases: ['number', 'bill_number', 'bill#', 'bill_no'] },
+    { key: 'vendor', label: 'Vendor Name', req: true, aliases: ['vendor', 'vendor_name', 'supplier', 'party'] },
+    { key: 'date', label: 'Bill Date', req: true, aliases: ['date', 'bill_date', 'doc_date'] },
+    { key: 'due_date', label: 'Due Date', aliases: ['due_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'line_description', 'desc'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price', 'amount', 'total'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ],
+  quotes: [
+    { key: 'number', label: 'Quote Number', aliases: ['number', 'quote_number', 'quote#', 'estimate_number'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Quote Date', req: true, aliases: ['date', 'quote_date'] },
+    { key: 'expiry_date', label: 'Expiry Date', aliases: ['expiry_date', 'valid_till'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'desc'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'amount'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ]
+};
+
 function openUniversalImportModal(resourceName, title) {
-  let parsedRecords = [];
+  let rawHeaders = [];
+  let rawRows = [];
+  let fileObj = null;
+  let currentStep = 1;
+  let columnMapping = {}; // systemKey -> fileHeaderIndex or -1
+  let mappedRecords = [];
+  let failedReportData = [];
+
+  const fields = IMPORT_SPECS[resourceName] || [
+    { key: 'name', label: 'Name / Title', req: true, aliases: ['name', 'title'] },
+    { key: 'code', label: 'Code / Reference', aliases: ['code', 'ref', 'number'] },
+    { key: 'description', label: 'Description', aliases: ['description', 'desc', 'notes'] }
+  ];
 
   const modal = Modal.open({
     title: `Import ${title}`,
     wide: true,
+    dialog: true,
     body: `
-      <div style="padding:4px 0;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:12px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
-          <div>
-            <div style="font-weight:600;font-size:13px;color:var(--tx);">Standard CSV Template</div>
-            <div class="sub" style="font-size:11.5px;">Download a pre-formatted template with exact header columns for ${esc(title)}.</div>
-          </div>
-          <a href="/api/${resourceName}/?export=template" class="btn" download="${resourceName}_template.csv" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;text-decoration:none;">
-            <i class="fa-solid fa-download"></i> Download Template
-          </a>
-        </div>
-
-        <div id="importDropZone" style="border:2px dashed var(--bd);border-radius:10px;padding:28px 16px;text-align:center;cursor:pointer;background:var(--surface-glass-subtle);transition:border-color 0.2s, background 0.2s;">
-          <input type="file" id="importFileInput" accept=".csv,.json,text/csv,application/json" style="display:none;" />
-          <i class="fa-solid fa-cloud-arrow-up" style="font-size:32px;color:var(--accent);margin-bottom:8px;"></i>
-          <div style="font-weight:600;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag & Drop CSV or JSON file here</div>
-          <div class="sub" style="font-size:12px;margin-bottom:12px;">or click to browse your computer</div>
-          <button type="button" class="btn p" style="font-size:12px;pointer-events:none;">Browse File</button>
-        </div>
-
-        <div id="importFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--surface-glass);border-radius:8px;border:1px solid var(--bd);align-items:center;justify-content:space-between;">
+      <div style="padding:2px 0;">
+        <!-- Stepper Navigation Header -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
           <div style="display:flex;align-items:center;gap:8px;">
-            <i class="fa-solid fa-file-lines" style="color:var(--accent);"></i>
-            <span id="importFileName" style="font-weight:600;font-size:12.5px;"></span>
-            <span id="importRecordCount" class="pastel-chip chip-mint" style="font-size:11px;"></span>
+            <span class="pastel-chip chip-sky" id="uimp-step-indicator" style="font-weight:700;font-size:11px;">STEP 1 OF 3</span>
+            <span id="uimp-step-title" style="font-size:13.5px;font-weight:700;color:var(--tx);">Upload File &amp; Options</span>
           </div>
-          <button type="button" class="btn" id="importClearBtn" style="padding:2px 8px;font-size:11px;">Change File</button>
-        </div>
-
-        <div id="importPreviewWrap" style="display:none;margin-top:14px;">
-          <div style="font-weight:600;font-size:12px;color:var(--tx-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Data Preview (First 5 Rows)</div>
-          <div class="tw" style="max-height:180px;overflow:auto;border:1px solid var(--bd);border-radius:6px;">
-            <table id="importPreviewTable" style="font-size:11.5px;"></table>
+          <div style="display:flex;gap:4px;">
+            <span class="uimp-step-dot" id="dot-step-1" style="width:24px;height:4px;border-radius:2px;background:var(--accent);"></span>
+            <span class="uimp-step-dot" id="dot-step-2" style="width:24px;height:4px;border-radius:2px;background:var(--bd);"></span>
+            <span class="uimp-step-dot" id="dot-step-3" style="width:24px;height:4px;border-radius:2px;background:var(--bd);"></span>
+            <span class="uimp-step-dot" id="dot-step-4" style="width:24px;height:4px;border-radius:2px;background:var(--bd);"></span>
           </div>
         </div>
 
-        <div id="importErrorAlert" style="display:none;margin-top:12px;" class="er" role="alert"></div>
+        <!-- STEP 1: Upload & Options -->
+        <div id="uimp-step-1" class="uimp-pane">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:12px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <i class="fa-solid fa-file-csv" style="font-size:26px;color:#10b981;"></i>
+              <div>
+                <div style="font-weight:600;font-size:13px;color:var(--tx);">Standard CSV Template</div>
+                <div class="sub" style="font-size:11.5px;">Download a pre-formatted template with exact sample columns for ${esc(title)}.</div>
+              </div>
+            </div>
+            <a href="/api/${resourceName}/?export=template" class="btn" download="${resourceName}_template.csv" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;text-decoration:none;">
+              <i class="fa-solid fa-download"></i> Download Template
+            </a>
+          </div>
+
+          <div id="uimp-drop-zone" style="border:2px dashed var(--bd);border-radius:10px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--surface-glass-subtle);transition:all 0.2s;">
+            <input type="file" id="uimp-file-input" accept=".csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json" style="display:none;" />
+            <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
+            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop CSV, TSV, or JSON file here</div>
+            <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
+            <button type="button" class="btn p" style="font-size:12px;pointer-events:none;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
+            <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
+          </div>
+
+          <div id="uimp-file-info" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface-glass);border-radius:8px;border:1px solid var(--bd);align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <i class="fa-solid fa-file-circle-check" style="font-size:22px;color:#10b981;"></i>
+              <div>
+                <div id="uimp-file-name" style="font-weight:700;font-size:13px;color:var(--tx);"></div>
+                <div class="sub" id="uimp-file-meta" style="font-size:11.5px;"></div>
+              </div>
+            </div>
+            <button type="button" class="btn" id="uimp-change-file-btn" style="font-size:11.5px;padding:4px 10px;">Change File</button>
+          </div>
+
+          <div style="margin-top:16px;padding:12px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
+            <label style="font-weight:600;font-size:12.5px;display:block;margin-bottom:6px;color:var(--tx);">Duplicate Record Handling</label>
+            <div style="display:flex;gap:18px;font-size:12px;color:var(--tx);">
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="uimp-dup-radio" value="skip" checked />
+                <span><b>Skip duplicates</b> (safest)</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="uimp-dup-radio" value="update" />
+                <span><b>Update existing</b> records</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="uimp-dup-radio" value="create" />
+                <span><b>Create new</b> always</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="uimp-alert-1" style="display:none;margin-top:12px;" class="er" role="alert"></div>
+        </div>
+
+        <!-- STEP 2: Map Columns -->
+        <div id="uimp-step-2" class="uimp-pane" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;font-size:13px;color:var(--tx);">Match Your Columns to System Fields</div>
+              <div class="sub" style="font-size:11.5px;">Columns from your file have been auto-matched. Adjust any dropdown if necessary.</div>
+            </div>
+            <span class="pastel-chip chip-sky" id="uimp-mapping-progress-chip" style="font-size:11px;"></span>
+          </div>
+
+          <div class="tw" style="max-height:280px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px;">
+            <table style="font-size:12px;width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:32%;">System Field</th>
+                  <th style="width:36%;">Column in Your File</th>
+                  <th style="width:32%;">Sample Value (Row 1)</th>
+                </tr>
+              </thead>
+              <tbody id="uimp-mapping-tbody"></tbody>
+            </table>
+          </div>
+          <div id="uimp-alert-2" style="display:none;margin-top:12px;" class="er" role="alert"></div>
+        </div>
+
+        <!-- STEP 3: Preview & Validate -->
+        <div id="uimp-step-3" class="uimp-pane" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;font-size:13px;color:var(--tx);">Review Mapped Records Preview</div>
+              <div class="sub" style="font-size:11.5px;">Displaying the first 10 rows ready for ingestion.</div>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <span class="pastel-chip chip-mint" id="uimp-preview-valid-chip" style="font-size:11px;"></span>
+              <span class="pastel-chip chip-amber" id="uimp-preview-warn-chip" style="font-size:11px;display:none;"></span>
+            </div>
+          </div>
+
+          <div class="tw" style="max-height:260px;overflow:auto;border:1px solid var(--bd);border-radius:8px;">
+            <table id="uimp-preview-table" style="font-size:11.5px;width:100%;"></table>
+          </div>
+          <div id="uimp-alert-3" style="display:none;margin-top:12px;" class="er" role="alert"></div>
+        </div>
+
+        <!-- STEP 4: Results & Summary -->
+        <div id="uimp-step-4" class="uimp-pane" style="display:none;">
+          <div id="uimp-results-banner" style="margin-bottom:16px;"></div>
+
+          <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;margin-bottom:16px;">
+            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:11px;">Total Processed</div>
+              <div id="uimp-res-total" style="font-size:20px;font-weight:700;color:var(--tx);">0</div>
+            </div>
+            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:11px;color:#10b981;">Imported</div>
+              <div id="uimp-res-imported" style="font-size:20px;font-weight:700;color:#10b981;">0</div>
+            </div>
+            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:11px;color:#3b82f6;">Updated</div>
+              <div id="uimp-res-updated" style="font-size:20px;font-weight:700;color:#3b82f6;">0</div>
+            </div>
+            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:11px;color:#ef4444;">Failed</div>
+              <div id="uimp-res-failed" style="font-size:20px;font-weight:700;color:#ef4444;">0</div>
+            </div>
+          </div>
+
+          <div id="uimp-errors-wrap" style="display:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div style="font-weight:700;font-size:12.5px;color:#ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Failed Rows Report</div>
+              <button type="button" class="btn" id="uimp-download-errors-btn" style="font-size:11.5px;padding:3px 10px;display:inline-flex;align-items:center;gap:6px;">
+                <i class="fa-solid fa-file-arrow-down"></i> Download Error Report (CSV)
+              </button>
+            </div>
+            <div class="tw" style="max-height:180px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px;">
+              <table style="font-size:11.5px;width:100%;">
+                <thead>
+                  <tr>
+                    <th style="width:14%;">Row #</th>
+                    <th style="width:30%;">Identifier</th>
+                    <th style="width:56%;">Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="uimp-errors-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     `,
     footer: `
-      <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn p" id="importSubmitBtn" type="button" disabled style="display:inline-flex;align-items:center;gap:6px;">
-        <i class="fa-solid fa-check"></i> Import Records
-      </button>
+      <div id="uimp-footer-left" style="display:flex;gap:8px;">
+        <button class="btn" type="button" data-close id="uimp-btn-cancel">Cancel</button>
+        <button class="btn" type="button" id="uimp-btn-back" style="display:none;">← Back</button>
+      </div>
+      <div id="uimp-footer-right" style="display:flex;gap:8px;">
+        <button class="btn p" id="uimp-btn-next" type="button" disabled style="display:inline-flex;align-items:center;gap:6px;">
+          <span>Next: Map Columns</span> <i class="fa-solid fa-arrow-right"></i>
+        </button>
+        <button class="btn p" id="uimp-btn-done" type="button" style="display:none;display:inline-flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-check"></i> Done &amp; View Records
+        </button>
+      </div>
     `
   });
 
-  const dropZone = $('#importDropZone', modal.el);
-  const fileInput = $('#importFileInput', modal.el);
-  const fileInfo = $('#importFileInfo', modal.el);
-  const fileName = $('#importFileName', modal.el);
-  const recordCount = $('#importRecordCount', modal.el);
-  const previewWrap = $('#importPreviewWrap', modal.el);
-  const previewTable = $('#importPreviewTable', modal.el);
-  const submitBtn = $('#importSubmitBtn', modal.el);
-  const errAlert = $('#importErrorAlert', modal.el);
+  const dropZone = $('#uimp-drop-zone', modal.el);
+  const fileInput = $('#uimp-file-input', modal.el);
+  const fileInfo = $('#uimp-file-info', modal.el);
+  const fileNameEl = $('#uimp-file-name', modal.el);
+  const fileMetaEl = $('#uimp-file-meta', modal.el);
+  const changeFileBtn = $('#uimp-change-file-btn', modal.el);
+  const stepIndicator = $('#uimp-step-indicator', modal.el);
+  const stepTitle = $('#uimp-step-title', modal.el);
+
+  const btnNext = $('#uimp-btn-next', modal.el);
+  const btnBack = $('#uimp-btn-back', modal.el);
+  const btnCancel = $('#uimp-btn-cancel', modal.el);
+  const btnDone = $('#uimp-btn-done', modal.el);
+
+  const pane1 = $('#uimp-step-1', modal.el);
+  const pane2 = $('#uimp-step-2', modal.el);
+  const pane3 = $('#uimp-step-3', modal.el);
+  const pane4 = $('#uimp-step-4', modal.el);
+
+  const alert1 = $('#uimp-alert-1', modal.el);
+  const alert2 = $('#uimp-alert-2', modal.el);
+  const alert3 = $('#uimp-alert-3', modal.el);
 
   dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; });
-  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--bd)'; });
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; dropZone.style.background = 'var(--surface-glass)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--bd)'; dropZone.style.background = 'var(--surface-glass-subtle)'; });
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.style.borderColor = 'var(--bd)';
+    dropZone.style.background = 'var(--surface-glass-subtle)';
     if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
   });
   fileInput.addEventListener('change', () => {
     if (fileInput.files.length) handleFile(fileInput.files[0]);
   });
-  $('#importClearBtn', modal.el).addEventListener('click', () => {
+  changeFileBtn.addEventListener('click', () => {
     fileInput.value = '';
-    parsedRecords = [];
+    fileObj = null;
+    rawHeaders = [];
+    rawRows = [];
     dropZone.style.display = 'block';
     fileInfo.style.display = 'none';
-    previewWrap.style.display = 'none';
-    submitBtn.disabled = true;
-    errAlert.style.display = 'none';
+    btnNext.disabled = true;
+    alert1.style.display = 'none';
   });
 
   function handleFile(file) {
-    errAlert.style.display = 'none';
+    alert1.style.display = 'none';
+    fileObj = file;
     const reader = new FileReader();
     reader.onload = e => {
       try {
         const text = e.target.result;
         if (file.name.endsWith('.json')) {
           const json = JSON.parse(text);
-          parsedRecords = Array.isArray(json) ? json : (json.records || json.data || json.results || [json]);
+          const arr = Array.isArray(json) ? json : (json.records || json.data || json.results || [json]);
+          if (!arr.length) throw new Error('No valid records found in JSON file.');
+          rawHeaders = Object.keys(arr[0] || {});
+          rawRows = arr.map(obj => rawHeaders.map(h => obj[h] ?? ''));
         } else {
-          parsedRecords = parseCsvString(text);
+          const parsed = parseCsvString(text);
+          rawHeaders = parsed.headers;
+          rawRows = parsed.rows;
         }
 
-        if (!parsedRecords.length) {
+        if (!rawHeaders.length || !rawRows.length) {
           throw new Error('No valid records found in the uploaded file.');
         }
 
         dropZone.style.display = 'none';
         fileInfo.style.display = 'flex';
-        fileName.textContent = file.name;
-        recordCount.textContent = `${parsedRecords.length} record${parsedRecords.length === 1 ? '' : 's'}`;
+        fileNameEl.textContent = file.name;
+        fileMetaEl.textContent = `${fmtBytes(file.size)} · ${rawRows.length} record${rawRows.length === 1 ? '' : 's'} detected · ${rawHeaders.length} columns`;
+        btnNext.disabled = false;
 
-        const previewRows = parsedRecords.slice(0, 5);
-        const headers = Object.keys(previewRows[0] || {});
-        previewTable.innerHTML = `
-          <thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-          <tbody>${previewRows.map(r => `<tr>${headers.map(h => `<td>${esc(r[h] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>
-        `;
-        previewWrap.style.display = 'block';
-        submitBtn.disabled = false;
-        submitBtn.textContent = `Import ${parsedRecords.length} Record${parsedRecords.length === 1 ? '' : 's'}`;
+        // Auto-match columns
+        autoMatchColumns();
       } catch (err) {
-        errAlert.textContent = err.message || 'Failed to read file.';
-        errAlert.style.display = 'block';
-        submitBtn.disabled = true;
+        alert1.textContent = err.message || 'Failed to parse file.';
+        alert1.style.display = 'block';
+        btnNext.disabled = true;
       }
     };
     reader.readAsText(file);
   }
 
-  submitBtn.addEventListener('click', async () => {
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = `${spinner} Importing...`;
-    try {
-      const res = await api(resourceName + '/', {
-        method: 'POST',
-        body: { import_records: parsedRecords }
+  function autoMatchColumns() {
+    columnMapping = {};
+    const cleanHeaders = rawHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    for (const f of fields) {
+      let matchedIdx = -1;
+      const targetKey = f.key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const targetLabel = f.label.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const aliases = (f.aliases || []).map(a => a.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+      // Check exact match on key or label
+      for (let i = 0; i < cleanHeaders.length; i++) {
+        if (cleanHeaders[i] === targetKey || cleanHeaders[i] === targetLabel) {
+          matchedIdx = i;
+          break;
+        }
+      }
+      // Check aliases
+      if (matchedIdx === -1) {
+        for (let i = 0; i < cleanHeaders.length; i++) {
+          if (aliases.includes(cleanHeaders[i])) {
+            matchedIdx = i;
+            break;
+          }
+        }
+      }
+      // Check substring match
+      if (matchedIdx === -1) {
+        for (let i = 0; i < cleanHeaders.length; i++) {
+          if (cleanHeaders[i].length >= 3 && (targetKey.includes(cleanHeaders[i]) || cleanHeaders[i].includes(targetKey))) {
+            matchedIdx = i;
+            break;
+          }
+        }
+      }
+      columnMapping[f.key] = matchedIdx;
+    }
+  }
+
+  function renderStep2Mapping() {
+    const tbody = $('#uimp-mapping-tbody', modal.el);
+    const firstRow = rawRows[0] || [];
+
+    tbody.innerHTML = fields.map(f => {
+      const selectedIdx = columnMapping[f.key] ?? -1;
+      const sampleVal = selectedIdx >= 0 && selectedIdx < firstRow.length ? firstRow[selectedIdx] : '—';
+      return `
+        <tr data-field="${esc(f.key)}">
+          <td>
+            <div style="font-weight:600;color:var(--tx);">
+              ${esc(f.label)} ${f.req ? '<span style="color:#ef4444;" title="Required Field">*</span>' : ''}
+            </div>
+            <div class="sub" style="font-size:11px;">${esc(f.key)}</div>
+          </td>
+          <td>
+            <select class="in uimp-map-select" data-key="${esc(f.key)}" style="width:100%;font-size:12px;padding:4px 8px;">
+              <option value="-1" ${selectedIdx === -1 ? 'selected' : ''}>-- Do Not Import / Skip --</option>
+              ${rawHeaders.map((h, idx) => `
+                <option value="${idx}" ${idx === selectedIdx ? 'selected' : ''}>${esc(h)}</option>
+              `).join('')}
+            </select>
+          </td>
+          <td class="uimp-sample-cell" data-sample-key="${esc(f.key)}" style="color:var(--tx-muted);font-family:monospace;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${esc(sampleVal || '—')}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    $$('.uimp-map-select', tbody).forEach(sel => {
+      sel.addEventListener('change', e => {
+        const key = e.target.dataset.key;
+        const val = Number(e.target.value);
+        columnMapping[key] = val;
+        const sampleEl = $(`[data-sample-key="${key}"]`, tbody);
+        if (sampleEl) {
+          const sVal = val >= 0 && val < firstRow.length ? firstRow[val] : '—';
+          sampleEl.textContent = sVal || '—';
+        }
+        updateMappingChip();
       });
-      toast(`Successfully imported ${res.imported ?? parsedRecords.length} record(s)!`, 'ok');
-      modal.close();
-      if (typeof PAGE.reload === 'function') PAGE.reload();
-    } catch (err) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Retry Import';
-      errAlert.textContent = err.message || 'Import failed.';
-      errAlert.style.display = 'block';
+    });
+
+    updateMappingChip();
+  }
+
+  function updateMappingChip() {
+    const reqFields = fields.filter(f => f.req);
+    const mappedReq = reqFields.filter(f => (columnMapping[f.key] ?? -1) >= 0);
+    const chip = $('#uimp-mapping-progress-chip', modal.el);
+    if (chip) {
+      chip.textContent = `${mappedReq.length} of ${reqFields.length} required mapped`;
+      chip.className = mappedReq.length === reqFields.length ? 'pastel-chip chip-mint' : 'pastel-chip chip-amber';
+    }
+  }
+
+  function buildMappedRecords() {
+    const records = [];
+    for (let r = 0; r < rawRows.length; r++) {
+      const row = rawRows[r];
+      const rec = {};
+      for (const f of fields) {
+        const colIdx = columnMapping[f.key];
+        if (colIdx != null && colIdx >= 0 && colIdx < row.length) {
+          rec[f.key] = row[colIdx];
+        }
+      }
+      records.push(rec);
+    }
+    return records;
+  }
+
+  function renderStep3Preview() {
+    mappedRecords = buildMappedRecords();
+    const table = $('#uimp-preview-table', modal.el);
+    const mappedFields = fields.filter(f => (columnMapping[f.key] ?? -1) >= 0);
+
+    const previewSubset = mappedRecords.slice(0, 10);
+    let readyCount = 0;
+    let warnCount = 0;
+
+    for (const rec of mappedRecords) {
+      const hasMissingReq = fields.some(f => f.req && !String(rec[f.key] || '').trim());
+      if (hasMissingReq) warnCount++;
+      else readyCount++;
+    }
+
+    $('#uimp-preview-valid-chip', modal.el).textContent = `${readyCount} valid row${readyCount === 1 ? '' : 's'}`;
+    const warnChip = $('#uimp-preview-warn-chip', modal.el);
+    if (warnCount > 0) {
+      warnChip.textContent = `${warnCount} missing required`;
+      warnChip.style.display = 'inline-block';
+    } else {
+      warnChip.style.display = 'none';
+    }
+
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th style="width:36px;text-align:center;">#</th>
+          <th style="width:60px;">Status</th>
+          ${mappedFields.map(f => `<th>${esc(f.label)}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+        ${previewSubset.map((rec, idx) => {
+          const missingReq = fields.filter(f => f.req && !String(rec[f.key] || '').trim());
+          const isValid = missingReq.length === 0;
+          return `
+            <tr>
+              <td style="text-align:center;color:var(--tx-muted);">${idx + 1}</td>
+              <td>
+                ${isValid
+                  ? '<span style="color:#10b981;font-weight:600;"><i class="fa-solid fa-check"></i> Ready</span>'
+                  : `<span style="color:#f59e0b;font-weight:600;" title="Missing: ${esc(missingReq.map(f => f.label).join(', '))}"><i class="fa-solid fa-triangle-exclamation"></i> Incomplete</span>`
+                }
+              </td>
+              ${mappedFields.map(f => `<td>${esc(rec[f.key] || '—')}</td>`).join('')}
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    `;
+  }
+
+  function goToStep(step) {
+    currentStep = step;
+    alert1.style.display = 'none';
+    alert2.style.display = 'none';
+    alert3.style.display = 'none';
+
+    pane1.style.display = step === 1 ? 'block' : 'none';
+    pane2.style.display = step === 2 ? 'block' : 'none';
+    pane3.style.display = step === 3 ? 'block' : 'none';
+    pane4.style.display = step === 4 ? 'block' : 'none';
+
+    for (let s = 1; s <= 4; s++) {
+      const dot = $(`#dot-step-${s}`, modal.el);
+      if (dot) dot.style.background = s === step ? 'var(--accent)' : (s < step ? '#10b981' : 'var(--bd)');
+    }
+
+    if (step === 1) {
+      stepIndicator.textContent = 'STEP 1 OF 3';
+      stepIndicator.className = 'pastel-chip chip-sky';
+      stepTitle.textContent = 'Upload File & Options';
+      btnBack.style.display = 'none';
+      btnCancel.style.display = 'inline-block';
+      btnNext.style.display = 'inline-flex';
+      btnNext.innerHTML = `<span>Next: Map Columns</span> <i class="fa-solid fa-arrow-right"></i>`;
+      btnNext.disabled = !fileObj;
+      btnDone.style.display = 'none';
+    } else if (step === 2) {
+      stepIndicator.textContent = 'STEP 2 OF 3';
+      stepIndicator.className = 'pastel-chip chip-purple';
+      stepTitle.textContent = 'Map Columns';
+      btnBack.style.display = 'inline-block';
+      btnCancel.style.display = 'none';
+      btnNext.style.display = 'inline-flex';
+      btnNext.innerHTML = `<span>Next: Preview Data</span> <i class="fa-solid fa-arrow-right"></i>`;
+      btnNext.disabled = false;
+      btnDone.style.display = 'none';
+      renderStep2Mapping();
+    } else if (step === 3) {
+      stepIndicator.textContent = 'STEP 3 OF 3';
+      stepIndicator.className = 'pastel-chip chip-mint';
+      stepTitle.textContent = 'Preview & Confirm Import';
+      btnBack.style.display = 'inline-block';
+      btnCancel.style.display = 'none';
+      btnNext.style.display = 'inline-flex';
+      btnNext.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> <span>Import ${rawRows.length} Records</span>`;
+      btnNext.disabled = false;
+      btnDone.style.display = 'none';
+      renderStep3Preview();
+    } else if (step === 4) {
+      stepIndicator.textContent = 'COMPLETE';
+      stepIndicator.className = 'pastel-chip chip-mint';
+      stepTitle.textContent = 'Import Summary & Results';
+      btnBack.style.display = 'none';
+      btnCancel.style.display = 'none';
+      btnNext.style.display = 'none';
+      btnDone.style.display = 'inline-flex';
+    }
+  }
+
+  btnNext.addEventListener('click', async () => {
+    if (currentStep === 1) {
+      if (!fileObj) return;
+      goToStep(2);
+    } else if (currentStep === 2) {
+      const missingRequired = fields.filter(f => f.req && (columnMapping[f.key] ?? -1) < 0);
+      if (missingRequired.length > 0) {
+        alert2.textContent = `Please map required field: "${missingRequired.map(f => f.label).join('", "')}" before continuing.`;
+        alert2.style.display = 'block';
+        return;
+      }
+      goToStep(3);
+    } else if (currentStep === 3) {
+      // Execute import
+      btnNext.disabled = true;
+      btnBack.disabled = true;
+      btnNext.innerHTML = `${spinner} Processing Ingestion...`;
+
+      const dupModeRadio = modal.el.querySelector('input[name="uimp-dup-radio"]:checked');
+      const dupMode = dupModeRadio ? dupModeRadio.value : 'skip';
+
+      try {
+        const payload = {
+          import_records: mappedRecords,
+          duplicate_mode: dupMode
+        };
+
+        const res = await api(resourceName + '/', {
+          method: 'POST',
+          body: payload
+        });
+
+        goToStep(4);
+        renderStep4Results(res);
+      } catch (err) {
+        btnNext.disabled = false;
+        btnBack.disabled = false;
+        btnNext.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> <span>Retry Import</span>`;
+        alert3.textContent = err.message || 'Import failed unexpectedly.';
+        alert3.style.display = 'block';
+      }
     }
   });
+
+  btnBack.addEventListener('click', () => {
+    if (currentStep === 2) goToStep(1);
+    else if (currentStep === 3) goToStep(2);
+  });
+
+  btnDone.addEventListener('click', () => {
+    modal.close();
+    if (typeof PAGE.reload === 'function') PAGE.reload();
+  });
+
+  function renderStep4Results(res) {
+    const banner = $('#uimp-results-banner', modal.el);
+    const errorsWrap = $('#uimp-errors-wrap', modal.el);
+    const errorsTbody = $('#uimp-errors-tbody', modal.el);
+
+    const imported = res.imported ?? 0;
+    const updated = res.updated ?? 0;
+    const skipped = res.skipped ?? 0;
+    const failed = res.failed ?? 0;
+    const total = res.total ?? mappedRecords.length;
+    const errors = res.errors || [];
+
+    failedReportData = errors;
+
+    $('#uimp-res-total', modal.el).textContent = total;
+    $('#uimp-res-imported', modal.el).textContent = imported;
+    $('#uimp-res-updated', modal.el).textContent = updated;
+    $('#uimp-res-failed', modal.el).textContent = failed;
+
+    if (failed === 0 && (imported > 0 || updated > 0 || skipped > 0)) {
+      banner.innerHTML = `
+        <div style="padding:14px 16px;background:rgba(16, 185, 129, 0.12);border:1px solid #10b981;border-radius:8px;display:flex;align-items:center;gap:12px;">
+          <i class="fa-solid fa-circle-check" style="font-size:24px;color:#10b981;"></i>
+          <div>
+            <div style="font-weight:700;font-size:13.5px;color:#10b981;">Import Completed Successfully!</div>
+            <div style="font-size:12px;color:var(--tx);">${esc(res.message || `Successfully ingested ${imported + updated} record(s).`)}</div>
+          </div>
+        </div>
+      `;
+      errorsWrap.style.display = 'none';
+    } else if (imported > 0 || updated > 0) {
+      banner.innerHTML = `
+        <div style="padding:14px 16px;background:rgba(245, 158, 11, 0.12);border:1px solid #f59e0b;border-radius:8px;display:flex;align-items:center;gap:12px;">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size:24px;color:#f59e0b;"></i>
+          <div>
+            <div style="font-weight:700;font-size:13.5px;color:#f59e0b;">Import Finished with Notices</div>
+            <div style="font-size:12px;color:var(--tx);">${esc(res.message || `${imported} imported, ${failed} failed.`)}</div>
+          </div>
+        </div>
+      `;
+      errorsWrap.style.display = 'block';
+    } else {
+      banner.innerHTML = `
+        <div style="padding:14px 16px;background:rgba(239, 68, 68, 0.12);border:1px solid #ef4444;border-radius:8px;display:flex;align-items:center;gap:12px;">
+          <i class="fa-solid fa-circle-xmark" style="font-size:24px;color:#ef4444;"></i>
+          <div>
+            <div style="font-weight:700;font-size:13.5px;color:#ef4444;">Import Failed</div>
+            <div style="font-size:12px;color:var(--tx);">${esc(res.message || 'No records could be imported. Please review the errors below.')}</div>
+          </div>
+        </div>
+      `;
+      errorsWrap.style.display = 'block';
+    }
+
+    if (errors.length > 0) {
+      errorsTbody.innerHTML = errors.map(err => `
+        <tr>
+          <td style="font-weight:600;color:var(--tx-muted);">Row ${err.row || '—'}</td>
+          <td style="font-weight:600;color:var(--tx);">${esc(err.identifier || 'Record')}</td>
+          <td style="color:#ef4444;">${esc(err.error || 'Validation error')}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  $('#uimp-download-errors-btn', modal.el)?.addEventListener('click', () => {
+    if (!failedReportData.length) return;
+    const csvRows = [
+      ['Row Number', 'Record Identifier', 'Error Message'],
+      ...failedReportData.map(e => [e.row, `"${String(e.identifier || '').replace(/"/g, '""')}"`, `"${String(e.error || '').replace(/"/g, '""')}"`])
+    ];
+    const csvContent = csvRows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${resourceName}_import_errors.csv`;
+    a.click();
+    toast('Downloaded error report CSV!', 'ok');
+  });
 }
+
 
 function exportTableToCsv(containerEl, filename = 'report.csv') {
   const rows = containerEl ? Array.from(containerEl.querySelectorAll('tr')) : [];

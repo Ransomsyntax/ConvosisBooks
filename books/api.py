@@ -357,29 +357,30 @@ class Resource:
         if not hasattr(self, 'model') or self.model is None:
             return None
         try:
-            qs = self.model.objects.all()
-            if user and hasattr(self.model, 'organization'):
-                org = get_user_org(user)
-                if org:
-                    qs = qs.filter(organization=org)
-            if hasattr(self.model, 'sku') and clean_item.get('sku'):
-                obj = qs.filter(sku__iexact=str(clean_item['sku']).strip()).first()
-                if obj: return obj
-            if hasattr(self.model, 'code') and clean_item.get('code'):
-                obj = qs.filter(code__iexact=str(clean_item['code']).strip()).first()
-                if obj: return obj
-            if hasattr(self.model, 'account_number') and clean_item.get('account_number'):
-                obj = qs.filter(account_number__iexact=str(clean_item['account_number']).strip()).first()
-                if obj: return obj
-            if hasattr(self.model, 'number') and clean_item.get('number'):
-                obj = qs.filter(number__iexact=str(clean_item['number']).strip()).first()
-                if obj: return obj
-            if hasattr(self.model, 'email') and clean_item.get('email'):
-                obj = qs.filter(email__iexact=str(clean_item['email']).strip()).first()
-                if obj: return obj
-            if hasattr(self.model, 'name') and clean_item.get('name'):
-                obj = qs.filter(name__iexact=str(clean_item['name']).strip()).first()
-                if obj: return obj
+            with transaction.atomic():
+                qs = self.model.objects.all()
+                if user and hasattr(self.model, 'organization'):
+                    org = get_user_org(user)
+                    if org:
+                        qs = qs.filter(organization=org)
+                if hasattr(self.model, 'sku') and clean_item.get('sku'):
+                    obj = qs.filter(sku__iexact=str(clean_item['sku']).strip()).first()
+                    if obj: return obj
+                if hasattr(self.model, 'code') and clean_item.get('code'):
+                    obj = qs.filter(code__iexact=str(clean_item['code']).strip()).first()
+                    if obj: return obj
+                if hasattr(self.model, 'account_number') and clean_item.get('account_number'):
+                    obj = qs.filter(account_number__iexact=str(clean_item['account_number']).strip()).first()
+                    if obj: return obj
+                if hasattr(self.model, 'number') and clean_item.get('number'):
+                    obj = qs.filter(number__iexact=str(clean_item['number']).strip()).first()
+                    if obj: return obj
+                if hasattr(self.model, 'email') and clean_item.get('email'):
+                    obj = qs.filter(email__iexact=str(clean_item['email']).strip()).first()
+                    if obj: return obj
+                if hasattr(self.model, 'name') and clean_item.get('name'):
+                    obj = qs.filter(name__iexact=str(clean_item['name']).strip()).first()
+                    if obj: return obj
         except Exception:
             pass
         return None
@@ -464,11 +465,15 @@ class Resource:
                 else:
                     with transaction.atomic():
                         obj = self.create(data, request.user)
-                        if hasattr(obj, 'organization') and not obj.organization_id:
-                            user_org = get_user_org(request.user)
-                            if user_org:
-                                obj.organization = user_org
-                                obj.save(update_fields=['organization'])
+                        if hasattr(obj, 'organization') and not getattr(obj, 'organization_id', None):
+                            try:
+                                with transaction.atomic():
+                                    user_org = get_user_org(request.user)
+                                    if user_org:
+                                        obj.organization = user_org
+                                        obj.save(update_fields=['organization'])
+                            except Exception:
+                                pass
                     return j(self.detail(self.get_object(obj.pk, request)), 201)
 
             if records is not None:
@@ -504,10 +509,14 @@ class Resource:
                             with transaction.atomic():
                                 created_obj = self.create(clean_item, request.user)
                                 if hasattr(created_obj, 'organization') and not getattr(created_obj, 'organization_id', None):
-                                    user_org = get_user_org(request.user)
-                                    if user_org:
-                                        created_obj.organization = user_org
-                                        created_obj.save(update_fields=['organization'])
+                                    try:
+                                        with transaction.atomic():
+                                            user_org = get_user_org(request.user)
+                                            if user_org:
+                                                created_obj.organization = user_org
+                                                created_obj.save(update_fields=['organization'])
+                                    except Exception:
+                                        pass
                             created_count += 1
                     except Exception as e:
                         row_identifier = raw_item.get('name') or raw_item.get('Name') or raw_item.get('sku') or raw_item.get('SKU') or raw_item.get('code') or raw_item.get('Code') or raw_item.get('number') or raw_item.get('item') or f'Row {idx + 1}'
@@ -659,21 +668,22 @@ class PartyResource(Resource):
         if not hasattr(self, 'model') or self.model is None:
             return None
         try:
-            name = (clean_item.get('name') or '').strip()
-            gstin = (clean_item.get('gstin') or '').strip()
-            qs = self.model.objects.all()
-            if user and hasattr(self.model, 'organization'):
-                org = get_user_org(user)
-                if org:
-                    qs = qs.filter(organization=org)
-            if gstin:
-                obj = qs.filter(gstin__iexact=gstin).first()
-                if obj:
-                    return obj
-            if name:
-                obj = qs.filter(name__iexact=name).first()
-                if obj:
-                    return obj
+            with transaction.atomic():
+                name = (clean_item.get('name') or '').strip()
+                gstin = (clean_item.get('gstin') or '').strip()
+                qs = self.model.objects.all()
+                if user and hasattr(self.model, 'organization'):
+                    org = get_user_org(user)
+                    if org:
+                        qs = qs.filter(organization=org)
+                if gstin:
+                    obj = qs.filter(gstin__iexact=gstin).first()
+                    if obj:
+                        return obj
+                if name:
+                    obj = qs.filter(name__iexact=name).first()
+                    if obj:
+                        return obj
         except Exception:
             pass
         return None
@@ -802,7 +812,15 @@ class PartyResource(Resource):
             rec['payment_terms'] = int(pt_num) if pt_num else 30
 
     def create(self, data, user):
-        obj = self.model.objects.create(**self.clean(data))
+        clean_data = self.clean(data)
+        if user and hasattr(self.model, 'organization'):
+            try:
+                org = get_user_org(user)
+                if org:
+                    clean_data['organization'] = org
+            except Exception:
+                pass
+        obj = self.model.objects.create(**clean_data)
         services.log_audit(user, 'create', self.kind, obj.pk, f"Created {self.kind} {obj.name}")
         return obj
 
@@ -1092,6 +1110,13 @@ class ItemResource(Resource):
 
     def create(self, data, user):
         out, opening = self.clean(data)
+        if user and hasattr(Item, 'organization'):
+            try:
+                org = get_user_org(user)
+                if org:
+                    out['organization'] = org
+            except Exception:
+                pass
         obj = Item.objects.create(**out)
         if opening > 0:
             services.move_stock(obj.pk, opening, 'opening', 'Opening stock', timezone.localdate(), user, 'Opening stock',

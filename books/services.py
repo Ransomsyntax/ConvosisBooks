@@ -88,33 +88,34 @@ def fmt_qty(d):
 
 def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_address=''):
     try:
-        username = ''
-        if user and getattr(user, 'is_authenticated', False):
-            username = user.get_username()
-        elif user:
-            username = str(user)
-        else:
-            username = 'system'
+        with transaction.atomic():
+            username = ''
+            if user and getattr(user, 'is_authenticated', False):
+                username = user.get_username()
+            elif user:
+                username = str(user)
+            else:
+                username = 'system'
 
-        last_log = AuditLog.objects.order_by('-id').first()
-        prev_hash = last_log.record_hash if (last_log and last_log.record_hash) else 'GENESIS-BLOCK-00000000000000000000000000000000000000000000000000000000'
-        
-        now_ts = timezone.now().isoformat()
-        raw_to_hash = f"{prev_hash}|{now_ts}|{username}|{action}|{entity_type}|{entity_id}|{summary}"
-        record_hash = hashlib.sha256(raw_to_hash.encode('utf-8')).hexdigest()
+            last_log = AuditLog.objects.order_by('-id').first()
+            prev_hash = last_log.record_hash if (last_log and last_log.record_hash) else 'GENESIS-BLOCK-00000000000000000000000000000000000000000000000000000000'
+            
+            now_ts = timezone.now().isoformat()
+            raw_to_hash = f"{prev_hash}|{now_ts}|{username}|{action}|{entity_type}|{entity_id}|{summary}"
+            record_hash = hashlib.sha256(raw_to_hash.encode('utf-8')).hexdigest()
 
-        AuditLog.objects.create(
-            user=user if user and getattr(user, 'pk', None) else None,
-            username=username,
-            action=action,
-            entity_type=entity_type,
-            entity_id=str(entity_id) if entity_id else '',
-            summary=summary,
-            details=details or {},
-            ip_address=ip_address or '',
-            prev_hash=prev_hash,
-            record_hash=record_hash
-        )
+            AuditLog.objects.create(
+                user=user if user and getattr(user, 'pk', None) else None,
+                username=username,
+                action=action,
+                entity_type=entity_type,
+                entity_id=str(entity_id) if entity_id else '',
+                summary=summary,
+                details=details or {},
+                ip_address=ip_address or '',
+                prev_hash=prev_hash,
+                record_hash=record_hash
+            )
     except Exception:
         pass
 

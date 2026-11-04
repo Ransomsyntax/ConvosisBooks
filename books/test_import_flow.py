@@ -260,3 +260,43 @@ class TestUniversalImport(TestCase):
         u = User.objects.get(username='anil_k')
         self.assertEqual(u.first_name, 'Anil Kapoor')
         self.assertEqual(u.profile.role, UserProfile.ADMIN)
+    def test_customer_import_real_world_edge_cases(self):
+        records = [
+            {
+                'Customer Name': 'Globex Corporation',
+                'customer_type': 'Business',
+                'opening_balance': '50,000.00',
+                'opening_balance_type': 'Debit',
+                'GSTIN': '27AAPCA1234A1Z5',
+                'PAN': 'AAPCA1234A'
+            },
+            {
+                'Customer Name': 'Mr. Rajesh Kumar',
+                'customer_type': 'Individual',
+                'Phone': '0484-2345678 / 9876543210',
+                'Email': 'rajesh@kumar.com, accounts@kumar.com',
+                'GSTIN': 'URP',
+                'PAN': 'NA'
+            },
+            {
+                'Company': 'Initech Software',
+                'First Name': 'Peter',
+                'Last Name': 'Gibbons',
+                'payment_terms': 'Net 30',
+                'active': 'Yes'
+            },
+            {
+                'Customer Name': 'Store #101 & Deli',
+                'contact_person': 'Bill Lumbergh (VP)',
+                'Phone': '+91 (80) 2345-6789',
+                'GSTIN': 'Unregistered'
+            }
+        ]
+        res = self.client.post('/api/customers/', data=json.dumps({
+            'import_records': records
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 4)
+        self.assertEqual(data['failed'], 0)

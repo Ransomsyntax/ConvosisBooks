@@ -198,8 +198,12 @@ function openUniversalImportModal(resourceName, title) {
     wide: true,
     dialog: true,
     onClose: () => {
-      if (recordsImportedCount > 0 && typeof PAGE.reload === 'function') {
-        try { PAGE.reload(); } catch(e){}
+      if (recordsImportedCount > 0) {
+        if (typeof refresh === 'function') {
+          try { refresh(); } catch(e){}
+        } else if (typeof PAGE.reload === 'function') {
+          try { PAGE.reload(); } catch(e){}
+        }
       }
     },
     body: `
@@ -502,6 +506,10 @@ function openUniversalImportModal(resourceName, title) {
       }
       columnMapping[f.key] = matchedIdx;
     }
+    if (columnMapping['name'] === -1) {
+      if (columnMapping['company'] >= 0) columnMapping['name'] = columnMapping['company'];
+      else if (columnMapping['first_name'] >= 0) columnMapping['name'] = columnMapping['first_name'];
+    }
   }
 
   function renderStep2Mapping() {
@@ -705,6 +713,10 @@ function openUniversalImportModal(resourceName, title) {
       if (!fileObj) return;
       goToStep(2);
     } else if (currentStep === 2) {
+      if (columnMapping['name'] === -1) {
+        if (columnMapping['company'] >= 0) columnMapping['name'] = columnMapping['company'];
+        else if (columnMapping['first_name'] >= 0) columnMapping['name'] = columnMapping['first_name'];
+      }
       const missingRequired = fields.filter(f => f.req && (columnMapping[f.key] ?? -1) < 0);
       if (missingRequired.length > 0) {
         alert2.textContent = `Please map required field: "${missingRequired.map(f => f.label).join('", "')}" before continuing.`;
@@ -751,7 +763,11 @@ function openUniversalImportModal(resourceName, title) {
 
   btnDone.addEventListener('click', () => {
     modal.close();
-    if (typeof PAGE.reload === 'function') PAGE.reload();
+    if (typeof refresh === 'function') {
+      try { refresh(); } catch(e){}
+    } else if (typeof PAGE.reload === 'function') {
+      try { PAGE.reload(); } catch(e){}
+    }
   });
 
   function renderStep4Results(res) {
@@ -775,7 +791,9 @@ function openUniversalImportModal(resourceName, title) {
 
     recordsImportedCount += (imported + updated);
     if (imported > 0 || updated > 0) {
-      if (typeof PAGE.reload === 'function') {
+      if (typeof refresh === 'function') {
+        try { refresh(); } catch(e){}
+      } else if (typeof PAGE.reload === 'function') {
         try { PAGE.reload(); } catch(e){}
       }
     }

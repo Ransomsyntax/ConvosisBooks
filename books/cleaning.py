@@ -143,10 +143,11 @@ class Cleaner:
                 self.err(key, REQUIRED)
             return default
         v = str(v).strip()
-        if v not in choices:
-            self.err(key, 'Invalid choice.')
-            return default
-        return v
+        for c in choices:
+            if str(c).lower() == v.lower():
+                return c
+        self.err(key, 'Invalid choice.')
+        return default
 
     def boolean(self, key, default=False):
         v = self.d.get(key)

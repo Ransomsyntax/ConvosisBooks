@@ -617,7 +617,26 @@ class PartyResource(Resource):
         c.done()
         return out
 
+    def find_existing(self, clean_item):
+        if not hasattr(self, 'model') or self.model is None:
+            return None
+        try:
+            name = (clean_item.get('name') or '').strip()
+            gstin = (clean_item.get('gstin') or '').strip()
+            if gstin:
+                obj = self.model.objects.filter(gstin__iexact=gstin).first()
+                if obj:
+                    return obj
+            if name:
+                obj = self.model.objects.filter(name__iexact=name).first()
+                if obj:
+                    return obj
+        except Exception:
+            pass
+        return None
+
     def prepare_import_record(self, rec):
+        # 1. Name & Composite Name
         if not rec.get('name'):
             first = rec.get('first_name') or rec.get('contact_first_name') or ''
             last = rec.get('last_name') or rec.get('contact_last_name') or ''
@@ -628,17 +647,110 @@ class PartyResource(Resource):
                 rec['name'] = rec.get('company')
             elif rec.get('contact_person'):
                 rec['name'] = rec.get('contact_person')
-        if rec.get('active') in (None, ''):
+
+        if rec.get('name'):
+            clean_name = str(rec['name']).strip()
+            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in str(rec['name']))
+            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in str(rec['name']))
+            if clean_name:
+                rec['name'] = clean_name
+
+        # 2. Customer Type
+        if 'customer_type' in rec:
+            t = str(rec['customer_type']).lower().strip()
+            if t in ('individual', 'person', 'consumer', 'b2c'):
+                rec['customer_type'] = 'individual'
+            else:
+                rec['customer_type'] = 'business'
+        else:
+            rec['customer_type'] = 'business'
+
+        # 3. Active status
+        if rec.get('active') in (None, '', 'None', 'none', 'null', 'NULL'):
             rec['active'] = True
-        if rec.get('gstin') and not rec.get('pan') and len(rec['gstin']) >= 12:
-            rec['pan'] = rec['gstin'][2:12].upper()
-        if rec.get('gstin') and not rec.get('state') and len(rec['gstin']) >= 2:
-            rec['state'] = services.GST_STATE_CODES.get(rec['gstin'][:2], '')
-        if 'payment_terms' in rec and not isinstance(rec['payment_terms'], int):
-            try:
-                rec['payment_terms'] = int(rec['payment_terms'])
-            except Exception:
-                rec['payment_terms'] = 30
+        elif isinstance(rec.get('active'), str):
+            act_s = rec['active'].lower().strip()
+            if act_s in ('true', 'yes', '1', 'active', 'y', 'enabled'):
+                rec['active'] = True
+            elif act_s in ('false', 'no', '0', 'inactive', 'n', 'disabled'):
+                rec['active'] = False
+            else:
+                rec['active'] = True
+
+        # 4. GSTIN and PAN
+        gstin_val = str(rec.get('gstin') or '').strip().upper()
+        if gstin_val in ('URP', 'UNREGISTERED', 'CONSUMER', 'NONE', 'NIL', 'NA', 'N/A', '-', 'NULL', 'NO', 'NOT REGISTERED', 'NOT AVAILABLE'):
+            rec['gstin'] = ''
+            rec.setdefault('gst_treatment', 'consumer')
+        elif gstin_val:
+            gstin_val = re.sub(r'[^A-Z0-9]', '', gstin_val)
+            if GSTIN_RE.match(gstin_val):
+                rec['gstin'] = gstin_val
+                if not rec.get('pan'):
+                    rec['pan'] = gstin_val[2:12]
+                if not rec.get('state') and len(gstin_val) >= 2:
+                    rec['state'] = services.GST_STATE_CODES.get(gstin_val[:2], '')
+            else:
+                rec['gstin'] = ''
+
+        pan_val = str(rec.get('pan') or '').strip().upper()
+        if pan_val in ('NONE', 'NIL', 'NA', 'N/A', '-', 'NULL', 'NOT AVAILABLE', 'NO'):
+            rec['pan'] = ''
+        elif pan_val:
+            pan_val = re.sub(r'[^A-Z0-9]', '', pan_val)
+            if PAN_RE.match(pan_val):
+                rec['pan'] = pan_val
+            else:
+                rec['pan'] = ''
+
+        # 5. Email sanitization
+        if rec.get('email'):
+            em = str(rec['email']).strip()
+            if em.lower() in ('none', 'nil', 'na', 'n/a', '-', 'null', 'no email', 'not available'):
+                rec['email'] = ''
+            elif ',' in em or ';' in em or ' ' in em:
+                parts = re.split(r'[,;\s]+', em)
+                found_em = ''
+                for p in parts:
+                    if '@' in p and '.' in p:
+                        found_em = p.strip()
+                        break
+                rec['email'] = found_em
+            elif '@' not in em or '.' not in em:
+                rec['email'] = ''
+
+        # 6. Phone sanitization
+        if rec.get('phone'):
+            ph = str(rec['phone']).strip()
+            if ph.lower() in ('none', 'nil', 'na', 'n/a', '-', 'null', 'no phone', 'not available'):
+                rec['phone'] = ''
+            elif '/' in ph or ',' in ph or ';' in ph:
+                first_ph = re.split(r'[/,;]', ph)[0].strip()
+                clean_ph = re.sub(r'[^0-9+()\-\s]', '', first_ph)
+                rec['phone'] = clean_ph[:30]
+            else:
+                clean_ph = re.sub(r'[^0-9+()\-\s]', '', ph)
+                rec['phone'] = clean_ph[:30]
+
+        # 7. Contact Person
+        if rec.get('contact_person'):
+            cp = str(rec['contact_person']).strip()
+            if cp.lower() in ('none', 'nil', 'na', 'n/a', '-', 'null'):
+                rec['contact_person'] = ''
+            else:
+                clean_cp = ''.join(ch if (ch.isalnum() or ch in " .'-") else ' ' for ch in cp)
+                rec['contact_person'] = re.sub(r'\s+', ' ', clean_cp).strip()[:120]
+
+        # 8. Opening balance & type
+        if 'opening_balance_type' in rec:
+            obt = str(rec['opening_balance_type']).lower().strip()
+            rec['opening_balance_type'] = 'credit' if obt in ('credit', 'cr') else 'debit'
+
+        # 9. Payment Terms
+        if 'payment_terms' in rec:
+            pt_val = str(rec['payment_terms']).lower().strip()
+            pt_num = re.sub(r'[^0-9]', '', pt_val)
+            rec['payment_terms'] = int(pt_num) if pt_num else 30
 
     def create(self, data, user):
         obj = self.model.objects.create(**self.clean(data))

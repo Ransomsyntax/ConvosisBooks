@@ -464,3 +464,133 @@ class TestUniversalImport(TestCase):
         self.assertEqual(data['imported'], 1)
         self.assertEqual(Customer.objects.filter(name='Shared Name Client').count(), 2)
 
+    def test_credit_note_import(self):
+        records = [{
+            'customer': 'Credit Client Corp',
+            'date': '2026-11-01',
+            'reason': 'Returned damaged item',
+            'item': 'Ergonomic Desk',
+            'quantity': '2',
+            'rate': '5000.00',
+            'gst_rate': '18'
+        }]
+        res = self.client.post('/api/credit-notes/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import CreditNote
+        cn = CreditNote.objects.filter(customer__name='Credit Client Corp').first()
+        self.assertIsNotNone(cn)
+        self.assertEqual(cn.reason, 'Returned damaged item')
+
+    def test_vendor_credit_import(self):
+        records = [{
+            'vendor': 'Supplier Direct Ltd',
+            'date': '2026-11-02',
+            'reason': 'Price revision credit',
+            'item': 'Raw Materials',
+            'quantity': '1',
+            'rate': '3200.00',
+            'gst_rate': '18'
+        }]
+        res = self.client.post('/api/vendor-credits/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import VendorCredit
+        vc = VendorCredit.objects.filter(vendor__name='Supplier Direct Ltd').first()
+        self.assertIsNotNone(vc)
+
+    def test_delivery_challan_import(self):
+        records = [{
+            'customer': 'Challan Customer Ltd',
+            'date': '2026-11-03',
+            'challan_type': 'supply_on_approval',
+            'vehicle_number': 'KL-05-AA-1234',
+            'item': 'Demo Machines',
+            'quantity': '3'
+        }]
+        res = self.client.post('/api/delivery-challans/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import DeliveryChallan
+        dc = DeliveryChallan.objects.filter(customer__name='Challan Customer Ltd').first()
+        self.assertIsNotNone(dc)
+        self.assertEqual(dc.vehicle_number, 'KL-05-AA-1234')
+
+    def test_recurring_invoice_import(self):
+        records = [{
+            'profile_name': 'Monthly Retainer Cloud',
+            'customer': 'Cloud Services Inc',
+            'frequency': 'monthly',
+            'start_date': '2026-11-01',
+            'rate': '15000.00'
+        }]
+        res = self.client.post('/api/recurring-invoices/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import RecurringInvoice
+        ri = RecurringInvoice.objects.filter(profile_name='Monthly Retainer Cloud').first()
+        self.assertIsNotNone(ri)
+        self.assertEqual(ri.total, Decimal('15000.00'))
+
+    def test_bank_transaction_import(self):
+        ba = BankAccount.objects.create(name='Federal Bank Current', bank_name='Federal Bank', account_number='123456789012')
+        records = [{
+            'bank_account': str(ba.pk),
+            'date': '2026-11-01',
+            'description': 'NEFT Inward From Client',
+            'reference': 'NEFT99881122',
+            'deposit': '45000.00',
+            'withdrawal': '0.00'
+        }]
+        res = self.client.post('/api/bank-transactions/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        bt = BankTransaction.objects.filter(reference='NEFT99881122').first()
+        self.assertIsNotNone(bt)
+        self.assertEqual(bt.deposit, Decimal('45000.00'))
+
+    def test_timelogs_alias_import(self):
+        records = [{
+            'project': 'Project Phoenix',
+            'date': '2026-11-02',
+            'task': 'Backend API Optimization',
+            'hours': '3.5'
+        }]
+        res = self.client.post('/api/timelogs/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import TimeLog
+        tl = TimeLog.objects.filter(task='Backend API Optimization').first()
+        self.assertIsNotNone(tl)
+        self.assertEqual(tl.hours, Decimal('3.5'))
+

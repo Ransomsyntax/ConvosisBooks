@@ -790,7 +790,7 @@ async function partyForm(kind, id) {
             <div style="font-weight:600;margin-bottom:2px;">Upload Attachments</div>
             <div class="sub" style="font-size:12px;color:var(--tx-muted);">You can upload a maximum of 10 files, 10MB each (PDF, PNG, JPG, DOCX, CSV)</div>
             <input type="file" id="party_file_input" multiple style="display:none;" accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.csv">
-            <button type="button" class="btn" style="margin-top:10px;" onclick="$('#party_file_input').click()">Browse Files</button>
+            <button type="button" class="btn" id="btn_party_browse_docs" style="margin-top:10px;">Browse Files</button>
           </div>
           <div id="uploaded_files_list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
@@ -805,6 +805,11 @@ async function partyForm(kind, id) {
     body: formHtml,
     onReady: (form, modal) => {
       modalInstance = modal;
+      const partyBrowseDocs = $('#btn_party_browse_docs', modal.el);
+      const partyFileInput = $('#party_file_input', modal.el);
+      if (partyBrowseDocs && partyFileInput) {
+        partyBrowseDocs.addEventListener('click', () => partyFileInput.click());
+      }
       const tabs = $$('.party-tab-btn', modal.el);
       const panes = $$('.party-tab-pane', modal.el);
       tabs.forEach(btn => {
@@ -3726,7 +3731,7 @@ async function statementImportWizardModal(defaultAccId) {
           <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Upload Statement File (CSV, XLS, XLSX)</div>
           <div class="sub" style="font-size:12px;margin-bottom:14px;">Supports standard Indian bank statements (HDFC, ICICI, SBI, Kotak, Axis, etc.)</div>
           <input type="file" id="wiz-file-inp" accept=".csv,.xlsx,.xls,.txt" style="display:none;">
-          <button type="button" class="btn p" onclick="$('#wiz-file-inp').click()">Choose File...</button>
+          <button type="button" class="btn p" id="wiz-choose-file-btn">Choose File...</button>
           <div id="wiz-file-name" style="font-size:12px;color:var(--accent);margin-top:8px;font-weight:600;"></div>
         </div>
 
@@ -3761,8 +3766,13 @@ async function statementImportWizardModal(defaultAccId) {
   });
 
   const fileInp = $('#wiz-file-inp', m.el);
+  const chooseBtn = $('#wiz-choose-file-btn', m.el);
   const submitBtn = $('#wiz-import-submit-btn', m.el);
   let selectedFile = null;
+
+  if (chooseBtn && fileInp) {
+    chooseBtn.addEventListener('click', () => fileInp.click());
+  }
 
   fileInp.addEventListener('change', e => {
     const file = e.target.files[0];
@@ -3896,7 +3906,7 @@ async function importStatementModal(baId) {
             <div style="font-weight:700;margin-bottom:4px;">Upload Statement File</div>
             <div class="sub" style="font-size:12px;margin-bottom:12px;">Supports CSV, OFX, QIF, and standard bank formats</div>
             <input type="file" id="imp-file-input" accept=".csv,.ofx,.qif" style="display:none;">
-            <button type="button" class="btn" onclick="$('#imp-file-input').click()" style="margin-top:24px;width:100%;">Browse Statement File</button>
+            <button type="button" class="btn" id="imp-browse-stmt-btn" style="margin-top:24px;width:100%;">Browse Statement File</button>
           </div>
         </div>
       </div>
@@ -3908,6 +3918,12 @@ async function importStatementModal(baId) {
     `,
     footer: `<button type="button" class="btn" data-close>Close</button>`
   });
+
+  const browseStmtBtn = $('#imp-browse-stmt-btn', m.el);
+  const impFileInp = $('#imp-file-input', m.el);
+  if (browseStmtBtn && impFileInp) {
+    browseStmtBtn.addEventListener('click', () => impFileInp.click());
+  }
 
   $('#btn-live-sync-now', m.el).addEventListener('click', async () => {
     const accId = $('#imp-ba', m.el).value;
@@ -6094,3 +6110,6 @@ async function salesOrderForm(id, onDone) {
   calcSo();
 }
 window.salesOrderForm = salesOrderForm;
+window.statementImportWizardModal = statementImportWizardModal;
+window.importStatementModal = importStatementModal;
+

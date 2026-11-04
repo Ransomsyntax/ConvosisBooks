@@ -113,3 +113,72 @@ function opts(list, sel) {
   }).join('');
 }
 window.opts = opts;
+
+function parseCsvString(text) {
+  if (!text) return { headers: [], rows: [] };
+  text = text.replace(/^\uFEFF/, '');
+  const sample = text.slice(0, 4096);
+  const firstLines = sample.split(/\r?\n/).filter(l => l.trim()).slice(0, 5);
+  let delimiter = ',';
+  if (firstLines.length > 0) {
+    const counts = { ',': 0, ';': 0, '\t': 0 };
+    for (const l of firstLines) {
+      let inQ = false;
+      for (let i = 0; i < l.length; i++) {
+        const ch = l[i];
+        if (ch === '"') inQ = !inQ;
+        else if (!inQ && ch in counts) counts[ch]++;
+      }
+    }
+    if (counts['\t'] > counts[','] && counts['\t'] > counts[';']) delimiter = '\t';
+    else if (counts[';'] > counts[','] && counts[';'] > counts['\t']) delimiter = ';';
+  }
+
+  const lines = [];
+  let row = [''];
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === '"') {
+      if (inQuotes && next === '"') {
+        row[row.length - 1] += '"';
+        i += 2;
+        continue;
+      }
+      inQuotes = !inQuotes;
+    } else if (c === delimiter && !inQuotes) {
+      row.push('');
+    } else if ((c === '\r' || c === '\n') && !inQuotes) {
+      if (c === '\r' && next === '\n') i++;
+      lines.push(row);
+      row = [''];
+    } else {
+      row[row.length - 1] += c;
+    }
+    i++;
+  }
+  if (row.length > 1 || (row.length === 1 && row[0] !== '')) lines.push(row);
+  if (!lines.length) return { headers: [], rows: [] };
+
+  const headers = lines[0].map(h => String(h || '').trim());
+  const rows = [];
+  for (let r = 1; r < lines.length; r++) {
+    const vals = lines[r];
+    if (!vals || vals.every(v => !String(v || '').trim())) continue;
+    rows.push(vals.map(v => String(v == null ? '' : v).trim()));
+  }
+  return { headers, rows };
+}
+
+window.$ = $;
+window.$$ = $$;
+window.esc = esc;
+window.num = num;
+window.inr = inr;
+window.iso = iso;
+window.api = api;
+window.toast = toast;
+window.parseCsvString = parseCsvString;
+

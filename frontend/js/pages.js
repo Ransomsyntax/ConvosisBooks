@@ -352,13 +352,19 @@ function openUniversalImportModal(resourceName, title) {
             </a>
           </div>
 
+          <input type="file" id="uimp-file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
           <div id="uimp-drop-zone" style="border:2px dashed var(--bd);border-radius:10px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--surface-glass-subtle);transition:all 0.2s;">
-            <input type="file" id="uimp-file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
-            <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
-            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop Excel (.xlsx), CSV, TSV, or JSON file here</div>
-            <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
-            <button type="button" class="btn p" style="font-size:12px;pointer-events:none;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
-            <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel workbooks (.xlsx, .xls), CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
+            <div id="uimp-drop-default">
+              <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
+              <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop Excel (.xlsx), CSV, TSV, or JSON file here</div>
+              <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
+              <button type="button" class="btn p" id="uimp-browse-btn" style="font-size:12px;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
+              <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel workbooks (.xlsx, .xls), CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
+            </div>
+            <div id="uimp-drop-loading" style="display:none;padding:16px 0;">
+              ${spinner}
+              <div id="uimp-drop-loading-text" style="margin-top:10px;font-size:12.5px;font-weight:600;color:var(--tx);">Reading and parsing file...</div>
+            </div>
           </div>
 
           <div id="uimp-file-info" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface-glass);border-radius:8px;border:1px solid var(--bd);align-items:center;justify-content:space-between;">
@@ -492,7 +498,7 @@ function openUniversalImportModal(resourceName, title) {
         <button class="btn p" id="uimp-btn-next" type="button" disabled style="display:inline-flex;align-items:center;gap:6px;">
           <span>Next: Map Columns</span> <i class="fa-solid fa-arrow-right"></i>
         </button>
-        <button class="btn p" id="uimp-btn-done" type="button" style="display:none;display:inline-flex;align-items:center;gap:6px;">
+        <button class="btn p" id="uimp-btn-done" type="button" style="display:none;align-items:center;gap:6px;">
           <i class="fa-solid fa-check"></i> Done &amp; View Records
         </button>
       </div>
@@ -501,6 +507,9 @@ function openUniversalImportModal(resourceName, title) {
 
   const dropZone = $('#uimp-drop-zone', modal.el);
   const fileInput = $('#uimp-file-input', modal.el);
+  const dropDefault = $('#uimp-drop-default', modal.el);
+  const dropLoading = $('#uimp-drop-loading', modal.el);
+  const dropLoadingText = $('#uimp-drop-loading-text', modal.el);
   const fileInfo = $('#uimp-file-info', modal.el);
   const fileNameEl = $('#uimp-file-name', modal.el);
   const fileMetaEl = $('#uimp-file-meta', modal.el);
@@ -522,7 +531,23 @@ function openUniversalImportModal(resourceName, title) {
   const alert2 = $('#uimp-alert-2', modal.el);
   const alert3 = $('#uimp-alert-3', modal.el);
 
-  dropZone.addEventListener('click', () => fileInput.click());
+  const triggerFileInput = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    fileInput.click();
+  };
+
+  dropZone.addEventListener('click', (e) => {
+    if (e.target.closest('#uimp-browse-btn') || e.target === dropZone || dropZone.contains(e.target)) {
+      triggerFileInput(e);
+    }
+  });
+  const browseBtn = $('#uimp-browse-btn', modal.el);
+  if (browseBtn) browseBtn.addEventListener('click', triggerFileInput);
+  fileInput.addEventListener('click', e => e.stopPropagation());
+
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; dropZone.style.background = 'var(--surface-glass)'; });
   dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--bd)'; dropZone.style.background = 'var(--surface-glass-subtle)'; });
   dropZone.addEventListener('drop', e => {
@@ -539,17 +564,9 @@ function openUniversalImportModal(resourceName, title) {
     fileObj = null;
     rawHeaders = [];
     rawRows = [];
-    dropZone.innerHTML = `
-      <input type="file" id="uimp-file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
-      <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
-      <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop Excel (.xlsx), CSV, TSV, or JSON file here</div>
-      <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
-      <button type="button" class="btn p" style="font-size:12px;pointer-events:none;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
-      <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel workbooks (.xlsx, .xls), CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
-    `;
-    const newInp = $('#uimp-file-input', dropZone);
-    if (newInp) newInp.addEventListener('change', () => { if (newInp.files.length) handleFile(newInp.files[0]); });
     dropZone.style.display = 'block';
+    if (dropDefault) dropDefault.style.display = 'block';
+    if (dropLoading) dropLoading.style.display = 'none';
     fileInfo.style.display = 'none';
     btnNext.disabled = true;
     alert1.style.display = 'none';
@@ -559,8 +576,9 @@ function openUniversalImportModal(resourceName, title) {
     alert1.style.display = 'none';
     fileObj = file;
     const isExcel = /\.(xlsx|xls|xlsm|xltx)$/i.test(file.name);
-    const origDropHtml = dropZone.innerHTML;
-    dropZone.innerHTML = `${spinner} <div style="margin-top:10px;font-size:12.5px;font-weight:600;color:var(--tx);">Reading and parsing ${esc(file.name)}...</div>`;
+    if (dropDefault) dropDefault.style.display = 'none';
+    if (dropLoading) dropLoading.style.display = 'block';
+    if (dropLoadingText) dropLoadingText.textContent = `Reading and parsing ${esc(file.name)}...`;
 
     try {
       if (isExcel) {
@@ -610,7 +628,8 @@ function openUniversalImportModal(resourceName, title) {
         throw new Error('No valid records found in the uploaded file.');
       }
 
-      dropZone.innerHTML = origDropHtml;
+      if (dropDefault) dropDefault.style.display = 'block';
+      if (dropLoading) dropLoading.style.display = 'none';
       dropZone.style.display = 'none';
       fileInfo.style.display = 'flex';
       fileNameEl.textContent = file.name;
@@ -620,9 +639,8 @@ function openUniversalImportModal(resourceName, title) {
       // Auto-match columns
       autoMatchColumns();
     } catch (err) {
-      dropZone.innerHTML = origDropHtml;
-      const newInp = $('#uimp-file-input', dropZone);
-      if (newInp) newInp.addEventListener('change', () => { if (newInp.files.length) handleFile(newInp.files[0]); });
+      if (dropDefault) dropDefault.style.display = 'block';
+      if (dropLoading) dropLoading.style.display = 'none';
       alert1.textContent = err.message || 'Failed to parse file.';
       alert1.style.display = 'block';
       btnNext.disabled = true;
@@ -668,6 +686,11 @@ function openUniversalImportModal(resourceName, title) {
     if (columnMapping['name'] === -1) {
       if (columnMapping['company'] >= 0) columnMapping['name'] = columnMapping['company'];
       else if (columnMapping['first_name'] >= 0) columnMapping['name'] = columnMapping['first_name'];
+      else if (columnMapping['customer'] >= 0) columnMapping['name'] = columnMapping['customer'];
+      else if (columnMapping['vendor'] >= 0) columnMapping['name'] = columnMapping['vendor'];
+      else if (columnMapping['party'] >= 0) columnMapping['name'] = columnMapping['party'];
+      else if (columnMapping['item'] >= 0) columnMapping['name'] = columnMapping['item'];
+      else if (columnMapping['title'] >= 0) columnMapping['name'] = columnMapping['title'];
     }
   }
 
@@ -897,6 +920,11 @@ function openUniversalImportModal(resourceName, title) {
       if (columnMapping['name'] === -1) {
         if (columnMapping['company'] >= 0) columnMapping['name'] = columnMapping['company'];
         else if (columnMapping['first_name'] >= 0) columnMapping['name'] = columnMapping['first_name'];
+        else if (columnMapping['customer'] >= 0) columnMapping['name'] = columnMapping['customer'];
+        else if (columnMapping['vendor'] >= 0) columnMapping['name'] = columnMapping['vendor'];
+        else if (columnMapping['party'] >= 0) columnMapping['name'] = columnMapping['party'];
+        else if (columnMapping['item'] >= 0) columnMapping['name'] = columnMapping['item'];
+        else if (columnMapping['title'] >= 0) columnMapping['name'] = columnMapping['title'];
       }
       const missingRequired = fields.filter(f => f.req && (columnMapping[f.key] ?? -1) < 0);
       if (missingRequired.length > 0) {
@@ -6710,3 +6738,4 @@ async function viewSalesOrderDetail(id) {
   }
 }
 window.viewSalesOrderDetail = viewSalesOrderDetail;
+window.openUniversalImportModal = openUniversalImportModal;

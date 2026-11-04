@@ -413,7 +413,7 @@ class Resource:
             elif act_val in ('', 'none', 'null', 'n/a', '-'):
                 rec['active'] = True
 
-        for num_f in ('selling_price', 'purchase_price', 'gst_rate', 'reorder_level', 'opening_stock', 'amount', 'opening_balance', 'current_balance', 'payment_terms', 'quantity', 'rate', 'discount_percent'):
+        for num_f in ('selling_price', 'purchase_price', 'gst_rate', 'reorder_level', 'opening_stock', 'amount', 'total', 'opening_balance', 'current_balance', 'payment_terms', 'quantity', 'rate', 'discount_percent'):
             if num_f in rec and isinstance(rec[num_f], str):
                 clean_num = rec[num_f].replace('₹', '').replace('$', '').replace('€', '').replace(',', '').replace('%', '').strip()
                 if clean_num:
@@ -1192,8 +1192,8 @@ class DocResource(Resource):
     def extract_line_from_record(self, r):
         item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
         desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
-        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
-        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or r.get('total') or Decimal('0.00')
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('selling_price') or r.get('purchase_price') or r.get('amount') or r.get('total') or Decimal('0.00')
         gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
         hsn = r.get('hsn_sac') or r.get('hsn') or ''
         disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
@@ -1824,10 +1824,17 @@ class PaymentResource(Resource):
 
         if not rec.get('date'):
             rec['date'] = timezone.localdate().isoformat()
-        if not rec.get('mode'):
+        mode_val = str(rec.get('mode') or '').strip().lower().replace(' ', '_').replace('-', '_')
+        if mode_val in MODE_KEYS:
+            rec['mode'] = mode_val
+        else:
             rec['mode'] = 'bank_transfer'
         if not rec.get('account'):
             rec['account'] = 'Bank Account'
+        if not rec.get('amount'):
+            amt = rec.get('payment_amount') or rec.get('amt') or rec.get('total')
+            if amt:
+                rec['amount'] = amt
 
     def get_template_sample(self):
         if self.party_attr == 'customer':
@@ -1993,6 +2000,31 @@ class StockMovementResource(Resource):
 class StockAdjustmentResource(StockMovementResource):
     name = 'stock-adjustments'
 
+    def prepare_import_record(self, rec):
+        item_val = rec.get('item') or rec.get('item_name') or rec.get('sku') or rec.get('product')
+        if item_val and not str(item_val).isdigit():
+            i_str = str(item_val).strip()
+            it = Item.objects.filter(Q(name__iexact=i_str) | Q(sku__iexact=i_str)).first()
+            if not it:
+                it = Item.objects.create(name=i_str, item_type='goods', track_inventory=True, selling_price=Decimal('100.00'))
+            elif not it.track_inventory or it.item_type != 'goods':
+                it.track_inventory = True
+                it.item_type = 'goods'
+                it.save(update_fields=['track_inventory', 'item_type'])
+            rec['item'] = it.pk
+        elif not item_val:
+            first_it = Item.objects.filter(item_type='goods', track_inventory=True).first()
+            if not first_it:
+                first_it = Item.objects.create(name='Stock Item', item_type='goods', track_inventory=True, selling_price=Decimal('100.00'))
+            rec['item'] = first_it.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('reason') or rec['reason'] not in REASONS:
+            rec['reason'] = 'Stock recount'
+        if not rec.get('new_quantity'):
+            rec['new_quantity'] = rec.get('quantity') or rec.get('qty') or Decimal('10.000')
+
     def base_qs(self):
         return StockMovement.objects.select_related('item', 'warehouse').filter(kind='adjustment')
 
@@ -2094,8 +2126,12 @@ class AccountResource(Resource):
         return ['5100', 'Office Electricity & Power', 'expense', 'operating_expense', 'Monthly office electricity charges']
 
     def prepare_import_record(self, rec):
-        if 'account_type' in rec:
+        if not rec.get('name'):
+            rec['name'] = rec.get('account_name') or rec.get('title')
+        if 'account_type' in rec and rec['account_type']:
             rec['account_type'] = str(rec['account_type']).lower().strip()
+        else:
+            rec['account_type'] = 'expense'
         if not rec.get('code'):
             rec['code'] = next_number('ACC')
 
@@ -2317,6 +2353,14 @@ class BankAccountResource(Resource):
     def get_template_sample(self):
         return ['HDFC Current Account', 'HDFC Bank', '50200012345678', 'HDFC0001234', 'current', '50000.00', 'MG Road Branch']
 
+    def prepare_import_record(self, rec):
+        if not rec.get('name'):
+            rec['name'] = rec.get('account_name') or rec.get('bank_name') or 'Bank Account'
+        if not rec.get('bank_name'):
+            rec['bank_name'] = rec.get('name') or 'Bank'
+        if not rec.get('account_number'):
+            rec['account_number'] = rec.get('account_no') or rec.get('acc_no') or f"BA{int(timezone.now().timestamp())}"
+
     def row(self, o):
         unrec = o.transactions.filter(status__in=['unmatched', 'unreconciled']).count()
         matched = o.transactions.filter(status='matched').count()
@@ -2392,6 +2436,103 @@ class BankTransactionResource(Resource):
     model = BankTransaction
     search_fields = ('description', 'reference', 'payee', 'transaction_type', 'location')
     default_ordering = ('-date', '-id')
+
+    def prepare_import_record(self, rec):
+        ba_val = rec.get('bank_account') or rec.get('account') or rec.get('bank_account_id')
+        ba = None
+        if ba_val:
+            if str(ba_val).isdigit():
+                ba = BankAccount.objects.filter(pk=int(ba_val)).first()
+            if not ba:
+                ba = BankAccount.objects.filter(Q(name__iexact=str(ba_val).strip()) | Q(account_number__iexact=str(ba_val).strip())).first()
+        if not ba:
+            ba = BankAccount.objects.first()
+            if not ba:
+                ba = BankAccount.objects.create(name='Primary Bank Account', bank_name='Bank', account_number=f"BA{int(timezone.now().timestamp())}")
+        rec['bank_account'] = ba.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+
+        if not rec.get('description'):
+            rec['description'] = rec.get('desc') or rec.get('payee') or rec.get('reference') or 'Bank Transaction'
+
+        amt = rec.get('amount')
+        ttype = str(rec.get('transaction_type') or rec.get('type') or '').lower().strip()
+        wd = rec.get('withdrawal') or rec.get('debit') or rec.get('withdrawal_amount')
+        dep = rec.get('deposit') or rec.get('credit') or rec.get('deposit_amount')
+
+        if wd is None and dep is None and amt is not None:
+            try:
+                amt_dec = Decimal(str(amt))
+                if amt_dec < 0:
+                    wd = abs(amt_dec)
+                    dep = Decimal('0.00')
+                elif ttype in ('withdrawal', 'debit', 'dr', 'expense', 'payment'):
+                    wd = amt_dec
+                    dep = Decimal('0.00')
+                else:
+                    dep = amt_dec
+                    wd = Decimal('0.00')
+            except Exception:
+                wd = Decimal('0.00')
+                dep = Decimal('0.00')
+
+        rec['withdrawal'] = Decimal(str(wd or '0.00'))
+        rec['deposit'] = Decimal(str(dep or '0.00'))
+
+        if not rec.get('status'):
+            rec['status'] = 'unreconciled'
+
+    def find_existing(self, clean_item, user=None):
+        ref = clean_item.get('reference')
+        if ref:
+            obj = self.model.objects.filter(reference__iexact=str(ref).strip()).first()
+            if obj:
+                return obj
+        ba_id = clean_item.get('bank_account')
+        dt = clean_item.get('date')
+        desc = clean_item.get('description')
+        wd = clean_item.get('withdrawal', Decimal('0.00'))
+        dep = clean_item.get('deposit', Decimal('0.00'))
+        if ba_id and dt and desc:
+            return self.model.objects.filter(
+                bank_account_id=ba_id, date=dt, description__iexact=str(desc).strip(),
+                withdrawal=wd, deposit=dep
+            ).first()
+        return None
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        ba_id = c.integer('bank_account', required=True, lo=1)
+        ba = BankAccount.objects.filter(pk=ba_id).first()
+        if not ba:
+            raise ApiError(404, 'Bank account not found.')
+        dt = c.date('date', required=True)
+        desc = c.text('description', required=True, max_len=500)
+        ref = c.text('reference', max_len=100)
+        wd = c.number('withdrawal', default=Decimal('0.00'), lo=Decimal('0'))
+        dep = c.number('deposit', default=Decimal('0.00'), lo=Decimal('0'))
+        ttype = c.text('transaction_type', max_len=50, default='Bank Transaction')
+        payee = c.text('payee', max_len=150)
+        loc = c.text('location', max_len=100, default=ba.branch_name or 'HO Kottayam')
+        st = c.choice('status', ['unmatched', 'unreconciled', 'matched', 'categorized', 'manually_added'], default='unreconciled')
+        notes = c.text('notes', max_len=1000)
+        c.done()
+
+        new_balance = ba.current_balance + dep - wd
+        ba.current_balance = new_balance
+        ba.bank_balance = new_balance
+        ba.save(update_fields=['current_balance', 'bank_balance'])
+
+        txn = BankTransaction.objects.create(
+            bank_account=ba, date=dt, description=desc, reference=ref,
+            withdrawal=wd, deposit=dep, balance=new_balance,
+            transaction_type=ttype, payee=payee, location=loc,
+            status=st, notes=notes
+        )
+        services.log_audit(user, 'create', 'BankTransaction', txn.pk, f"Imported bank transaction {txn.description} ({txn.date})")
+        return txn
 
     def filter_qs(self, qs, request):
         ba = request.GET.get('bank_account')
@@ -2678,7 +2819,7 @@ class SalesOrderResource(Resource):
     def extract_line_from_record(self, r):
         item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
         desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
-        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
         rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or Decimal('0.00')
         gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
         hsn = r.get('hsn_sac') or r.get('hsn') or ''
@@ -2968,7 +3109,7 @@ class PurchaseOrderResource(Resource):
     def extract_line_from_record(self, r):
         item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
         desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
-        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
         rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or Decimal('0.00')
         gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
         hsn = r.get('hsn_sac') or r.get('hsn') or ''
@@ -3192,6 +3333,78 @@ class CreditNoteResource(Resource):
     search_fields = ('number', 'customer__name', 'reason')
     default_ordering = ('-date', '-id')
 
+    def prepare_import_record(self, rec):
+        cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
+        if cust_val and not str(cust_val).isdigit():
+            c_str = str(cust_val).strip()
+            cust = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
+            if not cust:
+                org = Organization.get()
+                cust = Customer.objects.create(name=c_str, active=True, state=org.state)
+            rec['customer'] = cust.pk
+        elif not cust_val:
+            first_c = Customer.objects.first()
+            if first_c:
+                rec['customer'] = first_c.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('reason'):
+            rec['reason'] = rec.get('notes') or rec.get('remarks') or 'Credit Note'
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            rec['lines'] = [line]
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('selling_price') or r.get('purchase_price') or r.get('amount') or r.get('total') or Decimal('0.00')
+        gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'Credit Item / Service'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+        if it and (rate is None or rate == Decimal('0.00')):
+            rate = it.selling_price
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty,
+            'rate': rate,
+            'discount_percent': disc,
+            'gst_rate': gst
+        }
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('cn_number') or r.get('credit_note_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
@@ -3224,7 +3437,9 @@ class CreditNoteResource(Resource):
         reason = c.text('reason', max_len=150)
         c.done()
 
-        num = next_number('CN')
+        num = data.get('number')
+        if not num or CreditNote.objects.filter(number=num).exists():
+            num = next_number('CN')
         cn = CreditNote.objects.create(
             number=num, customer=cust, date=dt, due_date=dt,
             place_of_supply=cust.state or Organization.get().state,
@@ -3282,6 +3497,78 @@ class VendorCreditResource(Resource):
     search_fields = ('number', 'vendor__name', 'reason')
     default_ordering = ('-date', '-id')
 
+    def prepare_import_record(self, rec):
+        ven_val = rec.get('vendor') or rec.get('vendor_name') or rec.get('supplier') or rec.get('party')
+        if ven_val and not str(ven_val).isdigit():
+            v_str = str(ven_val).strip()
+            ven = Vendor.objects.filter(Q(name__iexact=v_str) | Q(company__iexact=v_str) | Q(email__iexact=v_str)).first()
+            if not ven:
+                org = Organization.get()
+                ven = Vendor.objects.create(name=v_str, active=True, state=org.state)
+            rec['vendor'] = ven.pk
+        elif not ven_val:
+            first_v = Vendor.objects.first()
+            if first_v:
+                rec['vendor'] = first_v.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('reason'):
+            rec['reason'] = rec.get('notes') or rec.get('remarks') or 'Vendor Credit'
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            rec['lines'] = [line]
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('selling_price') or r.get('purchase_price') or r.get('amount') or r.get('total') or Decimal('0.00')
+        gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'Credit Item / Service'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+        if it and (rate is None or rate == Decimal('0.00')):
+            rate = it.purchase_price
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty,
+            'rate': rate,
+            'discount_percent': disc,
+            'gst_rate': gst
+        }
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('vc_number') or r.get('vendor_credit_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
@@ -3314,7 +3601,9 @@ class VendorCreditResource(Resource):
         reason = c.text('reason', max_len=150)
         c.done()
 
-        num = next_number('VC')
+        num = data.get('number')
+        if not num or VendorCredit.objects.filter(number=num).exists():
+            num = next_number('VC')
         vc = VendorCredit.objects.create(
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or Organization.get().state,
@@ -3372,6 +3661,39 @@ class RecurringInvoiceResource(Resource):
     search_fields = ('profile_name', 'customer__name')
     default_ordering = ('-created_at',)
 
+    def prepare_import_record(self, rec):
+        cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
+        if cust_val and not str(cust_val).isdigit():
+            c_str = str(cust_val).strip()
+            c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
+            if not c:
+                org = Organization.get()
+                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+            rec['customer'] = c.pk
+        elif not cust_val:
+            first_c = Customer.objects.first()
+            if first_c:
+                rec['customer'] = first_c.pk
+
+        if not rec.get('profile_name'):
+            rec['profile_name'] = rec.get('name') or rec.get('title') or f"Recurring - {rec.get('customer_name') or 'Profile'}"
+
+        if not rec.get('start_date'):
+            rec['start_date'] = timezone.localdate().isoformat()
+        if not rec.get('next_date'):
+            rec['next_date'] = rec['start_date']
+
+        freq = str(rec.get('frequency', '')).lower().strip()
+        if freq not in ['weekly', 'monthly', 'quarterly', 'yearly']:
+            rec['frequency'] = 'monthly'
+
+        total_val = rec.get('total') or rec.get('amount')
+        if not total_val:
+            rate = Decimal(str(rec.get('selling_price') or rec.get('rate') or rec.get('price') or '100.00'))
+            qty = Decimal(str(rec.get('opening_stock') or rec.get('quantity') or rec.get('qty') or '1'))
+            total_val = rate * qty
+        rec['total'] = total_val
+
     def row(self, o):
         return {
             'id': o.pk, 'profile_name': o.profile_name, 'customer_id': o.customer_id,
@@ -3405,6 +3727,70 @@ class DeliveryChallanResource(Resource):
     search_fields = ('number', 'customer__name', 'vehicle_number')
     default_ordering = ('-date', '-id')
 
+    def prepare_import_record(self, rec):
+        cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
+        if cust_val and not str(cust_val).isdigit():
+            c_str = str(cust_val).strip()
+            c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
+            if not c:
+                org = Organization.get()
+                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+            rec['customer'] = c.pk
+        elif not cust_val:
+            first_c = Customer.objects.first()
+            if first_c:
+                rec['customer'] = first_c.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('challan_type'):
+            rec['challan_type'] = 'other'
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            rec['lines'] = [line]
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'Goods item'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty
+        }
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('dc_number') or r.get('challan_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
@@ -3434,7 +3820,9 @@ class DeliveryChallanResource(Resource):
         notes = c.text('notes', max_len=1000)
         c.done()
 
-        num = next_number('DC')
+        num = data.get('number')
+        if not num or DeliveryChallan.objects.filter(number=num).exists():
+            num = next_number('DC')
         dc = DeliveryChallan.objects.create(
             number=num, customer=cust, date=dt, challan_type=ctype,
             vehicle_number=vnum, notes=notes, status='open'
@@ -3532,6 +3920,27 @@ class TimeLogResource(Resource):
     search_fields = ('project__name', 'task', 'notes')
     default_ordering = ('-date', '-id')
 
+    def prepare_import_record(self, rec):
+        proj_val = rec.get('project') or rec.get('project_name') or rec.get('project_code')
+        if proj_val and not str(proj_val).isdigit():
+            p_str = str(proj_val).strip()
+            p = Project.objects.filter(Q(name__iexact=p_str) | Q(code__iexact=p_str)).first()
+            if not p:
+                p = Project.objects.create(name=p_str)
+            rec['project'] = p.pk
+        elif not proj_val:
+            first_p = Project.objects.first()
+            if not first_p:
+                first_p = Project.objects.create(name='General Project')
+            rec['project'] = first_p.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('task'):
+            rec['task'] = rec.get('description') or rec.get('notes') or 'General Task'
+        if not rec.get('hours'):
+            rec['hours'] = Decimal('1.0')
+
     def row(self, o):
         return {
             'id': o.pk, 'project_id': o.project_id, 'project_name': o.project.name,
@@ -3561,6 +3970,10 @@ class ItemCategoryResource(Resource):
     default_ordering = ('name',)
     csv_cols = [('Name', 'name'), ('Description', 'description')]
 
+    def prepare_import_record(self, rec):
+        if not rec.get('name'):
+            rec['name'] = rec.get('category') or rec.get('category_name') or rec.get('title') or 'General Category'
+
     def get_template_sample(self):
         return ['Hardware', 'Computer hardware and office peripherals']
 
@@ -3582,6 +3995,12 @@ class PriceListResource(Resource):
     model = PriceList
     search_fields = ('name', 'description')
     default_ordering = ('name',)
+
+    def prepare_import_record(self, rec):
+        if not rec.get('name'):
+            rec['name'] = rec.get('price_list_name') or rec.get('title') or 'Price List'
+        if not rec.get('pricing_scheme'):
+            rec['pricing_scheme'] = 'percentage'
 
     def row(self, o):
         return {'id': o.pk, 'name': o.name, 'description': o.description, 'pricing_scheme': o.pricing_scheme, 'percentage': o.percentage, 'active': o.active}
@@ -3622,6 +4041,13 @@ class WarehouseResource(Resource):
 
     def get_template_sample(self):
         return ['Central Warehouse', 'WH-MAIN', 'Plot 12, Industrial Area', 'Bengaluru', 'Karnataka', '560058']
+
+    def prepare_import_record(self, rec):
+        if not rec.get('name'):
+            rec['name'] = rec.get('warehouse_name') or rec.get('title') or 'Warehouse'
+        if not rec.get('code'):
+            clean_name = re.sub(r'[^A-Z0-9]', '', str(rec.get('name', 'WH')).upper())[:4] or 'WH'
+            rec['code'] = f"{clean_name}-{next_number('WH')}"
 
     def base_qs(self):
         return Warehouse.objects.select_related('parent')
@@ -3725,6 +4151,8 @@ RESOURCES = {r.name: r for r in (
     EWayBillResource(), ProjectResource(), TimeLogResource(), ItemCategoryResource(), PriceListResource(),
     WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource()
 )}
+RESOURCES['timelogs'] = RESOURCES.get('timesheets')
+RESOURCES['inventory-summary'] = RESOURCES.get('items')
 
 @api_view
 def collection(request, name):

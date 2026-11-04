@@ -1344,7 +1344,7 @@ async function partyForm(kind, id) {
       if (!dispName) {
         throw new ApiErr(400, { name: `${entityLabel} Display Name is required.` }, `${entityLabel} Display Name is required.`);
       }
-      if (/[@#$%^*+=~`<>{}[\]\]/.test(dispName)) {
+      if (/[@#$%^*+=~`<>{}\[\]\\]/.test(dispName)) {
         throw new ApiErr(400, { name: 'Display Name cannot contain special characters like @, #, $, %, ^, *.' }, 'Display Name contains invalid special characters.');
       }
       d.name = dispName;
@@ -4267,7 +4267,7 @@ async function priceListModal(id) {
     onSubmit: async d => {
       const n = (d.name || '').trim();
       if (!n) throw new ApiErr(400, { name: 'Price List Name is required.' }, 'Price List Name is required.');
-      const invalidChars = /[@#$%^*+=~`<>{}[\]\]/;
+      const invalidChars = /[@#$%^*+=~`<>{}\[\]\\]/;
       if (invalidChars.test(n)) {
         throw new ApiErr(400, { name: 'Price List Name cannot contain special characters like @, #, $, %, ^, *.' }, 'Special characters (@#$%^&*) are not allowed in Price List Name.');
       }

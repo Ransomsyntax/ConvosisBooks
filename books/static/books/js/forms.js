@@ -5293,3 +5293,389 @@ async function quoteForm(id, onDone) {
   renderAttach();
   calcQuote();
 }
+
+
+async function salesOrderForm(id, onDone) {
+  const [parties, items, nextNum, rec] = await Promise.all([
+    api('lookup/customers/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
+    id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  if (!parties.length) {
+    toast('Please create at least one customer first before creating a sales order.', 'err');
+    return;
+  }
+
+  const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
+  const soCustomer = rec ? (rec.customer_id || rec.party_id) : '';
+  const soDate = rec ? rec.date : APP.today;
+  const soShipDate = rec ? (rec.expected_shipment_date || '') : '';
+  const soOrderNum = rec ? (rec.order_number || '') : '';
+  const soPos = rec ? (rec.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(soCustomer))?.state || APP.org.state);
+  const soStatus = rec ? (rec.status || 'confirmed') : 'confirmed';
+  const soNotes = rec ? (rec.notes || '') : (APP.org.notes_default || 'Thank you for your order.');
+  const soTerms = rec ? (rec.terms || '') : (APP.org.terms_default || 'Payment within 30 days.');
+  const soLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-so" style="border-bottom:1px solid var(--bd);">
+      <td style="width:30px;text-align:center;color:var(--tx-muted);cursor:grab;padding:10px 4px;">
+        <i class="fa-solid fa-grip-vertical"></i>
+      </td>
+      <td style="min-width:280px;padding:10px 8px;">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <div style="width:40px;height:40px;border-radius:6px;background:var(--surface-glass-subtle);border:1px dashed var(--bd);display:grid;place-items:center;color:var(--tx-muted);flex-shrink:0;">
+            <i class="fa-solid fa-cart-shopping" style="font-size:16px;"></i>
+          </div>
+          <div style="flex:1;">
+            <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+              <option value="">Select or type item</option>
+              ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+            </select>
+            <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
+            <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+          </div>
+        </div>
+      </td>
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-qty" type="number" step="0.001" min="0.001" aria-label="Quantity" value="${esc(l.quantity || '1.00')}" style="text-align:right;">
+      </td>
+      <td style="width:130px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;">
+      </td>
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount" value="${esc(l.discount_percent || 0)}" style="text-align:right;">
+      </td>
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate">
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${inr(l.line_total || 0)}
+      </td>
+      <td style="width:40px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  const m = Modal.open({
+    title: id ? `Edit Sales Order ${soNumber}` : 'New Sales Order',
+    dialog: true,
+    wide: true,
+    body: `
+      <form id="so-form-element" style="padding:4px 0;" novalidate>
+        <div style="display:flex;flex-direction:column;gap:14px;background:var(--surface-glass-subtle);padding:20px;border-radius:10px;border:1px solid var(--bd);">
+          
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Name<span style="color:#ef4444;">*</span></label>
+            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="so-customer" name="customer" required style="flex:1;">
+                <option value="">Select a customer</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order#<span style="color:#ef4444;">*</span></label>
+            <div style="flex:1;max-width:440px;">
+              <input type="text" class="in" id="so-number" name="number" value="${esc(soNumber)}" required>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference# / PO#</label>
+            <div style="flex:1;max-width:440px;">
+              <input type="text" class="in" id="so-reference" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. PO-2026-001">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order Date<span style="color:#ef4444;">*</span></label>
+            <div style="display:flex;align-items:center;gap:16px;flex:1;max-width:650px;">
+              <input type="date" class="in" id="so-date" name="date" value="${esc(soDate)}" required style="width:180px;">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);margin-left:12px;">Expected Shipment</label>
+              <input type="date" class="in" id="so-ship-date" name="expected_shipment_date" value="${esc(soShipDate)}" style="width:180px;">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Place of Supply</label>
+            <div style="flex:1;max-width:440px;">
+              <select class="in" id="so-pos" name="place_of_supply">
+                ${(typeof STATES !== 'undefined' ? STATES : []).map(s => `<option value="${esc(s)}" ${s === soPos ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Order Status</label>
+            <div style="flex:1;max-width:440px;">
+              <select class="in" id="so-status" name="status">
+                <option value="confirmed" ${soStatus === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+                <option value="draft" ${soStatus === 'draft' ? 'selected' : ''}>Draft</option>
+                <option value="closed" ${soStatus === 'closed' ? 'selected' : ''}>Closed</option>
+                <option value="void" ${soStatus === 'void' ? 'selected' : ''}>Void</option>
+              </select>
+            </div>
+          </div>
+
+        </div>
+
+        <h3 style="font-size:15px;font-weight:700;margin:24px 0 10px;color:var(--tx);">Item Table</h3>
+        <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:var(--surface-glass-subtle);border-bottom:1px solid var(--bd);">
+                <th style="width:30px;"></th>
+                <th>ITEM DETAILS</th>
+                <th style="width:110px;" class="r">QUANTITY</th>
+                <th style="width:130px;" class="r">RATE</th>
+                <th style="width:120px;">DISCOUNT %</th>
+                <th style="width:140px;">TAX</th>
+                <th style="width:120px;" class="r">AMOUNT</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="so-line-tbody">
+              ${soLines.map(rowHtml).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+          <button type="button" class="btn" id="btn-so-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
+            <i class="fa-solid fa-circle-plus"></i> Add New Row
+          </button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+          <div>
+            <div class="fg" style="margin-bottom:16px;">
+              <label style="font-weight:600;font-size:13px;">Customer Notes</label>
+              <textarea class="in" id="so-notes" name="notes" rows="3">${esc(soNotes)}</textarea>
+            </div>
+            <div class="fg">
+              <label style="font-weight:600;font-size:13px;">Terms & Conditions</label>
+              <textarea class="in" id="so-terms" name="terms" rows="3">${esc(soTerms)}</textarea>
+            </div>
+          </div>
+
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;">Sub Total</span>
+              <span id="so-subtotal-val" style="font-size:16px;font-weight:700;">₹0.00</span>
+            </div>
+            <div id="so-tax-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:2px solid var(--bd);margin-top:10px;">
+              <span style="font-size:16px;font-weight:700;">Total ( ₹ )</span>
+              <span id="so-grandtotal-val" style="font-size:22px;font-weight:800;color:var(--accent);">₹0.00</span>
+            </div>
+          </div>
+        </div>
+      </form>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;width:100%;">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn" id="btn-so-save-draft">Save as Draft</button>
+        <button type="button" class="btn p" id="btn-so-save-confirm">${id ? 'Update Sales Order' : 'Save & Confirm'}</button>
+      </div>
+    `
+  });
+
+  const form = $('#so-form-element', m.el);
+  const tbody = $('#so-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+
+  function calcSo() {
+    let subtotal = 0;
+    let totalTax = 0;
+    $$('.ln-so', tbody).forEach(tr => {
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const gstVal = num($('.l-gst', tr).value) || 0;
+
+      const taxable = Math.max(0, qtyVal * rateVal * (1 - discVal / 100));
+      const taxAmt = taxable * (gstVal / 100);
+      const lineTot = taxable + taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = inr(lineTot);
+
+      subtotal += taxable;
+      totalTax += taxAmt;
+    });
+
+    const subEl = $('#so-subtotal-val', form);
+    if (subEl) subEl.textContent = inr(subtotal);
+
+    const posVal = $('#so-pos', form).value || APP.org.state;
+    const isIntra = (posVal || '').trim().toLowerCase() === (APP.org.state || '').trim().toLowerCase();
+    const taxRowsEl = $('#so-tax-rows', form);
+    if (taxRowsEl) {
+      if (totalTax > 0) {
+        if (isIntra) {
+          const half = totalTax / 2;
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
+              <span>CGST:</span><span>${inr(half)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
+              <span>SGST:</span><span>${inr(half)}</span>
+            </div>
+          `;
+        } else {
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
+              <span>IGST:</span><span>${inr(totalTax)}</span>
+            </div>
+          `;
+        }
+      } else {
+        taxRowsEl.innerHTML = '';
+      }
+    }
+
+    const grand = subtotal + totalTax;
+    const grandEl = $('#so-grandtotal-val', form);
+    if (grandEl) grandEl.textContent = inr(grand);
+  }
+
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcSo();
+  });
+  tbody.addEventListener('change', e => {
+    if (e.target.matches('.l-gst')) {
+      calcSo();
+    } else if (e.target.matches('.l-item')) {
+      const tr = e.target.closest('tr');
+      const it = byId[e.target.value];
+      if (it && tr) {
+        if (it.selling_price != null && !$('.l-rate', tr).value) $('.l-rate', tr).value = it.selling_price;
+        if (it.description && !$('.l-desc', tr).value) $('.l-desc', tr).value = it.description;
+        if (it.hsn_sac) $('.l-hsn', tr).value = it.hsn_sac;
+        if (it.gst_rate != null) $('.l-gst', tr).value = String(num(it.gst_rate));
+      }
+      calcSo();
+    }
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      const tr = rm.closest('tr');
+      if ($$('.ln-so', tbody).length > 1) {
+        tr.remove();
+        calcSo();
+      } else {
+        toast('A sales order requires at least one line item.', 'err');
+      }
+    }
+  });
+
+  $('#btn-so-add-row', form).addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
+    calcSo();
+  });
+
+  $('#so-customer', form).addEventListener('change', e => {
+    const cust = parties.find(p => String(p.id) === String(e.target.value));
+    if (cust && cust.state) {
+      $('#so-pos', form).value = cust.state;
+      calcSo();
+    }
+  });
+  $('#so-pos', form).addEventListener('change', () => calcSo());
+
+  async function saveSo(isDraft) {
+    const custId = $('#so-customer', form).value;
+    if (!custId) { toast('Please select a customer.', 'err'); return; }
+    const dt = $('#so-date', form).value;
+    if (!dt) { toast('Please enter order date.', 'err'); return; }
+    const numVal = $('#so-number', form).value.trim();
+    if (!numVal) { toast('Please enter a sales order number.', 'err'); return; }
+
+    const lines = [];
+    $$('.ln-so', tbody).forEach((tr, idx) => {
+      const itId = $('.l-item', tr).value;
+      const desc = $('.l-desc', tr).value.trim();
+      const hsn = $('.l-hsn', tr).value.trim();
+      const qVal = num($('.l-qty', tr).value) || 1;
+      const rVal = num($('.l-rate', tr).value) || 0;
+      const dVal = num($('.l-disc', tr).value) || 0;
+      const gVal = num($('.l-gst', tr).value) || 0;
+
+      if (itId || desc || rVal > 0) {
+        lines.push({
+          item: itId || null,
+          item_id: itId || null,
+          description: desc || (itId && byId[itId] ? byId[itId].name : 'Line item'),
+          hsn_sac: hsn,
+          quantity: qVal,
+          rate: rVal,
+          discount_percent: dVal,
+          gst_rate: gVal,
+          position: idx
+        });
+      }
+    });
+
+    if (!lines.length) {
+      toast('Please add at least one line item with a rate or description.', 'err');
+      return;
+    }
+
+    const payload = {
+      customer: custId,
+      customer_id: custId,
+      number: numVal,
+      order_number: $('#so-reference', form).value.trim(),
+      date: dt,
+      expected_shipment_date: $('#so-ship-date', form).value || null,
+      place_of_supply: $('#so-pos', form).value || APP.org.state,
+      status: isDraft ? 'draft' : ($('#so-status', form).value || 'confirmed'),
+      notes: $('#so-notes', form).value.trim(),
+      terms: $('#so-terms', form).value.trim(),
+      lines: lines
+    };
+
+    const saveBtns = [$('#btn-so-save-draft', m.el), $('#btn-so-save-confirm', m.el)];
+    saveBtns.forEach(b => { b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`sales-orders/${id}/`, { method: 'PUT', body: payload });
+        toast(`Sales Order ${saved.number} updated successfully!`, 'ok');
+      } else {
+        saved = await api('sales-orders/', { method: 'POST', body: payload });
+        toast(`Sales Order ${saved.number} created successfully!`, 'ok');
+      }
+
+      m.close();
+      if (onDone) onDone(saved);
+      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+      else refresh();
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      saveBtns.forEach(b => { b.disabled = false; });
+    }
+  }
+
+  $('#btn-so-save-draft', m.el).addEventListener('click', () => saveSo(true));
+  $('#btn-so-save-confirm', m.el).addEventListener('click', () => saveSo(false));
+
+  calcSo();
+}
+window.salesOrderForm = salesOrderForm;

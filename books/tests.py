@@ -947,4 +947,91 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(c2.status_code, 400)
         self.assertIn('already been converted', c2.json().get('error', ''))
 
+    def test_sales_order_view_and_edit(self):
+        # 1. Create Sales Order
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-11-04',
+            'expected_shipment_date': '2026-11-15',
+            'order_number': 'PO-TEST-99',
+            'notes': 'Deliver before 5 PM',
+            'terms': 'Payment within 15 days',
+            'lines': [
+                {
+                    'item_id': self.item.id,
+                    'description': 'Item for SO',
+                    'quantity': '4',
+                    'rate': '250.00',
+                    'discount': '0.00',
+                    'tax_rate': '18.00'
+                }
+            ]
+        }
+        res = self.client.post('/api/sales-orders/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        so_data = res.json()
+        so_id = so_data['id']
+        self.assertTrue(so_data['number'].startswith('SO-'))
+
+        # 2. View Sales Order Detail
+        get_res = self.client.get(f'/api/sales-orders/{so_id}/')
+        self.assertEqual(get_res.status_code, 200)
+        detail = get_res.json()
+        self.assertEqual(detail['customer_id'], self.customer.id)
+        self.assertEqual(detail['customer_name'], self.customer.name)
+        self.assertEqual(detail['party'], self.customer.name)
+        self.assertEqual(detail['order_number'], 'PO-TEST-99')
+        self.assertEqual(detail['notes'], 'Deliver before 5 PM')
+        self.assertEqual(detail['terms'], 'Payment within 15 days')
+        self.assertEqual(len(detail['lines']), 1)
+        self.assertEqual(Decimal(str(detail['lines'][0]['quantity'])), Decimal('4'))
+        self.assertEqual(Decimal(str(detail['subtotal'])), Decimal('1000.00'))
+
+        # 3. Edit / Update Sales Order
+        update_payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-11-05',
+            'expected_shipment_date': '2026-11-20',
+            'order_number': 'PO-TEST-99-UPDATED',
+            'notes': 'Updated delivery instructions',
+            'terms': 'Payment within 30 days',
+            'status': 'confirmed',
+            'lines': [
+                {
+                    'item_id': self.item.id,
+                    'description': 'Updated item description',
+                    'quantity': '6',
+                    'rate': '300.00',
+                    'discount': '5.00',
+                    'tax_rate': '18.00'
+                }
+            ]
+        }
+        put_res = self.client.put(f'/api/sales-orders/{so_id}/', data=json.dumps(update_payload), content_type='application/json')
+        self.assertEqual(put_res.status_code, 200)
+
+        # 4. Verify updated details
+        get_res2 = self.client.get(f'/api/sales-orders/{so_id}/')
+        self.assertEqual(get_res2.status_code, 200)
+        detail2 = get_res2.json()
+        self.assertEqual(detail2['order_number'], 'PO-TEST-99-UPDATED')
+        self.assertEqual(detail2['notes'], 'Updated delivery instructions')
+        self.assertEqual(detail2['status'], 'confirmed')
+        self.assertEqual(len(detail2['lines']), 1)
+        self.assertEqual(Decimal(str(detail2['lines'][0]['quantity'])), Decimal('6'))
+        self.assertEqual(Decimal(str(detail2['lines'][0]['rate'])), Decimal('300.00'))
+
+        # 5. Convert Sales Order to Invoice
+        conv_res = self.client.post(f'/api/sales-orders/{so_id}/convert-to-invoice/')
+        self.assertEqual(conv_res.status_code, 200)
+        conv_data = conv_res.json()
+        inv_id = conv_data['invoice_id']
+        self.assertTrue(conv_data['number'].startswith('INV-'))
+
+        inv_res = self.client.get(f'/api/invoices/{inv_id}/')
+        self.assertEqual(inv_res.status_code, 200)
+        inv_data = inv_res.json()
+        self.assertEqual(inv_data['party_id'], self.customer.id)
+        self.assertEqual(len(inv_data['lines']), 1)
+
 

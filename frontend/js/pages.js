@@ -1121,11 +1121,70 @@ const LISTS = {
     }
   },
   'sales-orders': {
-    api: 'sales-orders', title: 'Sales Orders', bc: 'Sales', newLabel: 'New sales order', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No sales orders yet.',
-    filters: docStatusFilters('Confirmed'),
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Order#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Expected Ship', s: 'expected_shipment_date', f: r => fd(r.expected_shipment_date || r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('sales-orders', r, 'sales order'),
+    api: 'sales-orders', title: 'Sales Orders', bc: 'Sales', newLabel: 'New sales order',
+    onNew: () => salesOrderForm(), ordering: '-date', empty: 'No sales orders yet. Click + New sales order to create one.',
+    filters: [
+      ['all', 'All'],
+      ['draft', 'Draft'],
+      ['confirmed', 'Confirmed'],
+      ['closed', 'Closed'],
+      ['void', 'Void']
+    ],
+    cols: [
+      { h: 'Date', s: 'date', f: r => fd(r.date) },
+      { h: 'Order#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` },
+      { h: 'Customer', f: r => esc(r.customer_name || r.party || '—') },
+      { h: 'Status', f: r => {
+        const map = {
+          draft: ['chip-lavender', 'DRAFT'],
+          confirmed: ['chip-sky', 'CONFIRMED'],
+          closed: ['chip-mint', 'CLOSED'],
+          void: ['chip-rose', 'VOID']
+        };
+        const [cls, label] = map[r.status] || ['chip-lavender', (r.status || 'DRAFT').toUpperCase()];
+        return `<span class="pastel-chip ${cls}">${label}</span>`;
+      }},
+      { h: 'Expected Ship', s: 'expected_shipment_date', f: r => r.expected_shipment_date ? fd(r.expected_shipment_date) : (r.due_date ? fd(r.due_date) : '—') },
+      { h: 'Total', s: 'total', ...money(r => inr(r.total)) }
+    ],
+    actions: r => {
+      const acts = [
+        ['view', 'View'],
+        ['edit', 'Edit']
+      ];
+      if (r.status !== 'void' && r.status !== 'closed') {
+        acts.push(['convert-inv', 'Convert to Invoice']);
+      }
+      if (r.status === 'draft') {
+        acts.push(['confirm', 'Mark as Confirmed']);
+      }
+      acts.push(['delete', 'Delete', 'd']);
+      return acts;
+    },
+    onAction: async (a, r) => {
+      if (a === 'view') {
+        viewSalesOrderDetail(r.id);
+      } else if (a === 'edit') {
+        salesOrderForm(r.id);
+      } else if (a === 'convert-inv') {
+        try {
+          const res = await api(`sales-orders/${r.id}/convert-to-invoice/`, { method: 'POST', body: {} });
+          toast(`Sales Order ${r.number} converted to Invoice ${res.number || ''}!`, 'ok');
+          location.hash = '#/sales/invoices';
+          setTimeout(() => {
+            if (typeof docMasterDetail === 'function') docMasterDetail($('#pg'), 'invoices', res.id || res.invoice_id);
+          }, 100);
+        } catch (err) { toast(err.message, 'err'); }
+      } else if (a === 'confirm') {
+        try {
+          await api(`sales-orders/${r.id}/confirm/`, { method: 'POST', body: {} });
+          toast(`Sales Order ${r.number} marked as confirmed!`, 'ok');
+          refresh();
+        } catch (err) { toast(err.message, 'err'); }
+      } else if (a === 'delete') {
+        deleteRecord('sales-orders', r, 'sales order');
+      }
+    }
   },
   'recurring-invoices': {
     api: 'recurring-invoices', title: 'Recurring Invoices', bc: 'Sales', newLabel: 'New recurring profile', onNew: () => recurringInvoiceModal(), ordering: '-created_at', empty: 'No recurring profiles yet.',
@@ -5972,6 +6031,9 @@ async function convertQuoteToSalesOrder(id) {
     const res = await api(`quotes/${id}/convert-to-sales-order/`, { method: 'POST', body: {} });
     toast(`Successfully converted to Sales Order ${res.number}!`, 'ok');
     location.hash = '#/sales/sales-orders';
+    setTimeout(() => {
+      if (typeof viewSalesOrderDetail === 'function') viewSalesOrderDetail(res.id || res.sales_order_id);
+    }, 150);
   } catch (e) {
     toast(e.message, 'err');
   }
@@ -6161,3 +6223,175 @@ async function viewQuoteDetail(id) {
     toast(err.message, 'err');
   }
 }
+
+
+async function viewSalesOrderDetail(id) {
+  try {
+    const so = await api(`sales-orders/${id}/`);
+    Modal.open({
+      title: `Sales Order ${so.number}`,
+      dialog: true,
+      wide: true,
+      body: `
+        <div style="background:#fff;color:#1e293b;border-radius:10px;padding:32px;box-shadow:0 4px 20px rgba(0,0,0,0.06);border:1px solid #e2e8f0;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:24px;">
+            <div>
+              <div style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">${esc(APP.org.name)}</div>
+              <div class="sub" style="font-size:12px;margin-top:4px;color:#64748b;line-height:1.5;">
+                ${esc(APP.org.address)}<br>
+                GSTIN: <b>${esc(APP.org.gstin || '—')}</b> · State: ${esc(APP.org.state)}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:26px;font-weight:800;color:#0284c7;letter-spacing:1px;text-transform:uppercase;">SALES ORDER</div>
+              <div style="font-size:16px;font-weight:700;color:#334155;margin-top:2px;"># ${esc(so.number)}</div>
+              <div style="margin-top:6px;">
+                <span class="pastel-chip ${so.status === 'confirmed' ? 'chip-sky' : so.status === 'closed' ? 'chip-mint' : so.status === 'void' ? 'chip-rose' : 'chip-lavender'}" style="font-size:11px;font-weight:700;text-transform:uppercase;">
+                  ${esc(so.status || 'CONFIRMED')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
+            <div>
+              <div style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:700;margin-bottom:6px;">Order For:</div>
+              <div style="font-size:15px;font-weight:700;color:#0f172a;">${esc(so.party || (so.party_details && so.party_details.name) || so.customer_name)}</div>
+              <div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:4px;">
+                ${so.party_details && so.party_details.company ? `<div>${esc(so.party_details.company)}</div>` : ''}
+                ${so.party_details && so.party_details.billing_address ? `<div>${esc(so.party_details.billing_address)}</div>` : ''}
+                ${so.party_details && so.party_details.gstin ? `<div>GSTIN: <b>${esc(so.party_details.gstin)}</b></div>` : ''}
+                ${so.party_details && so.party_details.email ? `<div>Email: ${esc(so.party_details.email)}</div>` : ''}
+                ${so.party_details && so.party_details.phone ? `<div>Phone: ${esc(so.party_details.phone)}</div>` : ''}
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;">
+              <div><b>Order Date:</b></div><div>${fd(so.date)}</div>
+              <div><b>Expected Shipment:</b></div><div>${so.expected_shipment_date ? fd(so.expected_shipment_date) : (so.due_date ? fd(so.due_date) : '—')}</div>
+              <div><b>Reference / PO#:</b></div><div>${esc(so.order_number || '—')}</div>
+              <div><b>Place of Supply:</b></div><div>${esc(so.place_of_supply || '—')}</div>
+            </div>
+          </div>
+
+          <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <thead>
+              <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;font-size:12px;text-align:left;color:#475569;">
+                <th style="padding:10px 12px;">#</th>
+                <th style="padding:10px 12px;">Item & Description</th>
+                <th style="padding:10px 12px;text-align:right;">Qty</th>
+                <th style="padding:10px 12px;text-align:right;">Rate</th>
+                <th style="padding:10px 12px;text-align:right;">Discount</th>
+                <th style="padding:10px 12px;text-align:right;">GST</th>
+                <th style="padding:10px 12px;text-align:right;">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(so.lines || []).map((l, i) => `
+                <tr style="border-bottom:1px solid #e2e8f0;font-size:13px;">
+                  <td style="padding:10px 12px;color:#64748b;">${i + 1}</td>
+                  <td style="padding:10px 12px;"><b>${esc(l.description || 'Item')}</b>${l.hsn_sac ? ` <small style="color:#64748b;">(HSN ${esc(l.hsn_sac)})</small>` : ''}</td>
+                  <td style="padding:10px 12px;text-align:right;">${qty(l.quantity)}</td>
+                  <td style="padding:10px 12px;text-align:right;">${inr(l.rate)}</td>
+                  <td style="padding:10px 12px;text-align:right;">${num(l.discount_percent) > 0 ? l.discount_percent + '%' : '—'}</td>
+                  <td style="padding:10px 12px;text-align:right;">${l.gst_rate}%</td>
+                  <td style="padding:10px 12px;text-align:right;font-weight:600;">${inr(l.line_total)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;">
+            <div style="flex:1;max-width:55%;">
+              ${so.notes ? `
+                <div style="margin-bottom:16px;">
+                  <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Customer Notes</div>
+                  <div style="font-size:12px;color:#334155;white-space:pre-wrap;">${esc(so.notes)}</div>
+                </div>
+              ` : ''}
+              ${so.terms ? `
+                <div>
+                  <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Terms & Conditions</div>
+                  <div style="font-size:12px;color:#334155;white-space:pre-wrap;">${esc(so.terms)}</div>
+                </div>
+              ` : ''}
+            </div>
+
+            <div style="width:280px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                <span style="color:#64748b;">Subtotal (Taxable):</span>
+                <b>${inr(so.subtotal)}</b>
+              </div>
+              ${num(so.cgst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">CGST:</span><span>${inr(so.cgst)}</span></div>` : ''}
+              ${num(so.sgst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">SGST:</span><span>${inr(so.sgst)}</span></div>` : ''}
+              ${num(so.igst) > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#64748b;">IGST:</span><span>${inr(so.igst)}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between;border-top:2px solid #cbd5e1;padding-top:10px;margin-top:10px;font-size:16px;font-weight:800;color:#0f172a;">
+                <span>Total:</span>
+                <span style="color:#0284c7;">${inr(so.total)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      footer: `
+        <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:10px;">
+          <div>
+            <button type="button" class="btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
+            ${so.status !== 'void' ? `<button type="button" class="btn" id="btn-view-edit-so"><i class="fa-solid fa-pen"></i> Edit Order</button>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${so.status !== 'void' && so.status !== 'closed' ? `
+              <button type="button" class="btn p" id="btn-so-to-inv" style="background:#059669;border:none;">
+                <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
+              </button>
+            ` : ''}
+            ${so.status === 'draft' ? `<button type="button" class="btn" id="btn-so-mark-confirmed"><i class="fa-solid fa-check"></i> Confirm</button>` : ''}
+            ${so.status !== 'void' ? `<button type="button" class="btn" id="btn-so-mark-void" style="color:#dc2626;"><i class="fa-solid fa-ban"></i> Void</button>` : ''}
+            <button type="button" class="btn" data-close>Close</button>
+          </div>
+        </div>
+      `
+    });
+
+    $('#btn-view-edit-so')?.addEventListener('click', () => {
+      Modal.close();
+      salesOrderForm(so.id);
+    });
+    $('#btn-so-to-inv')?.addEventListener('click', async () => {
+      try {
+        const res = await api(`sales-orders/${so.id}/convert-to-invoice/`, { method: 'POST', body: {} });
+        toast(`Sales Order ${so.number} converted to Invoice ${res.number || ''}!`, 'ok');
+        Modal.close();
+        location.hash = '#/sales/invoices';
+        setTimeout(() => {
+          if (typeof docMasterDetail === 'function') docMasterDetail($('#pg'), 'invoices', res.id || res.invoice_id);
+        }, 100);
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-so-mark-confirmed')?.addEventListener('click', async () => {
+      try {
+        await api(`sales-orders/${so.id}/confirm/`, { method: 'POST', body: {} });
+        toast(`Sales Order ${so.number} marked as confirmed!`, 'ok');
+        Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-so-mark-void')?.addEventListener('click', async () => {
+      const conf = await confirmBox({
+        title: 'Void Sales Order',
+        message: `Are you sure you want to void sales order ${so.number}?`,
+        danger: true,
+        okText: 'Void Order'
+      });
+      if (!conf) return;
+      try {
+        await api(`sales-orders/${so.id}/void/`, { method: 'POST', body: {} });
+        toast(`Sales Order ${so.number} marked as void.`, 'ok');
+        Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+window.viewSalesOrderDetail = viewSalesOrderDetail;

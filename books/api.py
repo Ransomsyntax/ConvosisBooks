@@ -2441,45 +2441,94 @@ class ManagedDocumentResource(Resource):
 class SalesOrderResource(Resource):
     name = 'sales-orders'
     model = SalesOrder
-    search_fields = ('number', 'customer__name')
+    search_fields = ('number', 'customer__name', 'order_number')
     default_ordering = ('-date', '-id')
 
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
-            'customer_name': o.customer.name, 'date': o.date,
+            'customer_name': o.customer.name, 'party': o.customer.name,
+            'date': o.date, 'due_date': o.due_date,
             'expected_shipment_date': o.expected_shipment_date,
             'status': o.status, 'subtotal': o.subtotal, 'total': o.total,
+            'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst,
+            'order_number': o.order_number or '',
             'lines_count': o.lines.count()
         }
 
     def detail(self, o):
         r = self.row(o)
-        r['lines'] = [
-            {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
-             'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
-             'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
-             'line_total': l.line_total}
-            for l in o.lines.all()
-        ]
+        r.update({
+            'place_of_supply': o.place_of_supply,
+            'terms': o.terms or '',
+            'notes': o.notes or '',
+            'party_details': {
+                'id': o.customer.pk,
+                'name': o.customer.name,
+                'company': getattr(o.customer, 'company_name', '') or getattr(o.customer, 'company', '') or '',
+                'billing_address': o.customer.billing_address or '',
+                'gstin': o.customer.gstin or '',
+                'email': o.customer.email or '',
+                'phone': o.customer.phone or '',
+                'state': o.customer.state or '',
+            },
+            'lines': [
+                {
+                    'id': l.pk,
+                    'item': l.item_id,
+                    'item_id': l.item_id,
+                    'description': l.description,
+                    'hsn_sac': l.hsn_sac,
+                    'quantity': l.quantity,
+                    'rate': l.rate,
+                    'discount_percent': l.discount_percent,
+                    'gst_rate': l.gst_rate,
+                    'taxable': l.taxable,
+                    'tax_amount': l.tax_amount,
+                    'line_total': l.line_total,
+                    'position': l.position,
+                }
+                for l in o.lines.all().order_by('position', 'id')
+            ]
+        })
         return r
 
     def create(self, data, user):
         c = Cleaner(data)
-        cust_id = c.integer('customer', required=True, lo=1)
-        cust = Customer.objects.filter(pk=cust_id).first()
+        cust_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+        if not cust_id:
+            c.err('customer', REQUIRED)
+        cust = Customer.objects.filter(pk=cust_id).first() if cust_id else None
         if not cust:
             raise ApiError(404, 'Customer not found.')
         dt = c.date('date', required=True)
         ship_dt = c.date('expected_shipment_date')
-        terms = c.text('terms', max_len=2000)
+        due_dt = c.date('due_date') or ship_dt or dt
+        terms = c.text('terms', max_len=2000) or ''
+        notes = c.text('notes', max_len=2000) or ''
+        order_num = c.text('order_number', max_len=60) or ''
+        pos = c.text('place_of_supply', max_len=60) or cust.state or Organization.get().state
+        status = c.choice('status', ['draft', 'confirmed'], default='confirmed')
         c.done()
 
-        num = next_number('SO')
+        num = (data.get('number') or '').strip()
+        if not num or SalesOrder.objects.filter(number=num).exists():
+            num = next_number('SO')
+        else:
+            import re
+            m = re.match(r'^SO-(\d+)$', num)
+            if m:
+                val = int(m.group(1))
+                seq, _ = Sequence.objects.get_or_create(key='SO')
+                if seq.value < val:
+                    seq.value = val
+                    seq.save(update_fields=['value'])
+
         so = SalesOrder.objects.create(
-            number=num, customer=cust, date=dt, due_date=dt,
-            place_of_supply=cust.state or Organization.get().state,
-            expected_shipment_date=ship_dt, terms=terms, status='draft'
+            number=num, customer=cust, date=dt, due_date=due_dt,
+            place_of_supply=pos,
+            expected_shipment_date=ship_dt, terms=terms, notes=notes,
+            order_number=order_num, status=status
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(so.place_of_supply, Organization.get().state)
@@ -2488,12 +2537,115 @@ class SalesOrderResource(Resource):
             setattr(so, k, v)
         so.save()
         for l in comp:
-            SalesOrderLine.objects.create(order=so, item=l['item'], description=l['description'],
-                                         hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                         discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
-                                         taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
+            SalesOrderLine.objects.create(
+                order=so, item=l['item'], description=l['description'],
+                hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+            )
         services.log_audit(user, 'create', 'SalesOrder', so.number, f"Created sales order {so.number} for {cust.name} (₹{so.total})")
         return so
+
+    def update(self, obj, data, user):
+        services.check_transaction_lock(obj.date)
+        if obj.status == 'void':
+            raise ApiError(409, 'Void sales orders cannot be edited.')
+        c = Cleaner(data)
+        cust_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+        if cust_id:
+            cust = Customer.objects.filter(pk=cust_id).first()
+            if not cust:
+                raise ApiError(404, 'Customer not found.')
+            obj.customer = cust
+        if 'date' in data and data['date']:
+            obj.date = c.date('date', required=True)
+            services.check_transaction_lock(obj.date)
+        if 'expected_shipment_date' in data:
+            obj.expected_shipment_date = c.date('expected_shipment_date')
+        if 'due_date' in data:
+            obj.due_date = c.date('due_date') or obj.expected_shipment_date or obj.date
+        if 'place_of_supply' in data:
+            obj.place_of_supply = c.text('place_of_supply', max_len=60) or obj.customer.state or Organization.get().state
+        if 'terms' in data:
+            obj.terms = c.text('terms', max_len=2000) or ''
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=2000) or ''
+        if 'order_number' in data:
+            obj.order_number = c.text('order_number', max_len=60) or ''
+        if 'status' in data and data['status']:
+            obj.status = c.choice('status', ['draft', 'confirmed', 'closed', 'void'], default=obj.status)
+        c.done()
+
+        if 'lines' in data:
+            lines = parse_lines(data.get('lines', []))
+            intra = is_intra_state(obj.place_of_supply, Organization.get().state)
+            comp, tot = compute(lines, intra)
+            for k, v in tot.items():
+                setattr(obj, k, v)
+            obj.save()
+            obj.lines.all().delete()
+            for l in comp:
+                SalesOrderLine.objects.create(
+                    order=obj, item=l['item'], description=l['description'],
+                    hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                    discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                    taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                )
+        else:
+            obj.save()
+        services.log_audit(user, 'update', 'SalesOrder', obj.number, f"Updated sales order {obj.number} (₹{obj.total})")
+        return obj
+
+    def action(self, request, obj, name):
+        if name == 'confirm':
+            obj.status = 'confirmed'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'confirm', 'SalesOrder', obj.number, f"Confirmed sales order {obj.number}")
+            return j({'status': obj.status})
+        elif name == 'void':
+            obj.status = 'void'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'void', 'SalesOrder', obj.number, f"Voided sales order {obj.number}")
+            return j({'status': obj.status})
+        elif name == 'convert-to-invoice':
+            if obj.status == 'void':
+                raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
+            inv = Invoice.objects.create(
+                customer=obj.customer,
+                number=next_number('INV'),
+                date=timezone.localdate(),
+                due_date=timezone.localdate() + timedelta(days=getattr(obj.customer, 'payment_terms', 30) or 30),
+                place_of_supply=obj.place_of_supply,
+                status='draft',
+                subtotal=obj.subtotal,
+                cgst=obj.cgst,
+                sgst=obj.sgst,
+                igst=obj.igst,
+                total=obj.total,
+                order_number=obj.number,
+                notes=obj.notes,
+                terms=obj.terms
+            )
+            for l in obj.lines.all():
+                InvoiceLine.objects.create(
+                    invoice=inv,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=l.rate,
+                    discount_percent=l.discount_percent,
+                    gst_rate=l.gst_rate,
+                    taxable=l.taxable,
+                    tax_amount=l.tax_amount,
+                    line_total=l.line_total,
+                    position=l.position
+                )
+            obj.status = 'closed'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'convert', 'SalesOrder', obj.number, f"Converted sales order {obj.number} to Invoice {inv.number}")
+            return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
+        raise ApiError(404, 'Unknown action.')
 
 class PurchaseOrderResource(Resource):
     name = 'purchase-orders'
@@ -3270,6 +3422,11 @@ def lookup(request, name):
     elif name == 'next-quote-number':
         org = Organization.get()
         pfx = org.quote_prefix or 'QT'
+        seq = Sequence.objects.filter(key=pfx).first()
+        nxt = (seq.value + 1) if seq else 1
+        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
+    elif name in ('next-so-number', 'next-sales-order-number'):
+        pfx = 'SO'
         seq = Sequence.objects.filter(key=pfx).first()
         nxt = (seq.value + 1) if seq else 1
         data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}

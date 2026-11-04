@@ -278,6 +278,7 @@ const QC = [
   ['Vendor', () => partyForm('vendors')],
   ['Invoice', () => { location.hash = '#/sales/invoices'; docMasterDetail($('#pg'), 'invoices', 'new'); }],
   ['Bill', () => { location.hash = '#/purchases/bills'; docMasterDetail($('#pg'), 'bills', 'new'); }],
+  ['Sales Order', () => salesOrderForm()],
   ['Expense', () => expenseForm()],
   ['Journal Entry', () => journalForm()],
   ['Upload Document', () => documentUploadModal()],
@@ -291,7 +292,7 @@ const qcmEl = $('#qcm');
 if (qcmEl) qcmEl.innerHTML = QC.map((q, i) => `<button class="mi" type="button" data-q="${i}">New ${esc(q[0].toLowerCase())}</button>`).join('');
 
 function openRecord(t, id) {
-  const M = { customer: ['sales/customers', () => partyDetail('customers', id)], vendor: ['purchases/vendors', () => partyDetail('vendors', id)], invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)], bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)], item: ['items/items-services', () => itemForm(id)] };
+  const M = { customer: ['sales/customers', () => partyDetail('customers', id)], vendor: ['purchases/vendors', () => partyDetail('vendors', id)], invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)], bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)], item: ['items/items-services', () => itemForm(id)], sales_order: ['sales/sales-orders', () => viewSalesOrderDetail(id)], 'sales-order': ['sales/sales-orders', () => viewSalesOrderDetail(id)] };
   const [r, fn] = M[t];
   if (location.hash !== '#/' + r) location.hash = '#/' + r;
   fn().catch(e => toast(e.message, 'err'));

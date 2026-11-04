@@ -15,10 +15,11 @@ from django.db import transaction
 from django.db.models import F, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.utils.text import slugify as slug
 
 from . import services
 from .calc import GST_SLABS, compute, is_intra_state, q2
-from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
+from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner, REQUIRED
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,

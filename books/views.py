@@ -36,12 +36,14 @@ def login_view(request, tab=None):
                 signup_error = f'Username "{username}" is already registered. Please sign in.'
             else:
                 user = User.objects.create_user(username=username, email=email, password=password, first_name=name)
-                UserProfile.objects.create(user=user, role=UserProfile.ADMIN)
-                if org_name:
-                    org = Organization.get()
-                    if not org.name or org.name == 'Convosis Technologies Pvt Ltd':
-                        org.name = org_name
-                        org.save()
+                company_title = org_name or (f"{name}'s Company" if name else f"{username}'s Company")
+                org = Organization.objects.create(
+                    name=company_title,
+                    owner=user,
+                    email=email or f"{username}@company.com",
+                    state='Kerala'
+                )
+                UserProfile.objects.create(user=user, role=UserProfile.ADMIN, organization=org)
                 auth_login(request, user)
                 next_url = request.POST.get('next') or request.GET.get('next') or '/'
                 return redirect(next_url)
@@ -52,6 +54,18 @@ def login_view(request, tab=None):
             user = authenticate(request, username=username, password=password)
             if user is not None:
                 if user.is_active:
+                    profile = getattr(user, 'profile', None)
+                    if not profile:
+                        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
+                        UserProfile.objects.create(
+                            user=user,
+                            role=UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT,
+                            organization=default_org
+                        )
+                    elif not profile.organization:
+                        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
+                        profile.organization = default_org
+                        profile.save(update_fields=['organization'])
                     auth_login(request, user)
                     next_url = request.POST.get('next') or request.GET.get('next') or '/'
                     return redirect(next_url)

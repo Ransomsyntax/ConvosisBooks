@@ -1358,10 +1358,10 @@ const LISTS = {
     onAction: (a, r) => deleteRecord('delivery-challans', r, 'delivery challan'),
   },
   'credit-notes': {
-    api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('invoices'), ordering: '-date', empty: 'No credit notes yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit Note#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance)) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('credit-notes', r, 'credit note'),
+    api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',
+    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit Note#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party || r.customer_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('credit-notes', r.id) : deleteRecord('credit-notes', r, 'credit note'),
   },
   'e-way-bills': {
     api: 'e-way-bills', title: 'E-Way Bills', bc: 'Sales', newLabel: 'Generate e-Way Bill', onNew: () => ewayBillModal(), ordering: '-created_at', empty: 'No e-Way Bills generated yet.',
@@ -1394,17 +1394,17 @@ const LISTS = {
     onAction: (a, r) => deleteRecord('expenses', r, 'expense'),
   },
   'purchase-orders': {
-    api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('bills'), ordering: '-date', empty: 'No purchase orders yet.',
+    api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('purchase-orders'), ordering: '-date', empty: 'No purchase orders yet.',
     filters: docStatusFilters('Confirmed'),
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'PO#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Delivery Date', s: 'delivery_date', f: r => fd(r.delivery_date || r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('purchase-orders', r, 'purchase order'),
+    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'PO#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Delivery Date', s: 'delivery_date', f: r => fd(r.delivery_date || r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }],
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('purchase-orders', r.id) : deleteRecord('purchase-orders', r, 'purchase order'),
   },
   'vendor-credits': {
-    api: 'vendor-credits', title: 'Vendor Credits', bc: 'Purchases', newLabel: 'New vendor credit', onNew: () => docForm('bills'), ordering: '-date', empty: 'No vendor credits yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance)) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('vendor-credits', r, 'vendor credit'),
+    api: 'vendor-credits', title: 'Vendor Credits', bc: 'Purchases', newLabel: 'New vendor credit', onNew: () => docForm('vendor-credits'), ordering: '-date', empty: 'No vendor credits yet.',
+    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('vendor-credits', r.id) : deleteRecord('vendor-credits', r, 'vendor credit'),
   },
   projects: {
     api: 'projects', title: 'Projects', bc: 'Time Tracking', newLabel: 'New project', onNew: () => projectModal(), ordering: 'name', empty: 'No projects yet.',
@@ -5707,6 +5707,7 @@ async function tenantAdminPage(root) {
               <th>Member Name</th>
               <th>Username / Email</th>
               <th>Role & Access Scope</th>
+              <th>Status</th>
               <th>MFA Security</th>
               <th>Date Joined</th>
               <th>Last Active</th>
@@ -5727,14 +5728,21 @@ async function tenantAdminPage(root) {
                   </span>
                 </td>
                 <td>
+                  <span class="pastel-chip ${u.is_active ? 'chip-mint' : 'chip-rose'}" style="font-size:11px;font-weight:600;">
+                    ${u.is_active ? 'Active' : 'Deactivated'}
+                  </span>
+                </td>
+                <td>
                   <span style="font-size:12px;color:${u.mfa_enabled ? 'var(--up)' : 'var(--bad)'};font-weight:600;">
-                    ${u.mfa_enabled ? '✓ TOTP Active' : '⚠ Inactive'}
+                    ${u.mfa_enabled ? '✓ Active' : '⚠ Inactive'}
                   </span>
                 </td>
                 <td>${esc(u.date_joined)}</td>
                 <td>${esc(u.last_login)}</td>
-                <td class="r">
-                  <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="changeRoleModal(${u.id}, '${esc(u.username)}', '${esc(u.role)}')">Edit Role</button>
+                <td class="r" style="white-space:nowrap;">
+                  <button class="btn" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="changeRoleModal(${u.id}, '${esc(u.username)}', '${esc(u.role)}')">Role</button>
+                  <button class="btn" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="toggleUserActive(${u.id}, '${esc(u.username)}', ${u.is_active ? 'true' : 'false'})">${u.is_active ? 'Deactivate' : 'Activate'}</button>
+                  <button class="btn" style="font-size:11px;padding:3px 8px;" onclick="resetPasswordModal(${u.id}, '${esc(u.username)}')">Password</button>
                 </td>
               </tr>
             `).join('')}
@@ -5779,18 +5787,64 @@ async function tenantAdminPage(root) {
       });
     };
 
+    window.toggleUserActive = async (userId, username, isActive) => {
+      const actionName = isActive ? 'Deactivate' : 'Activate';
+      if (!(await confirmBox({ title: `${actionName} user "${username}"?`, message: `Are you sure you want to ${actionName.toLowerCase()} this account?`, okText: actionName, danger: isActive }))) return;
+      try {
+        await api(`tenant/admin/users/${userId}/toggle-active/`, { method: 'POST' });
+        toast(`User "${username}" ${isActive ? 'deactivated' : 'activated'} successfully!`, 'ok');
+        tenantAdminPage(root);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+
+    window.resetPasswordModal = (userId, username) => {
+      Modal.open({
+        title: `Reset Password: ${username}`,
+        body: `
+          <div style="padding:10px 0;">
+            <div class="fg">
+              <label>New Password (min 4 characters)</label>
+              <input class="in" type="password" id="resetMemberPassword" placeholder="Enter new password…" required>
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnSaveResetPassword">Save Password</button>
+        `
+      });
+
+      $('#btnSaveResetPassword').addEventListener('click', async () => {
+        const pwd = $('#resetMemberPassword').value;
+        if (!pwd || pwd.length < 4) { toast('Password must be at least 4 characters long.', 'err'); return; }
+        try {
+          await api(`tenant/admin/users/${userId}/reset-password/`, { method: 'POST', body: { password: pwd } });
+          toast(`Password for ${username} reset successfully!`, 'ok');
+          Modal.close();
+        } catch (e) { toast(e.message, 'err'); }
+      });
+    };
+
     $('#btnInviteMember', root).addEventListener('click', () => {
       Modal.open({
         title: 'Invite Team Member to Tenant',
         body: `
           <div style="padding:10px 0;">
             <div class="fg" style="margin-bottom:12px;">
-              <label>Full Username</label>
+              <label>Full Name</label>
+              <input class="in" id="invFullName" placeholder="e.g. Karthik Raman">
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Username</label>
               <input class="in" id="invUsername" placeholder="e.g. karthik_audit" required>
             </div>
             <div class="fg" style="margin-bottom:12px;">
               <label>Work Email</label>
               <input class="in" id="invEmail" type="email" placeholder="karthik@enterprise.com" required>
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Initial Password (optional)</label>
+              <input class="in" type="password" id="invPassword" placeholder="Leave blank to auto-generate">
             </div>
             <div class="fg" style="margin-bottom:12px;">
               <label>Mobile Number (for SMS & OTP)</label>
@@ -5814,15 +5868,17 @@ async function tenantAdminPage(root) {
       });
 
       $('#btnSendInvite').addEventListener('click', async () => {
+        const fullName = ($('#invFullName') ? $('#invFullName').value : '').trim();
         const username = $('#invUsername').value.trim();
         const email = $('#invEmail').value.trim();
+        const password = ($('#invPassword') ? $('#invPassword').value : '').trim();
         const phone = $('#invPhone').value.trim();
         const role = $('#invRole').value;
         if (!username || !email) { toast('Username and email are required', 'err'); return; }
 
         try {
-          await api('tenant/admin/invite/', { method: 'POST', body: { username, email, phone, role } });
-          toast(`Invitation sent to ${username}!`, 'ok');
+          const res = await api('tenant/admin/invite/', { method: 'POST', body: { username, email, phone, role, full_name: fullName, password } });
+          toast(`User ${username} added successfully! ${res.temporary_password ? `Temp password: ${res.temporary_password}` : ''}`, 'ok');
           Modal.close();
           tenantAdminPage(root);
         } catch (e) { toast(e.message, 'err'); }

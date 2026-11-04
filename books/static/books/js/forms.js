@@ -945,6 +945,34 @@ async function partyForm(kind, id) {
                 if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
                 if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
 
+                const fnVal = getVal('first_name', 'firstname', 'given_name');
+                const lnVal = getVal('last_name', 'lastname', 'surname');
+                const cpVal = getVal('contact_person', 'contact', 'primary_contact', 'attention');
+                const stateVal = getVal('state', 'billing_state', 'place_of_supply', 'source_of_supply');
+                const obVal = getVal('opening_balance', 'balance', 'opening_bal');
+                const ptVal = getVal('payment_terms', 'terms', 'payment_terms_days');
+
+                if (fnVal && $('#contact_first_name', modal.el)) $('#contact_first_name', modal.el).value = fnVal;
+                if (lnVal && $('#contact_last_name', modal.el)) $('#contact_last_name', modal.el).value = lnVal;
+                if (cpVal && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = cpVal;
+                else if ((fnVal || lnVal) && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = `${fnVal} ${lnVal}`.trim();
+                if (stateVal) {
+                  if ($('#billing_state', modal.el)) $('#billing_state', modal.el).value = stateVal;
+                  if ($('#shipping_state', modal.el)) $('#shipping_state', modal.el).value = stateVal;
+                  const pos = $('#place_of_supply', modal.el) || $('#source_of_supply', modal.el);
+                  if (pos) {
+                    for (const opt of pos.options) {
+                      if (opt.text.toLowerCase().includes(stateVal.toLowerCase()) || opt.value.toLowerCase().includes(stateVal.toLowerCase())) {
+                        pos.value = opt.value;
+                        break;
+                      }
+                    }
+                  }
+                }
+                if (obVal && $('#opening_balance', modal.el)) $('#opening_balance', modal.el).value = obVal;
+                if (ptVal && $('#payment_terms', modal.el)) $('#payment_terms', modal.el).value = ptVal;
+                quickFileInput.value = '';
+
                 toast(`Loaded data for ${nameVal || 'Customer'} (1 of ${rows.length} rows) into form!`, 'ok');
               } catch(e) {
                 toast('Failed to load file: ' + e.message, 'err');
@@ -1372,18 +1400,19 @@ async function partyForm(kind, id) {
         }
       }
 
-      // DEF_CB_024: Validate Billing Address mandatory fields if address section is partially filled
+      // Validate Billing Address mandatory fields only if street address line is entered
       const bAddr = (d.billing_address || '').trim();
       const bCity = (d.billing_city || '').trim();
       const bState = (d.billing_state || '').trim();
       const bPin = (d.billing_pincode || '').trim();
-      if (bAddr || bCity || bState || bPin) {
+      if (bAddr) {
         const addrErrs = {};
-        if (!bAddr) addrErrs.billing_address = 'Address Line is required.';
         if (!bCity) addrErrs.billing_city = 'City is required.';
         if (!bState) addrErrs.billing_state = 'State is required.';
         if (!bPin) addrErrs.billing_pincode = 'Pincode is required.';
         if (Object.keys(addrErrs).length > 0) {
+          const tabBtn = form.querySelector('.party-tab-btn[data-tab="tab_address"]');
+          if (tabBtn) tabBtn.click();
           throw new ApiErr(400, addrErrs, 'Please fill in all mandatory address fields.');
         }
       }
@@ -2440,12 +2469,21 @@ async function itemForm(id) {
 
 async function docForm(kind, id, targetEl, onDone) {
   const isRetainer = kind === 'retainer-invoices';
-  const isBill = kind === 'bills';
-  const inv = kind === 'invoices' || isRetainer, pk = inv ? 'customer' : 'vendor';
+  const isPO = kind === 'purchase-orders';
+  const isCN = kind === 'credit-notes';
+  const isVC = kind === 'vendor-credits';
+  const isCustDoc = kind === 'invoices' || isRetainer || isCN;
+  const inv = isCustDoc, pk = inv ? 'customer' : 'vendor';
+  const isSubDoc = isPO || isCN || isVC;
+
+  const route = isRetainer ? 'sales/retainer-invoices' :
+                (isCN ? 'sales/credit-notes' :
+                (isPO ? 'purchases/purchase-orders' :
+                (isVC ? 'purchases/vendor-credits' :
+                (inv ? 'sales/invoices' : 'purchases/bills'))));
 
   let target = targetEl || document.getElementById('detail-col-box');
   if (!target && !document.getElementById('modal-root')) {
-    const route = isRetainer ? 'sales/retainer-invoices' : (inv ? 'sales/invoices' : 'purchases/bills');
     location.hash = '#/' + route;
     setTimeout(() => {
       const newTarget = document.getElementById('detail-col-box');
@@ -2462,14 +2500,19 @@ async function docForm(kind, id, targetEl, onDone) {
   if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   const itemOpts = [['', '— Custom line —'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])];
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
+  if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
   const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
-  const partyId = r.party_id || '';
-  const due0 = r.due_date || '';
+  const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
+  const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
 
-  const docTitle = isRetainer ? 'Retainer Invoice' : (inv ? 'Invoice' : 'Bill');
-  const docTitleLower = isRetainer ? 'retainer invoice' : (inv ? 'invoice' : 'bill');
+  const docTitle = isRetainer ? 'Retainer Invoice' :
+                   (isCN ? 'Credit Note' :
+                   (isPO ? 'Purchase Order' :
+                   (isVC ? 'Vendor Credit' :
+                   (inv ? 'Invoice' : 'Bill'))));
+  const docTitleLower = docTitle.toLowerCase();
 
   if (target) {
     target.innerHTML = `
@@ -2716,7 +2759,7 @@ async function docForm(kind, id, targetEl, onDone) {
           }
         }
 
-        if (action === 'post') {
+        if (action === 'post' && !isSubDoc) {
           try {
             await api(`${kind}/${saved.id}/${inv ? 'send' : 'approve'}/`, { method: 'POST', body: {} });
             toast(`${saved.number} ${inv ? 'sent' : 'approved'}`);

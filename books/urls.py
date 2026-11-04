@@ -84,6 +84,8 @@ urlpatterns = [
     path('tenant/admin/summary/', api.tenant_admin_summary_view),
     path('tenant/admin/invite/', api.tenant_admin_invite_user_view),
     path('tenant/admin/users/<int:pk>/role/', api.tenant_admin_update_role_view),
+    path('tenant/admin/users/<int:pk>/toggle-active/', api.tenant_admin_toggle_active_view),
+    path('tenant/admin/users/<int:pk>/reset-password/', api.tenant_admin_reset_password_view),
 
     path('developer/keys/', api.developer_keys_list_create_view),
     path('developer/keys/<int:pk>/revoke/', api.developer_key_revoke_view),

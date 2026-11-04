@@ -65,6 +65,14 @@ CASHIER_ALLOWED_RESOURCES = {
     'sales_orders', 'delivery_challans', 'price_lists', 'attachments'
 }
 
+def get_user_org(user):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None
+    profile = getattr(user, 'profile', None)
+    if profile and profile.organization:
+        return profile.organization
+    return Organization.objects.filter(pk=1).first() or Organization.objects.first()
+
 def get_user_role(user):
     if not user or not user.is_authenticated:
         return None
@@ -72,9 +80,13 @@ def get_user_role(user):
         return UserProfile.ADMIN
     profile = getattr(user, 'profile', None)
     if not profile:
+        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
         profile, _ = UserProfile.objects.get_or_create(
             user=user,
-            defaults={'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT}
+            defaults={
+                'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT,
+                'organization': default_org
+            }
         )
     return profile.role
 
@@ -202,8 +214,16 @@ class Resource:
     def detail(self, o):
         return self.row(o)
 
-    def get_object(self, pk):
-        obj = self.base_qs().filter(pk=pk).first()
+    def get_object(self, pk, request=None):
+        qs = self.base_qs()
+        if request and hasattr(self.model, 'organization'):
+            user_org = get_user_org(request.user)
+            if user_org:
+                if user_org.pk == 1:
+                    qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                else:
+                    qs = qs.filter(organization=user_org)
+        obj = qs.filter(pk=pk).first()
         if obj is None:
             raise ApiError(404, 'Not found.')
         return obj
@@ -222,6 +242,13 @@ class Resource:
 
     def queryset(self, request):
         qs = self.filter_qs(self.base_qs(), request)
+        if hasattr(self.model, 'organization'):
+            user_org = get_user_org(request.user)
+            if user_org:
+                if user_org.pk == 1:
+                    qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                else:
+                    qs = qs.filter(organization=user_org)
         q = request.GET.get('q', '').strip()
         if q and self.search_fields:
             cond = Q()
@@ -438,7 +465,12 @@ class Resource:
                 else:
                     with transaction.atomic():
                         obj = self.create(data, request.user)
-                    return j(self.detail(self.get_object(obj.pk)), 201)
+                        if hasattr(obj, 'organization') and not obj.organization_id:
+                            user_org = get_user_org(request.user)
+                            if user_org:
+                                obj.organization = user_org
+                                obj.save(update_fields=['organization'])
+                    return j(self.detail(self.get_object(obj.pk, request)), 201)
 
             if records is not None:
                 if not records:
@@ -471,7 +503,12 @@ class Resource:
                             updated_count += 1
                         else:
                             with transaction.atomic():
-                                self.create(clean_item, request.user)
+                                created_obj = self.create(clean_item, request.user)
+                                if hasattr(created_obj, 'organization') and not getattr(created_obj, 'organization_id', None):
+                                    user_org = get_user_org(request.user)
+                                    if user_org:
+                                        created_obj.organization = user_org
+                                        created_obj.save(update_fields=['organization'])
                             created_count += 1
                     except Exception as e:
                         row_identifier = raw_item.get('name') or raw_item.get('Name') or raw_item.get('sku') or raw_item.get('SKU') or raw_item.get('code') or raw_item.get('Code') or raw_item.get('number') or raw_item.get('item') or f'Row {idx + 1}'
@@ -510,13 +547,13 @@ class Resource:
 
     def handle_item(self, request, pk):
         check_permission(request, resource_name=self.name)
-        obj = self.get_object(pk)
+        obj = self.get_object(pk, request)
         if request.method == 'GET':
             return j(self.detail(obj))
         if request.method in ('PUT', 'PATCH'):
             with transaction.atomic():
                 self.update(obj, body(request), request.user)
-            return j(self.detail(self.get_object(pk)))
+            return j(self.detail(self.get_object(pk, request)))
         if request.method == 'DELETE':
             with transaction.atomic():
                 self.destroy(obj)
@@ -527,7 +564,7 @@ class Resource:
         check_permission(request, resource_name=self.name, action_name=name)
         if request.method != 'POST':
             raise ApiError(405, 'Method not allowed.')
-        obj = self.get_object(pk)
+        obj = self.get_object(pk, request)
         with transaction.atomic():
             res = self.action(request, obj, name)
         if res is not None:
@@ -614,6 +651,8 @@ class PartyResource(Resource):
                 out['state'] = pos.strip()
             elif out.get('gstin') and len(out.get('gstin')) >= 2:
                 out['state'] = services.GST_STATE_CODES.get(out['gstin'][:2], '')
+            else:
+                out['state'] = 'Kerala'
         c.done()
         return out
 
@@ -2973,7 +3012,7 @@ class PurchaseOrderResource(Resource):
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
-            'vendor_name': o.vendor.name, 'date': o.date,
+            'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'delivery_date': o.delivery_date, 'status': o.status,
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count()
         }
@@ -3029,6 +3068,37 @@ class PurchaseOrderResource(Resource):
                                             taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'PurchaseOrder', po.number, f"Created purchase order {po.number} for {ven.name} (₹{po.total})")
         return po
+
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        ven_id = c.integer('vendor', required=True, lo=1)
+        ven = Vendor.objects.filter(pk=ven_id).first()
+        if not ven:
+            raise ApiError(404, 'Vendor not found.')
+        dt = c.date('date', required=True)
+        deliv = c.date('delivery_date')
+        c.done()
+
+        obj.vendor = ven
+        obj.date = dt
+        obj.delivery_date = deliv or dt
+        obj.place_of_supply = ven.state or Organization.get().state
+        lines = parse_lines(data.get('lines', []))
+        intra = is_intra_state(obj.place_of_supply, Organization.get().state)
+        comp, tot = compute(lines, intra)
+        for k, v in tot.items():
+            setattr(obj, k, v)
+        obj.save()
+        obj.lines.all().delete()
+        for l in comp:
+            PurchaseOrderLine.objects.create(
+                order=obj, item=l['item'], description=l['description'],
+                hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+            )
+        services.log_audit(user, 'update', 'PurchaseOrder', obj.number, f"Updated purchase order {obj.number}")
+        return obj
 
 class ExpenseResource(Resource):
     name = 'expenses'
@@ -3115,10 +3185,24 @@ class CreditNoteResource(Resource):
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
-            'customer_name': o.customer.name, 'date': o.date,
+            'customer_name': o.customer.name, 'party': o.customer.name, 'date': o.date,
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
-            'total': o.total, 'reason': o.reason, 'status': o.status
+            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status
         }
+
+    def detail(self, o):
+        r = self.row(o)
+        r['customer'] = o.customer_id
+        r['party_id'] = o.customer_id
+        r['place_of_supply'] = o.place_of_supply
+        r['lines'] = [
+            {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
+             'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+             'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+             'line_total': l.line_total}
+            for l in o.lines.all()
+        ]
+        return r
 
     def create(self, data, user):
         c = Cleaner(data)
@@ -3150,6 +3234,38 @@ class CreditNoteResource(Resource):
         services.log_audit(user, 'create', 'CreditNote', cn.number, f"Created credit note {cn.number} for {cust.name} (₹{cn.total})")
         return cn
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        cid = c.integer('customer', required=True, lo=1)
+        cust = Customer.objects.filter(pk=cid).first()
+        if not cust:
+            raise ApiError(404, 'Customer not found.')
+        dt = c.date('date', required=True)
+        reason = c.text('reason', max_len=150)
+        c.done()
+
+        obj.customer = cust
+        obj.date = dt
+        obj.due_date = dt
+        obj.reason = reason
+        obj.place_of_supply = cust.state or Organization.get().state
+        lines = parse_lines(data.get('lines', []))
+        intra = is_intra_state(obj.place_of_supply, Organization.get().state)
+        comp, tot = compute(lines, intra)
+        for k, v in tot.items():
+            setattr(obj, k, v)
+        obj.save()
+        obj.lines.all().delete()
+        for l in comp:
+            CreditNoteLine.objects.create(
+                credit_note=obj, item=l['item'], description=l['description'],
+                hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+            )
+        services.log_audit(user, 'update', 'CreditNote', obj.number, f"Updated credit note {obj.number}")
+        return obj
+
 class VendorCreditResource(Resource):
     name = 'vendor-credits'
     model = VendorCredit
@@ -3159,10 +3275,24 @@ class VendorCreditResource(Resource):
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
-            'vendor_name': o.vendor.name, 'date': o.date,
+            'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'bill_id': o.bill_id, 'bill_number': o.bill.number if o.bill else '',
-            'total': o.total, 'reason': o.reason, 'status': o.status
+            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status
         }
+
+    def detail(self, o):
+        r = self.row(o)
+        r['vendor'] = o.vendor_id
+        r['party_id'] = o.vendor_id
+        r['place_of_supply'] = o.place_of_supply
+        r['lines'] = [
+            {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
+             'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+             'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+             'line_total': l.line_total}
+            for l in o.lines.all()
+        ]
+        return r
 
     def create(self, data, user):
         c = Cleaner(data)
@@ -3193,6 +3323,38 @@ class VendorCreditResource(Resource):
                                            taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'VendorCredit', vc.number, f"Created vendor credit {vc.number} for {ven.name} (₹{vc.total})")
         return vc
+
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        vid = c.integer('vendor', required=True, lo=1)
+        ven = Vendor.objects.filter(pk=vid).first()
+        if not ven:
+            raise ApiError(404, 'Vendor not found.')
+        dt = c.date('date', required=True)
+        reason = c.text('reason', max_len=150)
+        c.done()
+
+        obj.vendor = ven
+        obj.date = dt
+        obj.due_date = dt
+        obj.reason = reason
+        obj.place_of_supply = ven.state or Organization.get().state
+        lines = parse_lines(data.get('lines', []))
+        intra = is_intra_state(obj.place_of_supply, Organization.get().state)
+        comp, tot = compute(lines, intra)
+        for k, v in tot.items():
+            setattr(obj, k, v)
+        obj.save()
+        obj.lines.all().delete()
+        for l in comp:
+            VendorCreditLine.objects.create(
+                vendor_credit=obj, item=l['item'], description=l['description'],
+                hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+            )
+        services.log_audit(user, 'update', 'VendorCredit', obj.number, f"Updated vendor credit {obj.number}")
+        return obj
 
 class RecurringInvoiceResource(Resource):
     name = 'recurring-invoices'
@@ -3743,25 +3905,33 @@ def attachments_view(request, pk=None):
 
 @api_view
 def lookup(request, name):
+    user_org = get_user_org(request.user)
+    def org_filter(qs):
+        if user_org and hasattr(qs.model, 'organization'):
+            if user_org.pk == 1:
+                return qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            return qs.filter(organization=user_org)
+        return qs
+
     if name == 'customers':
         data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms}
-                for o in Customer.objects.filter(active=True).order_by('name')]
+                for o in org_filter(Customer.objects.filter(active=True)).order_by('name')]
     elif name == 'vendors':
         data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms}
-                for o in Vendor.objects.filter(active=True).order_by('name')]
+                for o in org_filter(Vendor.objects.filter(active=True)).order_by('name')]
     elif name == 'items':
         data = [{'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,
                  'selling_price': o.selling_price, 'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate,
                  'warehouse_id': o.warehouse_id, 'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
                  'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': format_qty(o.stock), 'unit': o.unit}
-                for o in Item.objects.filter(active=True).select_related('warehouse', 'preferred_vendor').order_by('name')]
+                for o in org_filter(Item.objects.filter(active=True)).select_related('warehouse', 'preferred_vendor').order_by('name')]
     elif name == 'accounts':
         services.ensure_default_accounts()
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
                 for o in Account.objects.filter(active=True).order_by('code')]
     elif name == 'bank-accounts':
         data = [{'id': o.pk, 'name': o.name, 'bank_name': o.bank_name, 'account_number': o.account_number, 'balance': o.current_balance}
-                for o in BankAccount.objects.filter(active=True).order_by('name')]
+                for o in org_filter(BankAccount.objects.filter(active=True)).order_by('name')]
     elif name == 'folders':
         data = [{'id': o.pk, 'name': o.name, 'color': o.color}
                 for o in DocumentFolder.objects.all().order_by('name')]
@@ -3770,17 +3940,17 @@ def lookup(request, name):
                 for o in ItemCategory.objects.all().order_by('name')]
     elif name == 'projects':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id}
-                for o in Project.objects.filter(status='active').order_by('name')]
+                for o in org_filter(Project.objects.filter(status='active')).order_by('name')]
     elif name == 'warehouses':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'is_primary': o.is_primary,
                  'is_sub_warehouse': bool(o.parent_id), 'parent_id': o.parent_id,
                  'parent_code': o.parent.code if o.parent else '',
                  'parent_name': o.parent.name if o.parent else '',
                  'shared_database': o.shared_database}
-                for o in Warehouse.objects.filter(active=True).select_related('parent').order_by('name')]
+                for o in org_filter(Warehouse.objects.filter(active=True)).select_related('parent').order_by('name')]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
-                for o in PriceList.objects.filter(active=True).order_by('name')]
+                for o in org_filter(PriceList.objects.filter(active=True)).order_by('name')]
     elif name == 'salespersons':
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -3847,7 +4017,8 @@ def quote_sequence_view(request):
 
 def dashboard_view(request):
     start, end = parse_range(request)
-    return j(services.dashboard(start, end))
+    org = get_user_org(request.user)
+    return j(services.dashboard(start, end, org=org))
 
 @api_view
 def activity_view(request):
@@ -3862,16 +4033,23 @@ def search_view(request):
     q = request.GET.get('q', '').strip()
     if len(q) < 2:
         return j([])
+    user_org = get_user_org(request.user)
+    def org_filter(qs):
+        if user_org and hasattr(qs.model, 'organization'):
+            if user_org.pk == 1:
+                return qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            return qs.filter(organization=user_org)
+        return qs
     out = []
-    for o in Customer.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q))[:5]:
+    for o in org_filter(Customer.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q)))[:5]:
         out.append({'type': 'customer', 'id': o.pk, 'label': o.name, 'sub': 'Customer'})
-    for o in Vendor.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q))[:5]:
+    for o in org_filter(Vendor.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q)))[:5]:
         out.append({'type': 'vendor', 'id': o.pk, 'label': o.name, 'sub': 'Vendor'})
-    for o in Invoice.objects.select_related('customer').filter(Q(number__icontains=q) | Q(customer__name__icontains=q))[:5]:
+    for o in org_filter(Invoice.objects.select_related('customer').filter(Q(number__icontains=q) | Q(customer__name__icontains=q)))[:5]:
         out.append({'type': 'invoice', 'id': o.pk, 'label': o.number, 'sub': f'Invoice · {o.customer.name}'})
-    for o in Bill.objects.select_related('vendor').filter(Q(number__icontains=q) | Q(vendor__name__icontains=q) | Q(vendor_ref__icontains=q))[:5]:
+    for o in org_filter(Bill.objects.select_related('vendor').filter(Q(number__icontains=q) | Q(vendor__name__icontains=q) | Q(vendor_ref__icontains=q)))[:5]:
         out.append({'type': 'bill', 'id': o.pk, 'label': o.number, 'sub': f'Bill · {o.vendor.name}'})
-    for o in Item.objects.filter(Q(name__icontains=q) | Q(sku__icontains=q))[:5]:
+    for o in org_filter(Item.objects.filter(Q(name__icontains=q) | Q(sku__icontains=q)))[:5]:
         out.append({'type': 'item', 'id': o.pk, 'label': o.name, 'sub': f'Item · {o.sku}'})
     for o in ManagedDocument.objects.filter(is_deleted=False).filter(Q(title__icontains=q) | Q(filename__icontains=q))[:5]:
         out.append({'type': 'document', 'id': o.pk, 'label': o.title, 'sub': f'Document · {o.category}'})
@@ -4928,7 +5106,8 @@ def subscription_update_view(request):
 @api_view
 @role_required(UserProfile.ADMIN)
 def tenant_admin_summary_view(request):
-    res = services.get_tenant_admin_summary()
+    org = get_user_org(request.user)
+    res = services.get_tenant_admin_summary(org=org)
     return j(res)
 
 @api_view
@@ -4937,11 +5116,15 @@ def tenant_admin_invite_user_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
+    org = get_user_org(request.user)
     res = services.invite_tenant_user(
         username=d.get('username'),
         email=d.get('email'),
         role=d.get('role', 'accountant'),
-        phone=d.get('phone', '')
+        phone=d.get('phone', ''),
+        full_name=d.get('full_name', ''),
+        password=d.get('password'),
+        org=org
     )
     return j(res)
 
@@ -4952,6 +5135,23 @@ def tenant_admin_update_role_view(request, pk):
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
     res = services.update_tenant_user_role(pk, d.get('role', 'accountant'))
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN)
+def tenant_admin_toggle_active_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.toggle_tenant_user_active(pk, requesting_user=request.user)
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN)
+def tenant_admin_reset_password_view(request, pk):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    d = body(request)
+    res = services.reset_tenant_user_password(pk, d.get('password'), requesting_user=request.user)
     return j(res)
 
 @api_view

@@ -43,8 +43,14 @@ def invoice_paid_expr():
     ret_sub = RetainerInvoiceAllocation.objects.filter(invoice=OuterRef('pk')).values('invoice').annotate(s=Sum('amount')).values('s')
     return Coalesce(Subquery(alloc_sub, output_field=DEC), Value(Z)) + Coalesce(Subquery(ret_sub, output_field=DEC), Value(Z))
 
-def invoice_qs():
-    return Invoice.objects.select_related('customer').annotate(paid_sum=invoice_paid_expr())
+def invoice_qs(org=None):
+    qs = Invoice.objects.select_related('customer').annotate(paid_sum=invoice_paid_expr())
+    if org:
+        if org.pk == 1:
+            qs = qs.filter(Q(organization=org) | Q(organization__isnull=True))
+        else:
+            qs = qs.filter(organization=org)
+    return qs
 
 def retainer_paid_expr():
     ret_pay_sub = RetainerPayment.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
@@ -60,8 +66,14 @@ def retainer_qs():
         applied_sum=retainer_applied_expr(),
     )
 
-def bill_qs():
-    return Bill.objects.select_related('vendor').annotate(paid_sum=paid_expr())
+def bill_qs(org=None):
+    qs = Bill.objects.select_related('vendor').annotate(paid_sum=paid_expr())
+    if org:
+        if org.pk == 1:
+            qs = qs.filter(Q(organization=org) | Q(organization__isnull=True))
+        else:
+            qs = qs.filter(organization=org)
+    return qs
 
 def next_number(prefix):
     """Call inside the same transaction that creates the record so a rollback frees the number."""
@@ -412,24 +424,32 @@ def _aging(docs, today):
         b[idx] += bal
     return b
 
-def _period(s, e):
+def _period(s, e, org=None):
     inv = Invoice.objects.filter(status='sent', date__range=(s, e))
     bl = Bill.objects.filter(status='open', date__range=(s, e))
+    if org:
+        if org.pk == 1:
+            inv = inv.filter(Q(organization=org) | Q(organization__isnull=True))
+            bl = bl.filter(Q(organization=org) | Q(organization__isnull=True))
+        else:
+            inv = inv.filter(organization=org)
+            bl = bl.filter(organization=org)
     rev, exp = _sum(inv, 'subtotal'), _sum(bl, 'subtotal')
     out_tax = _sum(inv, 'cgst') + _sum(inv, 'sgst') + _sum(inv, 'igst')
     in_tax = _sum(bl, 'cgst') + _sum(bl, 'sgst') + _sum(bl, 'igst')
     return {'revenue': rev, 'expenses': exp, 'profit': rev - exp, 'gst_payable': out_tax - in_tax}
 
-def dashboard(start, end):
+def dashboard(start, end, org=None):
     today = timezone.localdate()
-    org = Organization.get()
+    if not org:
+        org = Organization.get()
     days = (end - start).days + 1
     p_end = start - timedelta(days=1)
     p_start = p_end - timedelta(days=days - 1)
-    cur, prev = _period(start, end), _period(p_start, p_end)
+    cur, prev = _period(start, end, org=org), _period(p_start, p_end, org=org)
 
-    inv_open = list(invoice_qs().filter(status='sent', paid_sum__lt=F('total')))
-    bill_open = list(bill_qs().filter(status='open', paid_sum__lt=F('total')))
+    inv_open = list(invoice_qs(org=org).filter(status='sent', paid_sum__lt=F('total')))
+    bill_open = list(bill_qs(org=org).filter(status='open', paid_sum__lt=F('total')))
     rec_total = sum((i.total - q2(i.paid_sum) for i in inv_open), Z)
     pay_total = sum((b.total - q2(b.paid_sum) for b in bill_open), Z)
     rec_over = sum((i.total - q2(i.paid_sum) for i in inv_open if i.due_date < today), Z)
@@ -4560,12 +4580,20 @@ def update_tenant_subscription(tier, billing_cycle='annual'):
     sub.save()
     return get_tenant_subscription_summary()
 
-def get_tenant_admin_summary():
+def get_tenant_admin_summary(org=None):
     from django.contrib.auth import get_user_model
     User = get_user_model()
-    org = Organization.objects.first()
+    if not org:
+        org = Organization.objects.first()
+    users_qs = User.objects.all()
+    if org:
+        if org.pk == 1:
+            users_qs = users_qs.filter(Q(profile__organization=org) | Q(profile__organization__isnull=True))
+        else:
+            users_qs = users_qs.filter(profile__organization=org)
+
     users = []
-    for u in User.objects.all():
+    for u in users_qs.order_by('username'):
         profile = getattr(u, 'profile', None)
         users.append({
             'id': u.id,
@@ -4579,7 +4607,18 @@ def get_tenant_admin_summary():
             'date_joined': u.date_joined.strftime('%d %b %Y') if u.date_joined else '17 Oct 2026',
             'last_login': u.last_login.strftime('%d %b %Y %H:%M') if u.last_login else 'Active Now'
         })
-    
+
+    audit_qs = AuditLog.objects.all()
+    inv_qs = Invoice.objects.all()
+    jrnl_qs = Journal.objects.all()
+    if org:
+        if org.pk == 1:
+            audit_qs = audit_qs.filter(Q(organization=org) | Q(organization__isnull=True))
+            inv_qs = inv_qs.filter(Q(organization=org) | Q(organization__isnull=True))
+        else:
+            audit_qs = audit_qs.filter(organization=org)
+            inv_qs = inv_qs.filter(organization=org)
+
     return {
         'organization': {
             'id': org.pk if org else 1,
@@ -4593,24 +4632,51 @@ def get_tenant_admin_summary():
         },
         'metrics': {
             'total_users': len(users),
-            'total_audit_events': AuditLog.objects.count(),
-            'total_invoices_issued': Invoice.objects.count(),
-            'total_journal_entries': Journal.objects.count(),
+            'total_audit_events': audit_qs.count(),
+            'total_invoices_issued': inv_qs.count(),
+            'total_journal_entries': jrnl_qs.count(),
             'encryption': 'AES-256 (At Rest) & TLS 1.3 (In Transit)',
             'mfa_enforcement': 'Mandatory (TOTP RFC 6238)'
         },
         'members': users
     }
 
-def invite_tenant_user(username, email, role='accountant', phone=''):
+def invite_tenant_user(username, email, role='accountant', phone='', full_name='', password=None, org=None):
     from django.contrib.auth import get_user_model
     User = get_user_model()
     if User.objects.filter(username=username).exists():
         raise ApiError(400, f'Username "{username}" already exists.')
-    
-    u = User.objects.create_user(username=username, email=email, password=secrets.token_urlsafe(12))
-    UserProfile.objects.create(user=u, role=role, phone=phone, mfa_enabled=True)
-    return {'status': 'success', 'user_id': u.id, 'username': u.username, 'role': role}
+
+    pwd = password or secrets.token_urlsafe(10)
+    fn = full_name.split(' ')[0] if full_name else ''
+    ln = ' '.join(full_name.split(' ')[1:]) if (full_name and ' ' in full_name) else ''
+    u = User.objects.create_user(username=username, email=email, password=pwd, first_name=fn, last_name=ln)
+    UserProfile.objects.create(user=u, organization=org, role=role, phone=phone, mfa_enabled=True)
+    return {'status': 'success', 'user_id': u.id, 'username': u.username, 'role': role, 'temporary_password': pwd}
+
+def toggle_tenant_user_active(user_id, requesting_user=None):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    u = User.objects.filter(pk=user_id).first()
+    if not u:
+        raise ApiError(404, 'User not found.')
+    if requesting_user and requesting_user.pk == u.pk:
+        raise ApiError(400, 'You cannot deactivate your own account.')
+    u.is_active = not u.is_active
+    u.save(update_fields=['is_active'])
+    return {'status': 'success', 'user_id': u.id, 'is_active': u.is_active}
+
+def reset_tenant_user_password(user_id, new_password, requesting_user=None):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    u = User.objects.filter(pk=user_id).first()
+    if not u:
+        raise ApiError(404, 'User not found.')
+    if not new_password or len(str(new_password).strip()) < 4:
+        raise ApiError(400, 'Password must be at least 4 characters long.')
+    u.set_password(str(new_password).strip())
+    u.save(update_fields=['password'])
+    return {'status': 'success', 'user_id': u.id, 'message': f'Password for {u.username} has been reset successfully.'}
 
 def update_tenant_user_role(user_id, role):
     from django.contrib.auth import get_user_model

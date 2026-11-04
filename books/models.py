@@ -27,14 +27,22 @@ class Organization(models.Model):
     terms_default = models.TextField(blank=True, default='Due on Receipt')
     opening_cash = models.DecimalField(default=Decimal('0.00'), **MONEY)
     quote_prefix = models.CharField(max_length=20, blank=True, default='QT')
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='owned_organizations')
 
     def save(self, *args, **kwargs):
-        self.pk = 1
         super().save(*args, **kwargs)
 
     @classmethod
-    def get(cls):
-        obj, _ = cls.objects.get_or_create(pk=1)
+    def get(cls, user=None):
+        if user and getattr(user, 'is_authenticated', False):
+            profile = getattr(user, 'profile', None)
+            if profile and profile.organization:
+                return profile.organization
+        obj = cls.objects.filter(pk=1).first()
+        if not obj:
+            obj = cls.objects.first()
+        if not obj:
+            obj = cls.objects.create(pk=1, name='Convosis Technologies Pvt Ltd')
         return obj
 
     def __str__(self):
@@ -45,6 +53,7 @@ class Sequence(models.Model):
     value = models.PositiveIntegerField(default=0)
 
 class Party(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
     name = models.CharField(max_length=200)
     company = models.CharField(max_length=200, blank=True)
     contact_person = models.CharField(max_length=120, blank=True)
@@ -114,6 +123,7 @@ class Vendor(Party):
 
 class Item(models.Model):
     GOODS, SERVICE = 'goods', 'service'
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='items')
     name = models.CharField(max_length=200)
     sku = models.CharField(max_length=60, unique=True, blank=True)
     item_type = models.CharField(max_length=10, choices=[(GOODS, 'Goods'), (SERVICE, 'Service')], default=GOODS)
@@ -146,6 +156,7 @@ class Item(models.Model):
 
 class Document(models.Model):
     DRAFT, VOID = 'draft', 'void'
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
     number = models.CharField(max_length=30, unique=True)
     date = models.DateField()
     due_date = models.DateField()
@@ -206,6 +217,7 @@ MODES = [('cash', 'Cash'), ('bank_transfer', 'Bank transfer'), ('upi', 'UPI'),
          ('cheque', 'Cheque'), ('card', 'Card'), ('other', 'Other')]
 
 class Payment(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
     number = models.CharField(max_length=30, unique=True)
     date = models.DateField()
     mode = models.CharField(max_length=20, choices=MODES, default='bank_transfer')
@@ -344,6 +356,7 @@ class LockDate(models.Model):
 
 class AuditLog(models.Model):
     """Immutable statutory audit trail of all transactions and system events."""
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='audit_logs')
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     username = models.CharField(max_length=150, blank=True)
@@ -393,6 +406,7 @@ class WebhookConfig(models.Model):
     active = models.BooleanField(default=True)
 
 class BankAccount(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_accounts')
     SAVINGS, CURRENT, CREDIT_CARD, CASH, CHECKING, OTHER = 'savings', 'current', 'credit_card', 'cash', 'checking', 'other'
     TYPES = [
         (CURRENT, 'Current Account'),
@@ -533,6 +547,7 @@ class QuoteLine(Line):
     quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name='lines')
 
 class RecurringInvoice(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='recurring_invoices')
     FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
     profile_name = models.CharField(max_length=150)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='recurring_invoices')
@@ -592,6 +607,7 @@ class RetainerInvoiceAllocation(models.Model):
         return f'{self.retainer.number} -> {self.invoice.number} (₹{self.amount})'
 
 class DeliveryChallan(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='delivery_challans')
     CHALLAN_TYPES = [('supply_on_approval', 'Supply on Approval'), ('job_work', 'Job Work'), ('other', 'Other')]
     number = models.CharField(max_length=40, unique=True)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='delivery_challans')
@@ -625,6 +641,7 @@ class PurchaseOrderLine(Line):
     order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')
 
 class Expense(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='expenses')
     number = models.CharField(max_length=40, unique=True)
     date = models.DateField()
     expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses')
@@ -691,6 +708,7 @@ class EInvoiceRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class Project(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='projects')
     name = models.CharField(max_length=150)
     code = models.CharField(max_length=40, blank=True)
     customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name='projects')
@@ -732,6 +750,7 @@ class ItemCategory(models.Model):
         return self.name
 
 class PriceList(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='price_lists')
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     pricing_scheme = models.CharField(max_length=30, default='percentage')
@@ -746,6 +765,7 @@ class PriceList(models.Model):
         return self.name
 
 class Warehouse(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='warehouses')
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=30, unique=True)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_warehouses')
@@ -954,6 +974,7 @@ class UserProfile(models.Model):
     ]
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(max_length=30, choices=ROLES, default=ADMIN)
     phone = models.CharField(max_length=30, blank=True)
     mfa_enabled = models.BooleanField(default=True)

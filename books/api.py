@@ -353,27 +353,32 @@ class Resource:
     def preprocess_import_records(self, records):
         return records
 
-    def find_existing(self, clean_item):
+    def find_existing(self, clean_item, user=None):
         if not hasattr(self, 'model') or self.model is None:
             return None
         try:
+            qs = self.model.objects.all()
+            if user and hasattr(self.model, 'organization'):
+                org = get_user_org(user)
+                if org:
+                    qs = qs.filter(organization=org)
             if hasattr(self.model, 'sku') and clean_item.get('sku'):
-                obj = self.model.objects.filter(sku__iexact=str(clean_item['sku']).strip()).first()
+                obj = qs.filter(sku__iexact=str(clean_item['sku']).strip()).first()
                 if obj: return obj
             if hasattr(self.model, 'code') and clean_item.get('code'):
-                obj = self.model.objects.filter(code__iexact=str(clean_item['code']).strip()).first()
+                obj = qs.filter(code__iexact=str(clean_item['code']).strip()).first()
                 if obj: return obj
             if hasattr(self.model, 'account_number') and clean_item.get('account_number'):
-                obj = self.model.objects.filter(account_number__iexact=str(clean_item['account_number']).strip()).first()
+                obj = qs.filter(account_number__iexact=str(clean_item['account_number']).strip()).first()
                 if obj: return obj
             if hasattr(self.model, 'number') and clean_item.get('number'):
-                obj = self.model.objects.filter(number__iexact=str(clean_item['number']).strip()).first()
+                obj = qs.filter(number__iexact=str(clean_item['number']).strip()).first()
                 if obj: return obj
             if hasattr(self.model, 'email') and clean_item.get('email'):
-                obj = self.model.objects.filter(email__iexact=str(clean_item['email']).strip()).first()
+                obj = qs.filter(email__iexact=str(clean_item['email']).strip()).first()
                 if obj: return obj
             if hasattr(self.model, 'name') and clean_item.get('name'):
-                obj = self.model.objects.filter(name__iexact=str(clean_item['name']).strip()).first()
+                obj = qs.filter(name__iexact=str(clean_item['name']).strip()).first()
                 if obj: return obj
         except Exception:
             pass
@@ -442,18 +447,12 @@ class Resource:
                       'page_size': size, 'results': self.rows(list(page.object_list))})
         if request.method == 'POST':
             records = None
+            data = None
             if request.FILES.get('file'):
                 try:
                     file_obj = request.FILES['file']
-                    content = file_obj.read().decode('utf-8-sig', errors='ignore')
-                    if file_obj.name.lower().endswith('.json'):
-                        parsed_json = json.loads(content)
-                        records = parsed_json if isinstance(parsed_json, list) else (parsed_json.get('records') or parsed_json.get('data') or parsed_json.get('results') or [parsed_json])
-                    else:
-                        sample = content[:2048]
-                        delim = '\t' if '\t' in sample and ',' not in sample else (';' if ';' in sample and ',' not in sample else ',')
-                        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
-                        records = list(reader)
+                    parsed = services.parse_import_file(file_obj, file_obj.name)
+                    records = parsed.get('records', [])
                 except Exception as e:
                     raise ApiError(400, f'Failed to parse uploaded file: {str(e)}')
             else:
@@ -492,7 +491,7 @@ class Resource:
                 for idx, raw_item in enumerate(records):
                     try:
                         clean_item = self.normalize_record(raw_item)
-                        existing = self.find_existing(clean_item)
+                        existing = self.find_existing(clean_item, user=request.user)
 
                         if existing and dup_mode == 'skip':
                             skipped_count += 1
@@ -656,18 +655,23 @@ class PartyResource(Resource):
         c.done()
         return out
 
-    def find_existing(self, clean_item):
+    def find_existing(self, clean_item, user=None):
         if not hasattr(self, 'model') or self.model is None:
             return None
         try:
             name = (clean_item.get('name') or '').strip()
             gstin = (clean_item.get('gstin') or '').strip()
+            qs = self.model.objects.all()
+            if user and hasattr(self.model, 'organization'):
+                org = get_user_org(user)
+                if org:
+                    qs = qs.filter(organization=org)
             if gstin:
-                obj = self.model.objects.filter(gstin__iexact=gstin).first()
+                obj = qs.filter(gstin__iexact=gstin).first()
                 if obj:
                     return obj
             if name:
-                obj = self.model.objects.filter(name__iexact=name).first()
+                obj = qs.filter(name__iexact=name).first()
                 if obj:
                     return obj
         except Exception:
@@ -686,11 +690,17 @@ class PartyResource(Resource):
                 rec['name'] = rec.get('company')
             elif rec.get('contact_person'):
                 rec['name'] = rec.get('contact_person')
+            elif rec.get('customer'):
+                rec['name'] = rec.get('customer')
+            elif rec.get('vendor'):
+                rec['name'] = rec.get('vendor')
+            elif rec.get('party'):
+                rec['name'] = rec.get('party')
 
         if rec.get('name'):
             clean_name = str(rec['name']).strip()
-            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in str(rec['name']))
-            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in str(rec['name']))
+            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in clean_name)
+            clean_name = re.sub(r'\s+', ' ', clean_name).strip()
             if clean_name:
                 rec['name'] = clean_name
 
@@ -5199,4 +5209,18 @@ def assistant_accounting_context_view(request):
 def gstin_lookup_view(request, gstin):
     res = services.lookup_gstin_details(gstin)
     return j(res)
+
+@api_view
+def parse_import_file_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    file_obj = request.FILES.get('file')
+    if not file_obj:
+        raise ApiError(400, 'No file was uploaded.')
+    try:
+        res = services.parse_import_file(file_obj, file_obj.name)
+        return j(res)
+    except Exception as e:
+        raise ApiError(400, f"Failed to parse file: {str(e)}")
+
 

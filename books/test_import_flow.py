@@ -385,3 +385,82 @@ class TestUniversalImport(TestCase):
         self.assertIsNotNone(prj)
         self.assertEqual(prj.name, 'API Gateway Modernization')
         self.assertEqual(prj.customer.name, 'Fintech Alliance')
+
+    def test_parse_import_file_csv_endpoint(self):
+        import io
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        csv_content = b"Customer Name,Email,Phone,State\nExcel Test Corp,excel@test.com,9876543210,Kerala\nBeta Systems,beta@test.com,9876543211,Karnataka"
+        upload = SimpleUploadedFile("clients.csv", csv_content, content_type="text/csv")
+        res = self.client.post('/api/import/parse-file/', {'file': upload})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['total_rows'], 2)
+        self.assertIn('Customer Name', data['headers'])
+        self.assertEqual(data['records'][0]['Customer Name'], 'Excel Test Corp')
+
+    def test_parse_import_file_xlsx_endpoint(self):
+        import io, zipfile
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+            strings = ['Customer Name', 'Email', 'Phone', 'Apex Logistics', 'apex@logistics.com', '9876512345']
+            sst = ['<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">']
+            for s in strings:
+                sst.append(f'<si><t>{s}</t></si>')
+            sst.append('</sst>')
+            z.writestr('xl/sharedStrings.xml', ''.join(sst))
+            z.writestr('xl/workbook.xml', '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>')
+            ws = [
+                '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>',
+                '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>',
+                '<row r="2"><c r="A2" t="s"><v>3</v></c><c r="B2" t="s"><v>4</v></c><c r="C2" t="s"><v>5</v></c></row>',
+                '</sheetData></worksheet>'
+            ]
+            z.writestr('xl/worksheets/sheet1.xml', ''.join(ws))
+        buf.seek(0)
+        upload = SimpleUploadedFile("clients.xlsx", buf.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        res = self.client.post('/api/import/parse-file/', {'file': upload})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['total_rows'], 1)
+        self.assertIn('Customer Name', data['headers'])
+        self.assertEqual(data['records'][0]['Customer Name'], 'Apex Logistics')
+
+    def test_direct_multipart_file_upload_import(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        csv_content = b"Name,Email,Phone\nDirect File Upload Client,direct@upload.com,9876549999"
+        upload = SimpleUploadedFile("direct_clients.csv", csv_content, content_type="text/csv")
+        res = self.client.post('/api/customers/', {'file': upload, 'duplicate_mode': 'skip'})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        self.assertTrue(Customer.objects.filter(name='Direct File Upload Client').exists())
+
+    def test_tenant_isolation_in_import(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        org_a = Organization.get()
+        org_b = Organization.objects.create(name='Tenant Bravo Corp', company_id='TB-001')
+        user_b = User.objects.create_user(username='bravo_user', password='pass1234Secure!')
+        UserProfile.objects.create(user=user_b, role=UserProfile.ADMIN, organization=org_b)
+
+        # Create client for Org A
+        Customer.objects.create(name='Shared Name Client', organization=org_a)
+
+        # User B logs in and imports client with same name for Org B
+        client_b = Client()
+        client_b.login(username='bravo_user', password='pass1234Secure!')
+        records = [{'name': 'Shared Name Client', 'email': 'bravo@shared.com'}]
+        res = client_b.post('/api/customers/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        # Should be imported under Org B, not skipped because of Org A
+        self.assertEqual(data['imported'], 1)
+        self.assertEqual(Customer.objects.filter(name='Shared Name Client').count(), 2)
+

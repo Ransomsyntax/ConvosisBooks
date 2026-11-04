@@ -240,6 +240,55 @@ const IMPORT_SPECS = {
     { key: 'pricing_scheme', label: 'Pricing Scheme', aliases: ['pricing_scheme', 'scheme'] },
     { key: 'percentage', label: 'Percentage (%)', aliases: ['percentage', 'percent', 'adjustment'] },
     { key: 'description', label: 'Description', aliases: ['description', 'desc', 'notes'] }
+  ],
+  'delivery-challans': [
+    { key: 'number', label: 'Challan Number', aliases: ['number', 'challan_number', 'challan#', 'dc_number'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Challan Date', req: true, aliases: ['date', 'challan_date', 'doc_date'] },
+    { key: 'challan_type', label: 'Challan Type', aliases: ['challan_type', 'type'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ],
+  'credit-notes': [
+    { key: 'number', label: 'Credit Note Number', aliases: ['number', 'credit_note_number', 'cn#', 'cn_number'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Date', req: true, aliases: ['date', 'cn_date', 'doc_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'notes', label: 'Reason / Notes', aliases: ['notes', 'reason', 'remarks'] }
+  ],
+  'vendor-credits': [
+    { key: 'number', label: 'Vendor Credit Number', aliases: ['number', 'vendor_credit_number', 'vc#', 'vc_number'] },
+    { key: 'vendor', label: 'Vendor Name', req: true, aliases: ['vendor', 'vendor_name', 'supplier', 'party'] },
+    { key: 'date', label: 'Date', req: true, aliases: ['date', 'vc_date', 'doc_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ],
+  'recurring-invoices': [
+    { key: 'profile_name', label: 'Profile Name', req: true, aliases: ['profile_name', 'name', 'title'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'frequency', label: 'Frequency (monthly/weekly/yearly)', aliases: ['frequency', 'repeat_every', 'interval'] },
+    { key: 'start_date', label: 'Start Date', aliases: ['start_date', 'date'] },
+    { key: 'end_date', label: 'End Date', aliases: ['end_date', 'never_expires'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'amount'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] }
+  ],
+  'retainer-invoices': [
+    { key: 'number', label: 'Retainer Number', aliases: ['number', 'retainer_number', 'ret#'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Date', req: true, aliases: ['date', 'retainer_date', 'doc_date'] },
+    { key: 'item', label: 'Description / Item', aliases: ['item', 'description', 'notes'] },
+    { key: 'rate', label: 'Amount (₹)', req: true, aliases: ['rate', 'amount', 'total'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] }
   ]
 };
 
@@ -304,12 +353,12 @@ function openUniversalImportModal(resourceName, title) {
           </div>
 
           <div id="uimp-drop-zone" style="border:2px dashed var(--bd);border-radius:10px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--surface-glass-subtle);transition:all 0.2s;">
-            <input type="file" id="uimp-file-input" accept=".csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json" style="display:none;" />
+            <input type="file" id="uimp-file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
             <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
-            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop CSV, TSV, or JSON file here</div>
+            <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop Excel (.xlsx), CSV, TSV, or JSON file here</div>
             <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
             <button type="button" class="btn p" style="font-size:12px;pointer-events:none;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
-            <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
+            <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel workbooks (.xlsx, .xls), CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
           </div>
 
           <div id="uimp-file-info" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface-glass);border-radius:8px;border:1px solid var(--bd);align-items:center;justify-content:space-between;">
@@ -490,50 +539,94 @@ function openUniversalImportModal(resourceName, title) {
     fileObj = null;
     rawHeaders = [];
     rawRows = [];
+    dropZone.innerHTML = `
+      <input type="file" id="uimp-file-input" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
+      <i class="fa-solid fa-cloud-arrow-up" style="font-size:36px;color:var(--accent);margin-bottom:10px;"></i>
+      <div style="font-weight:700;font-size:14px;color:var(--tx);margin-bottom:4px;">Drag &amp; Drop Excel (.xlsx), CSV, TSV, or JSON file here</div>
+      <div class="sub" style="font-size:12px;margin-bottom:12px;">or click anywhere to browse from your device</div>
+      <button type="button" class="btn p" style="font-size:12px;pointer-events:none;"><i class="fa-solid fa-folder-open"></i> Browse Files</button>
+      <div class="sub" style="font-size:11px;margin-top:10px;color:var(--tx-muted);">Supports Excel workbooks (.xlsx, .xls), CSV exports, UTF-8 BOM, tab &amp; semicolon delimiters</div>
+    `;
+    const newInp = $('#uimp-file-input', dropZone);
+    if (newInp) newInp.addEventListener('change', () => { if (newInp.files.length) handleFile(newInp.files[0]); });
     dropZone.style.display = 'block';
     fileInfo.style.display = 'none';
     btnNext.disabled = true;
     alert1.style.display = 'none';
   });
 
-  function handleFile(file) {
+  async function handleFile(file) {
     alert1.style.display = 'none';
     fileObj = file;
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const text = e.target.result;
-        if (file.name.endsWith('.json')) {
+    const isExcel = /\.(xlsx|xls|xlsm|xltx)$/i.test(file.name);
+    const origDropHtml = dropZone.innerHTML;
+    dropZone.innerHTML = `${spinner} <div style="margin-top:10px;font-size:12.5px;font-weight:600;color:var(--tx);">Reading and parsing ${esc(file.name)}...</div>`;
+
+    try {
+      if (isExcel) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await api('import/parse-file/', { method: 'POST', body: fd });
+        rawHeaders = res.headers || [];
+        rawRows = res.rows || [];
+      } else if (file.name.toLowerCase().endsWith('.json')) {
+        try {
+          const text = await file.text();
           const json = JSON.parse(text);
           const arr = Array.isArray(json) ? json : (json.records || json.data || json.results || [json]);
           if (!arr.length) throw new Error('No valid records found in JSON file.');
           rawHeaders = Object.keys(arr[0] || {});
           rawRows = arr.map(obj => rawHeaders.map(h => obj[h] ?? ''));
-        } else {
+        } catch (e) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await api('import/parse-file/', { method: 'POST', body: fd });
+          rawHeaders = res.headers || [];
+          rawRows = res.rows || [];
+        }
+      } else {
+        try {
+          const text = await file.text();
           const parsed = parseCsvString(text);
-          rawHeaders = parsed.headers;
-          rawRows = parsed.rows;
+          rawHeaders = parsed.headers || [];
+          rawRows = parsed.rows || [];
+          if (!rawHeaders.length || !rawRows.length) {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await api('import/parse-file/', { method: 'POST', body: fd });
+            rawHeaders = res.headers || [];
+            rawRows = res.rows || [];
+          }
+        } catch (e) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await api('import/parse-file/', { method: 'POST', body: fd });
+          rawHeaders = res.headers || [];
+          rawRows = res.rows || [];
         }
-
-        if (!rawHeaders.length || !rawRows.length) {
-          throw new Error('No valid records found in the uploaded file.');
-        }
-
-        dropZone.style.display = 'none';
-        fileInfo.style.display = 'flex';
-        fileNameEl.textContent = file.name;
-        fileMetaEl.textContent = `${fmtBytes(file.size)} · ${rawRows.length} record${rawRows.length === 1 ? '' : 's'} detected · ${rawHeaders.length} columns`;
-        btnNext.disabled = false;
-
-        // Auto-match columns
-        autoMatchColumns();
-      } catch (err) {
-        alert1.textContent = err.message || 'Failed to parse file.';
-        alert1.style.display = 'block';
-        btnNext.disabled = true;
       }
-    };
-    reader.readAsText(file);
+
+      if (!rawHeaders.length || !rawRows.length) {
+        throw new Error('No valid records found in the uploaded file.');
+      }
+
+      dropZone.innerHTML = origDropHtml;
+      dropZone.style.display = 'none';
+      fileInfo.style.display = 'flex';
+      fileNameEl.textContent = file.name;
+      fileMetaEl.textContent = `${fmtBytes(file.size)} · ${rawRows.length} record${rawRows.length === 1 ? '' : 's'} detected · ${rawHeaders.length} columns`;
+      btnNext.disabled = false;
+
+      // Auto-match columns
+      autoMatchColumns();
+    } catch (err) {
+      dropZone.innerHTML = origDropHtml;
+      const newInp = $('#uimp-file-input', dropZone);
+      if (newInp) newInp.addEventListener('change', () => { if (newInp.files.length) handleFile(newInp.files[0]); });
+      alert1.textContent = err.message || 'Failed to parse file.';
+      alert1.style.display = 'block';
+      btnNext.disabled = true;
+    }
   }
 
   function autoMatchColumns() {
@@ -653,18 +746,24 @@ function openUniversalImportModal(resourceName, title) {
         if (full) rec.name = full;
         else if (rec.company) rec.name = rec.company;
         else if (rec.contact_person) rec.name = rec.contact_person;
+        else if (rec.customer) rec.name = rec.customer;
+        else if (rec.vendor) rec.name = rec.vendor;
+        else if (rec.party) rec.name = rec.party;
+        else if (rec.title) rec.name = rec.title;
+        else if (rec.item) rec.name = rec.item;
+        else if (rec.sku) rec.name = rec.sku;
       }
       if (!rec.customer) {
         if (rec.customer_name) rec.customer = rec.customer_name;
         else if (rec.client) rec.customer = rec.client;
         else if (rec.party) rec.customer = rec.party;
-        else if (rec.name && (resourceName === 'invoices' || resourceName === 'quotes' || resourceName === 'sales-orders' || resourceName === 'payments-received')) rec.customer = rec.name;
+        else if (rec.name && (resourceName === 'invoices' || resourceName === 'quotes' || resourceName === 'sales-orders' || resourceName === 'payments-received' || resourceName === 'delivery-challans' || resourceName === 'credit-notes' || resourceName === 'recurring-invoices' || resourceName === 'retainer-invoices')) rec.customer = rec.name;
       }
       if (!rec.vendor) {
         if (rec.vendor_name) rec.vendor = rec.vendor_name;
         else if (rec.supplier) rec.vendor = rec.supplier;
         else if (rec.party) rec.vendor = rec.party;
-        else if (rec.name && (resourceName === 'bills' || resourceName === 'purchase-orders' || resourceName === 'expenses' || resourceName === 'payments-made')) rec.vendor = rec.name;
+        else if (rec.name && (resourceName === 'bills' || resourceName === 'purchase-orders' || resourceName === 'expenses' || resourceName === 'payments-made' || resourceName === 'vendor-credits')) rec.vendor = rec.name;
       }
       if (!rec.active && rec.active !== false) {
         rec.active = true;
@@ -684,7 +783,11 @@ function openUniversalImportModal(resourceName, title) {
     let warnCount = 0;
 
     for (const rec of mappedRecords) {
-      const hasMissingReq = fields.some(f => f.req && !String(rec[f.key] || '').trim());
+      const hasMissingReq = fields.some(f => {
+        if (!f.req) return false;
+        if (f.key === 'name' && (rec.name || rec.company || rec.customer || rec.vendor)) return false;
+        return !String(rec[f.key] || '').trim();
+      });
       if (hasMissingReq) warnCount++;
       else readyCount++;
     }

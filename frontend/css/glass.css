@@ -22,8 +22,8 @@
   --tx: #0f172a;
   --tx2: #475569;
   --tx-muted: #64748b;
-  --in-bd: #cbd5e1;
-  --in-bd-hover: #94a3b8;
+  --in-bd: #94a3b8;
+  --in-bd-hover: #64748b;
   --in-bg: #ffffff;
   --bd-glass: rgba(255, 255, 255, 0.55);
   --bd-glass-subtle: rgba(255, 255, 255, 0.35);
@@ -70,8 +70,8 @@
   --tx: #f8fafc;
   --tx2: #cbd5e1;
   --tx-muted: #94a3b8;
-  --in-bd: #475569;
-  --in-bd-hover: #64748b;
+  --in-bd: #64748b;
+  --in-bd-hover: #94a3b8;
   --in-bg: #1e293b;
   --bd-glass: rgba(255, 255, 255, 0.14);
   --bd-glass-subtle: rgba(255, 255, 255, 0.08);
@@ -930,7 +930,7 @@ main, .main-wrapper {
 .in, .form-control {
   width: 100%;
   height: 36px;
-  border: 1px solid var(--in-bd, #cbd5e1) !important;
+  border: 1.5px solid var(--in-bd, #94a3b8) !important;
   border-radius: 9px;
   padding: 0 12px;
   background: var(--in-bg, #ffffff) !important;
@@ -945,7 +945,7 @@ textarea.in {
   padding: 10px 12px;
 }
 .in:hover, .form-control:hover {
-  border-color: var(--in-bd-hover, #94a3b8) !important;
+  border-color: var(--in-bd-hover, #64748b) !important;
 }
 .in:focus, .form-control:focus {
   background: var(--in-bg, #ffffff) !important;
@@ -2368,6 +2368,34 @@ select option {
   min-height: 38px;
   margin-bottom: 10px;
   gap: 16px;
+}
+
+.g .zb-form-row.fg,
+.form-grid-aligned .zb-form-row.fg {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+  margin-bottom: 14px !important;
+  min-height: auto !important;
+}
+
+.g .zb-form-row.fg .zb-form-label,
+.form-grid-aligned .zb-form-row.fg .zb-form-label {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  height: 20px !important;
+  line-height: 20px !important;
+  margin: 0 !important;
+}
+
+.g .zb-form-row.fg .zb-form-ctrl,
+.form-grid-aligned .zb-form-row.fg .zb-form-ctrl {
+  width: 100% !important;
+  flex: 1 !important;
 }
 
 .zb-form-row.align-top {

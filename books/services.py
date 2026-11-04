@@ -4994,3 +4994,192 @@ def lookup_gstin_details(raw_gstin):
         'taxpayer_type': 'Taxpayer (Regular)'
     }
 
+
+
+def col_letter_to_index(cell_ref):
+    letters = re.sub(r'[^A-Z]', '', str(cell_ref).upper())
+    idx = 0
+    for char in letters:
+        idx = idx * 26 + (ord(char) - ord('A') + 1)
+    return max(idx - 1, 0)
+
+
+def parse_import_file(file_obj, filename=''):
+    """
+    Parses any uploaded file: Excel (.xlsx, .xlsm, .xls), CSV (.csv), TSV (.tsv), TXT, or JSON.
+    Pure-Python standard-library parser with zero external package requirements.
+    Returns:
+    {
+        'status': 'ok',
+        'filename': filename,
+        'headers': [...],
+        'rows': [[...], ...],
+        'total_rows': int,
+        'records': [{col: val, ...}, ...]
+    }
+    """
+    import io
+    import csv
+    import json
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    filename_lower = (filename or getattr(file_obj, 'name', '') or '').lower()
+    content_bytes = file_obj.read() if hasattr(file_obj, 'read') else bytes(file_obj)
+
+    headers = []
+    clean_rows = []
+
+    # 1. Check for XLSX / XLSM ZIP archive
+    is_zip = content_bytes.startswith(b'PK\x03\x04')
+    if is_zip or filename_lower.endswith(('.xlsx', '.xlsm', '.xltx')):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content_bytes), 'r') as z:
+                ns = {'ns': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                shared_strings = []
+                if 'xl/sharedStrings.xml' in z.namelist():
+                    ss_root = ET.fromstring(z.read('xl/sharedStrings.xml'))
+                    for si in ss_root.findall('.//ns:si', ns):
+                        t_parts = [t_el.text or '' for t_el in si.findall('.//ns:t', ns)]
+                        shared_strings.append(''.join(t_parts))
+
+                ws_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet') and n.endswith('.xml')]
+                ws_files.sort()
+                if not ws_files:
+                    raise ValueError('No worksheets found in Excel workbook.')
+
+                # Pick worksheet with largest data size
+                best_ws = ws_files[0]
+                max_ws_len = 0
+                for ws_c in ws_files:
+                    c_len = len(z.read(ws_c))
+                    if c_len > max_ws_len:
+                        max_ws_len = c_len
+                        best_ws = ws_c
+
+                ws_root = ET.fromstring(z.read(best_ws))
+                raw_rows = []
+                for row in ws_root.findall('.//ns:row', ns):
+                    cells = row.findall('ns:c', ns)
+                    if not cells:
+                        continue
+                    row_dict = {}
+                    max_col = 0
+                    for c in cells:
+                        ref = c.attrib.get('r', '')
+                        col = col_letter_to_index(ref) if ref else max_col
+                        max_col = max(max_col, col)
+                        t = c.attrib.get('t')
+                        v_el = c.find('ns:v', ns)
+                        val = v_el.text if v_el is not None else ''
+                        if t == 's' and val.isdigit():
+                            idx = int(val)
+                            val = shared_strings[idx] if idx < len(shared_strings) else val
+                        elif t == 'inlineStr':
+                            is_t = c.find('.//ns:t', ns)
+                            val = is_t.text if is_t is not None else ''
+                        elif t == 'b':
+                            val = 'true' if val == '1' else 'false'
+                        row_dict[col] = str(val or '').strip()
+                    row_list = [row_dict.get(c_idx, '') for c_idx in range(max_col + 1)]
+                    if any(row_list):
+                        raw_rows.append(row_list)
+
+                if raw_rows:
+                    best_header_idx = 0
+                    max_non_empty = 0
+                    for idx in range(min(12, len(raw_rows))):
+                        cnt = sum(1 for c in raw_rows[idx] if c)
+                        if cnt > max_non_empty:
+                            max_non_empty = cnt
+                            best_header_idx = idx
+
+                    raw_headers = raw_rows[best_header_idx]
+                    while raw_headers and not raw_headers[-1]:
+                        raw_headers.pop()
+                    headers = [str(h or f'Column {i+1}').strip() for i, h in enumerate(raw_headers)]
+
+                    for r in raw_rows[best_header_idx + 1:]:
+                        padded = [str(r[i] if i < len(r) else '').strip() for i in range(len(headers))]
+                        if any(padded):
+                            clean_rows.append(padded)
+        except Exception as e:
+            raise ValueError(f"Failed to parse Excel workbook: {str(e)}")
+
+    # 2. Check for JSON
+    elif filename_lower.endswith('.json'):
+        try:
+            text = content_bytes.decode('utf-8-sig', errors='ignore')
+            data = json.loads(text)
+            records_arr = data if isinstance(data, list) else (
+                data.get('records') or data.get('data') or data.get('results') or [data]
+            )
+            if records_arr and isinstance(records_arr[0], dict):
+                headers = list(records_arr[0].keys())
+                for rec in records_arr:
+                    clean_rows.append([str(rec.get(h, '') or '').strip() for h in headers])
+        except Exception as e:
+            raise ValueError(f"Failed to parse JSON file: {str(e)}")
+
+    # 3. CSV / TSV / TXT
+    else:
+        try:
+            text = None
+            for enc in ('utf-8-sig', 'utf-8', 'latin-1'):
+                try:
+                    text = content_bytes.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if text is None:
+                text = content_bytes.decode('utf-8', errors='ignore')
+
+            sample = text[:4096]
+            first_lines = [l.strip() for l in sample.splitlines() if l.strip()][:5]
+            delim = ','
+            if first_lines:
+                counts = {',': 0, ';': 0, '\t': 0}
+                for l in first_lines:
+                    for ch in counts:
+                        counts[ch] += l.count(ch)
+                if counts['\t'] > counts[','] and counts['\t'] > counts[';']:
+                    delim = '\t'
+                elif counts[';'] > counts[','] and counts[';'] > counts['\t']:
+                    delim = ';'
+
+            reader = csv.reader(io.StringIO(text), delimiter=delim)
+            raw_lines = [row for row in reader if any(c.strip() for c in row)]
+            if raw_lines:
+                best_header_idx = 0
+                max_cnt = 0
+                for idx in range(min(8, len(raw_lines))):
+                    cnt = sum(1 for c in raw_lines[idx] if c.strip())
+                    if cnt > max_cnt:
+                        max_cnt = cnt
+                        best_header_idx = idx
+
+                raw_headers = raw_lines[best_header_idx]
+                while raw_headers and not raw_headers[-1].strip():
+                    raw_headers.pop()
+                headers = [str(h or f'Column {i+1}').strip() for i, h in enumerate(raw_headers)]
+
+                for r in raw_lines[best_header_idx + 1:]:
+                    padded = [str(r[i] if i < len(r) else '').strip() for i in range(len(headers))]
+                    if any(padded):
+                        clean_rows.append(padded)
+        except Exception as e:
+            raise ValueError(f"Failed to parse CSV/text file: {str(e)}")
+
+    records = [
+        {headers[i]: clean_rows[r_idx][i] for i in range(len(headers))}
+        for r_idx in range(len(clean_rows))
+    ]
+
+    return {
+        'status': 'ok',
+        'filename': filename,
+        'headers': headers,
+        'rows': clean_rows,
+        'total_rows': len(clean_rows),
+        'records': records
+    }

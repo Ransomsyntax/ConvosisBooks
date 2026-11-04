@@ -389,10 +389,10 @@ async function partyForm(kind, id) {
           <button type="button" class="btn" id="btn_party_preload_demo" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;height:32px;" title="Preload sample ${entityLabel} details">
             <i class="fa-solid fa-bolt" style="color:var(--accent);"></i> <span>⚡ Quick Fill</span>
           </button>
-          <button type="button" class="btn" id="btn_party_import_file_trigger" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;height:32px;" title="Import data from CSV/JSON into this form">
+          <button type="button" class="btn" id="btn_party_import_file_trigger" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;height:32px;" title="Import data from Excel/CSV/JSON into this form">
             <i class="fa-solid fa-file-import" style="color:#10b981;"></i> <span>📁 Load File Data</span>
           </button>
-          <input type="file" id="party_file_quick_import" accept=".csv,.tsv,.json,text/csv,application/json" style="display:none;">
+          <input type="file" id="party_file_quick_import" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;">
         </div>
       </div>
 
@@ -886,99 +886,131 @@ async function partyForm(kind, id) {
           });
         }
 
-        // Quick Load CSV/JSON File Data directly into Form
+        // Quick Load Excel/CSV/JSON File Data directly into Form
         const btnImportTrigger = $('#btn_party_import_file_trigger', modal.el);
         const quickFileInput = $('#party_file_quick_import', modal.el);
         if (btnImportTrigger && quickFileInput) {
           btnImportTrigger.addEventListener('click', () => quickFileInput.click());
-          quickFileInput.addEventListener('change', () => {
+          quickFileInput.addEventListener('change', async () => {
             if (!quickFileInput.files.length) return;
             const fObj = quickFileInput.files[0];
-            const reader = new FileReader();
-            reader.onload = ev => {
-              try {
-                const text = ev.target.result;
-                let rows = [];
-                if (fObj.name.endsWith('.json')) {
+            const origText = btnImportTrigger.innerHTML;
+            btnImportTrigger.innerHTML = `${spinner} <span>Loading...</span>`;
+            btnImportTrigger.disabled = true;
+
+            try {
+              let parsed = null;
+              const isExcel = /\.(xlsx|xls|xlsm|xltx)$/i.test(fObj.name);
+              if (isExcel) {
+                const fd = new FormData();
+                fd.append('file', fObj);
+                parsed = await api('import/parse-file/', { method: 'POST', body: fd });
+              } else if (fObj.name.toLowerCase().endsWith('.json')) {
+                try {
+                  const text = await fObj.text();
                   const jData = JSON.parse(text);
-                  rows = Array.isArray(jData) ? jData : (jData.records || jData.data || [jData]);
-                } else {
-                  const p = parseCsvString(text);
-                  const h = p.headers.map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
-                  rows = p.rows.map(rowVals => {
-                    const obj = {};
-                    h.forEach((head, i) => { obj[head] = rowVals[i] || ''; });
-                    return obj;
-                  });
+                  const arr = Array.isArray(jData) ? jData : (jData.records || jData.data || [jData]);
+                  const headers = Object.keys(arr[0] || {});
+                  const rows = arr.map(obj => headers.map(h => obj[h] ?? ''));
+                  parsed = { headers, rows };
+                } catch (e) {
+                  const fd = new FormData();
+                  fd.append('file', fObj);
+                  parsed = await api('import/parse-file/', { method: 'POST', body: fd });
                 }
-                if (!rows.length) {
-                  toast('No records found in selected file.', 'err');
-                  return;
-                }
-                const firstRec = rows[0];
-                const getVal = (...keys) => {
-                  for (const k of keys) {
-                    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    if (firstRec[cleanK] != null && String(firstRec[cleanK]).trim()) return String(firstRec[cleanK]).trim();
-                    if (firstRec[k] != null && String(firstRec[k]).trim()) return String(firstRec[k]).trim();
+              } else {
+                try {
+                  const text = await fObj.text();
+                  parsed = parseCsvString(text);
+                  if (!parsed.headers.length || !parsed.rows.length) {
+                    const fd = new FormData();
+                    fd.append('file', fObj);
+                    parsed = await api('import/parse-file/', { method: 'POST', body: fd });
                   }
-                  return '';
-                };
+                } catch (e) {
+                  const fd = new FormData();
+                  fd.append('file', fObj);
+                  parsed = await api('import/parse-file/', { method: 'POST', body: fd });
+                }
+              }
 
-                const nameVal = getVal('name', 'customer_name', 'vendor_name', 'client', 'display_name', 'company');
-                const compVal = getVal('company', 'company_name', 'business_name', 'organization');
-                const emailVal = getVal('email', 'email_address', 'mail');
-                const phoneVal = getVal('phone', 'phone_number', 'mobile', 'contact_number');
-                const gstinVal = getVal('gstin', 'gst', 'gst_number');
-                const panVal = getVal('pan', 'pan_number');
-                const addrVal = getVal('billing_address', 'address', 'street');
-                const cityVal = getVal('billing_city', 'city', 'town');
-                const pinVal = getVal('billing_pincode', 'pincode', 'pin_code', 'zip');
+              const headers = (parsed.headers || []).map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
+              const rows = (parsed.rows || []).map(rowVals => {
+                const obj = {};
+                headers.forEach((head, i) => { obj[head] = rowVals[i] || ''; });
+                return obj;
+              });
 
-                if (nameVal && $('#name', modal.el)) $('#name', modal.el).value = nameVal;
-                if (compVal && $('#company', modal.el)) $('#company', modal.el).value = compVal;
-                if (emailVal && $('#email', modal.el)) $('#email', modal.el).value = emailVal;
-                if (phoneVal && $('#phone', modal.el)) $('#phone', modal.el).value = phoneVal;
-                if (gstinVal && $('#gstin', modal.el)) $('#gstin', modal.el).value = gstinVal;
-                if (panVal && $('#pan', modal.el)) $('#pan', modal.el).value = panVal;
-                if (addrVal && $('#billing_address', modal.el)) $('#billing_address', modal.el).value = addrVal;
-                if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
-                if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
+              if (!rows.length) {
+                toast('No records found in selected file.', 'err');
+                return;
+              }
+              const firstRec = rows[0];
+              const getVal = (...keys) => {
+                for (const k of keys) {
+                  const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                  if (firstRec[cleanK] != null && String(firstRec[cleanK]).trim()) return String(firstRec[cleanK]).trim();
+                  if (firstRec[k] != null && String(firstRec[k]).trim()) return String(firstRec[k]).trim();
+                }
+                return '';
+              };
 
-                const fnVal = getVal('first_name', 'firstname', 'given_name');
-                const lnVal = getVal('last_name', 'lastname', 'surname');
-                const cpVal = getVal('contact_person', 'contact', 'primary_contact', 'attention');
-                const stateVal = getVal('state', 'billing_state', 'place_of_supply', 'source_of_supply');
-                const obVal = getVal('opening_balance', 'balance', 'opening_bal');
-                const ptVal = getVal('payment_terms', 'terms', 'payment_terms_days');
+              const nameVal = getVal('name', 'customer_name', 'vendor_name', 'client', 'display_name', 'company');
+              const compVal = getVal('company', 'company_name', 'business_name', 'organization');
+              const emailVal = getVal('email', 'email_address', 'mail');
+              const phoneVal = getVal('phone', 'phone_number', 'mobile', 'contact_number');
+              const gstinVal = getVal('gstin', 'gst', 'gst_number');
+              const panVal = getVal('pan', 'pan_number');
+              const addrVal = getVal('billing_address', 'address', 'street');
+              const cityVal = getVal('billing_city', 'city', 'town');
+              const pinVal = getVal('billing_pincode', 'pincode', 'pin_code', 'zip');
 
-                if (fnVal && $('#contact_first_name', modal.el)) $('#contact_first_name', modal.el).value = fnVal;
-                if (lnVal && $('#contact_last_name', modal.el)) $('#contact_last_name', modal.el).value = lnVal;
-                if (cpVal && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = cpVal;
-                else if ((fnVal || lnVal) && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = `${fnVal} ${lnVal}`.trim();
-                if (stateVal) {
-                  if ($('#billing_state', modal.el)) $('#billing_state', modal.el).value = stateVal;
-                  if ($('#shipping_state', modal.el)) $('#shipping_state', modal.el).value = stateVal;
-                  const pos = $('#place_of_supply', modal.el) || $('#source_of_supply', modal.el);
-                  if (pos) {
-                    for (const opt of pos.options) {
-                      if (opt.text.toLowerCase().includes(stateVal.toLowerCase()) || opt.value.toLowerCase().includes(stateVal.toLowerCase())) {
-                        pos.value = opt.value;
-                        break;
-                      }
+              if (nameVal && $('#name', modal.el)) $('#name', modal.el).value = nameVal;
+              if (compVal && $('#company', modal.el)) $('#company', modal.el).value = compVal;
+              if (emailVal && $('#email', modal.el)) $('#email', modal.el).value = emailVal;
+              if (phoneVal && $('#phone', modal.el)) $('#phone', modal.el).value = phoneVal;
+              if (gstinVal && $('#gstin', modal.el)) $('#gstin', modal.el).value = gstinVal;
+              if (panVal && $('#pan', modal.el)) $('#pan', modal.el).value = panVal;
+              if (addrVal && $('#billing_address', modal.el)) $('#billing_address', modal.el).value = addrVal;
+              if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
+              if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
+
+              const fnVal = getVal('first_name', 'firstname', 'given_name');
+              const lnVal = getVal('last_name', 'lastname', 'surname');
+              const cpVal = getVal('contact_person', 'contact', 'primary_contact', 'attention');
+              const stateVal = getVal('state', 'billing_state', 'place_of_supply', 'source_of_supply');
+              const obVal = getVal('opening_balance', 'balance', 'opening_bal');
+              const ptVal = getVal('payment_terms', 'terms', 'payment_terms_days');
+
+              if (fnVal && $('#contact_first_name', modal.el)) $('#contact_first_name', modal.el).value = fnVal;
+              if (lnVal && $('#contact_last_name', modal.el)) $('#contact_last_name', modal.el).value = lnVal;
+              if (cpVal && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = cpVal;
+              else if ((fnVal || lnVal) && $('#contact_person', modal.el)) $('#contact_person', modal.el).value = `${fnVal} ${lnVal}`.trim();
+              if (stateVal) {
+                if ($('#billing_state', modal.el)) $('#billing_state', modal.el).value = stateVal;
+                if ($('#shipping_state', modal.el)) $('#shipping_state', modal.el).value = stateVal;
+                const pos = $('#place_of_supply', modal.el) || $('#source_of_supply', modal.el);
+                if (pos) {
+                  for (const opt of pos.options) {
+                    if (opt.text.toLowerCase().includes(stateVal.toLowerCase()) || opt.value.toLowerCase().includes(stateVal.toLowerCase())) {
+                      pos.value = opt.value;
+                      break;
                     }
                   }
                 }
-                if (obVal && $('#opening_balance', modal.el)) $('#opening_balance', modal.el).value = obVal;
-                if (ptVal && $('#payment_terms', modal.el)) $('#payment_terms', modal.el).value = ptVal;
-                quickFileInput.value = '';
-
-                toast(`Loaded data for ${nameVal || 'Customer'} (1 of ${rows.length} rows) into form!`, 'ok');
-              } catch(e) {
-                toast('Failed to load file: ' + e.message, 'err');
               }
-            };
-            reader.readAsText(fObj);
+              if (obVal && $('#opening_balance', modal.el)) $('#opening_balance', modal.el).value = obVal;
+              if (ptVal && $('#payment_terms', modal.el)) $('#payment_terms', modal.el).value = ptVal;
+              quickFileInput.value = '';
+
+              toast(`Loaded data for ${nameVal || entityLabel} (1 of ${rows.length} rows) into form!`, 'ok');
+            } catch (e) {
+              toast('Failed to load file: ' + e.message, 'err');
+            } finally {
+              btnImportTrigger.innerHTML = origText;
+              btnImportTrigger.disabled = false;
+              quickFileInput.value = '';
+            }
           });
         }
 
@@ -1009,73 +1041,6 @@ async function partyForm(kind, id) {
             const sos = $('#source_of_supply', modal.el);
             if (sos) sos.value = '[32] Kerala';
             toast('Preloaded sample vendor details into form!', 'ok');
-          });
-        }
-
-        const btnImportTrigger = $('#btn_party_import_file_trigger', modal.el);
-        const quickFileInput = $('#party_file_quick_import', modal.el);
-        if (btnImportTrigger && quickFileInput) {
-          btnImportTrigger.addEventListener('click', () => quickFileInput.click());
-          quickFileInput.addEventListener('change', () => {
-            if (!quickFileInput.files.length) return;
-            const fObj = quickFileInput.files[0];
-            const reader = new FileReader();
-            reader.onload = ev => {
-              try {
-                const text = ev.target.result;
-                let rows = [];
-                if (fObj.name.endsWith('.json')) {
-                  const jData = JSON.parse(text);
-                  rows = Array.isArray(jData) ? jData : (jData.records || jData.data || [jData]);
-                } else {
-                  const p = parseCsvString(text);
-                  const h = p.headers.map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
-                  rows = p.rows.map(rowVals => {
-                    const obj = {};
-                    h.forEach((head, i) => { obj[head] = rowVals[i] || ''; });
-                    return obj;
-                  });
-                }
-                if (!rows.length) {
-                  toast('No records found in selected file.', 'err');
-                  return;
-                }
-                const firstRec = rows[0];
-                const getVal = (...keys) => {
-                  for (const k of keys) {
-                    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    if (firstRec[cleanK] != null && String(firstRec[cleanK]).trim()) return String(firstRec[cleanK]).trim();
-                    if (firstRec[k] != null && String(firstRec[k]).trim()) return String(firstRec[k]).trim();
-                  }
-                  return '';
-                };
-
-                const nameVal = getVal('name', 'vendor_name', 'supplier', 'payee', 'company');
-                const compVal = getVal('company', 'company_name', 'business_name', 'organization');
-                const emailVal = getVal('email', 'email_address', 'mail');
-                const phoneVal = getVal('phone', 'phone_number', 'mobile', 'contact_number');
-                const gstinVal = getVal('gstin', 'gst', 'gst_number');
-                const panVal = getVal('pan', 'pan_number');
-                const addrVal = getVal('billing_address', 'address', 'street');
-                const cityVal = getVal('billing_city', 'city', 'town');
-                const pinVal = getVal('billing_pincode', 'pincode', 'pin_code', 'zip');
-
-                if (nameVal && $('#name', modal.el)) $('#name', modal.el).value = nameVal;
-                if (compVal && $('#company', modal.el)) $('#company', modal.el).value = compVal;
-                if (emailVal && $('#email', modal.el)) $('#email', modal.el).value = emailVal;
-                if (phoneVal && $('#phone', modal.el)) $('#phone', modal.el).value = phoneVal;
-                if (gstinVal && $('#gstin', modal.el)) $('#gstin', modal.el).value = gstinVal;
-                if (panVal && $('#pan', modal.el)) $('#pan', modal.el).value = panVal;
-                if (addrVal && $('#billing_address', modal.el)) $('#billing_address', modal.el).value = addrVal;
-                if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
-                if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
-
-                toast(`Loaded data for ${nameVal || 'Vendor'} (1 of ${rows.length} rows) into form!`, 'ok');
-              } catch(e) {
-                toast('Failed to load file: ' + e.message, 'err');
-              }
-            };
-            reader.readAsText(fObj);
           });
         }
 
@@ -4182,7 +4147,7 @@ async function projectModal(id) {
   const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: '', billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
-    body: `<div class="g">
+    body: `<div class="g form-grid-aligned">
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
       ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Internal / No Customer'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', col: 's6' })}
@@ -4445,7 +4410,7 @@ async function recurringInvoiceModal(id) {
   const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: custs[0]?.id, frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00', status: 'active' };
   formModal({
     title: id ? 'Edit Recurring Invoice Profile' : 'New Recurring Invoice Profile',
-    body: `<div class="g">
+    body: `<div class="g form-grid-aligned">
       ${fld({ name: 'profile_name', label: 'Profile Name', req: true, value: o.profile_name, col: 's6', ph: 'e.g. Monthly Retainer Support' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: custs.map(c => [c.id, c.name]), value: o.customer_id || o.customer, req: true, col: 's6' })}
       ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']], value: o.frequency, col: 's6' })}

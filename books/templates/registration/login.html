@@ -108,6 +108,11 @@
           try { localStorage.setItem(STORAGE_KEY_USER, u); } catch(e){}
           setCookie('convosis_last_user', u);
         }
+        const submitBtn = document.getElementById('submitLoginBtn');
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
+        }
       });
     }
 

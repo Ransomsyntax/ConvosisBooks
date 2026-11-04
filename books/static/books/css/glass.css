@@ -162,17 +162,18 @@ html, body {
 #top, .top-bar {
   position: fixed;
   inset: 0 0 auto;
-  height: 48px;
+  height: 50px;
   background: var(--surface-glass);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 20px;
+  gap: 10px;
+  padding: 0 16px;
   z-index: 50;
   border-bottom: 1px solid var(--bd-glass);
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.06), var(--specular-sheen);
+  box-sizing: border-box;
   transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
@@ -246,20 +247,30 @@ html, body {
   position: relative;
   flex: 0 1 420px;
   margin-left: 4px;
+  height: 36px;
 }
 #gs input, .search-input {
   width: 100%;
   height: 36px;
-  border-radius: 10px;
-  border: 1px solid var(--bd-glass);
-  background: var(--surface-glass-subtle);
+  border-radius: 9px;
+  border: 1.5px solid rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   color: var(--tx);
   padding: 0 40px 0 34px;
   font-size: 13.5px;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s ease;
+  box-sizing: border-box;
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.04), var(--specular-sheen);
+}
+[data-theme="dark"] #gs input,
+[data-theme="dark"] .search-input {
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  background: rgba(15, 23, 42, 0.6);
+}
+#gs input:hover, .search-input:hover {
+  border-color: rgba(99, 102, 241, 0.6);
 }
 .search-icon {
   position: absolute;
@@ -304,16 +315,29 @@ html, body {
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
-  max-width: 270px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 5px 12px;
+  max-width: 420px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 12px;
   border-radius: 9px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: var(--specular-sheen);
+}
+#orgname {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+#orgfy {
+  flex-shrink: 0;
+  white-space: nowrap;
+  display: inline-block;
 }
 .org:hover, .org-dropdown-btn:hover {
   background: var(--surface-glass-elevated);
@@ -335,15 +359,23 @@ html, body {
   border: 1px solid var(--bd-glass);
   color: var(--tx);
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 0 12px;
+  height: 36px;
+  box-sizing: border-box;
   border-radius: 9px;
   font-size: 12.5px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap !important;
+  flex-shrink: 0;
+  line-height: 1;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: var(--specular-sheen);
+}
+.theme-toggle-btn span {
+  white-space: nowrap;
 }
 .theme-toggle-btn:hover {
   background: var(--surface-glass-elevated);
@@ -686,16 +718,20 @@ body.col .user-snippet {
 }
 body.col main, #app.sidebar-collapsed .main-wrapper {
   margin-left: 68px;
+  width: calc(100% - 68px);
+  max-width: calc(100% - 68px);
 }
 
 main, .main-wrapper {
   margin-left: 218px;
-  padding-top: 48px;
+  width: calc(100% - 218px);
+  max-width: calc(100% - 218px);
+  box-sizing: border-box;
+  padding-top: 50px;
   min-height: 100vh;
   min-width: 0;
-  max-width: 100%;
   overflow-x: hidden;
-  transition: margin 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: margin 0.25s cubic-bezier(0.16, 1, 0.3, 1), width 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .pg, .content-area {
   padding: 16px 24px 60px;
@@ -1121,7 +1157,7 @@ tr:hover td {
   align-items: center;
 }
 
-#umm.pop {
+#umm.pop, .user-dropdown {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
@@ -1131,13 +1167,14 @@ tr:hover td {
   padding: 7px;
   display: flex !important;
   flex-direction: column !important;
-  background: var(--surface-glass-solid);
-  backdrop-filter: blur(28px) saturate(var(--glass-sat));
-  -webkit-backdrop-filter: blur(28px) saturate(var(--glass-sat));
+  background: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
   color: var(--tx);
-  border: 1px solid var(--bd-glass);
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
   border-radius: 14px;
-  box-shadow: 0 16px 42px -4px rgba(0, 0, 0, 0.18), var(--specular-sheen);
+  box-shadow: 0 16px 42px -4px rgba(0, 0, 0, 0.18) !important;
   z-index: 1000;
 
   opacity: 0;
@@ -3588,4 +3625,125 @@ select option {
   align-items: center;
   justify-content: center;
   padding: 16px;
+}
+
+/* QA Defect Fixes - Solid Profile Dropdown, Table Alignment & Radio Buttons */
+[data-theme="dark"] #umm.pop,
+[data-theme="dark"] .user-dropdown {
+  background: #1e293b !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 42px -4px rgba(0, 0, 0, 0.5) !important;
+}
+
+th.r, td.r, table th.r, table td.r {
+  text-align: right !important;
+}
+th.c, td.c, table th.c, table td.c {
+  text-align: center !important;
+}
+th.l, td.l, table th.l, table td.l {
+  text-align: left !important;
+}
+
+/* Goods and Service Radio Buttons High-Contrast Styling */
+.convosis-radio-group, .convo-radio-group {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.convosis-radio-group .radio-label,
+.convo-radio-group .radio-label {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  padding: 6px 14px !important;
+  border-radius: 8px !important;
+  border: 1.5px solid #cbd5e1 !important;
+  background: #ffffff !important;
+  color: #1e293b !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  transition: all 0.2s ease !important;
+  user-select: none !important;
+}
+[data-theme="dark"] .convosis-radio-group .radio-label,
+[data-theme="dark"] .convo-radio-group .radio-label {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  background: rgba(30, 41, 59, 0.8) !important;
+  color: #f8fafc !important;
+}
+.convosis-radio-group .radio-label:has(input[type="radio"]:checked),
+.convo-radio-group .radio-label:has(input[type="radio"]:checked) {
+  border-color: #2563eb !important;
+  background: rgba(37, 99, 235, 0.08) !important;
+  color: #1d4ed8 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 0 0 1px #2563eb !important;
+}
+[data-theme="dark"] .convosis-radio-group .radio-label:has(input[type="radio"]:checked),
+[data-theme="dark"] .convo-radio-group .radio-label:has(input[type="radio"]:checked) {
+  border-color: #3b82f6 !important;
+  background: rgba(59, 130, 246, 0.18) !important;
+  color: #60a5fa !important;
+  box-shadow: 0 0 0 1px #3b82f6 !important;
+}
+.convosis-radio-group .radio-label input[type="radio"],
+.convo-radio-group .radio-label input[type="radio"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 18px !important;
+  height: 18px !important;
+  border: 2px solid #94a3b8 !important;
+  border-radius: 50% !important;
+  outline: none !important;
+  cursor: pointer !important;
+  background: #ffffff !important;
+  position: relative !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  margin: 0 !important;
+  transition: all 0.15s ease !important;
+}
+.convosis-radio-group .radio-label input[type="radio"]:checked,
+.convo-radio-group .radio-label input[type="radio"]:checked {
+  border-color: #2563eb !important;
+  background: #ffffff !important;
+}
+.convosis-radio-group .radio-label input[type="radio"]:checked::after,
+.convo-radio-group .radio-label input[type="radio"]:checked::after {
+  content: '' !important;
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  background: #2563eb !important;
+}
+
+/* Login submit button permanent styling */
+.login-btn-submit,
+.login-btn-submit:hover,
+.login-btn-submit:active,
+.login-btn-submit:focus,
+.login-btn-submit:disabled {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
+  opacity: 1 !important;
+}
+.login-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: login-spin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+@keyframes login-spin {
+  to { transform: rotate(360deg); }
 }

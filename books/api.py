@@ -237,11 +237,14 @@ class Resource:
         return qs
 
     def export(self, qs):
+        rows = list(qs)
+        if not rows:
+            return JsonResponse({'error': 'No data available to export.'}, status=400)
         resp = HttpResponse(content_type='text/csv; charset=utf-8')
         resp['Content-Disposition'] = f'attachment; filename="{self.name}.csv"'
         w = csv.writer(resp)
         w.writerow([h for h, _ in self.csv_cols])
-        for r in self.rows(list(qs)):
+        for r in self.rows(rows):
             w.writerow([safe_cell(r.get(k, '')) for _, k in self.csv_cols])
         return resp
 
@@ -566,9 +569,9 @@ class PartyResource(Resource):
     def clean(self, data):
         c = Cleaner(data)
         out = {
-            'name': c.text('name', True, 200),
+            'name': c.text('name', True, 200, pattern=re.compile(r'^[^@#$%^*+=~`<>{}[\]\\]+$'), pattern_msg='Display Name cannot contain special characters like @, #, $, %, ^, *.'),
             'company': c.text('company', max_len=200),
-            'contact_person': c.text('contact_person', max_len=120),
+            'contact_person': c.text('contact_person', max_len=120, pattern=re.compile(r"^[a-zA-Z\s\.\'\-]*$"), pattern_msg='Primary contact name can only contain letters, spaces, hyphens, and dots.'),
             'email': c.text('email', max_len=254, email=True),
             'phone': c.text('phone', max_len=30, phone=True),
             'mobile': c.text('mobile', max_len=30, phone=True),
@@ -854,14 +857,14 @@ class ItemResource(Resource):
     def clean(self, data, instance=None):
         c = Cleaner(data)
         out = {
-            'name': c.text('name', True, 200),
-            'sku': c.text('sku', False, 60, upper=True),
+            'name': c.text('name', True, 200, pattern=re.compile(r'^[^#@!$%^*+=~`<>?[\]\\{}]+$'), pattern_msg='Item Name cannot contain unsupported special characters (cannot contain #, @, !, $, %, ^, *).'),
+            'sku': c.text('sku', False, 60, upper=True, pattern=re.compile(r'^[A-Za-z0-9_\-\.\/]*$'), pattern_msg='SKU can only contain letters, numbers, hyphens, slashes, and dots.'),
             'item_type': c.choice('item_type', ['goods', 'service'], 'goods'),
-            'category': c.text('category', max_len=100),
+            'category': c.text('category', max_len=100, pattern=re.compile(r"^[a-zA-Z0-9\s\.\,\'\-\ &\/\(\)]*$"), pattern_msg='Category can only contain letters, numbers, spaces, and standard separators (&, -, /).'),
             'hsn_sac': c.text('hsn_sac', max_len=6),
             'unit': c.text('unit', max_len=20, default='nos') or 'nos',
             'description': c.text('description', max_len=2000),
-            'selling_price': c.number('selling_price', lo=Decimal('0'), hi=Decimal('999999999')),
+            'selling_price': c.number('selling_price', required=True, lo=Decimal('0'), hi=Decimal('999999999')),
             'purchase_price': c.number('purchase_price', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999')),
             'gst_rate': c.number('gst_rate', default=Decimal('18.00')),
             'track_inventory': c.boolean('track_inventory'),

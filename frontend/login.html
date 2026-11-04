@@ -108,15 +108,21 @@
     if (form) {
       form.addEventListener('submit', function(e) {
         persistCurrentCredentials();
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
+        }
         e.preventDefault();
-        window.location.href = 'index.html';
+        setTimeout(function() { window.location.href = 'index.html'; }, 200);
       });
     }
     if (submitBtn) {
       submitBtn.addEventListener('click', function(e) {
         persistCurrentCredentials();
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
         e.preventDefault();
-        window.location.href = 'index.html';
+        setTimeout(function() { window.location.href = 'index.html'; }, 200);
       });
     }
     if (toggleBtn && passInput) {

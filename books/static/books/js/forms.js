@@ -1062,6 +1062,36 @@ async function partyForm(kind, id) {
       renderDocs();
     },
     onSubmit: async d => {
+      // DEF_CB_007: Validate Display Name
+      const dispName = (d.name || '').trim();
+      if (!dispName) {
+        throw new ApiErr(400, { name: 'Customer Display Name is required.' }, 'Customer Display Name is required.');
+      }
+      if (/[@#$%^*+=~`<>{}[\]\\]/.test(dispName)) {
+        throw new ApiErr(400, { name: 'Display Name cannot contain special characters like @, #, $, %, ^, *.' }, 'Display Name contains invalid special characters.');
+      }
+
+      // DEF_CB_006: Validate Primary Contact
+      const cp = (d.contact_person || '').trim();
+      if (cp) {
+        const nameRegex = /^[a-zA-Z\s\.\'\-]+$/;
+        if (!nameRegex.test(cp)) {
+          throw new ApiErr(400, { contact_person: 'Primary contact name can only contain letters, spaces, hyphens, and dots.' }, 'Primary contact name cannot contain special characters.');
+        }
+      }
+
+      // DEF_CB_008: Validate Email
+      const emailVal = (d.email || '').trim();
+      if (emailVal) {
+        if (/\s/.test(d.email)) {
+          throw new ApiErr(400, { email: 'Email address cannot contain spaces.' }, 'Email address cannot contain spaces.');
+        }
+        const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!emailRegex.test(emailVal)) {
+          throw new ApiErr(400, { email: 'Enter a valid email address.' }, 'Enter a valid email address.');
+        }
+      }
+
       if (!isCust) {
         const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
         const cfAccEl = document.getElementById('bank_account_number_confirm') || (modalInstance?.el ? $('#bank_account_number_confirm', modalInstance.el) : null);
@@ -1368,19 +1398,10 @@ async function itemForm(id) {
       <div class="zb-form-row">
         <label for="item_hsn" class="zb-form-label">HSN / SAC Code <span class="zb-info-tip" title="6-digit GST classification code">ⓘ</span></label>
         <div class="zb-form-ctrl">
-          <div class="hsn-search-wrap">
-            <input class="in" type="text" id="item_hsn" name="hsn_sac" list="hsn_presets" value="${esc(r.hsn_sac || '')}" placeholder="6-digit HSN/SAC code (e.g. 847130)" maxlength="6" pattern="[0-9]{6}">
-            <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <datalist id="hsn_presets">
-              <option value="847130">847130 - Portable computers, laptops & notebooks</option>
-              <option value="847150">847150 - Digital processing units & servers</option>
-              <option value="851713">851713 - Smartphones & cellular devices</option>
-              <option value="852852">852852 - Computer monitors & visual display units</option>
-              <option value="482010">482010 - Registers, account books & office stationery</option>
-              <option value="998313">998313 - Information technology consulting & software development</option>
-              <option value="998314">998314 - Cloud hosting, infrastructure & IT data processing</option>
-              <option value="998713">998713 - Maintenance & repair of IT equipment</option>
-            </datalist>
+          <div class="hsn-search-wrap" id="hsnSearchWrap" style="position:relative;max-width:320px;">
+            <input class="in" type="text" id="item_hsn" name="hsn_sac" autocomplete="off" value="${esc(r.hsn_sac || '')}" placeholder="6-digit HSN/SAC code (e.g. 847130)" maxlength="6">
+            <svg class="hsn-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;right:10px;top:10px;pointer-events:none;color:var(--tx-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <div class="pop" id="hsn_dropdown_menu" role="listbox" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:160px;overflow-y:auto;z-index:100;background:var(--surface-glass-solid, #ffffff);border:1px solid var(--bd, #cbd5e1);border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,0.15);padding:4px;"></div>
           </div>
           <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">Standard 6-digit numeric HSN (goods) or SAC (services) code</div>
           <div class="er" data-err="hsn_sac" role="alert"></div>
@@ -1722,6 +1743,57 @@ async function itemForm(id) {
         });
       };
 
+      // DEF_CB_012: Bounded custom HSN dropdown to prevent obstruction
+      const HSN_PRESETS = [
+        { code: '847130', desc: 'Portable computers, laptops & notebooks' },
+        { code: '847150', desc: 'Digital processing units & servers' },
+        { code: '851713', desc: 'Smartphones & cellular devices' },
+        { code: '852852', desc: 'Computer monitors & visual display units' },
+        { code: '482010', desc: 'Registers, account books & office stationery' },
+        { code: '998313', desc: 'Information technology consulting & software development' },
+        { code: '998314', desc: 'Cloud hosting, infrastructure & IT data processing' },
+        { code: '998713', desc: 'Maintenance & repair of IT equipment' }
+      ];
+      const hsnInput = $('#item_hsn', form);
+      const hsnMenu = $('#hsn_dropdown_menu', form);
+      const hsnWrap = $('#hsnSearchWrap', form);
+
+      if (hsnInput && hsnMenu) {
+        const renderHsnMenu = (query = '') => {
+          const q = (query || '').trim().toLowerCase();
+          const filtered = q
+            ? HSN_PRESETS.filter(p => p.code.includes(q) || p.desc.toLowerCase().includes(q))
+            : HSN_PRESETS;
+          hsnMenu.innerHTML = '';
+          if (!filtered.length) {
+            hsnMenu.style.display = 'none';
+            return;
+          }
+          filtered.forEach(p => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--tx);display:flex;align-items:center;gap:8px;';
+            item.innerHTML = `<b style="color:var(--accent);">${p.code}</b> <span style="color:var(--tx-muted);">${p.desc}</span>`;
+            item.addEventListener('mouseenter', () => { item.style.background = 'var(--surface-glass-subtle, rgba(0,0,0,0.05))'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; });
+            item.addEventListener('mousedown', e => {
+              e.preventDefault();
+              hsnInput.value = p.code;
+              hsnMenu.style.display = 'none';
+            });
+            hsnMenu.appendChild(item);
+          });
+          hsnMenu.style.display = 'block';
+        };
+
+        hsnInput.addEventListener('focus', () => renderHsnMenu(hsnInput.value));
+        hsnInput.addEventListener('input', e => renderHsnMenu(e.target.value));
+        document.addEventListener('click', e => {
+          if (hsnWrap && !hsnWrap.contains(e.target)) {
+            if (hsnMenu) hsnMenu.style.display = 'none';
+          }
+        });
+      }
+
       const unitSelect = $('#item_unit_select', form);
       const unitInput = $('#item_unit', form);
       unitSelect.addEventListener('change', () => {
@@ -2034,8 +2106,33 @@ async function itemForm(id) {
       syncType();
     },
     onSubmit: async d => {
+      // DEF_CB_013: Validate Item Name
+      const nameVal = (d.name || '').trim();
+      if (!nameVal) {
+        throw new ApiErr(400, { name: 'Item Name is required.' }, 'Item Name is required.');
+      }
+      if (/[#@!$%^*+=~`<>?[\]\\{}]/.test(nameVal)) {
+        throw new ApiErr(400, { name: 'Item Name contains unsupported special characters (cannot contain #, @, !, $, %, ^, *).' }, 'Item Name contains unsupported special characters.');
+      }
+
+      // DEF_CB_015: Validate SKU
+      const skuVal = (d.sku || '').trim();
+      if (skuVal && !/^[A-Za-z0-9_\-\.\/]+$/.test(skuVal)) {
+        throw new ApiErr(400, { sku: 'SKU can only contain letters, numbers, hyphens, slashes, and dots.' }, 'SKU contains invalid special characters.');
+      }
+
+      // DEF_CB_014: Validate Category
+      const catVal = (d.category || '').trim();
+      if (catVal && !/^[a-zA-Z0-9\s\.\,\'\-\ &\/\(\)]+$/.test(catVal)) {
+        throw new ApiErr(400, { category: 'Category can only contain letters, numbers, spaces, and standard separators (&, -, /).' }, 'Category contains invalid special characters.');
+      }
+
+      // DEF_CB_016: Validate mandatory Selling Price
+      if (d.selling_price === undefined || d.selling_price === null || String(d.selling_price).trim() === '' || isNaN(Number(d.selling_price)) || Number(d.selling_price) < 0) {
+        throw new ApiErr(400, { selling_price: 'Selling Price is mandatory and must be 0 or greater.' }, 'Selling Price is mandatory.');
+      }
+
       if (!id) d.active = true;
-      if (!d.selling_price) d.selling_price = '0.00';
       if (!d.purchase_price) d.purchase_price = '0.00';
       await api(id ? `items/${id}/` : 'items/', { method: id ? 'PUT' : 'POST', body: d });
       toast('Item ' + (id ? 'updated' : 'created'));

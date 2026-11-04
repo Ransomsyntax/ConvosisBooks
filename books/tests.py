@@ -1035,3 +1035,87 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(len(inv_data['lines']), 1)
 
 
+
+class TestQABugReportFixes(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.admin_user)
+
+    def test_customer_primary_contact_validation(self):
+        # DEF_CB_006: Primary Contact accepts invalid special characters
+        payload = {
+            'name': 'Valid Customer Name',
+            'contact_person': '@#ndls%jje',
+            'email': 'valid@example.com'
+        }
+        res = self.client.post('/api/customers/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('contact_person', res.json().get('errors', {}))
+
+    def test_customer_display_name_validation(self):
+        # DEF_CB_007: Customer Display Name accepts invalid special characters
+        payload = {
+            'name': 'dfgh#@3$567',
+            'email': 'valid@example.com'
+        }
+        res = self.client.post('/api/customers/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('name', res.json().get('errors', {}))
+
+    def test_customer_email_spaces_validation(self):
+        # DEF_CB_008: Email Address field accepts spaces
+        payload = {
+            'name': 'Angel Rebecca',
+            'email': 'angel @gmail.com'
+        }
+        res = self.client.post('/api/customers/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('email', res.json().get('errors', {}))
+
+    def test_export_empty_data_warning(self):
+        # DEF_CB_010: Export generates blank file without warning when empty
+        Item.objects.all().delete()
+        res = self.client.get('/api/items/?export=csv')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('No data available to export', res.json().get('error', ''))
+
+    def test_item_name_validation(self):
+        # DEF_CB_013: Item Name accepts unsupported special characters
+        payload = {
+            'name': '#@!2345sdfdew',
+            'selling_price': '100.00'
+        }
+        res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('name', res.json().get('errors', {}))
+
+    def test_item_category_validation(self):
+        # DEF_CB_014: Category accepts special characters
+        payload = {
+            'name': 'Valid Item Name',
+            'selling_price': '100.00',
+            'category': '243@@@@24hiojh'
+        }
+        res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('category', res.json().get('errors', {}))
+
+    def test_item_sku_validation(self):
+        # DEF_CB_015: SKU accepts special characters
+        payload = {
+            'name': 'Valid Item Name',
+            'selling_price': '100.00',
+            'sku': '@#$%&*'
+        }
+        res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('sku', res.json().get('errors', {}))
+
+    def test_item_mandatory_selling_price(self):
+        # DEF_CB_016: Item creation allowed without mandatory Selling Price
+        payload = {
+            'name': 'Item Missing Price'
+        }
+        res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('selling_price', res.json().get('errors', {}))

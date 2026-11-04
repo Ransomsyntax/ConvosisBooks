@@ -53,6 +53,10 @@ class Cleaner:
             self.err(key, pattern_msg)
             return default
         if email:
+            raw_v = str(self.d.get(key, ''))
+            if any(ch.isspace() for ch in raw_v):
+                self.err(key, 'Email address cannot contain spaces.')
+                return default
             try:
                 validate_email(v)
             except ValidationError:

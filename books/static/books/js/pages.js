@@ -861,6 +861,7 @@ function listPage(root, cfg) {
       const sortMark = c => c.s ? (st.ordering === c.s ? ' ▲' : st.ordering === '-' + c.s ? ' ▼' : '') : '';
       const empty = !p.count ? (st.q || Object.values(st.f).some(Boolean) ? 'No matching records.' : esc(cfg.empty || 'No records yet.')) : '';
       $('#lt', root).innerHTML = `<table><thead><tr>${cfg.cols.map(c => `<th ${c.s ? `data-s="${c.s}" tabindex="0" aria-sort="${st.ordering === c.s ? 'ascending' : st.ordering === '-' + c.s ? 'descending' : 'none'}"` : ''} class="${c.r ? 'r' : ''}">${esc(c.h)}${sortMark(c)}</th>`).join('')}${cfg.actions ? '<th></th>' : ''}</tr></thead><tbody>${p.results.map(r => `<tr>${cfg.cols.map(c => `<td class="${c.r ? 'r' : ''}">${c.f(r)}</td>`).join('')}${cfg.actions ? `<td class="rowa">${cfg.actions(r).map(([a, l, k]) => `<button type="button" class="${k || ''}" data-act="${a}" data-id="${r.id}">${esc(l)}</button>`).join('')}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${cfg.cols.length + 1}"><div class="empty">${empty}${!p.count && !st.q && cfg.onNew ? `<br><button class="btn p" data-x="new" type="button" style="margin-top:8px">+ ${esc(cfg.newLabel)}</button>` : ''}</div></td></tr>`}</tbody></table>`;
+      st.total = p.count;
       $('#cnt', root).textContent = p.count + (p.count === 1 ? ' record' : ' records');
       $('#pgr', root).innerHTML = `<span class="sub">Page ${p.page} of ${p.pages}</span><span class="act"><select class="btn" data-size aria-label="Rows per page">${opts([10, 25, 50, 100].map(n => [n, n + ' / page']), st.size)}</select><button class="btn" data-x="pv" type="button" ${p.page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn" data-x="nx" type="button" ${p.page >= p.pages ? 'disabled' : ''}>Next</button></span>`;
 
@@ -894,14 +895,27 @@ function listPage(root, cfg) {
       else if (a === 'csv') {
         const pop = $('.export-menu-pop', root);
         if (pop) pop.style.display = 'none';
+        if (!st.total && (!cache || Object.keys(cache).length === 0)) {
+          toast('No data available to export.', 'err');
+          return;
+        }
         location.href = '/api/' + cfg.api + '/?' + qs({ ...params(), export: 'csv' });
       }
       else if (a === 'json') {
         const pop = $('.export-menu-pop', root);
         if (pop) pop.style.display = 'none';
+        if (!st.total && (!cache || Object.keys(cache).length === 0)) {
+          toast('No data available to export.', 'err');
+          return;
+        }
         try {
           const res = await api(cfg.api + '/?' + qs({ ...params(), export: 'json', page_size: 500 }));
-          const blob = new Blob([JSON.stringify(res.results || res, null, 2)], { type: 'application/json' });
+          const rows = res.results || res;
+          if (!rows || (Array.isArray(rows) && !rows.length)) {
+            toast('No data available to export.', 'err');
+            return;
+          }
+          const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
           const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob);
           dl.download = `${cfg.api}_export_${iso(new Date())}.json`;
           dl.click();
@@ -2095,6 +2109,10 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   if (expCsvBtn) {
     expCsvBtn.addEventListener('click', () => {
       if (expPop) expPop.style.display = 'none';
+      if (!list || !list.length) {
+        toast('No data available to export.', 'err');
+        return;
+      }
       location.href = '/api/' + kind + '/?export=csv';
     });
   }
@@ -2102,9 +2120,18 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   if (expJsonBtn) {
     expJsonBtn.addEventListener('click', async () => {
       if (expPop) expPop.style.display = 'none';
+      if (!list || !list.length) {
+        toast('No data available to export.', 'err');
+        return;
+      }
       try {
         const res = await api(kind + '/?export=json&page_size=500');
-        const blob = new Blob([JSON.stringify(res.results || res, null, 2)], { type: 'application/json' });
+        const rows = res.results || res;
+        if (!rows || (Array.isArray(rows) && !rows.length)) {
+          toast('No data available to export.', 'err');
+          return;
+        }
+        const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
         const dl = document.createElement('a'); dl.href = URL.createObjectURL(blob);
         dl.download = `${kind}_export_${iso(new Date())}.json`;
         dl.click();

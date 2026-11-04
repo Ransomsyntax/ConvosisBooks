@@ -396,6 +396,13 @@ document.addEventListener('click', async e => {
     closePops();
     if (a.dataset.a === 'org') orgForm();
     if (a.dataset.a === 'logout') {
+      const ok = await confirmBox({
+        title: 'Sign Out Confirmation',
+        message: 'Are you sure you want to sign out of Convosis Books?',
+        okText: 'Sign Out',
+        danger: true
+      });
+      if (!ok) return;
       try {
         if (APP && APP.user && APP.user.username) {
           try {

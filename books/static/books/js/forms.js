@@ -4140,8 +4140,8 @@ async function projectModal(id) {
   formModal({
     title: id ? 'Edit Project' : 'New Project',
     body: `<div class="g">
-      ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's8', ph: 'e.g. Cloud ERP Implementation' })}
-      ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's4', ph: 'PRJ-001' })}
+      ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
+      ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Internal / No Customer'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', col: 's6' })}
       ${fld({ name: 'billing_method', label: 'Billing Method', type: 'select', opts: [['hourly_rate', 'Hourly Rate'], ['fixed_cost', 'Fixed Cost'], ['task_hours', 'Task Hours']], value: o.billing_method, col: 's6' })}
       ${fld({ name: 'rate_per_hour', label: 'Rate Per Hour (₹)', type: 'number', value: o.rate_per_hour, col: 's6' })}

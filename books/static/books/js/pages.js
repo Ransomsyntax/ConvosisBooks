@@ -174,6 +174,72 @@ const IMPORT_SPECS = {
     { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'amount'] },
     { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] },
     { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ],
+  'sales-orders': [
+    { key: 'number', label: 'Order / SO Number', aliases: ['number', 'order_number', 'so_number', 'order#', 'so#'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'date', label: 'Order Date', req: true, aliases: ['date', 'order_date', 'doc_date'] },
+    { key: 'expected_shipment_date', label: 'Expected Shipment Date', aliases: ['expected_shipment_date', 'shipment_date', 'delivery_date'] },
+    { key: 'due_date', label: 'Due Date', aliases: ['due_date', 'payment_due_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'line_description', 'desc'] },
+    { key: 'hsn_sac', label: 'HSN / SAC Code', aliases: ['hsn_sac', 'hsn', 'sac'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price', 'amount'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'notes', label: 'Notes / Remarks', aliases: ['notes', 'remarks', 'terms'] }
+  ],
+  'purchase-orders': [
+    { key: 'number', label: 'PO Number', aliases: ['number', 'po_number', 'order_number', 'po#', 'order#'] },
+    { key: 'vendor', label: 'Vendor Name', req: true, aliases: ['vendor', 'vendor_name', 'supplier', 'party'] },
+    { key: 'date', label: 'PO Date', req: true, aliases: ['date', 'po_date', 'doc_date'] },
+    { key: 'delivery_date', label: 'Delivery / Due Date', aliases: ['delivery_date', 'due_date', 'expected_delivery'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'sku'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'line_description', 'desc'] },
+    { key: 'hsn_sac', label: 'HSN / SAC Code', aliases: ['hsn_sac', 'hsn', 'sac'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price', 'amount'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+  ],
+  projects: [
+    { key: 'name', label: 'Project Name', req: true, aliases: ['name', 'project_name', 'title'] },
+    { key: 'code', label: 'Project Code', aliases: ['code', 'project_code', 'prj_code'] },
+    { key: 'customer', label: 'Customer Name', aliases: ['customer', 'customer_name', 'client'] },
+    { key: 'billing_method', label: 'Billing Method', aliases: ['billing_method', 'method'] },
+    { key: 'rate_per_hour', label: 'Rate Per Hour', aliases: ['rate_per_hour', 'hourly_rate', 'rate'] },
+    { key: 'budget_hours', label: 'Budget Hours', aliases: ['budget_hours', 'budget', 'estimated_hours'] },
+    { key: 'description', label: 'Description', aliases: ['description', 'desc', 'notes'] }
+  ],
+  'payments-received': [
+    { key: 'date', label: 'Payment Date', req: true, aliases: ['date', 'payment_date', 'txn_date'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
+    { key: 'amount', label: 'Amount (₹)', req: true, aliases: ['amount', 'payment_amount', 'amt', 'total'] },
+    { key: 'mode', label: 'Payment Mode', aliases: ['mode', 'payment_mode', 'mode_label'] },
+    { key: 'reference', label: 'Reference / Transaction#', aliases: ['reference', 'ref', 'ref_no', 'txn_id'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'description'] }
+  ],
+  'payments-made': [
+    { key: 'date', label: 'Payment Date', req: true, aliases: ['date', 'payment_date', 'txn_date'] },
+    { key: 'vendor', label: 'Vendor Name', req: true, aliases: ['vendor', 'vendor_name', 'supplier', 'party'] },
+    { key: 'amount', label: 'Amount (₹)', req: true, aliases: ['amount', 'payment_amount', 'amt', 'total'] },
+    { key: 'mode', label: 'Payment Mode', aliases: ['mode', 'payment_mode', 'mode_label'] },
+    { key: 'reference', label: 'Reference / Voucher#', aliases: ['reference', 'ref', 'ref_no', 'txn_id'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'description'] }
+  ],
+  warehouses: [
+    { key: 'name', label: 'Warehouse Name', req: true, aliases: ['name', 'warehouse_name', 'title'] },
+    { key: 'code', label: 'Warehouse Code', aliases: ['code', 'warehouse_code', 'wh_code'] },
+    { key: 'address', label: 'Address', aliases: ['address', 'street'] },
+    { key: 'city', label: 'City', aliases: ['city'] },
+    { key: 'state', label: 'State', aliases: ['state'] },
+    { key: 'pincode', label: 'Pincode', aliases: ['pincode', 'pin_code', 'zip'] }
+  ],
+  'price-lists': [
+    { key: 'name', label: 'Price List Name', req: true, aliases: ['name', 'price_list_name', 'title'] },
+    { key: 'pricing_scheme', label: 'Pricing Scheme', aliases: ['pricing_scheme', 'scheme'] },
+    { key: 'percentage', label: 'Percentage (%)', aliases: ['percentage', 'percent', 'adjustment'] },
+    { key: 'description', label: 'Description', aliases: ['description', 'desc', 'notes'] }
   ]
 };
 
@@ -587,6 +653,18 @@ function openUniversalImportModal(resourceName, title) {
         if (full) rec.name = full;
         else if (rec.company) rec.name = rec.company;
         else if (rec.contact_person) rec.name = rec.contact_person;
+      }
+      if (!rec.customer) {
+        if (rec.customer_name) rec.customer = rec.customer_name;
+        else if (rec.client) rec.customer = rec.client;
+        else if (rec.party) rec.customer = rec.party;
+        else if (rec.name && (resourceName === 'invoices' || resourceName === 'quotes' || resourceName === 'sales-orders' || resourceName === 'payments-received')) rec.customer = rec.name;
+      }
+      if (!rec.vendor) {
+        if (rec.vendor_name) rec.vendor = rec.vendor_name;
+        else if (rec.supplier) rec.vendor = rec.supplier;
+        else if (rec.party) rec.vendor = rec.party;
+        else if (rec.name && (resourceName === 'bills' || resourceName === 'purchase-orders' || resourceName === 'expenses' || resourceName === 'payments-made')) rec.vendor = rec.name;
       }
       if (!rec.active && rec.active !== false) {
         rec.active = true;

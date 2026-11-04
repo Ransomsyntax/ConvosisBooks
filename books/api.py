@@ -1759,6 +1759,33 @@ class PaymentResource(Resource):
     orderings = {'date': 'date', 'number': 'number', 'amount': 'amount'}
     default_ordering = ('-date', '-id')
 
+    def prepare_import_record(self, rec):
+        party_val = rec.get(self.party_attr) or rec.get('party') or rec.get('customer') or rec.get('vendor')
+        if party_val and not str(party_val).isdigit():
+            p_str = str(party_val).strip()
+            p = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str)).first()
+            if not p:
+                org = Organization.get()
+                p = self.Party.objects.create(name=p_str, active=True, state=org.state)
+            rec[self.party_attr] = p.pk
+        elif not party_val:
+            first_p = self.Party.objects.first()
+            if first_p:
+                rec[self.party_attr] = first_p.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('mode'):
+            rec['mode'] = 'bank_transfer'
+        if not rec.get('account'):
+            rec['account'] = 'Bank Account'
+
+    def get_template_sample(self):
+        if self.party_attr == 'customer':
+            return ['PR-00050', 'Acme Infotech Ltd', '2026-10-15', 'Bank Transfer', 'TXN-99881', '25000.00', '25000.00', '0.00']
+        else:
+            return ['PM-00050', 'Reliable Hardware Supplies', '2026-10-12', 'Bank Transfer', 'TXN-99882', '15000.00', '15000.00', '0.00']
+
     @property
     def model(self):
         return self.Model
@@ -2570,6 +2597,88 @@ class SalesOrderResource(Resource):
     model = SalesOrder
     search_fields = ('number', 'customer__name', 'order_number')
     default_ordering = ('-date', '-id')
+    csv_cols = [
+        ('Order#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'), ('Due date', 'due_date'),
+        ('Expected Shipment Date', 'expected_shipment_date'), ('Item Name', 'item'),
+        ('Description', 'description'), ('HSN/SAC', 'hsn_sac'), ('Quantity', 'quantity'),
+        ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')
+    ]
+
+    def get_template_sample(self):
+        return ['SO-00010', 'Acme Infotech Ltd', '2026-10-15', '2026-11-14', '2026-10-25', 'Ergonomic Mesh Chair', 'Ergonomic office chair with lumbar support', '940310', '5', '8500.00', '18.00', 'Standard delivery terms']
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('order_number') or r.get('so_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or Decimal('0.00')
+        gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'General Supply / Service'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+        if it and (rate is None or rate == Decimal('0.00')):
+            rate = it.selling_price
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty,
+            'rate': rate,
+            'discount_percent': disc,
+            'gst_rate': gst
+        }
+
+    def prepare_import_record(self, rec):
+        cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
+        if cust_val and not str(cust_val).isdigit():
+            c_str = str(cust_val).strip()
+            cust = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
+            if not cust:
+                org = Organization.get()
+                cust = Customer.objects.create(name=c_str, active=True, state=org.state)
+            rec['customer'] = cust.pk
+        elif not cust_val:
+            first_c = Customer.objects.first()
+            if first_c:
+                rec['customer'] = first_c.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('due_date'):
+            rec['due_date'] = rec.get('expected_shipment_date') or rec['date']
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            if line:
+                rec['lines'] = [line]
 
     def row(self, o):
         return {
@@ -2779,6 +2888,87 @@ class PurchaseOrderResource(Resource):
     model = PurchaseOrder
     search_fields = ('number', 'vendor__name')
     default_ordering = ('-date', '-id')
+    csv_cols = [
+        ('PO#', 'number'), ('Vendor Name', 'vendor'), ('Date', 'date'), ('Delivery date', 'delivery_date'),
+        ('Item Name', 'item'), ('Description', 'description'), ('HSN/SAC', 'hsn_sac'),
+        ('Quantity', 'quantity'), ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')
+    ]
+
+    def get_template_sample(self):
+        return ['PO-00020', 'Reliable Hardware Supplies', '2026-10-12', '2026-10-28', 'Steel Rods 10mm', 'TMT steel rods', '721420', '20', '450.00', '18.00', 'Standard supplier delivery']
+
+    def preprocess_import_records(self, records):
+        grouped = []
+        doc_map = {}
+        for r in records:
+            num = str(r.get('number') or r.get('po_number') or r.get('order_number') or '').strip()
+            line = self.extract_line_from_record(r)
+            if num and num in doc_map:
+                existing = doc_map[num]
+                if line:
+                    existing.setdefault('lines', []).append(line)
+            else:
+                doc_copy = dict(r)
+                if line and 'lines' not in doc_copy:
+                    doc_copy['lines'] = [line]
+                grouped.append(doc_copy)
+                if num:
+                    doc_map[num] = doc_copy
+        return grouped
+
+    def extract_line_from_record(self, r):
+        item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
+        desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
+        qty = r.get('quantity') or r.get('qty') or Decimal('1.000')
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('amount') or Decimal('0.00')
+        gst = r.get('gst_rate') or r.get('tax_rate') or Decimal('18.00')
+        hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        disc = r.get('discount_percent') or r.get('discount') or Decimal('0.00')
+
+        it = None
+        if item_val:
+            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+
+        if not desc:
+            desc = it.name if it else 'General Supply / Service'
+        if it and not hsn:
+            hsn = it.hsn_sac or ''
+        if it and (rate is None or rate == Decimal('0.00')):
+            rate = it.purchase_price
+
+        return {
+            'item': it.pk if it else None,
+            'description': str(desc)[:500],
+            'hsn_sac': str(hsn)[:10],
+            'quantity': qty,
+            'rate': rate,
+            'discount_percent': disc,
+            'gst_rate': gst
+        }
+
+    def prepare_import_record(self, rec):
+        ven_val = rec.get('vendor') or rec.get('vendor_name') or rec.get('supplier') or rec.get('party')
+        if ven_val and not str(ven_val).isdigit():
+            v_str = str(ven_val).strip()
+            ven = Vendor.objects.filter(Q(name__iexact=v_str) | Q(company__iexact=v_str) | Q(email__iexact=v_str)).first()
+            if not ven:
+                org = Organization.get()
+                ven = Vendor.objects.create(name=v_str, active=True, state=org.state)
+            rec['vendor'] = ven.pk
+        elif not ven_val:
+            first_v = Vendor.objects.first()
+            if first_v:
+                rec['vendor'] = first_v.pk
+
+        if not rec.get('date'):
+            rec['date'] = timezone.localdate().isoformat()
+        if not rec.get('delivery_date'):
+            rec['delivery_date'] = rec['date']
+
+        if not rec.get('lines'):
+            line = self.extract_line_from_record(rec)
+            if line:
+                rec['lines'] = [line]
 
     def row(self, o):
         return {
@@ -2809,7 +2999,18 @@ class PurchaseOrderResource(Resource):
         deliv = c.date('delivery_date')
         c.done()
 
-        num = next_number('PO')
+        num = (data.get('number') or '').strip()
+        if not num or PurchaseOrder.objects.filter(number=num).exists():
+            num = next_number('PO')
+        else:
+            import re
+            m = re.match(r'^PO-(\d+)$', num)
+            if m:
+                val = int(m.group(1))
+                seq, _ = Sequence.objects.get_or_create(key='PO')
+                if seq.value < val:
+                    seq.value = val
+                    seq.save(update_fields=['value'])
         po = PurchaseOrder.objects.create(
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or Organization.get().state,
@@ -3111,6 +3312,24 @@ class ProjectResource(Resource):
     model = Project
     search_fields = ('name', 'code', 'customer__name')
     default_ordering = ('name',)
+    csv_cols = [
+        ('Project Name', 'name'), ('Project Code', 'code'), ('Customer Name', 'customer'),
+        ('Billing Method', 'billing_method'), ('Rate Per Hour', 'rate_per_hour'),
+        ('Budget Hours', 'budget_hours'), ('Description', 'description')
+    ]
+
+    def get_template_sample(self):
+        return ['Cloud ERP Implementation', 'PRJ-001', 'Acme Infotech Ltd', 'hourly_rate', '2500.00', '120.00', 'Cloud ERP deployment and training']
+
+    def prepare_import_record(self, rec):
+        cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client')
+        if cust_val and not str(cust_val).isdigit():
+            c_str = str(cust_val).strip()
+            c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str)).first()
+            if not c:
+                org = Organization.get()
+                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+            rec['customer'] = c.pk
 
     def row(self, o):
         hours = o.timelogs.aggregate(s=Sum('hours'))['s'] or Decimal('0.00')

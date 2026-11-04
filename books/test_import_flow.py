@@ -300,3 +300,88 @@ class TestUniversalImport(TestCase):
         self.assertEqual(data['status'], 'ok')
         self.assertEqual(data['imported'], 4)
         self.assertEqual(data['failed'], 0)
+
+    def test_sales_orders_import(self):
+        records = [
+            {
+                'number': 'SO-IMPORT-001',
+                'customer': 'Global Exports Ltd',
+                'date': '2026-11-01',
+                'item': 'Imported Widget A',
+                'quantity': '10',
+                'rate': '150.00',
+                'gst_rate': '18.00'
+            },
+            {
+                'number': 'SO-IMPORT-001',
+                'customer': 'Global Exports Ltd',
+                'date': '2026-11-01',
+                'item': 'Imported Widget B',
+                'quantity': '5',
+                'rate': '300.00',
+                'gst_rate': '18.00'
+            }
+        ]
+        res = self.client.post('/api/sales-orders/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import SalesOrder
+        so = SalesOrder.objects.filter(number='SO-IMPORT-001').first()
+        self.assertIsNotNone(so)
+        self.assertEqual(so.customer.name, 'Global Exports Ltd')
+        self.assertEqual(so.lines.count(), 2)
+
+    def test_purchase_orders_import(self):
+        records = [
+            {
+                'number': 'PO-IMPORT-001',
+                'vendor': 'Alpha Steel Supplies',
+                'date': '2026-11-02',
+                'item': 'Raw Steel Rods',
+                'quantity': '20',
+                'rate': '250.00',
+                'gst_rate': '18.00'
+            }
+        ]
+        res = self.client.post('/api/purchase-orders/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import PurchaseOrder
+        po = PurchaseOrder.objects.filter(number='PO-IMPORT-001').first()
+        self.assertIsNotNone(po)
+        self.assertEqual(po.vendor.name, 'Alpha Steel Supplies')
+
+    def test_projects_import(self):
+        records = [
+            {
+                'name': 'API Gateway Modernization',
+                'code': 'PRJ-M-01',
+                'customer': 'Fintech Alliance',
+                'billing_method': 'hourly_rate',
+                'rate_per_hour': '1800.00',
+                'budget_hours': '80.00'
+            }
+        ]
+        res = self.client.post('/api/projects/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 1)
+        from books.models import Project
+        prj = Project.objects.filter(code='PRJ-M-01').first()
+        self.assertIsNotNone(prj)
+        self.assertEqual(prj.name, 'API Gateway Modernization')
+        self.assertEqual(prj.customer.name, 'Fintech Alliance')

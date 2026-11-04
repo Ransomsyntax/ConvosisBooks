@@ -22,6 +22,9 @@
   --tx: #0f172a;
   --tx2: #475569;
   --tx-muted: #64748b;
+  --in-bd: #cbd5e1;
+  --in-bd-hover: #94a3b8;
+  --in-bg: #ffffff;
   --bd-glass: rgba(255, 255, 255, 0.55);
   --bd-glass-subtle: rgba(255, 255, 255, 0.35);
   --bd-focus: var(--accent);
@@ -67,6 +70,9 @@
   --tx: #f8fafc;
   --tx2: #cbd5e1;
   --tx-muted: #94a3b8;
+  --in-bd: #475569;
+  --in-bd-hover: #64748b;
+  --in-bg: #1e293b;
   --bd-glass: rgba(255, 255, 255, 0.14);
   --bd-glass-subtle: rgba(255, 255, 255, 0.08);
   --surface-glass: rgba(15, 23, 42, calc(var(--glass-alpha) * 0.82));
@@ -924,29 +930,31 @@ main, .main-wrapper {
 .in, .form-control {
   width: 100%;
   height: 36px;
-  border: 1px solid var(--bd-glass);
+  border: 1px solid var(--in-bd, #cbd5e1) !important;
   border-radius: 9px;
   padding: 0 12px;
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  color: var(--tx);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04), var(--specular-sheen);
+  background: var(--in-bg, #ffffff) !important;
+  color: var(--tx) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   font-size: 13.5px;
+  box-sizing: border-box;
 }
 textarea.in {
   height: auto;
   padding: 10px 12px;
 }
+.in:hover, .form-control:hover {
+  border-color: var(--in-bd-hover, #94a3b8) !important;
+}
 .in:focus, .form-control:focus {
-  background: var(--surface-glass-solid);
-  border-color: var(--border-highlight);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.22), 0 4px 14px rgba(0, 0, 0, 0.08), var(--specular-sheen);
+  background: var(--in-bg, #ffffff) !important;
+  border-color: var(--accent, #0284c7) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 2, 132, 199), 0.22), 0 2px 6px rgba(0, 0, 0, 0.08) !important;
 }
 select.in {
-  background-color: var(--surface-glass);
+  background-color: var(--in-bg, #ffffff) !important;
 }
 [data-theme="dark"] select.in option {
   background-color: #0f172a;
@@ -1678,18 +1686,21 @@ body.login {
   padding: 0 16px !important;
   font-size: 14.5px !important;
   border-radius: 11px !important;
-  border: 1px solid var(--bd-glass) !important;
-  background: var(--surface-glass) !important;
+  border: 1px solid var(--in-bd, #cbd5e1) !important;
+  background: var(--in-bg, #ffffff) !important;
   color: var(--tx) !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04), var(--specular-sheen) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
   box-sizing: border-box !important;
 }
+.lcard .in:hover, .login-input:hover {
+  border-color: var(--in-bd-hover, #94a3b8) !important;
+}
 .lcard .in:focus, .login-input:focus {
-  background: var(--surface-glass-solid) !important;
-  border-color: var(--border-highlight) !important;
+  background: var(--in-bg, #ffffff) !important;
+  border-color: var(--accent, #0284c7) !important;
   outline: none !important;
-  box-shadow: 0 0 0 3.5px rgba(var(--accent-rgb), 0.22), 0 4px 14px rgba(0, 0, 0, 0.08), var(--specular-sheen) !important;
+  box-shadow: 0 0 0 3.5px rgba(var(--accent-rgb, 2, 132, 199), 0.22), 0 4px 14px rgba(0, 0, 0, 0.08) !important;
 }
 .login-password-wrapper {
   position: relative !important;

@@ -605,7 +605,11 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None):
         if isinstance(acc_ref, Account):
             acc = acc_ref
         else:
-            acc = Account.objects.filter(code=str(acc_ref)).first()
+            acc = None
+            if str(acc_ref).isdigit():
+                acc = Account.objects.filter(pk=int(acc_ref)).first()
+            if not acc:
+                acc = Account.objects.filter(code=str(acc_ref)).first()
             if not acc:
                 acc = Account.objects.filter(name__iexact=str(acc_ref)).first()
             if not acc:

@@ -2452,8 +2452,9 @@ async function docForm(kind, id, targetEl, onDone) {
                 (isVC ? 'purchases/vendor-credits' :
                 (inv ? 'sales/invoices' : 'purchases/bills'))));
 
-  let target = targetEl || document.getElementById('detail-col-box');
-  if (!target && !document.getElementById('modal-root')) {
+  const usesMasterDetail = (kind === 'invoices' || kind === 'bills' || isRetainer);
+  let target = targetEl || (usesMasterDetail ? document.getElementById('detail-col-box') : null);
+  if (!target && usesMasterDetail && !targetEl) {
     location.hash = '#/' + route;
     setTimeout(() => {
       const newTarget = document.getElementById('detail-col-box');
@@ -2922,17 +2923,23 @@ async function docForm(kind, id, targetEl, onDone) {
 
 async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
-  const parties = await api(`lookup/${rec ? 'customers' : 'vendors'}/`);
+  const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
+  const [parties, existing] = await Promise.all([
+    api(`lookup/${rec ? 'customers' : 'vendors'}/`),
+    payId ? api(`${kind}/${payId}/`).catch(() => null) : Promise.resolve(null)
+  ]);
   if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
+  const dataObj = existing || (typeof pre === 'object' ? pre : {});
+  const partyVal = dataObj.party_id || dataObj.customer_id || dataObj.vendor_id || dataObj.party || dataObj[pk] || '';
   formModal({
-    title: rec ? 'Record payment received' : 'Record payment made', wide: true,
+    title: payId ? (rec ? `Edit payment received ${dataObj.number || ''}` : `Edit payment made ${dataObj.number || ''}`) : (rec ? 'Record payment received' : 'Record payment made'), wide: true,
     body: `<div class="zb-form-wrap">${[
-      fld({ name: pk, label: rec ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: pre.party || '' }),
-      fld({ name: 'date', label: 'Payment date', type: 'date', req: 1, value: APP.today }),
-      fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: 1, value: pre.amount || '', attrs: 'min="0.01" step="0.01"' }),
-      fld({ name: 'mode', label: 'Payment mode', type: 'select', opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: 'bank_transfer' }),
-      fld({ name: 'account', label: 'Bank / cash account', value: 'Bank Account' }), fld({ name: 'reference', label: 'Reference number' }),
-      fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 'c2' }),
+      fld({ name: pk, label: rec ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyVal }),
+      fld({ name: 'date', label: 'Payment date', type: 'date', req: 1, value: dataObj.date || APP.today }),
+      fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: 1, value: dataObj.amount || '', attrs: 'min="0.01" step="0.01"' }),
+      fld({ name: 'mode', label: 'Payment mode', type: 'select', opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: dataObj.mode || 'bank_transfer' }),
+      fld({ name: 'account', label: 'Bank / cash account', value: dataObj.account || 'Bank Account' }), fld({ name: 'reference', label: 'Reference number', value: dataObj.reference || '' }),
+      fld({ name: 'notes', label: 'Notes', type: 'textarea', value: dataObj.notes || '', col: 'c2' }),
     ].join('')}</div>
     <h3 style="margin:16px 0 6px;font-size:14px">Apply to ${rec ? 'invoices' : 'bills'}</h3>
     <div id="alloc"><div class="sub">Select a ${pk} to see outstanding ${docs}.</div></div>
@@ -2950,7 +2957,13 @@ async function paymentForm(kind, pre = {}) {
           const p = await api(`${docs}/?` + qs({ open: 1, [pk]: pid, page_size: 100, ordering: 'due_date' }));
           list = p.results;
           box.innerHTML = list.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Due</th><th class="r">Balance due</th><th class="r" style="width:150px">Apply (₹)</th></tr></thead><tbody>${list.map(d => `<tr><td>${esc(d.number)}</td><td>${fd(d.due_date)}</td><td class="r">${inr(d.balance)}</td><td><input class="in al-in r" type="number" min="0" step="0.01" max="${esc(d.balance)}" data-id="${d.id}" aria-label="Apply to ${esc(d.number)}"></td></tr>`).join('')}</tbody></table></div><button type="button" class="btn" data-auto style="margin-top:8px">Auto-apply (oldest due first)</button>` : `<div class="sub">No outstanding ${docs} for this ${pk}. The full amount will remain unapplied.</div>`;
-          if (pre.doc) { const i = $(`.al-in[data-id="${pre.doc}"]`, form); if (i) { const d = list.find(x => String(x.id) === String(pre.doc)); i.value = d.balance; if (!form.elements.amount.value) form.elements.amount.value = d.balance; } pre.doc = null; }
+          if (pre && pre.doc) { const i = $(`.al-in[data-id="${pre.doc}"]`, form); if (i) { const d = list.find(x => String(x.id) === String(pre.doc)); i.value = d.balance; if (!form.elements.amount.value) form.elements.amount.value = d.balance; } pre.doc = null; }
+          if (existing && existing.allocations) {
+            for (const alloc of existing.allocations) {
+              const inp = $(`.al-in[data-id="${alloc.doc_id}"]`, form);
+              if (inp) inp.value = alloc.amount;
+            }
+          }
           totals();
         } catch (e) { box.innerHTML = errBox(e.message); }
       };
@@ -2962,14 +2975,14 @@ async function paymentForm(kind, pre = {}) {
         $$('.al-in', form).forEach(i => { const d = list.find(x => String(x.id) === i.dataset.id); const a = Math.min(left, num(d.balance)); i.value = a > 0 ? r2(a) : ''; left = r2(left - a); });
         m.markDirty(); totals();
       });
-      if (pre.party) load(); else totals();
+      if (partyVal) load(); else totals();
     },
     onSubmit: async (d, a, form) => {
       d.allocations = $$('.al-in', form).filter(i => num(i.value) > 0).map(i => ({ [docKey]: Number(i.dataset.id), amount: i.value }));
       const applied = d.allocations.reduce((s, x) => s + num(x.amount), 0);
       if (applied > num(d.amount) + 0.001) throw new ApiErr(400, { message: 'Please correct the allocations.', errors: { allocations: 'Applied amount exceeds the payment amount.' } });
-      const p = await api(kind + '/', { method: 'POST', body: d });
-      toast(`Payment ${p.number} recorded`); refresh();
+      const p = await api(payId ? `${kind}/${payId}/` : `${kind}/`, { method: payId ? 'PUT' : 'POST', body: d });
+      toast(payId ? `Payment ${p.number} updated` : `Payment ${p.number} recorded`); refresh();
     },
   });
 }
@@ -3131,9 +3144,17 @@ async function accountForm(id) {
   });
 }
 
-async function journalForm() {
-  const accounts = await api('lookup/accounts/');
-  let lines = [
+async function journalForm(id) {
+  const [accounts, rec] = await Promise.all([
+    api('lookup/accounts/'),
+    id ? api(`manual-journals/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+  let lines = (rec && rec.lines && rec.lines.length) ? rec.lines.map(l => ({
+    account: l.account_id || l.account,
+    debit: num(l.debit) > 0 ? l.debit : '',
+    credit: num(l.credit) > 0 ? l.credit : '',
+    description: l.description || ''
+  })) : [
     { account: accounts[0]?.id || '', debit: '', credit: '', description: '' },
     { account: accounts[1]?.id || '', debit: '', credit: '', description: '' }
   ];
@@ -3151,14 +3172,14 @@ async function journalForm() {
   }
 
   const m = Modal.open({
-    title: 'New Manual Journal Voucher',
+    title: id ? `Edit Manual Journal ${rec ? rec.number : ''}` : 'New Manual Journal Voucher',
     wide: true,
     body: `
       <form id="jrn-form">
         <div class="zb-form-wrap" style="margin-bottom:16px;">
-          ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: APP.today })}
-          ${fld({ name: 'reference', label: 'Reference / Voucher #', ph: 'e.g. JRN-ADJ-01' })}
-          ${fld({ name: 'notes', label: 'Notes / Narration', ph: 'Purpose of journal entry' })}
+          ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: rec ? rec.date : APP.today })}
+          ${fld({ name: 'reference', label: 'Reference / Voucher #', value: rec ? (rec.reference || '') : '', ph: 'e.g. JRN-ADJ-01' })}
+          ${fld({ name: 'notes', label: 'Notes / Narration', value: rec ? (rec.notes || '') : '', ph: 'Purpose of journal entry' })}
         </div>
         <div style="font-weight:600;margin-bottom:8px;color:var(--tx);">Journal Debits & Credits</div>
         <div style="display:grid;grid-template-columns:3fr 1.5fr 1.5fr 3fr 36px;gap:8px;font-weight:600;font-size:12px;color:var(--tx-muted);padding-bottom:4px;border-bottom:1px solid var(--bd);">
@@ -3176,7 +3197,7 @@ async function journalForm() {
     `,
     footer: `
       <button type="button" class="btn" data-close>Cancel</button>
-      <button type="button" class="btn p" id="jrn-submit-btn">Post Journal</button>
+      <button type="button" class="btn p" id="jrn-submit-btn">${id ? 'Update Journal' : 'Post Journal'}</button>
     `
   });
 
@@ -3230,8 +3251,9 @@ async function journalForm() {
       }
     }
     try {
-      await api('manual-journals/', { method: 'POST', body: { date: dt, reference: ref, notes, lines: outLines } });
-      toast('Journal voucher posted');
+      if (id) await api(`manual-journals/${id}/`, { method: 'PUT', body: { date: dt, reference: ref, notes, lines: outLines } });
+      else await api('manual-journals/', { method: 'POST', body: { date: dt, reference: ref, notes, lines: outLines } });
+      toast(id ? 'Journal voucher updated' : 'Journal voucher posted');
       m.close();
       refresh();
     } catch (err) {
@@ -4184,42 +4206,49 @@ async function projectModal(id) {
   });
 }
 
-async function timelogModal() {
-  const prjs = await api('lookup/projects/');
+async function timelogModal(id) {
+  const [prjs, rec] = await Promise.all([
+    api('lookup/projects/'),
+    id ? api(`timelogs/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
   if (!prjs.length) {
     toast('Create a project first before logging time.', 'err');
     return projectModal();
   }
+  const o = rec || { project_id: prjs[0]?.id, date: APP.today, task: '', hours: '2.5', billable: true, notes: '' };
   formModal({
-    title: 'Log Project Timesheet',
+    title: id ? 'Edit Timesheet Entry' : 'Log Project Timesheet',
     body: `<div class="g">
-      ${fld({ name: 'project', label: 'Project', type: 'select', opts: prjs.map(p => [p.id, p.name]), req: true, col: 's6' })}
-      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: APP.today, col: 's6' })}
-      ${fld({ name: 'task', label: 'Task / Activity', req: true, col: 's8', ph: 'e.g. Deluge Scripting & Workflow Integration' })}
-      ${fld({ name: 'hours', label: 'Hours', type: 'number', req: true, value: '2.5', col: 's4' })}
-      ${fld({ name: 'billable', label: 'Billable to customer', type: 'checkbox', value: true, col: 's12' })}
-      ${fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 's12', ph: 'Work accomplished...' })}
+      ${fld({ name: 'project', label: 'Project', type: 'select', opts: prjs.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
+      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
+      ${fld({ name: 'task', label: 'Task / Activity', req: true, value: o.task, col: 's8', ph: 'e.g. Deluge Scripting & Workflow Integration' })}
+      ${fld({ name: 'hours', label: 'Hours', type: 'number', req: true, value: o.hours, col: 's4' })}
+      ${fld({ name: 'billable', label: 'Billable to customer', type: 'checkbox', value: o.billable, col: 's12' })}
+      ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: o.notes || '', col: 's12', ph: 'Work accomplished...' })}
     </div>`,
     onSubmit: async d => {
       d.project = Number(d.project);
       d.hours = num(d.hours);
-      await api('timelogs/', { method: 'POST', body: d });
-      toast('Timesheet entry logged');
+      if (id) await api(`timelogs/${id}/`, { method: 'PUT', body: d });
+      else await api('timelogs/', { method: 'POST', body: d });
+      toast(id ? 'Timesheet entry updated' : 'Timesheet entry logged');
       refresh();
     }
   });
 }
 
-async function categoryModal() {
+async function categoryModal(id) {
+  const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
   formModal({
-    title: 'New Item Category',
+    title: id ? 'Edit Item Category' : 'New Item Category',
     body: `<div class="g">
-      ${fld({ name: 'name', label: 'Category Name', req: true, col: 's12', ph: 'e.g. Hardware Components' })}
-      ${fld({ name: 'description', label: 'Description', type: 'textarea', col: 's12' })}
+      ${fld({ name: 'name', label: 'Category Name', req: true, value: o ? o.name : '', col: 's12', ph: 'e.g. Hardware Components' })}
+      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o ? (o.description || '') : '', col: 's12' })}
     </div>`,
     onSubmit: async d => {
-      await api('item-categories/', { method: 'POST', body: d });
-      toast('Category created');
+      if (id) await api(`item-categories/${id}/`, { method: 'PUT', body: d });
+      else await api('item-categories/', { method: 'POST', body: d });
+      toast(id ? 'Category updated' : 'Category created');
       refresh();
     }
   });
@@ -4376,21 +4405,26 @@ async function stockMoveModal() {
   });
 }
 
-async function challanModal() {
-  const custs = await api('lookup/customers/');
+async function challanModal(id) {
+  const [custs, rec] = await Promise.all([
+    api('lookup/customers/'),
+    id ? api(`delivery-challans/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+  const o = rec || { customer_id: '', date: APP.today, challan_type: 'other', vehicle_number: '', notes: '' };
   formModal({
-    title: 'New Delivery Challan',
+    title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
     body: `<div class="g">
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: custs.map(c => [c.id, c.name]), col: 's6' })}
-      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: APP.today, col: 's6' })}
-      ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', opts: [['job_work', 'Job Work'], ['supply_on_approval', 'Supply on Approval'], ['other', 'Other Delivery']], col: 's6' })}
-      ${fld({ name: 'vehicle_number', label: 'Vehicle Number', col: 's6', ph: 'KL-05-AB-1234' })}
-      ${fld({ name: 'notes', label: 'Notes / Transportation Memo', type: 'textarea', col: 's12' })}
+      ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: custs.map(c => [c.id, c.name]), value: o.customer_id, col: 's6' })}
+      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
+      ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', opts: [['job_work', 'Job Work'], ['supply_on_approval', 'Supply on Approval'], ['other', 'Other Delivery']], value: o.challan_type, col: 's6' })}
+      ${fld({ name: 'vehicle_number', label: 'Vehicle Number', value: o.vehicle_number || '', col: 's6', ph: 'KL-05-AB-1234' })}
+      ${fld({ name: 'notes', label: 'Notes / Transportation Memo', type: 'textarea', value: o.notes || '', col: 's12' })}
     </div>`,
     onSubmit: async d => {
       d.customer = Number(d.customer);
-      await api('delivery-challans/', { method: 'POST', body: d });
-      toast('Delivery Challan created');
+      if (id) await api(`delivery-challans/${id}/`, { method: 'PUT', body: d });
+      else await api('delivery-challans/', { method: 'POST', body: d });
+      toast(id ? 'Delivery Challan updated' : 'Delivery Challan created');
       refresh();
     }
   });

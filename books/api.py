@@ -12,7 +12,7 @@ from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
-from django.db.models import F, ProtectedError, Q
+from django.db.models import F, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 
@@ -1927,8 +1927,49 @@ class PaymentResource(Resource):
             services.post_payment_made_journal(pay, user)
         return pay
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if self.party_attr in data:
+            pid = c.integer(self.party_attr, lo=1, required=True)
+            party = self.Party.objects.filter(pk=pid).first() if pid else None
+            if not party:
+                raise ApiError(404, f"{self.party_attr.capitalize()} not found.")
+            setattr(obj, self.party_attr, party)
+        if 'date' in data:
+            dt = c.date('date', required=True)
+            services.check_transaction_lock(dt)
+            obj.date = dt
+        if 'mode' in data:
+            obj.mode = c.choice('mode', MODE_KEYS, default=obj.mode)
+        if 'account' in data:
+            obj.account = c.text('account', max_len=60, default=obj.account)
+        if 'amount' in data:
+            new_amt = c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999'))
+            applied = sum((a.amount for a in obj.allocations.all()), Z)
+            if new_amt < applied:
+                raise ApiError(400, f"New amount ({new_amt}) cannot be less than already applied amount ({applied}).")
+            obj.amount = new_amt
+        if 'reference' in data:
+            obj.reference = c.text('reference', max_len=80)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=2000)
+        c.done()
+        obj.save()
+
+        if 'allocations' in data and data.get('allocations') is not None:
+            obj.allocations.all().delete()
+            self.allocate(obj, data.get('allocations'))
+
+        if isinstance(obj, PaymentReceived):
+            services.post_payment_received_journal(obj, user)
+        else:
+            services.post_payment_made_journal(obj, user)
+        services.log_audit(user, 'update', self.Model.__name__, obj.number, f"Updated payment {obj.number}")
+        return obj
+
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
+        Journal.objects.filter(reference=obj.number).delete()
         obj.delete()
 
     def action(self, request, obj, name):
@@ -2244,6 +2285,67 @@ class JournalResource(Resource):
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
         return jrn
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'date' in data:
+            obj.date = c.date('date', required=True)
+            services.check_transaction_lock(obj.date)
+        if 'reference' in data:
+            obj.reference = c.text('reference', max_len=80)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=1000)
+        c.done()
+
+        lines_in = data.get('lines')
+        if lines_in is not None:
+            if len(lines_in) < 2:
+                raise ApiError(400, 'A journal entry must contain at least two balancing line items.')
+            clean_items = []
+            tot_debit = Decimal('0.00')
+            tot_credit = Decimal('0.00')
+            for ln in lines_in:
+                acc_ref = ln.get('account') or ln.get('account_id')
+                if not acc_ref:
+                    raise ApiError(400, 'Each line item must specify an account.')
+                if isinstance(acc_ref, Account):
+                    acc = acc_ref
+                else:
+                    acc = None
+                    if str(acc_ref).isdigit():
+                        acc = Account.objects.filter(pk=int(acc_ref)).first()
+                    if not acc:
+                        acc = Account.objects.filter(code=str(acc_ref)).first()
+                    if not acc:
+                        acc = Account.objects.filter(name__iexact=str(acc_ref)).first()
+                    if not acc:
+                        raise ApiError(400, f"Account '{acc_ref}' not found in Chart of Accounts.")
+                d_val = q2(ln.get('debit', 0))
+                c_val = q2(ln.get('credit', 0))
+                if d_val < 0 or c_val < 0:
+                    raise ApiError(400, 'Debits and credits cannot be negative.')
+                if d_val == 0 and c_val == 0:
+                    continue
+                tot_debit += d_val
+                tot_credit += c_val
+                clean_items.append((acc, d_val, c_val, ln.get('description', '')))
+            if not clean_items:
+                raise ApiError(400, 'A journal entry must contain non-zero items.')
+            if tot_debit != tot_credit:
+                raise ApiError(400, f"Unbalanced Journal: Total Debits (₹{tot_debit}) must equal Total Credits (₹{tot_credit}).")
+
+            obj.items.all().delete()
+            for acc, deb, cred, desc in clean_items:
+                JournalItem.objects.create(journal=obj, account=acc, debit=deb, credit=cred, description=desc)
+
+        obj.save()
+        services.log_audit(user, 'update', 'Journal', obj.number, f"Updated manual journal {obj.number}")
+        return obj
+
+    def destroy(self, obj):
+        services.check_transaction_lock(obj.date)
+        obj.items.all().delete()
+        obj.delete()
+
 class AuditLogResource(Resource):
     name = 'audit-logs'
     model = AuditLog
@@ -2533,6 +2635,59 @@ class BankTransactionResource(Resource):
         )
         services.log_audit(user, 'create', 'BankTransaction', txn.pk, f"Imported bank transaction {txn.description} ({txn.date})")
         return txn
+
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        old_dep = obj.deposit
+        old_wd = obj.withdrawal
+        ba = obj.bank_account
+        if 'bank_account' in data:
+            ba_id = c.integer('bank_account', required=True, lo=1)
+            new_ba = BankAccount.objects.filter(pk=ba_id).first()
+            if not new_ba:
+                raise ApiError(404, 'Bank account not found.')
+            ba = new_ba
+            obj.bank_account = new_ba
+        if 'date' in data:
+            obj.date = c.date('date', required=True)
+        if 'description' in data:
+            obj.description = c.text('description', required=True, max_len=500)
+        if 'reference' in data:
+            obj.reference = c.text('reference', max_len=100)
+        if 'withdrawal' in data:
+            obj.withdrawal = c.number('withdrawal', default=Decimal('0.00'), lo=Decimal('0'))
+        if 'deposit' in data:
+            obj.deposit = c.number('deposit', default=Decimal('0.00'), lo=Decimal('0'))
+        if 'transaction_type' in data:
+            obj.transaction_type = c.text('transaction_type', max_len=50, default=obj.transaction_type)
+        if 'payee' in data:
+            obj.payee = c.text('payee', max_len=150)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=100, default=obj.location)
+        if 'status' in data:
+            obj.status = c.choice('status', ['unmatched', 'unreconciled', 'matched', 'categorized', 'manually_added'], default=obj.status)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=1000)
+        c.done()
+
+        balance_delta = (obj.deposit - old_dep) - (obj.withdrawal - old_wd)
+        if balance_delta != Decimal('0.00'):
+            ba.current_balance += balance_delta
+            ba.bank_balance += balance_delta
+            ba.save(update_fields=['current_balance', 'bank_balance'])
+            obj.balance = ba.current_balance
+
+        obj.save()
+        services.log_audit(user, 'update', 'BankTransaction', obj.pk, f"Updated bank transaction {obj.description} ({obj.date})")
+        return obj
+
+    def destroy(self, obj):
+        ba = obj.bank_account
+        if ba:
+            ba.current_balance = ba.current_balance - obj.deposit + obj.withdrawal
+            ba.bank_balance = ba.bank_balance - obj.deposit + obj.withdrawal
+            ba.save(update_fields=['current_balance', 'bank_balance'])
+        obj.delete()
 
     def filter_qs(self, qs, request):
         ba = request.GET.get('bank_account')
@@ -3327,6 +3482,45 @@ class ExpenseResource(Resource):
         services.log_audit(user, 'create', 'Expense', exp.number, f"Recorded expense {exp.number} for ₹{exp.total}")
         return exp
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'date' in data:
+            obj.date = c.date('date', required=True)
+        if 'expense_account' in data:
+            acc_id = c.integer('expense_account', required=True, lo=1)
+            acc = Account.objects.filter(pk=acc_id).first()
+            if not acc:
+                raise ApiError(404, 'Expense account not found.')
+            obj.expense_account = acc
+        if 'vendor' in data:
+            ven_id = c.integer('vendor', lo=1)
+            obj.vendor = Vendor.objects.filter(pk=ven_id).first() if ven_id else None
+        if 'amount' in data or 'gst_rate' in data:
+            amt = c.number('amount', default=obj.amount, lo=Decimal('0.01'))
+            gst_r = c.number('gst_rate', default=obj.gst_rate)
+            tax_amt = q2(amt * gst_r / Decimal(100))
+            obj.amount = amt
+            obj.gst_rate = gst_r
+            obj.tax_amount = tax_amt
+            obj.total = amt + tax_amt
+        if 'paid_through' in data:
+            obj.paid_through = c.text('paid_through', max_len=80)
+        if 'reference' in data:
+            obj.reference = c.text('reference', max_len=80)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=1000)
+        c.done()
+        obj.save()
+
+        Journal.objects.filter(reference=obj.number, entry_type='expense').delete()
+        services.post_expense_journal(obj, user)
+        services.log_audit(user, 'update', 'Expense', obj.number, f"Updated expense {obj.number} for ₹{obj.total}")
+        return obj
+
+    def destroy(self, obj):
+        Journal.objects.filter(reference=obj.number, entry_type='expense').delete()
+        obj.delete()
+
 class CreditNoteResource(Resource):
     name = 'credit-notes'
     model = CreditNote
@@ -3721,6 +3915,35 @@ class RecurringInvoiceResource(Resource):
             total=tot, subtotal=tot
         )
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'profile_name' in data:
+            obj.profile_name = c.text('profile_name', required=True, max_len=150)
+        if 'customer' in data:
+            cid = c.integer('customer', required=True, lo=1)
+            cust = Customer.objects.filter(pk=cid).first()
+            if not cust:
+                raise ApiError(404, 'Customer not found.')
+            obj.customer = cust
+        if 'frequency' in data:
+            obj.frequency = c.choice('frequency', ['weekly', 'monthly', 'quarterly', 'yearly'], default=obj.frequency)
+        if 'start_date' in data:
+            obj.start_date = c.date('start_date', required=True)
+        if 'end_date' in data:
+            obj.end_date = c.date('end_date')
+        if 'next_date' in data:
+            obj.next_date = c.date('next_date', default=obj.start_date)
+        if 'status' in data:
+            obj.status = c.choice('status', ['active', 'paused', 'expired'], default=obj.status)
+        if 'total' in data:
+            tot = c.number('total', required=True, lo=Decimal('0.01'))
+            obj.total = tot
+            obj.subtotal = tot
+        c.done()
+        obj.save()
+        services.log_audit(user, 'update', 'RecurringInvoice', obj.profile_name, f"Updated recurring profile {obj.profile_name}")
+        return obj
+
 class DeliveryChallanResource(Resource):
     name = 'delivery-challans'
     model = DeliveryChallan
@@ -3837,6 +4060,41 @@ class DeliveryChallanResource(Resource):
         services.log_audit(user, 'create', 'DeliveryChallan', dc.number, f"Created delivery challan {dc.number}")
         return dc
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'customer' in data:
+            cid = c.integer('customer', required=True, lo=1)
+            cust = Customer.objects.filter(pk=cid).first()
+            if not cust:
+                raise ApiError(404, 'Customer not found.')
+            obj.customer = cust
+        if 'date' in data:
+            obj.date = c.date('date', required=True)
+        if 'challan_type' in data:
+            obj.challan_type = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default=obj.challan_type)
+        if 'vehicle_number' in data:
+            obj.vehicle_number = c.text('vehicle_number', max_len=50)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=1000)
+        if 'status' in data:
+            obj.status = c.choice('status', ['open', 'closed', 'cancelled'], default=obj.status)
+        c.done()
+        obj.save()
+
+        if 'lines' in data:
+            obj.lines.all().delete()
+            for l in data.get('lines', []):
+                item_id = l.get('item') or l.get('item_id')
+                DeliveryChallanLine.objects.create(
+                    challan=obj,
+                    item_id=item_id if item_id else None,
+                    description=l.get('description', 'Item'),
+                    hsn_sac=l.get('hsn_sac', ''),
+                    quantity=Decimal(str(l.get('quantity', 1)))
+                )
+        services.log_audit(user, 'update', 'DeliveryChallan', obj.number, f"Updated delivery challan {obj.number}")
+        return obj
+
 class EWayBillResource(Resource):
     name = 'e-way-bills'
     model = EWayBill
@@ -3914,6 +4172,30 @@ class ProjectResource(Resource):
         c.done()
         return Project.objects.create(name=name, code=code, customer=cust, billing_method=bmethod, rate_per_hour=rate, budget_hours=budget, description=desc)
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'name' in data:
+            obj.name = c.text('name', required=True, max_len=150)
+        if 'code' in data:
+            obj.code = c.text('code', max_len=40)
+        if 'customer' in data:
+            cid = c.integer('customer', lo=1)
+            obj.customer = Customer.objects.filter(pk=cid).first() if cid else None
+        if 'billing_method' in data:
+            obj.billing_method = c.text('billing_method', max_len=40)
+        if 'rate_per_hour' in data:
+            obj.rate_per_hour = c.number('rate_per_hour', default=Decimal('0.00'))
+        if 'budget_hours' in data:
+            obj.budget_hours = c.number('budget_hours', default=Decimal('0.00'))
+        if 'status' in data:
+            obj.status = c.choice('status', ['active', 'completed', 'on_hold', 'cancelled'], default=obj.status)
+        if 'description' in data:
+            obj.description = c.text('description', max_len=1000)
+        c.done()
+        obj.save()
+        services.log_audit(user, 'update', 'Project', obj.name, f"Updated project {obj.name}")
+        return obj
+
 class TimeLogResource(Resource):
     name = 'timesheets'
     model = TimeLog
@@ -3963,6 +4245,29 @@ class TimeLogResource(Resource):
         c.done()
         return TimeLog.objects.create(project=proj, user=user, date=dt, hours=hrs, task=task, billable=bill, notes=notes)
 
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'project' in data:
+            pid = c.integer('project', required=True, lo=1)
+            proj = Project.objects.filter(pk=pid).first()
+            if not proj:
+                raise ApiError(404, 'Project not found.')
+            obj.project = proj
+        if 'date' in data:
+            obj.date = c.date('date', required=True)
+        if 'hours' in data:
+            obj.hours = c.number('hours', required=True, lo=Decimal('0.1'), hi=Decimal('24.0'))
+        if 'task' in data:
+            obj.task = c.text('task', required=True, max_len=255)
+        if 'billable' in data:
+            obj.billable = c.boolean('billable', default=obj.billable)
+        if 'notes' in data:
+            obj.notes = c.text('notes', max_len=1000)
+        c.done()
+        obj.save()
+        services.log_audit(user, 'update', 'TimeLog', str(obj.pk), f"Updated time log for {obj.project.name}: {obj.hours} hrs")
+        return obj
+
 class ItemCategoryResource(Resource):
     name = 'item-categories'
     model = ItemCategory
@@ -3987,6 +4292,21 @@ class ItemCategoryResource(Resource):
         desc = c.text('description', max_len=500)
         c.done()
         return ItemCategory.objects.create(name=name, description=desc)
+
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        if 'name' in data:
+            old_name = obj.name
+            new_name = c.text('name', required=True, max_len=100)
+            obj.name = new_name
+            if old_name != new_name:
+                Item.objects.filter(category=old_name).update(category=new_name)
+        if 'description' in data:
+            obj.description = c.text('description', max_len=500)
+        c.done()
+        obj.save()
+        services.log_audit(user, 'update', 'ItemCategory', obj.name, f"Updated item category {obj.name}")
+        return obj
 
 PRICE_LIST_NAME_RE = re.compile(r'^[^@#$%^&*~`+=<>{}[\]\\]+$')
 

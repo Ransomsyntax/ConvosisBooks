@@ -1191,9 +1191,20 @@ function listPage(root, cfg) {
 }
 
 async function deleteRecord(resource, row, label) {
+  const id = row && (row.id != null ? row.id : row);
+  if (!id) return;
   if (!(await confirmBox({ title: 'Delete ' + label + '?', message: 'This cannot be undone.', okText: 'Delete', danger: true }))) return;
-  await api(`${resource}/${row.id}/`, { method: 'DELETE' });
-  toast(label + ' deleted'); refresh();
+  try {
+    await api(`${resource}/${id}/`, { method: 'DELETE' });
+    toast(label + ' deleted', 'ok');
+    if (window.PAGE && window.PAGE.reload) {
+      window.PAGE.reload();
+    } else {
+      refresh();
+    }
+  } catch (err) {
+    toast(err.message || ('Could not delete ' + label), 'err');
+  }
 }
 
 const money = f => ({ r: 1, f });
@@ -1261,14 +1272,14 @@ const LISTS = {
   'payments-received': {
     api: 'payments-received', title: 'Payments Received', bc: 'Sales', newLabel: 'Record payment', onNew: () => paymentForm('payments-received'), ordering: '-date', empty: 'No payments recorded yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Receipt#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Mode', f: r => esc(r.mode_label) }, { h: 'Reference', f: r => esc(r.reference || '—') }, { h: 'Amount', s: 'amount', ...money(r => inr(r.amount)) }, { h: 'Unapplied', ...money(r => inr(r.unapplied)) }],
-    actions: () => [['view', 'View'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => a === 'view' ? paymentDetail('payments-received', r.id) : deleteRecord('payments-received', r, 'payment'),
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'view' ? paymentDetail('payments-received', r.id) : a === 'edit' ? paymentForm('payments-received', r) : deleteRecord('payments-received', r, 'payment'),
   },
   'payments-made': {
     api: 'payments-made', title: 'Payments Made', bc: 'Purchases', newLabel: 'Record payment', onNew: () => paymentForm('payments-made'), ordering: '-date', empty: 'No payments recorded yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Payment#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party) }, { h: 'Mode', f: r => esc(r.mode_label) }, { h: 'Reference', f: r => esc(r.reference || '—') }, { h: 'Amount', s: 'amount', ...money(r => inr(r.amount)) }, { h: 'Unapplied', ...money(r => inr(r.unapplied)) }],
-    actions: () => [['view', 'View'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => a === 'view' ? paymentDetail('payments-made', r.id) : deleteRecord('payments-made', r, 'payment'),
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'view' ? paymentDetail('payments-made', r.id) : a === 'edit' ? paymentForm('payments-made', r) : deleteRecord('payments-made', r, 'payment'),
   },
   inventory: {
     api: 'items', title: 'Inventory Summary', bc: 'Inventory', params: { tracked: 1 }, empty: 'No inventory-tracked items yet. Create a goods item with “Track inventory” on.',
@@ -1484,9 +1495,9 @@ const LISTS = {
   },
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Challan#', s: 'number', f: r => esc(r.number) }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Type', f: r => esc(r.challan_type) }, { h: 'Vehicle#', f: r => esc(r.vehicle_number || '—') }, { h: 'Status', f: r => badge(r.status) }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('delivery-challans', r, 'delivery challan'),
+    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Challan#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Type', f: r => esc(r.challan_type) }, { h: 'Vehicle#', f: r => esc(r.vehicle_number || '—') }, { h: 'Status', f: r => badge(r.status) }],
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? challanModal(r.id) : deleteRecord('delivery-challans', r, 'delivery challan'),
   },
   'credit-notes': {
     api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',
@@ -1513,7 +1524,7 @@ const LISTS = {
     api: 'expenses', title: 'Expenses', bc: 'Purchases', newLabel: 'Record expense', onNew: () => expenseForm(), ordering: '-date', empty: 'No expenses recorded yet.',
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
-      { h: 'Expense#', s: 'number', f: r => esc(r.number) },
+      { h: 'Expense#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` },
       { h: 'Account', f: r => esc(r.expense_account_name) },
       { h: 'Vendor', f: r => esc(r.vendor_name || '—') },
       { h: 'Paid Through', f: r => esc(r.paid_through) },
@@ -1521,8 +1532,8 @@ const LISTS = {
       { h: 'Amount', s: 'total', ...money(r => inr(r.total)) },
       { h: 'Tax Deductible', f: r => r.is_tax_deductible ? badge('Deductible', 'up') : badge('Non-deductible') }
     ],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('expenses', r, 'expense'),
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? expenseForm(r.id) : deleteRecord('expenses', r, 'expense'),
   },
   'purchase-orders': {
     api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('purchase-orders'), ordering: '-date', empty: 'No purchase orders yet.',
@@ -1554,15 +1565,15 @@ const LISTS = {
   timesheets: {
     api: 'timelogs', title: 'Timesheets', bc: 'Time Tracking', newLabel: 'Log time', onNew: () => timelogModal(), ordering: '-date', empty: 'No time entries logged yet.',
     cols: [
-      { h: 'Date', s: 'date', f: r => fd(r.date) },
+      { h: 'Date', s: 'date', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${fd(r.date)}</button>` },
       { h: 'Project', f: r => esc(r.project_name) },
       { h: 'Task', f: r => esc(r.task) },
       { h: 'Hours', r: 1, f: r => `<b>${qty(r.hours)} hrs</b>` },
       { h: 'Billable', f: r => r.billable ? badge('Billable', 'up') : badge('Non-billable') },
       { h: 'Logged By', f: r => esc(r.user_name || 'Admin') }
     ],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('timelogs', r, 'time log'),
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? timelogModal(r.id) : deleteRecord('timelogs', r, 'time log'),
   },
   'bank-accounts': {
     api: 'bank-accounts', title: 'Bank Accounts', bc: 'Banking', newLabel: 'Add bank account', onNew: () => bankAccountForm(), empty: 'No bank accounts added yet.',
@@ -1595,15 +1606,15 @@ const LISTS = {
     api: 'manual-journals', title: 'Manual Journals', bc: 'Accountant', newLabel: 'New journal', onNew: () => journalForm(), ordering: '-date', empty: 'No journal entries yet.',
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
-      { h: 'Journal#', s: 'number', f: r => `<b>${esc(r.number)}</b>` },
+      { h: 'Journal#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}"><b>${esc(r.number)}</b></button>` },
       { h: 'Type', f: r => badge(r.entry_type) },
       { h: 'Reference', f: r => esc(r.reference || '—') },
       { h: 'Notes', f: r => esc(r.notes || '—') },
       { h: 'Total Debit', ...money(r => inr(r.total_debit)) },
       { h: 'Total Credit', ...money(r => inr(r.total_credit)) }
     ],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('manual-journals', r, 'journal entry'),
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? journalForm(r.id) : deleteRecord('manual-journals', r, 'journal entry'),
   },
   accounts: {
     api: 'accounts', title: 'Chart of Accounts', bc: 'Accountant', newLabel: 'New account', onNew: () => accountForm(), ordering: 'code', empty: 'No accounts in Chart of Accounts.',
@@ -1621,9 +1632,9 @@ const LISTS = {
   },
   'item-categories': {
     api: 'item-categories', title: 'Item Categories', bc: 'Items', newLabel: 'New category', onNew: () => categoryModal(), ordering: 'name', empty: 'No item categories yet.',
-    cols: [{ h: 'Category Name', s: 'name', f: r => `<b>${esc(r.name)}</b>` }, { h: 'Description', f: r => esc(r.description || '—') }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('item-categories', r, 'category'),
+    cols: [{ h: 'Category Name', s: 'name', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}"><b>${esc(r.name)}</b></button>` }, { h: 'Description', f: r => esc(r.description || '—') }],
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? categoryModal(r.id) : deleteRecord('item-categories', r, 'category'),
   },
   'price-lists': {
     api: 'price-lists', title: 'Price Lists', bc: 'Items', newLabel: 'New price list', onNew: () => priceListModal(), ordering: 'name', empty: 'No price lists yet.',

@@ -153,15 +153,41 @@ let openG = pref.get('open', ['home']);
 
 const NAV_NEW_ACTIONS = {
   'items/items': () => itemForm(),
+  'items/item-categories': () => categoryModal(),
+  'items/price-lists': () => priceListModal(),
+  'inventory/stock-adjustments': () => adjustForm(),
+  'inventory/stock-movement': () => stockMoveModal(),
+  'inventory/warehouses': () => warehouseModal(),
   'sales/customers': () => partyForm('customers'),
   'sales/quotes': () => quoteForm(),
-  'purchases/vendors': () => partyForm('vendors')
+  'sales/sales-orders': () => salesOrderForm(),
+  'sales/invoices': () => { location.hash = '#/sales/invoices'; return docMasterDetail($('#pg'), 'invoices', 'new'); },
+  'sales/recurring-invoices': () => recurringInvoiceModal(),
+  'sales/retainer-invoices': () => { location.hash = '#/sales/retainer-invoices'; return docMasterDetail($('#pg'), 'retainer-invoices', 'new'); },
+  'sales/delivery-challans': () => challanModal(),
+  'sales/payments-received': () => paymentForm('payments-received'),
+  'sales/credit-notes': () => docForm('credit-notes'),
+  'sales/e-way-bills': () => ewayBillModal(),
+  'purchases/vendors': () => partyForm('vendors'),
+  'purchases/expenses': () => expenseForm(),
+  'purchases/purchase-orders': () => docForm('purchase-orders'),
+  'purchases/bills': () => { location.hash = '#/purchases/bills'; return docMasterDetail($('#pg'), 'bills', 'new'); },
+  'purchases/payments-made': () => paymentForm('payments-made'),
+  'purchases/vendor-credits': () => docForm('vendor-credits'),
+  'time/projects': () => projectModal(),
+  'time/timesheets': () => timelogModal(),
+  'banking/bank-accounts': () => bankAccountForm(),
+  'accountant/manual-journals': () => journalForm(),
+  'accountant/chart-of-accounts': () => accountForm(),
+  'documents/all-documents': () => documentUploadModal(),
+  'documents/files': () => documentUploadModal(),
+  'documents/folders': () => folderModal()
 };
 
 function getNavAddAction(k, c) {
   const s = slug(c);
   const target = k + '/' + s;
-  return NAV_NEW_ACTIONS[target] || null;
+  return NAV_NEW_ACTIONS[target] || NAV_NEW_ACTIONS[k + '/' + c] || NAV_NEW_ACTIONS[c] || null;
 }
 
 function drawNav(cur) {
@@ -276,8 +302,8 @@ document.addEventListener('touchstart', e => {
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
-  ['Invoice', () => { location.hash = '#/sales/invoices'; docMasterDetail($('#pg'), 'invoices', 'new'); }],
-  ['Bill', () => { location.hash = '#/purchases/bills'; docMasterDetail($('#pg'), 'bills', 'new'); }],
+  ['Invoice', () => { location.hash = '#/sales/invoices'; return docMasterDetail($('#pg'), 'invoices', 'new'); }],
+  ['Bill', () => { location.hash = '#/purchases/bills'; return docMasterDetail($('#pg'), 'bills', 'new'); }],
   ['Sales Order', () => salesOrderForm()],
   ['Expense', () => expenseForm()],
   ['Journal Entry', () => journalForm()],
@@ -295,7 +321,12 @@ function openRecord(t, id) {
   const M = { customer: ['sales/customers', () => partyDetail('customers', id)], vendor: ['purchases/vendors', () => partyDetail('vendors', id)], invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)], bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)], item: ['items/items-services', () => itemForm(id)], sales_order: ['sales/sales-orders', () => viewSalesOrderDetail(id)], 'sales-order': ['sales/sales-orders', () => viewSalesOrderDetail(id)] };
   const [r, fn] = M[t];
   if (location.hash !== '#/' + r) location.hash = '#/' + r;
-  fn().catch(e => toast(e.message, 'err'));
+  try {
+    const res = fn();
+    if (res && typeof res.catch === 'function') res.catch(e => toast(e.message, 'err'));
+  } catch (e) {
+    toast(e.message, 'err');
+  }
 }
 
 const NotificationCenter = {
@@ -388,7 +419,19 @@ document.addEventListener('click', async e => {
   }
 
   const q = t.closest('[data-q]');
-  if (q) { closePops(); QC[q.dataset.q][1]().catch(err => toast(err.message, 'err')); return; }
+  if (q) {
+    closePops();
+    const action = QC[q.dataset.q] && QC[q.dataset.q][1];
+    if (action) {
+      try {
+        const res = action();
+        if (res && typeof res.catch === 'function') res.catch(err => toast(err.message, 'err'));
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    }
+    return;
+  }
   const sr = t.closest('#qr [data-t]');
   if (sr) { closePops(); $('#q').value = ''; openRecord(sr.dataset.t, sr.dataset.id); return; }
   const a = t.closest('[data-a]');
@@ -428,11 +471,11 @@ document.addEventListener('click', async e => {
     e.stopPropagation();
     const target = navAdd.dataset.navAdd;
     const parts = target.split('/');
-    const action = getNavAddAction(parts[0], parts[1]);
+    const action = NAV_NEW_ACTIONS[target] || getNavAddAction(parts[0], parts[1]);
     if (action) {
       try {
         const res = action();
-        if (res && res.catch) res.catch(err => toast(err.message, 'err'));
+        if (res && typeof res.catch === 'function') res.catch(err => toast(err.message, 'err'));
       } catch (err) {
         toast(err.message, 'err');
       }

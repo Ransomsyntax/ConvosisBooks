@@ -378,6 +378,8 @@ class Resource:
                 rec['active'] = True
             elif act_val in ('false', 'no', '0', 'inactive', 'n'):
                 rec['active'] = False
+            elif act_val in ('', 'none', 'null', 'n/a', '-'):
+                rec['active'] = True
 
         for num_f in ('selling_price', 'purchase_price', 'gst_rate', 'reorder_level', 'opening_stock', 'amount', 'opening_balance', 'current_balance', 'payment_terms', 'quantity', 'rate', 'discount_percent'):
             if num_f in rec and isinstance(rec[num_f], str):
@@ -616,8 +618,18 @@ class PartyResource(Resource):
         return out
 
     def prepare_import_record(self, rec):
-        if not rec.get('name') and rec.get('company'):
-            rec['name'] = rec['company']
+        if not rec.get('name'):
+            first = rec.get('first_name') or rec.get('contact_first_name') or ''
+            last = rec.get('last_name') or rec.get('contact_last_name') or ''
+            full = f"{first} {last}".strip()
+            if full:
+                rec['name'] = full
+            elif rec.get('company'):
+                rec['name'] = rec.get('company')
+            elif rec.get('contact_person'):
+                rec['name'] = rec.get('contact_person')
+        if rec.get('active') in (None, ''):
+            rec['active'] = True
         if rec.get('gstin') and not rec.get('pan') and len(rec['gstin']) >= 12:
             rec['pan'] = rec['gstin'][2:12].upper()
         if rec.get('gstin') and not rec.get('state') and len(rec['gstin']) >= 2:

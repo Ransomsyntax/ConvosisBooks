@@ -347,16 +347,28 @@ async function partyForm(kind, id) {
   const formHtml = `
     <div class="party-form-wrap zb-form-wrap">
 
-      <div class="gst-prefill-compact">
-        <div class="gst-prefill-left">
-          <svg class="gst-prefill-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-          <span class="gst-prefill-text">Prefill ${entityLabel} details from the GST portal using the ${entityLabel}'s GSTIN.</span>
-          <a href="javascript:void(0)" class="gst-prefill-link" id="btn_toggle_gst_prefill">Prefill &gt;</a>
+      <div class="party-top-actions-bar" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:8px 12px;background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;flex-wrap:wrap;">
+        <div class="gst-prefill-compact" style="flex:1;min-width:280px;margin:0;">
+          <div class="gst-prefill-left" style="display:flex;align-items:center;gap:8px;">
+            <svg class="gst-prefill-icon-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span class="gst-prefill-text" style="font-size:12px;">Prefill ${entityLabel} details from GSTIN</span>
+            <a href="javascript:void(0)" class="gst-prefill-link" id="btn_toggle_gst_prefill" style="font-size:12px;font-weight:600;">Fetch &gt;</a>
+          </div>
+          <div class="gst-prefill-ctrls" id="gst_prefill_ctrls" style="display:none;gap:6px;align-items:center;margin-top:6px;">
+            <input class="in gst-prefill-mini-in" id="gst_prefill_code" placeholder="15-digit GSTIN" maxlength="15" value="${esc(r.gstin || '')}" style="height:30px;font-size:12px;">
+            <button type="button" class="btn p gst-prefill-mini-btn" id="btn_trigger_gst_prefill" style="height:30px;font-size:11.5px;padding:0 10px;">Fetch</button>
+            <button type="button" class="btn ic gst-prefill-mini-close" id="btn_close_gst_prefill" title="Close">×</button>
+          </div>
         </div>
-        <div class="gst-prefill-ctrls" id="gst_prefill_ctrls" style="display:none;">
-          <input class="in gst-prefill-mini-in" id="gst_prefill_code" placeholder="15-digit GSTIN" maxlength="15" value="${esc(r.gstin || '')}">
-          <button type="button" class="btn p gst-prefill-mini-btn" id="btn_trigger_gst_prefill">Fetch</button>
-          <button type="button" class="btn ic gst-prefill-mini-close" id="btn_close_gst_prefill" title="Close">×</button>
+
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button type="button" class="btn" id="btn_party_preload_demo" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;height:32px;" title="Preload sample ${entityLabel} details">
+            <i class="fa-solid fa-bolt" style="color:var(--accent);"></i> <span>⚡ Quick Fill</span>
+          </button>
+          <button type="button" class="btn" id="btn_party_import_file_trigger" style="font-size:12px;display:inline-flex;align-items:center;gap:5px;height:32px;" title="Import data from CSV/JSON into this form">
+            <i class="fa-solid fa-file-import" style="color:#10b981;"></i> <span>📁 Load File Data</span>
+          </button>
+          <input type="file" id="party_file_quick_import" accept=".csv,.tsv,.json,text/csv,application/json" style="display:none;">
         </div>
       </div>
 
@@ -365,24 +377,18 @@ async function partyForm(kind, id) {
           <label class="zb-form-label">Customer Type <span class="zb-info-tip" title="Choose whether customer is a registered business or an individual consumer">ⓘ</span></label>
           <div class="zb-form-ctrl">
             <div style="display:flex;align-items:center;gap:20px;height:35px;">
-              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
+              <label id="pill_type_business" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
                 <input type="radio" name="customer_type" value="business" ${r.customer_type !== 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
                 <span>Business</span>
-
               </label>
 
-              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
+              <label id="pill_type_individual" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--tx);">
                 <input type="radio" name="customer_type" value="individual" ${r.customer_type === 'individual' ? 'checked' : ''} style="accent-color:var(--accent,#2563eb);width:15px;height:15px;cursor:pointer;">
                 <span>Individual</span>
-
               </label>
-
             </div>
-
           </div>
-
         </div>
-
       ` : ''}
 
       <div class="zb-form-row">
@@ -808,14 +814,113 @@ async function partyForm(kind, id) {
       if (isCust) {
         const pillBiz = $('#pill_type_business', modal.el);
         const pillInd = $('#pill_type_individual', modal.el);
-        pillBiz.addEventListener('click', () => {
-          pillBiz.classList.add('active'); pillInd.classList.remove('active');
-          $('input[name="customer_type"][value="business"]', modal.el).checked = true;
-        });
-        pillInd.addEventListener('click', () => {
-          pillInd.classList.add('active'); pillBiz.classList.remove('active');
-          $('input[name="customer_type"][value="individual"]', modal.el).checked = true;
-        });
+        if (pillBiz) {
+          pillBiz.addEventListener('click', () => {
+            pillBiz.classList.add('active'); if (pillInd) pillInd.classList.remove('active');
+            const rBiz = $('input[name="customer_type"][value="business"]', modal.el);
+            if (rBiz) rBiz.checked = true;
+          });
+        }
+        if (pillInd) {
+          pillInd.addEventListener('click', () => {
+            pillInd.classList.add('active'); if (pillBiz) pillBiz.classList.remove('active');
+            const rInd = $('input[name="customer_type"][value="individual"]', modal.el);
+            if (rInd) rInd.checked = true;
+          });
+        }
+
+        // Quick Preload Sample Party Data
+        const btnPreload = $('#btn_party_preload_demo', modal.el);
+        if (btnPreload) {
+          btnPreload.addEventListener('click', () => {
+            $('#company', modal.el).value = 'Bharat Electronics & Retail Pvt Ltd';
+            $('#name', modal.el).value = 'Bharat Electronics Ltd';
+            $('#contact_first_name', modal.el).value = 'Rajesh';
+            $('#contact_last_name', modal.el).value = 'Kumar';
+            $('#contact_person', modal.el).value = 'Rajesh Kumar';
+            $('#primary_salutation', modal.el).value = 'Mr.';
+            $('#email', modal.el).value = 'accounts@bharatelectronics.in';
+            $('#phone', modal.el).value = '+91 98450 12345';
+            $('#gstin', modal.el).value = '32AABCC1234D1Z5';
+            $('#pan', modal.el).value = 'AABCC1234D';
+            $('#billing_address', modal.el).value = '42 Commercial Arcade, MG Road';
+            $('#billing_city', modal.el).value = 'Kochi';
+            $('#billing_pincode', modal.el).value = '682016';
+            const pos = $('#place_of_supply', modal.el);
+            if (pos) pos.value = '[32] Kerala';
+            const pillB = $('#pill_type_business', modal.el);
+            if (pillB) pillB.click();
+            toast('Preloaded sample customer details into form!', 'ok');
+          });
+        }
+
+        // Quick Load CSV/JSON File Data directly into Form
+        const btnImportTrigger = $('#btn_party_import_file_trigger', modal.el);
+        const quickFileInput = $('#party_file_quick_import', modal.el);
+        if (btnImportTrigger && quickFileInput) {
+          btnImportTrigger.addEventListener('click', () => quickFileInput.click());
+          quickFileInput.addEventListener('change', () => {
+            if (!quickFileInput.files.length) return;
+            const fObj = quickFileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = ev => {
+              try {
+                const text = ev.target.result;
+                let rows = [];
+                if (fObj.name.endsWith('.json')) {
+                  const jData = JSON.parse(text);
+                  rows = Array.isArray(jData) ? jData : (jData.records || jData.data || [jData]);
+                } else {
+                  const p = parseCsvString(text);
+                  const h = p.headers.map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                  rows = p.rows.map(rowVals => {
+                    const obj = {};
+                    h.forEach((head, i) => { obj[head] = rowVals[i] || ''; });
+                    return obj;
+                  });
+                }
+                if (!rows.length) {
+                  toast('No records found in selected file.', 'err');
+                  return;
+                }
+                const firstRec = rows[0];
+                const getVal = (...keys) => {
+                  for (const k of keys) {
+                    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    if (firstRec[cleanK] != null && String(firstRec[cleanK]).trim()) return String(firstRec[cleanK]).trim();
+                    if (firstRec[k] != null && String(firstRec[k]).trim()) return String(firstRec[k]).trim();
+                  }
+                  return '';
+                };
+
+                const nameVal = getVal('name', 'customer_name', 'vendor_name', 'client', 'display_name', 'company');
+                const compVal = getVal('company', 'company_name', 'business_name', 'organization');
+                const emailVal = getVal('email', 'email_address', 'mail');
+                const phoneVal = getVal('phone', 'phone_number', 'mobile', 'contact_number');
+                const gstinVal = getVal('gstin', 'gst', 'gst_number');
+                const panVal = getVal('pan', 'pan_number');
+                const addrVal = getVal('billing_address', 'address', 'street');
+                const cityVal = getVal('billing_city', 'city', 'town');
+                const pinVal = getVal('billing_pincode', 'pincode', 'pin_code', 'zip');
+
+                if (nameVal && $('#name', modal.el)) $('#name', modal.el).value = nameVal;
+                if (compVal && $('#company', modal.el)) $('#company', modal.el).value = compVal;
+                if (emailVal && $('#email', modal.el)) $('#email', modal.el).value = emailVal;
+                if (phoneVal && $('#phone', modal.el)) $('#phone', modal.el).value = phoneVal;
+                if (gstinVal && $('#gstin', modal.el)) $('#gstin', modal.el).value = gstinVal;
+                if (panVal && $('#pan', modal.el)) $('#pan', modal.el).value = panVal;
+                if (addrVal && $('#billing_address', modal.el)) $('#billing_address', modal.el).value = addrVal;
+                if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
+                if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
+
+                toast(`Loaded data for ${nameVal || 'Customer'} (1 of ${rows.length} rows) into form!`, 'ok');
+              } catch(e) {
+                toast('Failed to load file: ' + e.message, 'err');
+              }
+            };
+            reader.readAsText(fObj);
+          });
+        }
 
         $$('input[name="tax_preference"]', modal.el).forEach(radio => {
           radio.addEventListener('change', () => {
@@ -825,6 +930,95 @@ async function partyForm(kind, id) {
           });
         });
       } else {
+        const btnPreload = $('#btn_party_preload_demo', modal.el);
+        if (btnPreload) {
+          btnPreload.addEventListener('click', () => {
+            $('#company', modal.el).value = 'Reliable Hardware Supplies Pvt Ltd';
+            $('#name', modal.el).value = 'Reliable Hardware Supplies';
+            $('#contact_first_name', modal.el).value = 'Suresh';
+            $('#contact_last_name', modal.el).value = 'Nair';
+            $('#contact_person', modal.el).value = 'Suresh Nair';
+            $('#primary_salutation', modal.el).value = 'Mr.';
+            $('#email', modal.el).value = 'orders@reliablehardware.in';
+            $('#phone', modal.el).value = '+91 94470 56789';
+            $('#gstin', modal.el).value = '32AABCR9876E1Z2';
+            $('#pan', modal.el).value = 'AABCR9876E';
+            $('#billing_address', modal.el).value = '18 Industrial Estate, Kalamassery';
+            $('#billing_city', modal.el).value = 'Kochi';
+            $('#billing_pincode', modal.el).value = '683104';
+            const sos = $('#source_of_supply', modal.el);
+            if (sos) sos.value = '[32] Kerala';
+            toast('Preloaded sample vendor details into form!', 'ok');
+          });
+        }
+
+        const btnImportTrigger = $('#btn_party_import_file_trigger', modal.el);
+        const quickFileInput = $('#party_file_quick_import', modal.el);
+        if (btnImportTrigger && quickFileInput) {
+          btnImportTrigger.addEventListener('click', () => quickFileInput.click());
+          quickFileInput.addEventListener('change', () => {
+            if (!quickFileInput.files.length) return;
+            const fObj = quickFileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = ev => {
+              try {
+                const text = ev.target.result;
+                let rows = [];
+                if (fObj.name.endsWith('.json')) {
+                  const jData = JSON.parse(text);
+                  rows = Array.isArray(jData) ? jData : (jData.records || jData.data || [jData]);
+                } else {
+                  const p = parseCsvString(text);
+                  const h = p.headers.map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                  rows = p.rows.map(rowVals => {
+                    const obj = {};
+                    h.forEach((head, i) => { obj[head] = rowVals[i] || ''; });
+                    return obj;
+                  });
+                }
+                if (!rows.length) {
+                  toast('No records found in selected file.', 'err');
+                  return;
+                }
+                const firstRec = rows[0];
+                const getVal = (...keys) => {
+                  for (const k of keys) {
+                    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    if (firstRec[cleanK] != null && String(firstRec[cleanK]).trim()) return String(firstRec[cleanK]).trim();
+                    if (firstRec[k] != null && String(firstRec[k]).trim()) return String(firstRec[k]).trim();
+                  }
+                  return '';
+                };
+
+                const nameVal = getVal('name', 'vendor_name', 'supplier', 'payee', 'company');
+                const compVal = getVal('company', 'company_name', 'business_name', 'organization');
+                const emailVal = getVal('email', 'email_address', 'mail');
+                const phoneVal = getVal('phone', 'phone_number', 'mobile', 'contact_number');
+                const gstinVal = getVal('gstin', 'gst', 'gst_number');
+                const panVal = getVal('pan', 'pan_number');
+                const addrVal = getVal('billing_address', 'address', 'street');
+                const cityVal = getVal('billing_city', 'city', 'town');
+                const pinVal = getVal('billing_pincode', 'pincode', 'pin_code', 'zip');
+
+                if (nameVal && $('#name', modal.el)) $('#name', modal.el).value = nameVal;
+                if (compVal && $('#company', modal.el)) $('#company', modal.el).value = compVal;
+                if (emailVal && $('#email', modal.el)) $('#email', modal.el).value = emailVal;
+                if (phoneVal && $('#phone', modal.el)) $('#phone', modal.el).value = phoneVal;
+                if (gstinVal && $('#gstin', modal.el)) $('#gstin', modal.el).value = gstinVal;
+                if (panVal && $('#pan', modal.el)) $('#pan', modal.el).value = panVal;
+                if (addrVal && $('#billing_address', modal.el)) $('#billing_address', modal.el).value = addrVal;
+                if (cityVal && $('#billing_city', modal.el)) $('#billing_city', modal.el).value = cityVal;
+                if (pinVal && $('#billing_pincode', modal.el)) $('#billing_pincode', modal.el).value = pinVal;
+
+                toast(`Loaded data for ${nameVal || 'Vendor'} (1 of ${rows.length} rows) into form!`, 'ok');
+              } catch(e) {
+                toast('Failed to load file: ' + e.message, 'err');
+              }
+            };
+            reader.readAsText(fObj);
+          });
+        }
+
         const msmeCk = $('#is_msme_registered', modal.el);
         const msmeWrap = $('#msme_fields_wrap', modal.el);
         msmeCk.addEventListener('change', () => {
@@ -862,8 +1056,13 @@ async function partyForm(kind, id) {
           if (gstTrSel) gstTrSel.value = res.gst_treatment || 'business_regular';
 
           if (isCust && res.customer_type) {
-            if (res.customer_type === 'individual') $('#pill_type_individual', modal.el).click();
-            else $('#pill_type_business', modal.el).click();
+            if (res.customer_type === 'individual') {
+              const pInd = $('#pill_type_individual', modal.el);
+              if (pInd) pInd.click();
+            } else {
+              const pBiz = $('#pill_type_business', modal.el);
+              if (pBiz) pBiz.click();
+            }
           }
 
           $('#billing_address', modal.el).value = res.billing_address || '';

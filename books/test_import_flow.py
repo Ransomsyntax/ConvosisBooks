@@ -175,4 +175,88 @@ class TestUniversalImport(TestCase):
         self.assertEqual(data['failed'], 1)
         self.assertTrue(len(data['errors']) > 0)
         self.assertEqual(data['errors'][0]['row'], 1)
+    def test_customer_import_defaults_active_to_true_even_when_blank(self):
+        records = [
+            {
+                'name': 'Active Client Defaults',
+                'email': 'activeclient@test.com',
+                'active': '',
+                'phone': '9876543212'
+            }
+        ]
+        res = self.client.post('/api/customers/', data=json.dumps({
+            'import_records': records
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        cust = Customer.objects.get(name='Active Client Defaults')
+        self.assertTrue(cust.active)
 
+    def test_customer_import_with_composite_first_and_last_name(self):
+        records = [
+            {
+                'first_name': 'Ramesh',
+                'last_name': 'Patel',
+                'email': 'ramesh.patel@test.com',
+                'phone': '9876543213'
+            }
+        ]
+        res = self.client.post('/api/customers/', data=json.dumps({
+            'import_records': records
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        cust = Customer.objects.filter(name='Ramesh Patel').first()
+        self.assertIsNotNone(cust)
+        self.assertTrue(cust.active)
+
+    def test_auth_login_and_signup_flow(self):
+        anon_client = Client()
+        
+        # 1. Signin failure
+        res_fail = anon_client.post('/accounts/login/', {
+            'action': 'signin',
+            'username': 'tester',
+            'password': 'wrongpassword'
+        })
+        self.assertEqual(res_fail.status_code, 200)
+        self.assertIn('Authentication failed', res_fail.content.decode('utf-8'))
+
+        # 2. Signin success
+        res_succ = anon_client.post('/accounts/login/', {
+            'action': 'signin',
+            'username': 'tester',
+            'password': 'pass1234Secure!'
+        })
+        self.assertEqual(res_succ.status_code, 302)
+        self.assertEqual(res_succ.url, '/')
+
+        # 3. Signup mismatch password
+        new_client = Client()
+        res_mismatch = new_client.post('/accounts/signup/', {
+            'action': 'signup',
+            'signup_name': 'Anil Kapoor',
+            'signup_username': 'anil_k',
+            'signup_email': 'anil@example.com',
+            'signup_password': 'password123',
+            'signup_confirm_password': 'differentpassword'
+        })
+        self.assertEqual(res_mismatch.status_code, 200)
+        self.assertIn('Passwords do not match', res_mismatch.content.decode('utf-8'))
+
+        # 4. Signup success
+        res_reg = new_client.post('/accounts/signup/', {
+            'action': 'signup',
+            'signup_name': 'Anil Kapoor',
+            'signup_org': 'Kapoor Enterprises',
+            'signup_username': 'anil_k',
+            'signup_email': 'anil@example.com',
+            'signup_password': 'password123',
+            'signup_confirm_password': 'password123'
+        })
+        self.assertEqual(res_reg.status_code, 302)
+        self.assertEqual(res_reg.url, '/')
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        u = User.objects.get(username='anil_k')
+        self.assertEqual(u.first_name, 'Anil Kapoor')
+        self.assertEqual(u.profile.role, UserProfile.ADMIN)

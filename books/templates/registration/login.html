@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in | CONVOSIS Books</title>
+<title>Sign in / Sign up | CONVOSIS Books</title>
 <link rel="icon" type="image/png" sizes="32x32" href="{% static 'books/img/favicon-32x32.png' %}">
 <link rel="icon" type="image/png" sizes="16x16" href="{% static 'books/img/favicon-16x16.png' %}">
 <link rel="icon" type="image/png" href="{% static 'books/img/favicon.png' %}">
@@ -14,12 +14,98 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{% static 'books/css/glass.css' %}">
 <link rel="stylesheet" href="{% static 'books/css/app.css' %}">
+<style>
+.login-tab-switcher {
+  display: flex;
+  background: var(--surface-glass, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--bd-glass, rgba(255, 255, 255, 0.15));
+  border-radius: 12px;
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+.login-tab-btn {
+  flex: 1;
+  padding: 8px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--tx-muted, #64748b);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.login-tab-btn.active {
+  background: var(--surface-glass-solid, #ffffff);
+  color: var(--tx, #0f172a);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+[data-theme="dark"] .login-tab-btn.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.quick-prefill-box {
+  background: var(--surface-glass-subtle, rgba(37, 99, 235, 0.05));
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 20px;
+}
+.quick-prefill-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent, #2563eb);
+  margin-bottom: 8px;
+}
+.quick-prefill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.quick-chip {
+  background: var(--surface-glass, rgba(255, 255, 255, 0.8));
+  border: 1px solid var(--bd, rgba(0, 0, 0, 0.1));
+  color: var(--tx, #0f172a);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.quick-chip:hover {
+  background: var(--accent, #2563eb);
+  color: #ffffff;
+  border-color: var(--accent, #2563eb);
+  transform: translateY(-1px);
+}
+.prefill-flash {
+  animation: fieldFlash 0.6s ease;
+}
+@keyframes fieldFlash {
+  0% { background-color: rgba(37, 99, 235, 0.25); }
+  100% { background-color: transparent; }
+}
+</style>
 </head>
 <body class="login">
 
-
 <div id="wallpaper" class="wallpaper" aria-hidden="true"><div class="wp-image"></div><div class="wp-image"></div><div class="wp-dim"></div></div>
-
 
 <div style="position:fixed; top:18px; right:20px; z-index:10; display:flex; gap:10px;">
   <button class="theme-toggle-btn" id="themeToggleBtn" type="button" onclick="ThemeEngine.toggleMode()" title="Toggle Dark / Light Theme">
@@ -31,101 +117,288 @@
   </button>
 </div>
 
-<form method="post" class="lcard" novalidate>{% csrf_token %}
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;">
+<div class="lcard">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
     <img src="{% static 'books/img/convosis-logo.png' %}" alt="Convosis" class="llogo" style="margin-bottom:0;">
-    <span class="app" style="font-size:20px;">Books</span>
+    <span class="app" style="font-size:20px;font-weight:700;">Books</span>
   </div>
 
-  <h1>Sign in to Convosis Books</h1>
-
-  {% if form.errors %}
-  <div class="lerr" role="alert">
-    <strong>Authentication failed:</strong> Incorrect username or password.
-  </div>
-  {% endif %}
-
-  <div class="login-field-group">
-    <label for="id_username" class="login-label">Username</label>
-    <input class="login-input in" type="text" name="username" id="id_username" value="{% if form.is_bound %}{{ form.username.value|default:'' }}{% elif request.COOKIES.convosis_last_user %}{{ request.COOKIES.convosis_last_user }}{% endif %}" placeholder="Enter username…" autocomplete="username" required>
+  <div class="login-tab-switcher" role="tablist">
+    <button type="button" class="login-tab-btn {% if tab != 'signup' %}active{% endif %}" id="tabBtnSignIn" role="tab" aria-selected="{% if tab != 'signup' %}true{% else %}false{% endif %}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+      Sign In
+    </button>
+    <button type="button" class="login-tab-btn {% if tab == 'signup' %}active{% endif %}" id="tabBtnSignUp" role="tab" aria-selected="{% if tab == 'signup' %}true{% else %}false{% endif %}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+      Sign Up
+    </button>
   </div>
 
-  <div class="login-field-group">
-    <label for="id_password" class="login-label">Password</label>
-    <div class="login-password-wrapper">
-      <input class="login-input in" type="password" name="password" id="id_password" value="" placeholder="••••••••" autocomplete="current-password" required>
-      <button type="button" id="togglePasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
-        <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-          <circle cx="12" cy="12" r="3"></circle>
-        </svg>
+  <!-- Quick Preload Demo Credentials Box -->
+  <div class="quick-prefill-box">
+    <div class="quick-prefill-title">
+      <span>⚡ Quick Fill / Preload</span>
+      <span style="font-size:10.5px;text-transform:none;opacity:0.85;">1-Click Demo</span>
+    </div>
+    <div class="quick-prefill-chips">
+      <button type="button" class="quick-chip" id="chipPrefillConvoadmin" title="Fill Convoadmin (Master Administrator)">
+        <span>Admin (Convoadmin)</span>
+      </button>
+      <button type="button" class="quick-chip" id="chipPrefillAdmin" title="Fill admin user">
+        <span>Admin (admin)</span>
+      </button>
+      <button type="button" class="quick-chip" id="chipPrefillSignup" title="Switch to Signup and fill sample details">
+        <span>New User Signup</span>
       </button>
     </div>
   </div>
 
-  <input type="hidden" name="next" value="{{ next|default:'/' }}">
+  <!-- SIGN IN PANE -->
+  <div id="paneSignIn" style="{% if tab == 'signup' %}display:none;{% else %}display:block;{% endif %}">
+    <h1>Sign in to Workspace</h1>
 
-  <button class="btn p login-btn-submit" id="submitLoginBtn" type="submit" autofocus>
-    Sign in to Workspace
-  </button>
-</form>
+    {% if signin_error %}
+    <div class="lerr" role="alert">
+      <strong>Authentication failed:</strong> {{ signin_error }}
+    </div>
+    {% elif form.errors %}
+    <div class="lerr" role="alert">
+      <strong>Authentication failed:</strong> Incorrect username or password.
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'login' %}" id="formSignIn" novalidate>{% csrf_token %}
+      <input type="hidden" name="action" value="signin">
+      <input type="hidden" name="next" value="{{ next|default:'/' }}">
+
+      <div class="login-field-group">
+        <label for="id_username" class="login-label">Username</label>
+        <input class="login-input in" type="text" name="username" id="id_username" value="{% if request.COOKIES.convosis_last_user %}{{ request.COOKIES.convosis_last_user }}{% endif %}" placeholder="e.g. Convoadmin" autocomplete="username" required>
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_password" class="login-label">Password</label>
+        <div class="login-password-wrapper">
+          <input class="login-input in" type="password" name="password" id="id_password" value="" placeholder="••••••••" autocomplete="current-password" required>
+          <button type="button" id="togglePasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
+            <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button class="btn p login-btn-submit" id="submitLoginBtn" type="submit">
+        Sign in to Workspace
+      </button>
+    </form>
+  </div>
+
+  <!-- SIGN UP PANE -->
+  <div id="paneSignUp" style="{% if tab == 'signup' %}display:block;{% else %}display:none;{% endif %}">
+    <h1>Create Your Account</h1>
+
+    {% if signup_error %}
+    <div class="lerr" role="alert">
+      <strong>Registration notice:</strong> {{ signup_error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'signup' %}" id="formSignUp" novalidate>{% csrf_token %}
+      <input type="hidden" name="action" value="signup">
+      <input type="hidden" name="next" value="{{ next|default:'/' }}">
+
+      <div class="login-field-group">
+        <label for="id_signup_name" class="login-label">Full Name</label>
+        <input class="login-input in" type="text" name="signup_name" id="id_signup_name" placeholder="e.g. Rajesh Sharma">
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_org" class="login-label">Organization / Business Name</label>
+        <input class="login-input in" type="text" name="signup_org" id="id_signup_org" placeholder="e.g. Sharma Logistics Pvt Ltd">
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_username" class="login-label">Choose Username<span class="rq" style="color:#ef4444;">*</span></label>
+        <input class="login-input in" type="text" name="signup_username" id="id_signup_username" placeholder="e.g. rajesh_sharma" required>
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_email" class="login-label">Work Email</label>
+        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="e.g. rajesh@example.com">
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_password" class="login-label">Password<span class="rq" style="color:#ef4444;">*</span></label>
+        <div class="login-password-wrapper">
+          <input class="login-input in" type="password" name="signup_password" id="id_signup_password" placeholder="Minimum 4 characters" required>
+          <button type="button" id="toggleSignupPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_confirm_password" class="login-label">Confirm Password<span class="rq" style="color:#ef4444;">*</span></label>
+        <input class="login-input in" type="password" name="signup_confirm_password" id="id_signup_confirm_password" placeholder="Re-enter password" required>
+      </div>
+
+      <button class="btn p login-btn-submit" id="submitSignupBtn" type="submit">
+        Create Account &amp; Open Workspace
+      </button>
+    </form>
+  </div>
+</div>
 
 <script src="{% static 'books/js/theme.js' %}"></script>
 <script>
-  (function() {
+(function() {
+  const tabSignIn = document.getElementById('tabBtnSignIn');
+  const tabSignUp = document.getElementById('tabBtnSignUp');
+  const paneSignIn = document.getElementById('paneSignIn');
+  const paneSignUp = document.getElementById('paneSignUp');
 
+  function switchTab(target) {
+    if (target === 'signup') {
+      tabSignUp.classList.add('active');
+      tabSignUp.setAttribute('aria-selected', 'true');
+      tabSignIn.classList.remove('active');
+      tabSignIn.setAttribute('aria-selected', 'false');
+      paneSignUp.style.display = 'block';
+      paneSignIn.style.display = 'none';
+      const firstInp = document.getElementById('id_signup_name');
+      if (firstInp) firstInp.focus();
+    } else {
+      tabSignIn.classList.add('active');
+      tabSignIn.setAttribute('aria-selected', 'true');
+      tabSignUp.classList.remove('active');
+      tabSignUp.setAttribute('aria-selected', 'false');
+      paneSignIn.style.display = 'block';
+      paneSignUp.style.display = 'none';
+      const firstInp = document.getElementById('id_username');
+      if (firstInp) firstInp.focus();
+    }
+  }
+
+  if (tabSignIn && tabSignUp) {
+    tabSignIn.addEventListener('click', () => switchTab('signin'));
+    tabSignUp.addEventListener('click', () => switchTab('signup'));
+  }
+
+  // Preload Demo Credentials
+  const chipConvoadmin = document.getElementById('chipPrefillConvoadmin');
+  const chipAdmin = document.getElementById('chipPrefillAdmin');
+  const chipSignup = document.getElementById('chipPrefillSignup');
+
+  function flashInput(el) {
+    if (!el) return;
+    el.classList.add('prefill-flash');
+    setTimeout(() => el.classList.remove('prefill-flash'), 600);
+  }
+
+  if (chipConvoadmin) {
+    chipConvoadmin.addEventListener('click', () => {
+      switchTab('signin');
+      const u = document.getElementById('id_username');
+      const p = document.getElementById('id_password');
+      if (u) { u.value = 'Convoadmin'; flashInput(u); }
+      if (p) { p.value = 'admin123'; flashInput(p); }
+      const btn = document.getElementById('submitLoginBtn');
+      if (btn) btn.focus();
+    });
+  }
+
+  if (chipAdmin) {
+    chipAdmin.addEventListener('click', () => {
+      switchTab('signin');
+      const u = document.getElementById('id_username');
+      const p = document.getElementById('id_password');
+      if (u) { u.value = 'admin'; flashInput(u); }
+      if (p) { p.value = 'admin123'; flashInput(p); }
+      const btn = document.getElementById('submitLoginBtn');
+      if (btn) btn.focus();
+    });
+  }
+
+  if (chipSignup) {
+    chipSignup.addEventListener('click', () => {
+      switchTab('signup');
+      const name = document.getElementById('id_signup_name');
+      const org = document.getElementById('id_signup_org');
+      const user = document.getElementById('id_signup_username');
+      const email = document.getElementById('id_signup_email');
+      const pass = document.getElementById('id_signup_password');
+      const conf = document.getElementById('id_signup_confirm_password');
+
+      const randNum = Math.floor(100 + Math.random() * 900);
+      if (name) { name.value = 'Rajesh Sharma'; flashInput(name); }
+      if (org) { org.value = 'Sharma Logistics Pvt Ltd'; flashInput(org); }
+      if (user) { user.value = 'rajesh_' + randNum; flashInput(user); }
+      if (email) { email.value = 'rajesh' + randNum + '@example.com'; flashInput(email); }
+      if (pass) { pass.value = 'admin123'; flashInput(pass); }
+      if (conf) { conf.value = 'admin123'; flashInput(conf); }
+      const btn = document.getElementById('submitSignupBtn');
+      if (btn) btn.focus();
+    });
+  }
+
+  // Password visibility toggles
+  function wirePasswordToggle(toggleBtnId, inputId) {
+    const btn = document.getElementById(toggleBtnId);
+    const inp = document.getElementById(inputId);
+    if (!btn || !inp) return;
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const isPass = inp.type === 'password';
+      inp.type = isPass ? 'text' : 'password';
+      btn.innerHTML = isPass
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    });
+  }
+
+  wirePasswordToggle('togglePasswordBtn', 'id_password');
+  wirePasswordToggle('toggleSignupPasswordBtn', 'id_signup_password');
+
+  // Remember Last User
+  const STORAGE_KEY_USER = 'convosis_last_login_username';
+  const userInput = document.getElementById('id_username');
+  if (userInput && !userInput.value) {
     try {
-      document.cookie = 'convosis_last_pass=; path=/; max-age=0; SameSite=Lax';
-      localStorage.removeItem('convosis_last_login_password');
-      localStorage.removeItem('convosis_saved_accounts_map');
-    } catch(e) {}
-
-    function getCookie(name) {
-      const match = document.cookie.match(new RegExp('(^|;\\s*)' + name + '=([^;]*)'));
-      return match ? decodeURIComponent(match[2]) : null;
-    }
-    function setCookie(name, val) {
-      document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; max-age=2592000; SameSite=Lax';
-    }
-
-    const STORAGE_KEY_USER = 'convosis_last_login_username';
-    const userInput = document.getElementById('id_username');
-    const passInput = document.getElementById('id_password');
-    const toggleBtn = document.getElementById('togglePasswordBtn');
-    const form = document.querySelector('form.lcard');
-
-    if (userInput && !userInput.value) {
-      let u = '';
-      try { u = localStorage.getItem(STORAGE_KEY_USER); } catch(e){}
-      if (!u) u = getCookie('convosis_last_user');
+      const u = localStorage.getItem(STORAGE_KEY_USER);
       if (u) userInput.value = u;
-    }
+    } catch(e) {}
+  }
+  const formSignIn = document.getElementById('formSignIn');
+  if (formSignIn) {
+    formSignIn.addEventListener('submit', () => {
+      if (userInput && userInput.value.trim()) {
+        try { localStorage.setItem(STORAGE_KEY_USER, userInput.value.trim()); } catch(e){}
+        document.cookie = 'convosis_last_user=' + encodeURIComponent(userInput.value.trim()) + '; path=/; max-age=2592000; SameSite=Lax';
+      }
+      const btn = document.getElementById('submitLoginBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
+      }
+    });
+  }
 
-    if (form) {
-      form.addEventListener('submit', function() {
-        if (userInput && userInput.value.trim()) {
-          const u = userInput.value.trim();
-          try { localStorage.setItem(STORAGE_KEY_USER, u); } catch(e){}
-          setCookie('convosis_last_user', u);
-        }
-        const submitBtn = document.getElementById('submitLoginBtn');
-        if (submitBtn) {
-          submitBtn.disabled = true;
-          submitBtn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
-        }
-      });
-    }
-
-    if (toggleBtn && passInput) {
-      toggleBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        const isPassword = passInput.type === 'password';
-        passInput.type = isPassword ? 'text' : 'password';
-        toggleBtn.innerHTML = isPassword
-          ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
-          : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
-      });
-    }
-  })();</script>
+  const formSignUp = document.getElementById('formSignUp');
+  if (formSignUp) {
+    formSignUp.addEventListener('submit', () => {
+      const btn = document.getElementById('submitSignupBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="login-spinner"></span> Creating Account…';
+      }
+    });
+  }
+})();
+</script>
 </body>
 </html>

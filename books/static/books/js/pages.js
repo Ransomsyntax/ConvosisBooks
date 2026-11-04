@@ -1,5 +1,6 @@
 'use strict';
 
+var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
 const PAGE = { reload: null };
 
 function parseCsvString(text) {
@@ -64,6 +65,9 @@ const IMPORT_SPECS = {
   customers: [
     { key: 'name', label: 'Customer Name', req: true, aliases: ['name', 'customer_name', 'customer', 'client', 'party', 'display_name', 'full_name'] },
     { key: 'company', label: 'Company Name', aliases: ['company', 'company_name', 'business_name', 'organization', 'org'] },
+    { key: 'first_name', label: 'First Name', aliases: ['first_name', 'firstname', 'given_name', 'contact_first_name'] },
+    { key: 'last_name', label: 'Last Name', aliases: ['last_name', 'lastname', 'surname', 'contact_last_name'] },
+    { key: 'contact_person', label: 'Contact Person', aliases: ['contact_person', 'contact', 'primary_contact', 'attention'] },
     { key: 'email', label: 'Email Address', aliases: ['email', 'email_address', 'mail', 'contact_email'] },
     { key: 'phone', label: 'Phone Number', aliases: ['phone', 'phone_number', 'mobile', 'mobile_number', 'contact_number', 'phone_no'] },
     { key: 'gstin', label: 'GSTIN', aliases: ['gstin', 'gst_number', 'gst_no', 'gst'] },
@@ -73,11 +77,15 @@ const IMPORT_SPECS = {
     { key: 'billing_city', label: 'City', aliases: ['billing_city', 'city', 'town'] },
     { key: 'billing_pincode', label: 'Pincode', aliases: ['billing_pincode', 'pincode', 'pin_code', 'postal_code', 'zip'] },
     { key: 'payment_terms', label: 'Payment Terms (Days)', aliases: ['payment_terms', 'terms', 'payment_terms_days', 'credit_days'] },
-    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance', 'opening_bal'] }
+    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance', 'opening_bal'] },
+    { key: 'active', label: 'Status (Active/Inactive)', aliases: ['active', 'status', 'is_active'] }
   ],
   vendors: [
     { key: 'name', label: 'Vendor Name', req: true, aliases: ['name', 'vendor_name', 'vendor', 'supplier', 'payee', 'merchant'] },
     { key: 'company', label: 'Company Name', aliases: ['company', 'company_name', 'business_name', 'organization'] },
+    { key: 'first_name', label: 'First Name', aliases: ['first_name', 'firstname', 'given_name', 'contact_first_name'] },
+    { key: 'last_name', label: 'Last Name', aliases: ['last_name', 'lastname', 'surname', 'contact_last_name'] },
+    { key: 'contact_person', label: 'Contact Person', aliases: ['contact_person', 'contact', 'primary_contact', 'attention'] },
     { key: 'email', label: 'Email Address', aliases: ['email', 'email_address', 'mail'] },
     { key: 'phone', label: 'Phone Number', aliases: ['phone', 'phone_number', 'mobile', 'contact_number'] },
     { key: 'gstin', label: 'GSTIN', aliases: ['gstin', 'gst_number', 'gst_no', 'gst'] },
@@ -87,7 +95,8 @@ const IMPORT_SPECS = {
     { key: 'billing_city', label: 'City', aliases: ['billing_city', 'city'] },
     { key: 'billing_pincode', label: 'Pincode', aliases: ['billing_pincode', 'pincode', 'pin_code', 'zip'] },
     { key: 'payment_terms', label: 'Payment Terms (Days)', aliases: ['payment_terms', 'terms', 'credit_days'] },
-    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance'] }
+    { key: 'opening_balance', label: 'Opening Balance', aliases: ['opening_balance', 'balance'] },
+    { key: 'active', label: 'Status (Active/Inactive)', aliases: ['active', 'status', 'is_active'] }
   ],
   items: [
     { key: 'name', label: 'Item Name', req: true, aliases: ['name', 'item_name', 'product_name', 'product', 'title'] },
@@ -183,10 +192,16 @@ function openUniversalImportModal(resourceName, title) {
     { key: 'description', label: 'Description', aliases: ['description', 'desc', 'notes'] }
   ];
 
+  let recordsImportedCount = 0;
   const modal = Modal.open({
     title: `Import ${title}`,
     wide: true,
     dialog: true,
+    onClose: () => {
+      if (recordsImportedCount > 0 && typeof PAGE.reload === 'function') {
+        try { PAGE.reload(); } catch(e){}
+      }
+    },
     body: `
       <div style="padding:2px 0;">
         <!-- Stepper Navigation Header -->
@@ -557,6 +572,17 @@ function openUniversalImportModal(resourceName, title) {
           rec[f.key] = row[colIdx];
         }
       }
+      if (!rec.name) {
+        const fn = rec.first_name || '';
+        const ln = rec.last_name || '';
+        const full = `${fn} ${ln}`.trim();
+        if (full) rec.name = full;
+        else if (rec.company) rec.name = rec.company;
+        else if (rec.contact_person) rec.name = rec.contact_person;
+      }
+      if (!rec.active && rec.active !== false) {
+        rec.active = true;
+      }
       records.push(rec);
     }
     return records;
@@ -746,6 +772,13 @@ function openUniversalImportModal(resourceName, title) {
     $('#uimp-res-imported', modal.el).textContent = imported;
     $('#uimp-res-updated', modal.el).textContent = updated;
     $('#uimp-res-failed', modal.el).textContent = failed;
+
+    recordsImportedCount += (imported + updated);
+    if (imported > 0 || updated > 0) {
+      if (typeof PAGE.reload === 'function') {
+        try { PAGE.reload(); } catch(e){}
+      }
+    }
 
     if (failed === 0 && (imported > 0 || updated > 0 || skipped > 0)) {
       banner.innerHTML = `

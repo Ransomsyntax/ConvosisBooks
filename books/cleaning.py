@@ -150,7 +150,7 @@ class Cleaner:
 
     def boolean(self, key, default=False):
         v = self.d.get(key)
-        if v is None:
+        if self._blank(v):
             return default
         if isinstance(v, bool):
             return v

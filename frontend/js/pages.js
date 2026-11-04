@@ -1419,8 +1419,8 @@ const LISTS = {
   'price-lists': {
     api: 'price-lists', title: 'Price Lists', bc: 'Items', newLabel: 'New price list', onNew: () => priceListModal(), ordering: 'name', empty: 'No price lists yet.',
     cols: [{ h: 'Name', s: 'name', f: r => `<b>${esc(r.name)}</b>` }, { h: 'Pricing Scheme', f: r => esc(r.pricing_scheme) }, { h: 'Percentage', r: 1, f: r => num(r.percentage) + '%' }, { h: 'Status', f: r => r.active ? badge('Active', 'up') : badge('Inactive') }],
-    actions: () => [['delete', 'Delete', 'd']],
-    onAction: (a, r) => deleteRecord('price-lists', r, 'price list'),
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => a === 'edit' ? priceListModal(r.id) : deleteRecord('price-lists', r, 'price list'),
   },
   warehouses: {
     api: 'warehouses', title: 'Warehouses', bc: 'Inventory', newLabel: 'New warehouse', onNew: () => warehouseModal(), ordering: 'name', empty: 'No warehouses configured.',

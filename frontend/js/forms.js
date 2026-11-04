@@ -168,18 +168,36 @@ function readForm(form) {
   }
   return d;
 }
-function clearErrors(form) { $$('[data-err]', form).forEach(e => { e.textContent = ''; }); }
+function clearErrors(form) {
+  $$('[data-err]', form).forEach(e => { e.textContent = ''; });
+  $$('.in-error', form).forEach(e => { e.classList.remove('in-error'); });
+}
 function showErrors(form, errors, msg) {
   let general = msg || '', first = null;
   for (const [k, v] of Object.entries(errors || {})) {
     const el = form.querySelector(`[data-err="${k}"]`);
-    if (el) { el.textContent = v; if (!first) first = el; } else general += (general ? ' ' : '') + k + ': ' + v;
+    if (el) {
+      el.textContent = v;
+      if (!first) first = el;
+      const inp = el.parentElement ? el.parentElement.querySelector('input,select,textarea') : null;
+      if (inp) inp.classList.add('in-error');
+    } else {
+      general += (general ? ' ' : '') + k + ': ' + v;
+    }
   }
   const g = form.querySelector('[data-err="_"]');
   if (g) g.textContent = general;
   const target = first || g;
-  if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
-  const inp = first && first.parentElement.querySelector('input,select,textarea');
+  if (target) {
+    const pane = target.closest('.party-tab-pane');
+    if (pane && !pane.classList.contains('active')) {
+      const tabId = pane.id;
+      const tabBtn = form.querySelector(`.party-tab-btn[data-tab="${tabId}"]`);
+      if (tabBtn) tabBtn.click();
+    }
+    if (target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
+  }
+  const inp = first && first.parentElement ? first.parentElement.querySelector('input,select,textarea') : null;
   if (inp) inp.focus();
 }
 
@@ -207,8 +225,14 @@ function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmi
       dirty = false; m.close();
     } catch (err) {
       if (err && err.cancel) return;
-      if (err instanceof ApiErr) showErrors(form, err.errors, err.message);
-      else { showErrors(form, {}, (err && err.message) || 'Unexpected error.'); console.error(err); }
+      if (err instanceof ApiErr) {
+        showErrors(form, err.errors, err.message);
+        toast(err.message || 'Please correct the highlighted fields.', 'err');
+      } else {
+        showErrors(form, {}, (err && err.message) || 'Unexpected error.');
+        toast((err && err.message) || 'Action failed', 'err');
+        console.error(err);
+      }
     } finally { btns.forEach(b => { b.disabled = false; }); }
   });
   if (onReady) onReady(form, m);
@@ -420,13 +444,10 @@ async function partyForm(kind, id) {
       <div class="zb-form-row">
         <label class="zb-form-label" for="name">${entityLabel} Display Name<span class="rq">*</span> <span class="zb-info-tip" title="Display name appears on invoices and transactions">ⓘ</span></label>
         <div class="zb-form-ctrl">
-          <div style="display:flex;gap:6px;position:relative;">
-            <input class="in" id="name" name="name" required placeholder="Select or type to add" value="${esc(r.name || '')}" style="font-weight:600;padding-right:32px;">
-            <select class="in" id="display_name_picker" title="Quick pick name source" style="position:absolute;right:2px;top:2px;bottom:2px;width:28px;opacity:0.7;border:none;background:transparent;cursor:pointer;">
-              <option value="">▼</option>
-              <option value="company">From Company Name</option>
-              <option value="contact">From Primary Contact</option>
-            </select>
+          <div style="position:relative;display:flex;align-items:center;width:100%;">
+            <input class="in" id="name" name="name" required placeholder="Select or type to add" value="${esc(r.name || '')}" style="font-weight:600;padding-right:36px;width:100%;">
+            <button type="button" class="btn ic" id="btn_toggle_display_name_dropdown" title="Quick pick display name options" style="position:absolute;right:3px;top:3px;bottom:3px;width:30px;height:auto;border:none;background:transparent;cursor:pointer;opacity:0.8;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx-muted);">▼</button>
+            <div class="display-name-dropdown" id="display_name_dropdown" style="display:none;"></div>
           </div>
           <div class="er" data-err="name"></div>
         </div>
@@ -510,7 +531,7 @@ async function partyForm(kind, id) {
               <select class="in" id="${isCust ? 'place_of_supply' : 'source_of_supply'}" name="${isCust ? 'place_of_supply' : 'source_of_supply'}">
                 ${GST_STATE_OPTIONS.map(([v, l]) => {
                   const cur = isCust ? defaultPos : defaultSos;
-                  const isSel = cur.includes(v) || v.includes(r.state || 'None');
+                  const isSel = Boolean(v && cur && (cur === v || cur.includes(v)));
                   return `<option value="${v}" ${isSel ? 'selected' : ''}>${l}</option>`;
                 }).join('')}
               </select>
@@ -658,30 +679,33 @@ async function partyForm(kind, id) {
         <div class="party-tab-pane" id="tab_address">
           <div style="display:grid;grid-template-columns:${isCust ? '1fr 1fr' : '1fr'};gap:32px;">
             <div>
-              <h4 style="margin:0 0 14px;font-size:13.5px;font-weight:700;color:var(--tx);border-bottom:1px solid var(--bd-glass);padding-bottom:6px;">Billing Address</h4>
+              <div style="display:flex;justify-content:space-between;align-items:center;height:32px;margin-bottom:14px;border-bottom:1px solid var(--bd-glass);padding-bottom:6px;box-sizing:border-box;">
+                <h4 style="margin:0;font-size:13.5px;font-weight:700;color:var(--tx);">Billing Address</h4>
+                <span style="font-size:11px;color:var(--tx-muted);visibility:hidden;">Placeholder</span>
+              </div>
 
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"></div></div>
-              <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="billing_address" name="billing_address" rows="3" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea></div></div>
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_city">City</label><div class="zb-form-ctrl"><input class="in" id="billing_city" name="billing_city" placeholder="City" value="${esc(r.billing_city || '')}"></div></div>
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_state">State</label><div class="zb-form-ctrl"><input class="in" id="billing_state" name="billing_state" placeholder="State" value="${esc(r.billing_state || r.state || '')}"></div></div>
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_pincode">Pincode</label><div class="zb-form-ctrl"><input class="in" id="billing_pincode" name="billing_pincode" placeholder="Pincode" value="${esc(r.billing_pincode || '')}"></div></div>
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_country">Country</label><div class="zb-form-ctrl"><input class="in" id="billing_country" name="billing_country" value="${esc(r.billing_country || 'India')}"></div></div>
-              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="billing_phone" name="billing_phone" value="${esc(r.billing_phone || '')}"></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="billing_attention" name="billing_attention" placeholder="Accounts / Finance Dept" value="${esc(r.billing_attention || '')}"><div class="er" data-err="billing_attention"></div></div></div>
+              <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_address">Address Line <span class="rq">*</span></label><div class="zb-form-ctrl"><textarea class="in" id="billing_address" name="billing_address" rows="3" placeholder="Street, Building, Suite">${esc(r.billing_address || '')}</textarea><div class="er" data-err="billing_address"></div></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_city">City <span class="rq">*</span></label><div class="zb-form-ctrl"><input class="in" id="billing_city" name="billing_city" placeholder="City" value="${esc(r.billing_city || '')}"><div class="er" data-err="billing_city"></div></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_state">State <span class="rq">*</span></label><div class="zb-form-ctrl"><input class="in" id="billing_state" name="billing_state" placeholder="State" value="${esc(r.billing_state || r.state || '')}"><div class="er" data-err="billing_state"></div></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_pincode">Pincode <span class="rq">*</span></label><div class="zb-form-ctrl"><input class="in" id="billing_pincode" name="billing_pincode" placeholder="Pincode" value="${esc(r.billing_pincode || '')}"><div class="er" data-err="billing_pincode"></div></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_country">Country <span class="rq">*</span></label><div class="zb-form-ctrl"><input class="in" id="billing_country" name="billing_country" value="${esc(r.billing_country || 'India')}"><div class="er" data-err="billing_country"></div></div></div>
+              <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="billing_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="billing_phone" name="billing_phone" value="${esc(r.billing_phone || '')}"><div class="er" data-err="billing_phone"></div></div></div>
             </div>
 
             ${isCust ? `
               <div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--bd-glass);padding-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;height:32px;margin-bottom:14px;border-bottom:1px solid var(--bd-glass);padding-bottom:6px;box-sizing:border-box;">
                   <h4 style="margin:0;font-size:13.5px;font-weight:700;color:var(--tx);">Shipping Address</h4>
-                  <button type="button" class="btn" id="btn_copy_billing_addr" style="font-size:11px;padding:3px 8px;">📋 Copy billing address</button>
+                  <button type="button" class="btn" id="btn_copy_billing_addr" style="font-size:11px;padding:2px 8px;height:24px;line-height:1;">📋 Copy billing address</button>
                 </div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="shipping_attention" name="shipping_attention" placeholder="Receiving / Logistics" value="${esc(r.shipping_attention || '')}"></div></div>
-                <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="shipping_address" name="shipping_address" rows="3" placeholder="Delivery street address">${esc(r.shipping_address || '')}</textarea></div></div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_city">City</label><div class="zb-form-ctrl"><input class="in" id="shipping_city" name="shipping_city" placeholder="City" value="${esc(r.shipping_city || '')}"></div></div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_state">State</label><div class="zb-form-ctrl"><input class="in" id="shipping_state" name="shipping_state" placeholder="State" value="${esc(r.shipping_state || '')}"></div></div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_pincode">Pincode</label><div class="zb-form-ctrl"><input class="in" id="shipping_pincode" name="shipping_pincode" placeholder="Pincode" value="${esc(r.shipping_pincode || '')}"></div></div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_country">Country</label><div class="zb-form-ctrl"><input class="in" id="shipping_country" name="shipping_country" value="${esc(r.shipping_country || 'India')}"></div></div>
-                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="shipping_phone" name="shipping_phone" value="${esc(r.shipping_phone || '')}"></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_attention">Attention</label><div class="zb-form-ctrl"><input class="in" id="shipping_attention" name="shipping_attention" placeholder="Receiving / Logistics" value="${esc(r.shipping_attention || '')}"><div class="er" data-err="shipping_attention"></div></div></div>
+                <div class="zb-form-row align-top"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_address">Address Line</label><div class="zb-form-ctrl"><textarea class="in" id="shipping_address" name="shipping_address" rows="3" placeholder="Delivery street address">${esc(r.shipping_address || '')}</textarea><div class="er" data-err="shipping_address"></div></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_city">City</label><div class="zb-form-ctrl"><input class="in" id="shipping_city" name="shipping_city" placeholder="City" value="${esc(r.shipping_city || '')}"><div class="er" data-err="shipping_city"></div></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_state">State</label><div class="zb-form-ctrl"><input class="in" id="shipping_state" name="shipping_state" placeholder="State" value="${esc(r.shipping_state || '')}"><div class="er" data-err="shipping_state"></div></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_pincode">Pincode</label><div class="zb-form-ctrl"><input class="in" id="shipping_pincode" name="shipping_pincode" placeholder="Pincode" value="${esc(r.shipping_pincode || '')}"><div class="er" data-err="shipping_pincode"></div></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_country">Country</label><div class="zb-form-ctrl"><input class="in" id="shipping_country" name="shipping_country" value="${esc(r.shipping_country || 'India')}"><div class="er" data-err="shipping_country"></div></div></div>
+                <div class="zb-form-row"><label class="zb-form-label" style="width:120px;min-width:120px;" for="shipping_phone">Phone</label><div class="zb-form-ctrl"><input class="in" id="shipping_phone" name="shipping_phone" value="${esc(r.shipping_phone || '')}"><div class="er" data-err="shipping_phone"></div></div></div>
               </div>
             ` : ''}
           </div>
@@ -819,6 +843,10 @@ async function partyForm(kind, id) {
             pillBiz.classList.add('active'); if (pillInd) pillInd.classList.remove('active');
             const rBiz = $('input[name="customer_type"][value="business"]', modal.el);
             if (rBiz) rBiz.checked = true;
+            const gstTr = $('#gst_treatment', modal.el);
+            if (gstTr && (!gstTr.value || gstTr.value === 'consumer')) {
+              gstTr.value = 'business_regular';
+            }
           });
         }
         if (pillInd) {
@@ -826,6 +854,10 @@ async function partyForm(kind, id) {
             pillInd.classList.add('active'); if (pillBiz) pillBiz.classList.remove('active');
             const rInd = $('input[name="customer_type"][value="individual"]', modal.el);
             if (rInd) rInd.checked = true;
+            const gstTr = $('#gst_treatment', modal.el);
+            if (gstTr && (!gstTr.value || gstTr.value === 'business_regular')) {
+              gstTr.value = 'consumer';
+            }
           });
         }
 
@@ -1117,17 +1149,65 @@ async function partyForm(kind, id) {
         $('#gstin', modal.el).value = e.target.value;
       });
 
-      $('#display_name_picker', modal.el).addEventListener('change', e => {
-        const val = e.target.value;
-        if (val === 'company') {
-          const comp = $('#company', modal.el).value.trim();
-          if (comp) $('#name', modal.el).value = comp;
-        } else if (val === 'contact') {
-          const cont = $('#contact_person', modal.el).value.trim();
-          if (cont) $('#name', modal.el).value = cont;
-        }
-        e.target.value = '';
-      });
+      const btnDn = $('#btn_toggle_display_name_dropdown', modal.el);
+      const dnMenu = $('#display_name_dropdown', modal.el);
+      const nameInput = $('#name', modal.el);
+      if (btnDn && dnMenu && nameInput) {
+        const renderDnOptions = () => {
+          const comp = ($('#company', modal.el)?.value || '').trim();
+          const fn = ($('#contact_first_name', modal.el)?.value || '').trim();
+          const ln = ($('#contact_last_name', modal.el)?.value || '').trim();
+          const sal = ($('#primary_salutation', modal.el)?.value || '').trim();
+          const fullName = [fn, ln].filter(Boolean).join(' ');
+          const salFullName = [sal, fn, ln].filter(Boolean).join(' ');
+          const invertedName = fn && ln ? `${ln}, ${fn}` : '';
+
+          const opts = [];
+          if (comp) opts.push({ label: comp, source: 'From Company Name' });
+          if (fullName) opts.push({ label: fullName, source: 'From Primary Contact' });
+          if (salFullName && salFullName !== fullName) opts.push({ label: salFullName, source: 'With Salutation' });
+          if (invertedName) opts.push({ label: invertedName, source: 'Last Name, First Name' });
+
+          if (!opts.length) {
+            opts.push(
+              { label: 'Example: Bharat Technologies Pvt Ltd', source: 'Suggested Business Name' },
+              { label: 'Example: Rajesh Kumar', source: 'Suggested Contact Name' }
+            );
+          }
+
+          dnMenu.innerHTML = opts.map(o => `
+            <div class="display-name-item" data-val="${esc(o.label)}">
+              <span class="dn-label">${esc(o.label)}</span>
+              <span class="dn-source">${esc(o.source)}</span>
+            </div>
+          `).join('');
+
+          $$('.display-name-item', dnMenu).forEach(item => {
+            item.addEventListener('click', e => {
+              e.stopPropagation();
+              nameInput.value = item.dataset.val;
+              nameInput.focus();
+              dnMenu.style.display = 'none';
+            });
+          });
+        };
+
+        btnDn.addEventListener('click', e => {
+          e.stopPropagation();
+          if (dnMenu.style.display === 'none' || !dnMenu.style.display) {
+            renderDnOptions();
+            dnMenu.style.display = 'block';
+          } else {
+            dnMenu.style.display = 'none';
+          }
+        });
+
+        document.addEventListener('click', e => {
+          if (!btnDn.contains(e.target) && !dnMenu.contains(e.target)) {
+            dnMenu.style.display = 'none';
+          }
+        });
+      }
 
       if (isCust) {
         $('#btn_copy_billing_addr', modal.el).addEventListener('click', () => {
@@ -1261,19 +1341,20 @@ async function partyForm(kind, id) {
       renderDocs();
     },
     onSubmit: async d => {
-      // DEF_CB_007: Validate Display Name
+      // DEF_CB_007 & DEF_CB_026: Validate Display Name
       const dispName = (d.name || '').trim();
       if (!dispName) {
-        throw new ApiErr(400, { name: 'Customer Display Name is required.' }, 'Customer Display Name is required.');
+        throw new ApiErr(400, { name: `${entityLabel} Display Name is required.` }, `${entityLabel} Display Name is required.`);
       }
-      if (/[@#$%^*+=~`<>{}[\]\\]/.test(dispName)) {
+      if (/[@#$%^*+=~`<>{}[\]\]/.test(dispName)) {
         throw new ApiErr(400, { name: 'Display Name cannot contain special characters like @, #, $, %, ^, *.' }, 'Display Name contains invalid special characters.');
       }
+      d.name = dispName;
 
       // DEF_CB_006: Validate Primary Contact
       const cp = (d.contact_person || '').trim();
       if (cp) {
-        const nameRegex = /^[a-zA-Z\s\.\'\-]+$/;
+        const nameRegex = /^[a-zA-Z\s\.'\-]+$/;
         if (!nameRegex.test(cp)) {
           throw new ApiErr(400, { contact_person: 'Primary contact name can only contain letters, spaces, hyphens, and dots.' }, 'Primary contact name cannot contain special characters.');
         }
@@ -1291,6 +1372,22 @@ async function partyForm(kind, id) {
         }
       }
 
+      // DEF_CB_024: Validate Billing Address mandatory fields if address section is partially filled
+      const bAddr = (d.billing_address || '').trim();
+      const bCity = (d.billing_city || '').trim();
+      const bState = (d.billing_state || '').trim();
+      const bPin = (d.billing_pincode || '').trim();
+      if (bAddr || bCity || bState || bPin) {
+        const addrErrs = {};
+        if (!bAddr) addrErrs.billing_address = 'Address Line is required.';
+        if (!bCity) addrErrs.billing_city = 'City is required.';
+        if (!bState) addrErrs.billing_state = 'State is required.';
+        if (!bPin) addrErrs.billing_pincode = 'Pincode is required.';
+        if (Object.keys(addrErrs).length > 0) {
+          throw new ApiErr(400, addrErrs, 'Please fill in all mandatory address fields.');
+        }
+      }
+
       if (!isCust) {
         const acc = d.bank_account_number ? d.bank_account_number.trim() : '';
         const cfAccEl = document.getElementById('bank_account_number_confirm') || (modalInstance?.el ? $('#bank_account_number_confirm', modalInstance.el) : null);
@@ -1300,7 +1397,8 @@ async function partyForm(kind, id) {
         }
       }
 
-      d.contact_persons_data = contactPersonsList.filter(c => c.first_name || c.ln_input || c.email);
+      d.customer_type = d.customer_type || 'business';
+      d.contact_persons_data = contactPersonsList.filter(c => c.first_name || c.last_name || c.email);
       const cfMap = {};
       customFieldsList.forEach(cf => {
         if (cf.label.trim()) cfMap[cf.label.trim()] = (cf.value || '').trim();
@@ -4103,19 +4201,32 @@ async function categoryModal() {
   });
 }
 
-async function priceListModal() {
+async function priceListModal(id) {
+  const rec = id ? await api(`price-lists/${id}/`).catch(() => null) : null;
   formModal({
-    title: 'New Price List',
-    body: `<div class="g">
-      ${fld({ name: 'name', label: 'Price List Name', req: true, col: 's6', ph: 'e.g. Wholesale Discount 15%' })}
-      ${fld({ name: 'pricing_scheme', label: 'Pricing Scheme', type: 'select', opts: [['percentage', 'Percentage Markup/Discount'], ['fixed', 'Fixed Rate Card']], col: 's6' })}
-      ${fld({ name: 'percentage', label: 'Percentage Adjustment (%)', type: 'number', value: '-15.00', col: 's6', help: 'Negative for discount (e.g. -15%), positive for markup.' })}
-      ${fld({ name: 'description', label: 'Description', col: 's6' })}
+    title: id ? 'Edit Price List' : 'New Price List',
+    body: `<div class="zb-form-wrap">
+      ${fld({ name: 'name', label: 'Price List Name', req: true, value: rec?.name || '', ph: 'e.g. Wholesale Discount 15%' })}
+      ${fld({ name: 'pricing_scheme', label: 'Pricing Scheme', type: 'select', opts: [['percentage', 'Percentage Markup/Discount'], ['fixed', 'Fixed Rate Card']], value: rec?.pricing_scheme || 'percentage' })}
+      ${fld({ name: 'percentage', label: 'Percentage Adjustment (%)', type: 'number', value: rec ? rec.percentage : '-15.00', help: 'Negative for discount (e.g. -15%), positive for markup.' })}
+      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: rec?.description || '', ph: 'Optional notes regarding this price list...' })}
     </div>`,
     onSubmit: async d => {
+      const n = (d.name || '').trim();
+      if (!n) throw new ApiErr(400, { name: 'Price List Name is required.' }, 'Price List Name is required.');
+      const invalidChars = /[@#$%^*+=~`<>{}[\]\]/;
+      if (invalidChars.test(n)) {
+        throw new ApiErr(400, { name: 'Price List Name cannot contain special characters like @, #, $, %, ^, *.' }, 'Special characters (@#$%^&*) are not allowed in Price List Name.');
+      }
+      d.name = n;
       d.percentage = num(d.percentage);
-      await api('price-lists/', { method: 'POST', body: d });
-      toast('Price list created');
+      if (id) {
+        await api(`price-lists/${id}/`, { method: 'PUT', body: d });
+        toast('Price list updated successfully!', 'ok');
+      } else {
+        await api('price-lists/', { method: 'POST', body: d });
+        toast('Price list created successfully!', 'ok');
+      }
       refresh();
     }
   });
@@ -4288,16 +4399,16 @@ async function ewayBillModal() {
 
 async function recurringInvoiceModal(id) {
   const custs = await api('lookup/customers/');
-  const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: custs[0]?.id, frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00' };
+  const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: custs[0]?.id, frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00', status: 'active' };
   formModal({
     title: id ? 'Edit Recurring Invoice Profile' : 'New Recurring Invoice Profile',
     body: `<div class="g">
       ${fld({ name: 'profile_name', label: 'Profile Name', req: true, value: o.profile_name, col: 's6', ph: 'e.g. Monthly Retainer Support' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: custs.map(c => [c.id, c.name]), value: o.customer_id || o.customer, req: true, col: 's6' })}
-      ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']], value: o.frequency, col: 's4' })}
-      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date, col: 's4' })}
-      ${fld({ name: 'next_date', label: 'Next Invoice Date', type: 'date', req: true, value: o.next_date, col: 's4' })}
-      ${fld({ name: 'total', label: 'Recurring Amount (₹)', type: 'number', req: true, value: o.total, col: 's6' })}
+      ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']], value: o.frequency, col: 's6' })}
+      ${fld({ name: 'total', label: 'Recurring Amount (₹)', type: 'number', req: true, value: o.total, col: 's6', ph: '15000.00' })}
+      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date, col: 's6' })}
+      ${fld({ name: 'next_date', label: 'Next Invoice Date', type: 'date', req: true, value: o.next_date, col: 's6' })}
       ${fld({ name: 'status', label: 'Status', type: 'select', opts: [['active', 'Active'], ['paused', 'Paused'], ['expired', 'Expired']], value: o.status || 'active', col: 's6' })}
     </div>`,
     onSubmit: async d => {

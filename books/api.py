@@ -3184,6 +3184,8 @@ class ItemCategoryResource(Resource):
         c.done()
         return ItemCategory.objects.create(name=name, description=desc)
 
+PRICE_LIST_NAME_RE = re.compile(r'^[^@#$%^&*~`+=<>{}[\]\\]+$')
+
 class PriceListResource(Resource):
     name = 'price-lists'
     model = PriceList
@@ -3195,11 +3197,29 @@ class PriceListResource(Resource):
 
     def create(self, data, user):
         c = Cleaner(data)
-        name = c.text('name', required=True, max_len=100)
+        name = c.text('name', required=True, max_len=100, pattern=PRICE_LIST_NAME_RE,
+                      pattern_msg='Price List Name cannot contain special characters like @, #, $, %, ^, *.')
+        scheme = c.choice('pricing_scheme', ['percentage', 'fixed'], default='percentage')
         desc = c.text('description', max_len=500)
         pct = c.number('percentage', default=Decimal('0.00'))
         c.done()
-        return PriceList.objects.create(name=name, description=desc, percentage=pct)
+        return PriceList.objects.create(name=name, pricing_scheme=scheme, description=desc, percentage=pct)
+
+    def update(self, obj, data, user):
+        c = Cleaner(data)
+        obj.name = c.text('name', required=True, max_len=100, pattern=PRICE_LIST_NAME_RE,
+                          pattern_msg='Price List Name cannot contain special characters like @, #, $, %, ^, *.')
+        if 'pricing_scheme' in data:
+            obj.pricing_scheme = c.choice('pricing_scheme', ['percentage', 'fixed'], default=obj.pricing_scheme)
+        if 'description' in data:
+            obj.description = c.text('description', max_len=500)
+        if 'percentage' in data:
+            obj.percentage = c.number('percentage', default=obj.percentage)
+        if 'active' in data:
+            obj.active = bool(data.get('active'))
+        c.done()
+        obj.save()
+        return obj
 
 class WarehouseResource(Resource):
     name = 'warehouses'

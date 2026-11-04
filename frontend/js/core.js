@@ -58,10 +58,23 @@ function toast(msg, kind) {
 }
 
 class ApiErr extends Error {
-  constructor(status, data) {
-    super((data && data.message) || ('Request failed (' + status + ')'));
+  constructor(status, data, msg) {
+    let message = msg || ('Request failed (' + status + ')');
+    let errors = {};
+    if (typeof data === 'string') {
+      message = data;
+    } else if (data && typeof data === 'object') {
+      if (data.message) message = data.message;
+      if (data.errors && typeof data.errors === 'object') {
+        errors = data.errors;
+      } else if (!data.message) {
+        errors = data;
+      }
+    }
+    super(message);
     this.status = status;
-    this.errors = (data && data.errors) || {};
+    this.message = message;
+    this.errors = errors;
   }
 }
 const csrf = () => { const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };

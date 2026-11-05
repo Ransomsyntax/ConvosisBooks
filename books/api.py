@@ -725,7 +725,7 @@ class PartyResource(Resource):
 
         if rec.get('name'):
             clean_name = str(rec['name']).strip()
-            clean_name = ''.join(' ' if ch in '@#$%^*+=~`<>{}[\]\\' else ch for ch in clean_name)
+            clean_name = ''.join(' ' if ch in ('@#$%^*+=~`<>{}`' + '[]\\') else ch for ch in clean_name)
             clean_name = re.sub(r'\s+', ' ', clean_name).strip()
             if clean_name:
                 rec['name'] = clean_name

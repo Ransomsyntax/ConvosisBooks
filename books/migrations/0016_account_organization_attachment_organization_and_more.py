@@ -4,34 +4,6 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
-def populate_existing_orgs(apps, schema_editor):
-    Organization = apps.get_model('books', 'Organization')
-    default_org = Organization.objects.first()
-    if not default_org:
-        default_org = Organization.objects.create(pk=1, name='Convosis Technologies Pvt Ltd')
-
-    model_names = [
-        'Account', 'Attachment', 'BackgroundTask', 'BankDeposit', 'BankFeedConnection',
-        'BankReconciliation', 'BankRule', 'BankStatementBatch', 'BankTransaction',
-        'BankTransfer', 'CustomerPortalAccess', 'CustomField', 'DeveloperApiKey',
-        'DocumentFolder', 'EInvoiceRecord', 'EWayBill', 'FinancialAnomaly', 'GSTRReturn',
-        'ItemCategory', 'Journal', 'LockDate', 'ManagedDocument', 'Notification',
-        'PaymentTransaction', 'RetainerPayment', 'SecurityBackupRecord', 'StockMovement',
-        'TenantSubscription', 'TimeLog', 'VendorPortalAccess', 'WebhookConfig',
-        'WebhookSubscription', 'WorkflowRule', 'Customer', 'Vendor', 'Item',
-        'Invoice', 'Bill', 'PaymentReceived', 'PaymentMade', 'SalesOrder', 'Quote',
-        'RecurringInvoice', 'RetainerInvoice', 'DeliveryChallan', 'CreditNote',
-        'PurchaseOrder', 'Expense', 'VendorCredit', 'Project', 'PriceList', 'Warehouse',
-        'AuditLog', 'BankAccount'
-    ]
-    for mname in model_names:
-        try:
-            m = apps.get_model('books', mname)
-            m.objects.filter(organization__isnull=True).update(organization=default_org)
-        except Exception:
-            pass
-
-
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -238,26 +210,5 @@ class Migration(migrations.Migration):
             model_name='warehouse',
             name='code',
             field=models.CharField(max_length=30),
-        ),
-        migrations.RunPython(populate_existing_orgs, migrations.RunPython.noop),
-        migrations.AddConstraint(
-            model_name='account',
-            constraint=models.UniqueConstraint(fields=('organization', 'code'), name='unique_org_account_code'),
-        ),
-        migrations.AddConstraint(
-            model_name='documentfolder',
-            constraint=models.UniqueConstraint(fields=('organization', 'name'), name='unique_org_doc_folder_name'),
-        ),
-        migrations.AddConstraint(
-            model_name='itemcategory',
-            constraint=models.UniqueConstraint(fields=('organization', 'name'), name='unique_org_item_category_name'),
-        ),
-        migrations.AddConstraint(
-            model_name='journal',
-            constraint=models.UniqueConstraint(fields=('organization', 'number'), name='unique_org_journal_number'),
-        ),
-        migrations.AddConstraint(
-            model_name='warehouse',
-            constraint=models.UniqueConstraint(fields=('organization', 'code'), name='unique_org_warehouse_code'),
         ),
     ]

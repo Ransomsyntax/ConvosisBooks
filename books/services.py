@@ -46,10 +46,7 @@ def invoice_paid_expr():
 def invoice_qs(org=None):
     qs = Invoice.objects.select_related('customer').annotate(paid_sum=invoice_paid_expr())
     if org:
-        if org.pk == 1:
-            qs = qs.filter(Q(organization=org) | Q(organization__isnull=True))
-        else:
-            qs = qs.filter(organization=org)
+        qs = qs.filter(organization=org)
     return qs
 
 def retainer_paid_expr():
@@ -60,25 +57,27 @@ def retainer_applied_expr():
     ret_alloc_sub = RetainerInvoiceAllocation.objects.filter(retainer=OuterRef('pk')).values('retainer').annotate(s=Sum('amount')).values('s')
     return Coalesce(Subquery(ret_alloc_sub, output_field=DEC), Value(Z))
 
-def retainer_qs():
-    return RetainerInvoice.objects.select_related('customer').annotate(
+def retainer_qs(org=None):
+    qs = RetainerInvoice.objects.select_related('customer').annotate(
         paid_sum=retainer_paid_expr(),
         applied_sum=retainer_applied_expr(),
     )
+    if org:
+        qs = qs.filter(organization=org)
+    return qs
 
 def bill_qs(org=None):
     qs = Bill.objects.select_related('vendor').annotate(paid_sum=paid_expr())
     if org:
-        if org.pk == 1:
-            qs = qs.filter(Q(organization=org) | Q(organization__isnull=True))
-        else:
-            qs = qs.filter(organization=org)
+        qs = qs.filter(organization=org)
     return qs
 
-def next_number(prefix):
+def next_number(prefix, org=None):
     """Call inside the same transaction that creates the record so a rollback frees the number."""
     with transaction.atomic():
-        seq, _ = Sequence.objects.select_for_update().get_or_create(key=prefix)
+        key = f"{org.pk}_{prefix}" if (org and getattr(org, 'pk', None)) else prefix
+        key = key[:20]
+        seq, _ = Sequence.objects.select_for_update().get_or_create(key=key)
         seq.value += 1
         seq.save(update_fields=['value'])
         return f'{prefix}-{seq.value:06d}'
@@ -119,16 +118,17 @@ def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_ad
     except Exception:
         pass
 
-def check_transaction_lock(doc_date):
+def check_transaction_lock(doc_date, org=None):
     if not doc_date:
         return
-    lock = LockDate.get_lock()
+    lock = LockDate.get_lock(org=org)
     if lock and lock.lock_date and doc_date <= lock.lock_date:
         raise ApiError(403, f"Transactions dated on or prior to {lock.lock_date.strftime('%d/%m/%Y')} are locked for accounting compliance ({lock.reason}).")
 
 def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes='', warehouse=None, warehouse_code='', adjusted_at=None, to_warehouse=None, to_warehouse_code=''):
-    check_transaction_lock(on)
     item = Item.objects.select_for_update().get(pk=item_id)
+    org = getattr(item, 'organization', None)
+    check_transaction_lock(on, org=org)
     new = item.stock + change
     if new < 0:
         raise ApiError(400, f'Insufficient stock for {item.name}: available {fmt_qty(item.stock)}, required {fmt_qty(-change)}.')
@@ -147,6 +147,7 @@ def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes
         to_warehouse_code = to_warehouse.code
 
     return StockMovement.objects.create(
+        organization=org,
         item=item, date=on, adjusted_at=adjusted_at,
         warehouse=warehouse, warehouse_code=warehouse_code,
         to_warehouse=to_warehouse, to_warehouse_code=to_warehouse_code,
@@ -157,16 +158,17 @@ def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes
 
 @transaction.atomic
 def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjusted_at=None, user=None, reason='Warehouse Transfer', notes='', reference=''):
-    check_transaction_lock(on)
+    item = Item.objects.select_for_update().get(pk=item_id)
+    org = getattr(item, 'organization', None)
+    check_transaction_lock(on, org=org)
     if from_warehouse_id == to_warehouse_id:
         raise ApiError(400, 'Source and destination warehouses cannot be the same.')
-    item = Item.objects.select_for_update().get(pk=item_id)
     if qty <= Decimal('0'):
         raise ApiError(400, 'Transfer quantity must be greater than zero.')
     if item.stock < qty:
         raise ApiError(400, f'Insufficient stock for {item.name}: available {fmt_qty(item.stock)}, required {fmt_qty(qty)}.')
-    from_wh = Warehouse.objects.filter(pk=from_warehouse_id).first()
-    to_wh = Warehouse.objects.filter(pk=to_warehouse_id).first()
+    from_wh = Warehouse.objects.filter(pk=from_warehouse_id, organization=org).first() if org else Warehouse.objects.filter(pk=from_warehouse_id).first()
+    to_wh = Warehouse.objects.filter(pk=to_warehouse_id, organization=org).first() if org else Warehouse.objects.filter(pk=to_warehouse_id).first()
     if not from_wh or not to_wh:
         raise ApiError(400, 'Select valid source and destination warehouses.')
     if not reference:
@@ -429,12 +431,11 @@ def _period(s, e, org=None):
     inv = Invoice.objects.filter(status='sent', date__range=(s, e))
     bl = Bill.objects.filter(status='open', date__range=(s, e))
     if org:
-        if org.pk == 1:
-            inv = inv.filter(Q(organization=org) | Q(organization__isnull=True))
-            bl = bl.filter(Q(organization=org) | Q(organization__isnull=True))
-        else:
-            inv = inv.filter(organization=org)
-            bl = bl.filter(organization=org)
+        inv = inv.filter(organization=org)
+        bl = bl.filter(organization=org)
+    else:
+        inv = inv.none()
+        bl = bl.none()
     rev, exp = _sum(inv, 'subtotal'), _sum(bl, 'subtotal')
     out_tax = _sum(inv, 'cgst') + _sum(inv, 'sgst') + _sum(inv, 'igst')
     in_tax = _sum(bl, 'cgst') + _sum(bl, 'sgst') + _sum(bl, 'igst')
@@ -456,9 +457,14 @@ def dashboard(start, end, org=None):
     rec_over = sum((i.total - q2(i.paid_sum) for i in inv_open if i.due_date < today), Z)
     pay_over = sum((b.total - q2(b.paid_sum) for b in bill_open if b.due_date < today), Z)
 
-    cash = org.opening_cash + _sum(PaymentReceived.objects.all(), 'amount') - _sum(PaymentMade.objects.all(), 'amount')
-    opening = (org.opening_cash + _sum(PaymentReceived.objects.filter(date__lt=start), 'amount')
-               - _sum(PaymentMade.objects.filter(date__lt=start), 'amount'))
+    pay_rec_qs = PaymentReceived.objects.filter(organization=org) if org else PaymentReceived.objects.none()
+    pay_made_qs = PaymentMade.objects.filter(organization=org) if org else PaymentMade.objects.none()
+    inv_qs_m = Invoice.objects.filter(organization=org) if org else Invoice.objects.none()
+    bill_qs_m = Bill.objects.filter(organization=org) if org else Bill.objects.none()
+
+    cash = (org.opening_cash if org else Z) + _sum(pay_rec_qs, 'amount') - _sum(pay_made_qs, 'amount')
+    opening = ((org.opening_cash if org else Z) + _sum(pay_rec_qs.filter(date__lt=start), 'amount')
+               - _sum(pay_made_qs.filter(date__lt=start), 'amount'))
 
     months = _months(start, end)
     idx = {m: i for i, m in enumerate(months)}
@@ -471,28 +477,29 @@ def dashboard(start, end, org=None):
             if i is not None:
                 arr[i] += amt
 
-    bucket(PaymentReceived.objects.filter(date__range=(start, end)).values_list('date', 'amount'), c_in)
-    bucket(PaymentMade.objects.filter(date__range=(start, end)).values_list('date', 'amount'), c_out)
-    bucket(Invoice.objects.filter(status='sent', date__range=(start, end)).values_list('date', 'subtotal'), rev_m)
-    bucket(Bill.objects.filter(status='open', date__range=(start, end)).values_list('date', 'subtotal'), exp_m)
+    bucket(pay_rec_qs.filter(date__range=(start, end)).values_list('date', 'amount'), c_in)
+    bucket(pay_made_qs.filter(date__range=(start, end)).values_list('date', 'amount'), c_out)
+    bucket(inv_qs_m.filter(status='sent', date__range=(start, end)).values_list('date', 'subtotal'), rev_m)
+    bucket(bill_qs_m.filter(status='open', date__range=(start, end)).values_list('date', 'subtotal'), exp_m)
     labels = [date(y, m, 1).strftime('%b %y') for y, m in months]
 
     mix = {}
     from .models import InvoiceLine
-    for cat, amt in InvoiceLine.objects.filter(invoice__status='sent', invoice__date__range=(start, end)).values_list('item__category', 'taxable'):
+    inv_line_qs = InvoiceLine.objects.filter(invoice__organization=org) if org else InvoiceLine.objects.none()
+    for cat, amt in inv_line_qs.filter(invoice__status='sent', invoice__date__range=(start, end)).values_list('item__category', 'taxable'):
         key = cat or 'Uncategorised'
         mix[key] = mix.get(key, Z) + amt
 
     top = {}
-    for name, amt in Invoice.objects.filter(status='sent', date__range=(start, end)).values_list('customer__name', 'subtotal'):
+    for name, amt in inv_qs_m.filter(status='sent', date__range=(start, end)).values_list('customer__name', 'subtotal'):
         top[name] = top.get(name, Z) + amt
 
-    p_inv = list(invoice_qs().filter(status='sent', date__range=(start, end)))
+    p_inv = list(invoice_qs(org=org).filter(status='sent', date__range=(start, end)))
     count = len(p_inv)
     gross = sum((i.total for i in p_inv), Z)
     paid_cnt = sum(1 for i in p_inv if i.total - q2(i.paid_sum) <= 0)
 
-    goods = Item.objects.filter(item_type='goods', track_inventory=True)
+    goods = Item.objects.filter(organization=org, item_type='goods', track_inventory=True) if org else Item.objects.none()
     inv_value = sum((i.stock * i.purchase_price for i in goods), Z)
     growth = None
     if prev['revenue']:
@@ -525,31 +532,41 @@ def dashboard(start, end, org=None):
         'inventory': {'value': inv_value, 'active_items': Item.objects.filter(active=True).count(),
                       'low': sum(1 for i in goods if 0 < i.stock <= i.reorder_level and i.reorder_level > 0),
                       'out': sum(1 for i in goods if i.stock <= 0)},
-        'activity': recent_activity(8),
+        'activity': recent_activity(8, org=org),
     }
 
-def recent_activity(limit=10):
+def recent_activity(limit=10, org=None):
     ev = []
-    for o in Invoice.objects.select_related('customer').exclude(status='draft').order_by('-created_at')[:limit]:
+    inv_qs = Invoice.objects.filter(organization=org) if org else Invoice.objects.none()
+    pay_rec_qs = PaymentReceived.objects.filter(organization=org) if org else PaymentReceived.objects.none()
+    bill_qs_inst = Bill.objects.filter(organization=org) if org else Bill.objects.none()
+    pay_made_qs = PaymentMade.objects.filter(organization=org) if org else PaymentMade.objects.none()
+    stock_qs = StockMovement.objects.filter(organization=org) if org else StockMovement.objects.none()
+
+    for o in inv_qs.select_related('customer').exclude(status='draft').order_by('-created_at')[:limit]:
         ev.append({'type': 'invoice', 'id': o.pk, 'title': f'Invoice {o.number} ' + ('voided' if o.status == 'void' else 'issued'),
                    'detail': o.customer.name, 'amount': o.total, 'date': o.date, 'at': o.created_at})
-    for o in PaymentReceived.objects.select_related('customer').order_by('-created_at')[:limit]:
+    for o in pay_rec_qs.select_related('customer').order_by('-created_at')[:limit]:
         ev.append({'type': 'payment_received', 'id': o.pk, 'title': f'Payment {o.number} received', 'detail': o.customer.name,
                    'amount': o.amount, 'date': o.date, 'at': o.created_at})
-    for o in Bill.objects.select_related('vendor').exclude(status='draft').order_by('-created_at')[:limit]:
+    for o in bill_qs_inst.select_related('vendor').exclude(status='draft').order_by('-created_at')[:limit]:
         ev.append({'type': 'bill', 'id': o.pk, 'title': f'Bill {o.number} ' + ('voided' if o.status == 'void' else 'recorded'),
                    'detail': o.vendor.name, 'amount': o.total, 'date': o.date, 'at': o.created_at})
-    for o in PaymentMade.objects.select_related('vendor').order_by('-created_at')[:limit]:
+    for o in pay_made_qs.select_related('vendor').order_by('-created_at')[:limit]:
         ev.append({'type': 'payment_made', 'id': o.pk, 'title': f'Payment {o.number} made', 'detail': o.vendor.name,
                    'amount': o.amount, 'date': o.date, 'at': o.created_at})
-    for o in StockMovement.objects.select_related('item').filter(kind='adjustment').order_by('-created_at')[:limit]:
+    for o in stock_qs.select_related('item').filter(kind='adjustment').order_by('-created_at')[:limit]:
         ev.append({'type': 'stock', 'id': o.pk, 'title': f'Stock adjusted: {o.item.name}', 'detail': o.reason,
                    'amount': None, 'date': o.date, 'at': o.created_at})
     ev.sort(key=lambda e: e['at'], reverse=True)
     return ev[:limit]
 
-def ensure_default_accounts():
-    """Seed the standard Chart of Accounts if empty or missing system accounts."""
+def ensure_default_accounts(org=None):
+    """Seed the standard Chart of Accounts for the given organization."""
+    if not org:
+        org = Organization.objects.first()
+    if not org:
+        return
     defaults = [
         ('1000', 'Petty Cash', 'asset', 'cash', 'Liquid physical currency on hand'),
         ('1010', 'Bank Account', 'asset', 'bank', 'Primary operating bank account'),
@@ -586,18 +603,25 @@ def ensure_default_accounts():
     ]
     for code, name, atype, subtype, desc in defaults:
         Account.objects.get_or_create(
+            organization=org,
             code=code,
             defaults={'name': name, 'account_type': atype, 'sub_type': subtype, 'description': desc, 'is_system': True}
         )
 
-def post_journal_entry(date, entry_type, reference, notes, items, user=None):
+def post_journal_entry(date, entry_type, reference, notes, items, user=None, org=None):
     """
     Post a double-entry journal voucher.
     items: list of (account_code_or_obj, debit, credit, description)
     Enforces debit == credit and transaction locking.
     """
-    check_transaction_lock(date)
-    ensure_default_accounts()
+    if not org and user:
+        from .api import get_user_org
+        org = get_user_org(user)
+    if not org:
+        org = Organization.objects.first()
+
+    check_transaction_lock(date, org=org)
+    ensure_default_accounts(org=org)
     clean_items = []
     tot_debit = Decimal('0.00')
     tot_credit = Decimal('0.00')
@@ -608,11 +632,11 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None):
         else:
             acc = None
             if str(acc_ref).isdigit():
-                acc = Account.objects.filter(pk=int(acc_ref)).first()
+                acc = Account.objects.filter(pk=int(acc_ref), organization=org).first()
             if not acc:
-                acc = Account.objects.filter(code=str(acc_ref)).first()
+                acc = Account.objects.filter(code=str(acc_ref), organization=org).first()
             if not acc:
-                acc = Account.objects.filter(name__iexact=str(acc_ref)).first()
+                acc = Account.objects.filter(name__iexact=str(acc_ref), organization=org).first()
             if not acc:
                 raise ApiError(400, f"Account '{acc_ref}' not found in Chart of Accounts.")
         d_val = q2(deb or 0)
@@ -630,8 +654,9 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None):
     if tot_debit != tot_credit:
         raise ApiError(400, f"Unbalanced Journal: Total Debits (₹{tot_debit}) must equal Total Credits (₹{tot_credit}).")
 
-    num = next_number('JRN')
+    num = next_number('JRN', org=org)
     jrn = Journal.objects.create(
+        organization=org,
         number=num,
         date=date,
         entry_type=entry_type,
@@ -645,6 +670,7 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None):
 
 def post_invoice_journal(inv, user):
     """Debit AR, Credit Sales Revenue, Credit Output Taxes."""
+    org = getattr(inv, 'organization', None)
     items = [
         ('1200', inv.total, Decimal('0.00'), f'Invoice {inv.number} - {inv.customer.name}'),
         ('4000', Decimal('0.00'), inv.subtotal, f'Invoice {inv.number} Taxable Sales')
@@ -655,10 +681,11 @@ def post_invoice_journal(inv, user):
         items.append(('2220', Decimal('0.00'), inv.sgst, f'Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', Decimal('0.00'), inv.igst, f'Output IGST on {inv.number}'))
-    return post_journal_entry(inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}', items, user)
+    return post_journal_entry(inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}', items, user, org=org)
 
 def post_invoice_void_journal(inv, user):
     """Reversing journal entry on invoice void."""
+    org = getattr(inv, 'organization', None)
     items = [
         ('1200', Decimal('0.00'), inv.total, f'Void Invoice {inv.number} - {inv.customer.name}'),
         ('4000', inv.subtotal, Decimal('0.00'), f'Void Invoice {inv.number} Sales')
@@ -669,10 +696,11 @@ def post_invoice_void_journal(inv, user):
         items.append(('2220', inv.sgst, Decimal('0.00'), f'Reversal of Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', inv.igst, Decimal('0.00'), f'Reversal of Output IGST on {inv.number}'))
-    return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user)
+    return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user, org=org)
 
 def post_bill_journal(bill, user):
     """Debit COGS/Expense, Debit Input Taxes, Credit AP."""
+    org = getattr(bill, 'organization', None)
     items = [
         ('5000', bill.subtotal, Decimal('0.00'), f'Bill {bill.number} - {bill.vendor.name}'),
         ('2000', Decimal('0.00'), bill.total, f'Bill {bill.number} Accounts Payable')
@@ -683,10 +711,11 @@ def post_bill_journal(bill, user):
         items.append(('2250', bill.sgst, Decimal('0.00'), f'Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', bill.igst, Decimal('0.00'), f'Input IGST ITC on {bill.number}'))
-    return post_journal_entry(bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}', items, user)
+    return post_journal_entry(bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}', items, user, org=org)
 
 def post_bill_void_journal(bill, user):
     """Reversing journal entry on bill void."""
+    org = getattr(bill, 'organization', None)
     items = [
         ('5000', Decimal('0.00'), bill.subtotal, f'Void Bill {bill.number} Expense'),
         ('2000', bill.total, Decimal('0.00'), f'Void Bill {bill.number} Accounts Payable')
@@ -697,28 +726,31 @@ def post_bill_void_journal(bill, user):
         items.append(('2250', Decimal('0.00'), bill.sgst, f'Reversal of Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', Decimal('0.00'), bill.igst, f'Reversal of Input IGST ITC on {bill.number}'))
-    return post_journal_entry(bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}', items, user)
+    return post_journal_entry(bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}', items, user, org=org)
 
 def post_payment_received_journal(pay, user):
     """Debit Bank/Cash, Credit Accounts Receivable."""
+    org = getattr(pay, 'organization', None)
     acc_code = '1000' if pay.mode == 'cash' else '1010'
     items = [
         (acc_code, pay.amount, Decimal('0.00'), f'Payment {pay.number} from {pay.customer.name}'),
         ('1200', Decimal('0.00'), pay.amount, f'Payment {pay.number} applied to AR')
     ]
-    return post_journal_entry(pay.date, 'payment_in', pay.number, f'Payment received {pay.number}', items, user)
+    return post_journal_entry(pay.date, 'payment_in', pay.number, f'Payment received {pay.number}', items, user, org=org)
 
 def post_payment_made_journal(pay, user):
     """Debit Accounts Payable, Credit Bank/Cash."""
+    org = getattr(pay, 'organization', None)
     acc_code = '1000' if pay.mode == 'cash' else '1010'
     items = [
         ('2000', pay.amount, Decimal('0.00'), f'Payment {pay.number} to {pay.vendor.name}'),
         (acc_code, Decimal('0.00'), pay.amount, f'Payment {pay.number} disbursed')
     ]
-    return post_journal_entry(pay.date, 'payment_out', pay.number, f'Payment made {pay.number}', items, user)
+    return post_journal_entry(pay.date, 'payment_out', pay.number, f'Payment made {pay.number}', items, user, org=org)
 
 def post_expense_journal(exp, user):
     """Debit Expense Account, Debit Input Taxes (if any), Credit Bank/Cash."""
+    org = getattr(exp, 'organization', None)
     acc_code = '1000' if 'cash' in (exp.paid_through or '').lower() else '1010'
     items = [
         (exp.expense_account, exp.amount, Decimal('0.00'), f'Expense {exp.number} - {exp.notes or exp.expense_account.name}'),
@@ -728,26 +760,34 @@ def post_expense_journal(exp, user):
         half = q2(exp.tax_amount / 2)
         items.append(('2240', half, Decimal('0.00'), f'Input CGST on {exp.number}'))
         items.append(('2250', exp.tax_amount - half, Decimal('0.00'), f'Input SGST on {exp.number}'))
-    return post_journal_entry(exp.date, 'expense', exp.number, f'Operating expense {exp.number}', items, user)
+    return post_journal_entry(exp.date, 'expense', exp.number, f'Operating expense {exp.number}', items, user, org=org)
 
-def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user):
+def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user, org=None):
     """Record a transfer between bank accounts or cash."""
-    check_transaction_lock(on_date)
+    if not org:
+        org = getattr(from_acc, 'organization', None) or getattr(to_acc, 'organization', None)
+    check_transaction_lock(on_date, org=org)
     items = [
         (to_acc, amount, Decimal('0.00'), f'Transfer receipt: {ref}'),
         (from_acc, Decimal('0.00'), amount, f'Transfer disbursement: {ref}')
     ]
-    jrn = post_journal_entry(on_date, 'transfer', ref, f'Fund transfer of ₹{amount}', items, user)
+    jrn = post_journal_entry(on_date, 'transfer', ref, f'Fund transfer of ₹{amount}', items, user, org=org)
     log_audit(user, 'transfer', 'BankAccount', 0, f'Transferred ₹{amount} from {from_acc} to {to_acc}')
     return jrn
 
-def trial_balance_report(as_of_date=None, include_zero=True):
+def trial_balance_report(as_of_date=None, include_zero=True, org=None):
     """Compute real-time Trial Balance ensuring sum(Debits) == sum(Credits)."""
-    ensure_default_accounts()
+    ensure_default_accounts(org)
     as_of = as_of_date or timezone.localdate()
     qs = JournalItem.objects.filter(journal__date__lte=as_of)
-
     accounts = Account.objects.filter(active=True).order_by('code')
+    if org:
+        qs = qs.filter(journal__organization=org)
+        accounts = accounts.filter(organization=org)
+    else:
+        qs = qs.none()
+        accounts = accounts.none()
+
     rows = []
     tot_debit = Decimal('0.00')
     tot_credit = Decimal('0.00')
@@ -785,26 +825,35 @@ def trial_balance_report(as_of_date=None, include_zero=True):
         'difference': abs(tot_debit - tot_credit)
     }
 
-def general_ledger_report(account_id=None, start=None, end=None):
+def general_ledger_report(account_id=None, start=None, end=None, org=None):
     """Chronological ledger transactions with running balances."""
-    ensure_default_accounts()
+    ensure_default_accounts(org)
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
 
     acc_qs = Account.objects.filter(active=True)
+    if org:
+        acc_qs = acc_qs.filter(organization=org)
+    else:
+        acc_qs = acc_qs.none()
     if account_id:
         acc_qs = acc_qs.filter(pk=account_id)
 
     ledger = []
     for acc in acc_qs:
         pre_items = JournalItem.objects.filter(account=acc, journal__date__lt=s)
+        if org:
+            pre_items = pre_items.filter(journal__organization=org)
         pre_d = pre_items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         pre_c = pre_items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
         normal_is_debit = acc.account_type in ('asset', 'expense')
         opening_bal = (pre_d - pre_c) if normal_is_debit else (pre_c - pre_d)
 
-        cur_items = JournalItem.objects.filter(account=acc, journal__date__range=(s, e)).select_related('journal').order_by('journal__date', 'journal__id', 'id')
+        cur_items = JournalItem.objects.filter(account=acc, journal__date__range=(s, e))
+        if org:
+            cur_items = cur_items.filter(journal__organization=org)
+        cur_items = cur_items.select_related('journal').order_by('journal__date', 'journal__id', 'id')
         running = opening_bal
         txns = []
         for it in cur_items:
@@ -834,16 +883,23 @@ def general_ledger_report(account_id=None, start=None, end=None):
 
     return {'start': s, 'end': e, 'accounts': ledger}
 
-def profit_and_loss_report(start, end):
+def profit_and_loss_report(start, end, org=None):
     """Accrual and cash operating P&L."""
-    ensure_default_accounts()
+    ensure_default_accounts(org)
     qs = JournalItem.objects.filter(journal__date__range=(start, end))
+    accounts = Account.objects.filter(account_type__in=['income', 'expense'], active=True).order_by('code')
+    if org:
+        qs = qs.filter(journal__organization=org)
+        accounts = accounts.filter(organization=org)
+    else:
+        qs = qs.none()
+        accounts = accounts.none()
 
     income_rows = []
     cogs_rows = []
     expense_rows = []
 
-    for acc in Account.objects.filter(account_type__in=['income', 'expense'], active=True).order_by('code'):
+    for acc in accounts:
         items = qs.filter(account=acc)
         d_sum = items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         c_sum = items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
@@ -881,17 +937,24 @@ def profit_and_loss_report(start, end):
         'margin_pct': float(net_profit / tot_income * 100) if tot_income > 0 else 0.0
     }
 
-def balance_sheet_report(as_of_date=None):
+def balance_sheet_report(as_of_date=None, org=None):
     """Assets = Liabilities + Equity (including net current earnings)."""
-    ensure_default_accounts()
+    ensure_default_accounts(org)
     as_of = as_of_date or timezone.localdate()
     qs = JournalItem.objects.filter(journal__date__lte=as_of)
+    accounts = Account.objects.filter(active=True).order_by('code')
+    if org:
+        qs = qs.filter(journal__organization=org)
+        accounts = accounts.filter(organization=org)
+    else:
+        qs = qs.none()
+        accounts = accounts.none()
 
     assets = []
     liabilities = []
     equity = []
 
-    for acc in Account.objects.filter(active=True).order_by('code'):
+    for acc in accounts:
         items = qs.filter(account=acc)
         d_sum = items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         c_sum = items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
@@ -935,14 +998,18 @@ def balance_sheet_report(as_of_date=None):
         'is_balanced': tot_assets == (tot_liab + tot_eq)
     }
 
-def cash_flow_report(start, end):
+def cash_flow_report(start, end, org=None):
     """Direct and indirect cash flow statement."""
-    pnl = profit_and_loss_report(start, end)
+    pnl = profit_and_loss_report(start, end, org=org)
     net_income = pnl['net_profit']
 
-    inflows = PaymentReceived.objects.filter(date__range=(start, end)).aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
-    outflows_bills = PaymentMade.objects.filter(date__range=(start, end)).aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
-    outflows_exp = Expense.objects.filter(date__range=(start, end)).aggregate(s=Sum('total'))['s'] or Decimal('0.00')
+    rec_qs = PaymentReceived.objects.filter(organization=org, date__range=(start, end)) if org else PaymentReceived.objects.none()
+    made_qs = PaymentMade.objects.filter(organization=org, date__range=(start, end)) if org else PaymentMade.objects.none()
+    exp_qs = Expense.objects.filter(organization=org, date__range=(start, end)) if org else Expense.objects.none()
+
+    inflows = rec_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+    outflows_bills = made_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+    outflows_exp = exp_qs.aggregate(s=Sum('total'))['s'] or Decimal('0.00')
 
     operating_net = inflows - outflows_bills - outflows_exp
 
@@ -959,7 +1026,7 @@ def cash_flow_report(start, end):
         'net_change_in_cash': operating_net
     }
 
-def gstr1_report(start, end):
+def gstr1_report(start, end, org=None):
     """
     Categorize all outward supplies into GSTR-1 government sections:
     - B2B (registered parties with valid GSTIN)
@@ -968,8 +1035,9 @@ def gstr1_report(start, end):
     - Nil / Exempted
     - HSN Summary
     """
-    invoices = Invoice.objects.filter(status='sent', date__range=(start, end)).select_related('customer').prefetch_related('lines')
-    org = Organization.get()
+    invoices = Invoice.objects.filter(organization=org, status='sent', date__range=(start, end)).select_related('customer').prefetch_related('lines') if org else Invoice.objects.none()
+    if not org:
+        org = Organization.get()
     b2b, b2cl, b2cs = [], [], []
     hsn_map = {}
 
@@ -1038,11 +1106,11 @@ def gstr1_report(start, end):
         'hsn_summary': list(hsn_map.values())
     }
 
-def gstr3b_report(start, end):
+def gstr3b_report(start, end, org=None):
     """GSTR-3B Summary: 3.1 Outward supplies, 4 Eligible ITC, 5 Net Tax Payable."""
-    g1 = gstr1_report(start, end)
-    bills = Bill.objects.filter(status='open', date__range=(start, end))
-    exps = Expense.objects.filter(date__range=(start, end))
+    g1 = gstr1_report(start, end, org=org)
+    bills = Bill.objects.filter(status='open', date__range=(start, end), organization=org) if org else Bill.objects.filter(status='open', date__range=(start, end))
+    exps = Expense.objects.filter(date__range=(start, end), organization=org) if org else Expense.objects.filter(date__range=(start, end))
 
     itc_cgst = sum((b.cgst for b in bills), Decimal('0.00')) + sum((q2(e.tax_amount / 2) for e in exps), Decimal('0.00'))
     itc_sgst = sum((b.sgst for b in bills), Decimal('0.00')) + sum((q2(e.tax_amount / 2) for e in exps), Decimal('0.00'))
@@ -1086,10 +1154,10 @@ def gstr3b_report(start, end):
         }
     }
 
-def itc_summary_report(start, end):
+def itc_summary_report(start, end, org=None):
     """Input Tax Credit claimed from purchases and business expenses."""
-    bills = Bill.objects.filter(status='open', date__range=(start, end)).select_related('vendor')
-    exps = Expense.objects.filter(date__range=(start, end)).select_related('vendor')
+    bills = Bill.objects.filter(status='open', date__range=(start, end), organization=org).select_related('vendor') if org else Bill.objects.filter(status='open', date__range=(start, end)).select_related('vendor')
+    exps = Expense.objects.filter(date__range=(start, end), organization=org).select_related('vendor') if org else Expense.objects.filter(date__range=(start, end)).select_related('vendor')
     entries = []
 
     for b in bills:
@@ -1136,9 +1204,9 @@ def itc_summary_report(start, end):
         'total_itc': tot_cgst + tot_sgst + tot_igst
     }
 
-def tax_liability_report(start, end):
-    g1 = gstr1_report(start, end)
-    itc = itc_summary_report(start, end)
+def tax_liability_report(start, end, org=None):
+    g1 = gstr1_report(start, end, org=org)
+    itc = itc_summary_report(start, end, org=org)
     out_tax = g1['summary']['total_tax']
     in_tax = itc['total_itc']
     return {
@@ -1156,24 +1224,24 @@ def tax_liability_report(start, end):
 
 def generate_eway_bill(doc_type, doc_id, transporter_id='', transporter_name='', vehicle_number='', distance_km=50, user=None):
     """Generate Indian GST E-Way Bill with 12-digit standard number and expiry."""
-    org = Organization.get()
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else Organization.get()
     if doc_type == 'INV':
-        inv = Invoice.objects.select_related('customer').filter(pk=doc_id).first()
+        inv = Invoice.objects.select_related('customer').filter(pk=doc_id, organization=org).first() if org else Invoice.objects.select_related('customer').filter(pk=doc_id).first()
         if not inv:
             raise ApiError(404, 'Invoice not found.')
         doc_no = inv.number
         doc_date = inv.date
         p_name = inv.customer.name
         p_gstin = inv.customer.gstin
-        from_st = org.state
-        to_st = inv.place_of_supply or inv.customer.state or org.state
+        from_st = org.state if org else ''
+        to_st = inv.place_of_supply or inv.customer.state or (org.state if org else '')
     else:
         doc_no = f'DOC-{doc_id}'
         doc_date = timezone.localdate()
         p_name = 'Customer'
         p_gstin = ''
-        from_st = org.state
-        to_st = org.state
+        from_st = org.state if org else ''
+        to_st = org.state if org else ''
 
     import random
     ewb_no = f'{random.randint(1000, 9999)}{random.randint(1000, 9999)}{random.randint(1000, 9999)}'
@@ -1181,6 +1249,7 @@ def generate_eway_bill(doc_type, doc_id, transporter_id='', transporter_name='',
     valid_until = timezone.now() + timedelta(days=valid_days)
 
     ewb = EWayBill.objects.create(
+        organization=org,
         bill_number=ewb_no,
         doc_type=doc_type,
         doc_number=doc_no,
@@ -1201,21 +1270,22 @@ def generate_eway_bill(doc_type, doc_id, transporter_id='', transporter_name='',
 
 def generate_einvoice(inv_id, user=None):
     """Generate 64-char IRN hash and QR payload for GST B2B e-Invoicing compliance."""
-    inv = Invoice.objects.select_related('customer').filter(pk=inv_id).first()
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else Organization.get()
+    inv = Invoice.objects.select_related('customer').filter(pk=inv_id, organization=org).first() if org else Invoice.objects.select_related('customer').filter(pk=inv_id).first()
     if not inv:
         raise ApiError(404, 'Invoice not found.')
-    org = Organization.get()
+    org = inv.organization or org
     import hashlib
     import random
-    raw_key = f"{org.gstin or '32AANCC9298C1ZE'}|{inv.date.year}|INV|{inv.number}"
+    raw_key = f"{(org.gstin or '32AANCC9298C1ZE') if org else '32AANCC9298C1ZE'}|{inv.date.year}|INV|{inv.number}"
     irn = hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
     ack_no = f"1{random.randint(1000000000, 9999999999)}"
     now = timezone.now()
-    qr_code = f"IRN:{irn[:16]}...|SUP:{org.gstin}|BUY:{inv.customer.gstin or 'URP'}|DOC:{inv.number}|VAL:{inv.total}|DATE:{inv.date}"
+    qr_code = f"IRN:{irn[:16]}...|SUP:{org.gstin if org else ''}|BUY:{inv.customer.gstin or 'URP'}|DOC:{inv.number}|VAL:{inv.total}|DATE:{inv.date}"
 
     rec, _ = EInvoiceRecord.objects.update_or_create(
         invoice=inv,
-        defaults={'irn': irn, 'ack_no': ack_no, 'ack_date': now, 'signed_qr_code': qr_code, 'status': 'generated'}
+        defaults={'organization': org, 'irn': irn, 'ack_no': ack_no, 'ack_date': now, 'signed_qr_code': qr_code, 'status': 'generated'}
     )
     log_audit(user, 'generate', 'EInvoice', inv.pk, f'Generated e-Invoice IRN for Invoice {inv.number}')
     return rec
@@ -1275,28 +1345,31 @@ def process_document_ocr(doc):
 @transaction.atomic
 def convert_scanned_document(doc_id, target_type, user):
     """Convert an OCR processed document into a draft Bill or Expense."""
-    doc = ManagedDocument.objects.filter(pk=doc_id).first()
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else None
+    doc = ManagedDocument.objects.filter(pk=doc_id, organization=org).first() if org else ManagedDocument.objects.filter(pk=doc_id).first()
     if not doc:
         raise ApiError(404, 'Document not found.')
     if not doc.ocr_data:
         process_document_ocr(doc)
 
     data = doc.ocr_data
-    org = Organization.get()
+    org = doc.organization or org or Organization.get()
     vendor_name = data.get('merchant', 'Scanned Vendor')
     vendor, _ = Vendor.objects.get_or_create(
+        organization=org,
         name=vendor_name,
-        defaults={'company': vendor_name, 'state': org.state, 'payment_terms': 15}
+        defaults={'company': vendor_name, 'state': org.state if org else '', 'payment_terms': 15}
     )
 
     if target_type == 'bill':
-        bill_num = next_number('BIL')
+        bill_num = next_number('BIL', org=org)
         bill = Bill.objects.create(
+            organization=org,
             number=bill_num,
             vendor=vendor,
             date=data.get('date') or timezone.localdate(),
             due_date=timezone.localdate() + timedelta(days=15),
-            place_of_supply=org.state,
+            place_of_supply=org.state if org else '',
             vendor_ref=data.get('invoice_number', ''),
             subtotal=Decimal(str(data.get('taxable_amount', 0))),
             cgst=q2(Decimal(str(data.get('tax_amount', 0))) / 2),
@@ -1330,12 +1403,13 @@ def convert_scanned_document(doc_id, target_type, user):
         return {'type': 'bill', 'id': bill.pk, 'number': bill.number}
 
     elif target_type == 'expense':
-        exp_acc = Account.objects.filter(code='6090').first() or Account.objects.filter(account_type='expense').first()
-        exp_num = next_number('EXP')
+        exp_acc = (Account.objects.filter(organization=org, code='6090').first() or Account.objects.filter(organization=org, account_type='expense').first()) if org else (Account.objects.filter(code='6090').first() or Account.objects.filter(account_type='expense').first())
+        exp_num = next_number('EXP', org=org)
         tot = Decimal(str(data.get('total_amount', 0)))
         tax = Decimal(str(data.get('tax_amount', 0)))
         sub = Decimal(str(data.get('taxable_amount', tot - tax)))
         exp = Expense.objects.create(
+            organization=org,
             number=exp_num,
             date=data.get('date') or timezone.localdate(),
             expense_account=exp_acc,
@@ -1364,9 +1438,11 @@ def match_bank_transaction(bank_txn):
     amt = bank_txn.deposit if bank_txn.deposit > 0 else bank_txn.withdrawal
     dt = bank_txn.date
     candidates = []
+    org = bank_txn.organization
 
     if bank_txn.deposit > 0:
-        for pay in PaymentReceived.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7))):
+        pay_qs = PaymentReceived.objects.filter(organization=org, date__range=(dt - timedelta(days=7), dt + timedelta(days=7))) if org else PaymentReceived.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7)))
+        for pay in pay_qs:
             score = 0.5
             if pay.amount == amt:
                 score += 0.4
@@ -1374,11 +1450,12 @@ def match_bank_transaction(bank_txn):
                 score += 0.1
             if score >= 0.7:
                 candidates.append({'type': 'payment_received', 'id': pay.pk, 'label': f'Payment {pay.number} ({pay.customer.name})', 'amount': pay.amount, 'confidence': score})
-        for inv in Invoice.objects.filter(status='sent', total=amt):
+        inv_qs = Invoice.objects.filter(organization=org, status='sent', total=amt) if org else Invoice.objects.filter(status='sent', total=amt)
+        for inv in inv_qs:
             candidates.append({'type': 'invoice', 'id': inv.pk, 'label': f'Invoice {inv.number} ({inv.customer.name})', 'amount': inv.total, 'confidence': 0.85})
     else:
-        
-        for pay in PaymentMade.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7))):
+        pay_qs = PaymentMade.objects.filter(organization=org, date__range=(dt - timedelta(days=7), dt + timedelta(days=7))) if org else PaymentMade.objects.filter(date__range=(dt - timedelta(days=7), dt + timedelta(days=7)))
+        for pay in pay_qs:
             score = 0.5
             if pay.amount == amt:
                 score += 0.4
@@ -1386,16 +1463,19 @@ def match_bank_transaction(bank_txn):
                 score += 0.1
             if score >= 0.7:
                 candidates.append({'type': 'payment_made', 'id': pay.pk, 'label': f'Payment {pay.number} ({pay.vendor.name})', 'amount': pay.amount, 'confidence': score})
-        for exp in Expense.objects.filter(total=amt):
-            candidates.append({'type': 'expense', 'id': exp.pk, 'label': f'Expense {exp.number} ({exp.notes or exp.expense_account.name})', 'amount': exp.total, 'confidence': 0.80})
-        for bill in Bill.objects.filter(status='open', total=amt):
+        exp_qs = Expense.objects.filter(organization=org, total=amt) if org else Expense.objects.filter(total=amt)
+        for exp in exp_qs:
+            candidates.append({'type': 'expense', 'id': exp.pk, 'label': f'Expense {exp.number} ({exp.notes or (exp.expense_account.name if exp.expense_account else "")})', 'amount': exp.total, 'confidence': 0.80})
+        bill_qs = Bill.objects.filter(organization=org, status='open', total=amt) if org else Bill.objects.filter(status='open', total=amt)
+        for bill in bill_qs:
             candidates.append({'type': 'bill', 'id': bill.pk, 'label': f'Bill {bill.number} ({bill.vendor.name})', 'amount': bill.total, 'confidence': 0.85})
 
     candidates.sort(key=lambda x: -x['confidence'])
     return candidates
 
 def reconcile_bank_transaction(bank_txn_id, entity_type, entity_id, user=None):
-    txn = BankTransaction.objects.filter(pk=bank_txn_id).first()
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else None
+    txn = BankTransaction.objects.filter(pk=bank_txn_id, organization=org).first() if org else BankTransaction.objects.filter(pk=bank_txn_id).first()
     if not txn:
         raise ApiError(404, 'Bank transaction not found.')
     txn.status = 'reconciled'
@@ -1406,7 +1486,7 @@ def reconcile_bank_transaction(bank_txn_id, entity_type, entity_id, user=None):
     log_audit(user, 'reconcile', 'BankTransaction', txn.pk, f'Reconciled bank transaction ₹{txn.deposit or txn.withdrawal} against {entity_type} #{entity_id}')
     return txn
 
-def detect_financial_anomalies():
+def detect_financial_anomalies(org=None):
     """
     Run automated anomaly checks across bills, expenses, and transactions:
     1. Duplicate vendor bills within 30 days
@@ -1415,7 +1495,7 @@ def detect_financial_anomalies():
     4. Round-number transaction spikes
     """
     anomalies = []
-    bills = Bill.objects.exclude(status='void').order_by('vendor_id', 'date')
+    bills = Bill.objects.filter(organization=org).exclude(status='void').order_by('vendor_id', 'date') if org else Bill.objects.exclude(status='void').order_by('vendor_id', 'date')
     seen = {}
     for b in bills:
         k = (b.vendor_id, b.total)
@@ -1433,7 +1513,7 @@ def detect_financial_anomalies():
         seen[k] = b
 
    
-    exps = Expense.objects.all()
+    exps = Expense.objects.filter(organization=org) if org else Expense.objects.all()
     if exps.count() >= 3:
         avg_exp = exps.aggregate(a=Sum('total'))['a'] / exps.count()
         threshold = avg_exp * Decimal('1.75')
@@ -1449,6 +1529,7 @@ def detect_financial_anomalies():
 
     for a in anomalies:
         FinancialAnomaly.objects.get_or_create(
+            organization=org,
             title=a['title'],
             defaults={
                 'anomaly_type': a['type'],
@@ -1458,7 +1539,7 @@ def detect_financial_anomalies():
                 'entity_id': a['entity_id']
             }
         )
-    return FinancialAnomaly.objects.filter(status='detected')
+    return FinancialAnomaly.objects.filter(organization=org, status='detected') if org else FinancialAnomaly.objects.filter(status='detected')
 
 def sanitize_ai_text(text):
     if not text or not isinstance(text, str):
@@ -1469,7 +1550,7 @@ def sanitize_ai_text(text):
     clean = re.sub(r'href\s*=\s*(?:["\']\s*javascript:[^"\']*["\']|javascript:[^\s>]+)', 'href="#"', clean, flags=re.IGNORECASE)
     return clean
 
-def get_live_accounting_context():
+def get_live_accounting_context(org=None):
     """
     Computes real-time, live accounting metrics from the ledger database
     to inject as grounding context for ConvoBot AI Copilot.
@@ -1477,28 +1558,28 @@ def get_live_accounting_context():
     today = timezone.localdate()
     m_start = today.replace(day=1)
 
-    bank_accounts = list(BankAccount.objects.all())
+    bank_accounts = list(BankAccount.objects.filter(organization=org) if org else BankAccount.objects.all())
     total_bank_cash = sum((acc.current_balance or Decimal('0.00')) for acc in bank_accounts)
 
-    inv_unpaid = invoice_qs().filter(status__in=['sent', 'partially_paid'])
+    inv_unpaid = invoice_qs(org=org).filter(status__in=['sent', 'partially_paid'])
     total_receivable = sum((inv.total - inv.paid_sum) for inv in inv_unpaid)
     overdue_invs = [inv for inv in inv_unpaid if inv.due_date and inv.due_date < today]
     total_overdue = sum((inv.total - inv.paid_sum) for inv in overdue_invs)
 
-    bill_unpaid = bill_qs().filter(status__in=['open', 'partially_paid'])
+    bill_unpaid = bill_qs(org=org).filter(status__in=['open', 'partially_paid'])
     total_payable = sum((b.total - b.paid_sum) for b in bill_unpaid)
 
-    pnl = profit_and_loss_report(m_start, today)
-    gstr1 = gstr1_report(m_start, today)
-    gstr3b = gstr3b_report(m_start, today)
+    pnl = profit_and_loss_report(m_start, today, org=org)
+    gstr1 = gstr1_report(m_start, today, org=org)
+    gstr3b = gstr3b_report(m_start, today, org=org)
     output_tax = gstr1.get('summary', {}).get('total_tax', Decimal('0.00'))
     itc_dict = gstr3b.get('section_4_itc', {}).get('net_itc_available', {})
     itc_available = itc_dict.get('cgst', Decimal('0.00')) + itc_dict.get('sgst', Decimal('0.00')) + itc_dict.get('igst', Decimal('0.00'))
     net_gst_payable = max(Decimal('0.00'), output_tax - itc_available)
 
-    low_stock_count = Item.objects.filter(track_inventory=True, stock__lte=F('reorder_level'), active=True).count()
-    anomalies_count = FinancialAnomaly.objects.filter(status='detected').count()
-    tb = trial_balance_report(today)
+    low_stock_count = (Item.objects.filter(organization=org, track_inventory=True, stock__lte=F('reorder_level'), active=True) if org else Item.objects.filter(track_inventory=True, stock__lte=F('reorder_level'), active=True)).count()
+    anomalies_count = (FinancialAnomaly.objects.filter(organization=org, status='detected') if org else FinancialAnomaly.objects.filter(status='detected')).count()
+    tb = trial_balance_report(today, org=org)
 
     accs_data = [
         {
@@ -1546,9 +1627,10 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
     q = raw_query.lower()
     today = timezone.localdate()
     m_start = today.replace(day=1)
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else None
 
     if any(k in q for k in ['bank account', 'bank balance', 'how much money', 'cash balance', 'bank cash', 'in the bank', 'available cash']):
-        ctx = get_live_accounting_context()
+        ctx = get_live_accounting_context(org=org)
         accs = ctx['bank_accounts_list']
         rows = [{'Account Name': a['name'], 'Bank': a['bank_name'], 'Account No.': a['account_number'], 'Book Balance': f"₹{a['balance']:,.2f}", 'Statement Balance': f"₹{a['bank_balance']:,.2f}"} for a in accs]
         return {
@@ -1694,7 +1776,7 @@ def _convobot_deterministic_reasoning(query, category=None, history=None, user=N
         }
 
     if ('briefing' in q or 'summary' in q or 'executive' in q or 'health' in q or 'status' in q or 'how is our business' in q or 'overview' in q or 'position' in q) and not ('gstr' in q or 'tax' in q or 'audit' in q):
-        ctx = get_live_accounting_context()
+        ctx = get_live_accounting_context(org=org)
         return {
             'query': raw_query,
             'doubt_topic': 'Live Accounting Executive Briefing',
@@ -2463,7 +2545,8 @@ def process_convobot_query(query, category=None, history=None, user=None):
     and live double-entry ledger grounding.
     """
     raw_query = (query or '').strip()
-    ctx = get_live_accounting_context()
+    org = user.profile.organization if user and hasattr(user, 'profile') and user.profile.organization else None
+    ctx = get_live_accounting_context(org=org)
     today = timezone.localdate()
 
     llm_content = None

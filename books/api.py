@@ -15,11 +15,14 @@ from django.db import transaction
 from django.db.models import F, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
-from django.utils.text import slugify as slug
+from django.utils.text import slugify
+
+slug = slugify
+REQUIRED = 'This field is required.'
 
 from . import services
 from .calc import GST_SLABS, compute, is_intra_state, q2
-from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner, REQUIRED
+from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
@@ -30,7 +33,7 @@ from .models import (
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTransaction,
     PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, SalesOrder,
-    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TimeLog, UserProfile, Vendor, VendorCredit,
+    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TenantSubscription, TimeLog, UserProfile, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
@@ -72,7 +75,15 @@ def get_user_org(user):
     profile = getattr(user, 'profile', None)
     if profile and profile.organization:
         return profile.organization
-    return Organization.objects.filter(pk=1).first() or Organization.objects.first()
+    if getattr(user, 'is_superuser', False):
+        return Organization.objects.first()
+    if profile and not profile.organization:
+        default_org = Organization.objects.first()
+        if default_org:
+            profile.organization = default_org
+            profile.save(update_fields=['organization'])
+            return default_org
+    return None
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -81,12 +92,14 @@ def get_user_role(user):
         return UserProfile.ADMIN
     profile = getattr(user, 'profile', None)
     if not profile:
-        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
+        org_name = f"{user.username.title()}'s Organization"
+        org = Organization.objects.create(name=org_name, company_id=slug(org_name)[:20])
+        services.ensure_default_accounts(org)
         profile, _ = UserProfile.objects.get_or_create(
             user=user,
             defaults={
-                'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT,
-                'organization': default_org
+                'role': UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ADMIN,
+                'organization': org
             }
         )
     return profile.role
@@ -220,10 +233,9 @@ class Resource:
         if request and hasattr(self.model, 'organization'):
             user_org = get_user_org(request.user)
             if user_org:
-                if user_org.pk == 1:
-                    qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-                else:
-                    qs = qs.filter(organization=user_org)
+                qs = qs.filter(organization=user_org)
+            elif request.user.is_authenticated and not request.user.is_superuser:
+                qs = qs.none()
         obj = qs.filter(pk=pk).first()
         if obj is None:
             raise ApiError(404, 'Not found.')
@@ -246,10 +258,9 @@ class Resource:
         if hasattr(self.model, 'organization'):
             user_org = get_user_org(request.user)
             if user_org:
-                if user_org.pk == 1:
-                    qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-                else:
-                    qs = qs.filter(organization=user_org)
+                qs = qs.filter(organization=user_org)
+            elif request.user.is_authenticated and not request.user.is_superuser:
+                qs = qs.none()
         q = request.GET.get('q', '').strip()
         if q and self.search_fields:
             cond = Q()
@@ -360,10 +371,12 @@ class Resource:
         try:
             with transaction.atomic():
                 qs = self.model.objects.all()
-                if user and hasattr(self.model, 'organization'):
-                    org = get_user_org(user)
+                if hasattr(self.model, 'organization'):
+                    org = get_user_org(user) if user else None
                     if org:
                         qs = qs.filter(organization=org)
+                    elif user and user.is_authenticated and not user.is_superuser:
+                        return None
                 if hasattr(self.model, 'sku') and clean_item.get('sku'):
                     obj = qs.filter(sku__iexact=str(clean_item['sku']).strip()).first()
                     if obj: return obj
@@ -673,10 +686,12 @@ class PartyResource(Resource):
                 name = (clean_item.get('name') or '').strip()
                 gstin = (clean_item.get('gstin') or '').strip()
                 qs = self.model.objects.all()
-                if user and hasattr(self.model, 'organization'):
-                    org = get_user_org(user)
+                if hasattr(self.model, 'organization'):
+                    org = get_user_org(user) if user else None
                     if org:
                         qs = qs.filter(organization=org)
+                    elif user and user.is_authenticated and not user.is_superuser:
+                        return None
                 if gstin:
                     obj = qs.filter(gstin__iexact=gstin).first()
                     if obj:
@@ -1046,7 +1061,7 @@ class ItemResource(Resource):
             'inventory_account': o.inventory_account
         }
 
-    def clean(self, data, instance=None):
+    def clean(self, data, instance=None, user=None):
         c = Cleaner(data)
         out = {
             'name': c.text('name', True, 200, pattern=re.compile(r'^[^#@!$%^*+=~`<>?[\]\\{}]+$'), pattern_msg='Item Name cannot contain unsupported special characters (cannot contain #, @, !, $, %, ^, *).'),
@@ -1071,14 +1086,16 @@ class ItemResource(Resource):
         wid = c.integer('warehouse_id', required=False)
         if wid is None:
             wid = c.integer('warehouse', required=False)
-        wh = Warehouse.objects.filter(pk=wid).first() if wid else None
+        user_org = get_user_org(user) if user else (getattr(instance, 'organization', None) if instance else None)
+        wh = Warehouse.objects.filter(pk=wid, organization=user_org).first() if (wid and user_org) else (Warehouse.objects.filter(pk=wid).first() if wid else None)
         out['warehouse_id'] = wh.pk if wh else None
         out['warehouse_code'] = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
 
         vid = c.integer('preferred_vendor_id', required=False)
         if vid is None:
             vid = c.integer('preferred_vendor', required=False)
-        out['preferred_vendor_id'] = vid if vid and Vendor.objects.filter(pk=vid).exists() else None
+        v_exists = Vendor.objects.filter(pk=vid, organization=user_org).exists() if (vid and user_org) else (Vendor.objects.filter(pk=vid).exists() if vid else False)
+        out['preferred_vendor_id'] = vid if v_exists else None
 
         if out['hsn_sac']:
             hsn = out['hsn_sac'].strip()
@@ -1090,9 +1107,11 @@ class ItemResource(Resource):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
 
         if not out['sku']:
-            out['sku'] = next_number('SKU')
+            out['sku'] = next_number('SKU', org=user_org)
         else:
             dup = Item.objects.filter(sku__iexact=out['sku'])
+            if user_org:
+                dup = dup.filter(organization=user_org)
             if instance:
                 dup = dup.exclude(pk=instance.pk)
             if dup.exists():
@@ -1110,14 +1129,10 @@ class ItemResource(Resource):
         return out, opening
 
     def create(self, data, user):
-        out, opening = self.clean(data)
-        if user and hasattr(Item, 'organization'):
-            try:
-                org = get_user_org(user)
-                if org:
-                    out['organization'] = org
-            except Exception:
-                pass
+        out, opening = self.clean(data, user=user)
+        user_org = get_user_org(user)
+        if user_org:
+            out['organization'] = user_org
         obj = Item.objects.create(**out)
         if opening > 0:
             services.move_stock(obj.pk, opening, 'opening', 'Opening stock', timezone.localdate(), user, 'Opening stock',
@@ -1125,14 +1140,14 @@ class ItemResource(Resource):
         return obj
 
     def update(self, obj, data, user):
-        out, _ = self.clean(data, obj)
+        out, _ = self.clean(data, obj, user=user)
         if out['item_type'] == 'service' and obj.stock != 0:
             raise ApiError(400, 'Adjust stock to zero before changing this item to a service.', {'item_type': 'Stock must be zero.'})
         for k, v in out.items():
             setattr(obj, k, v)
         obj.save()
 
-def parse_lines(raw):
+def parse_lines(raw, org=None):
     msg = 'Add at least one line item.'
     if not isinstance(raw, list) or not raw:
         raise ApiError(400, msg, {'lines': msg})
@@ -1146,7 +1161,10 @@ def parse_lines(raw):
             iid = c.integer('item_id', lo=1, default=None)
         item = None
         if iid:
-            item = Item.objects.filter(pk=iid).first()
+            iqs = Item.objects.filter(pk=iid)
+            if org:
+                iqs = iqs.filter(organization=org)
+            item = iqs.first()
             if item is None:
                 c.err('item', 'Item not found.')
         desc = c.text('description', max_len=500) or (item.name if item else '')
@@ -1252,7 +1270,7 @@ class DocResource(Resource):
             p = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str)).first()
             if not p:
                 org = Organization.get()
-                p = self.Party.objects.create(name=p_str, active=True, state=org.state)
+                p = self.Party.objects.create(name=p_str, active=True, state=org.state if org else '', organization=org)
             rec[self.party_attr] = p.pk
         elif not party_val:
             first_p = self.Party.objects.first()
@@ -1420,15 +1438,21 @@ class DocResource(Resource):
     def extra_clean(self, c):
         return {}
 
-    def parse(self, data):
+    def parse(self, data, user=None):
         c = Cleaner(data)
-        org = Organization.get()
+        user_org = get_user_org(user) if user else None
+        org = user_org or Organization.get()
         pid = c.integer(self.party_attr, lo=1)
         if not pid:
             pid = c.integer(self.party_attr + '_id', lo=1)
         if not pid:
             c.err(self.party_attr, REQUIRED)
-        party = self.Party.objects.filter(pk=pid).first() if pid else None
+        party = None
+        if pid:
+            pqs = self.Party.objects.filter(pk=pid)
+            if user_org:
+                pqs = pqs.filter(organization=user_org)
+            party = pqs.first()
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
         date_ = c.date('date', required=True)
@@ -1440,15 +1464,17 @@ class DocResource(Resource):
             due = date_ + timedelta(days=terms or 30)
         if date_ and due and due < date_:
             c.err('due_date', 'Due date cannot be before the document date.')
-        pos = c.text('place_of_supply', max_len=60) or (party.state if party and party.state else org.state)
+        pos = c.text('place_of_supply', max_len=60) or (party.state if party and party.state else (org.state if org else ''))
         head = {self.party_attr: party, 'date': date_, 'due_date': due, 'place_of_supply': pos,
                 'notes': c.text('notes', max_len=2000)}
         head.update(self.extra_clean(c))
         c.done()
-        return head, parse_lines(data.get('lines'))
+        return head, parse_lines(data.get('lines'), org=user_org)
 
-    def write(self, obj, head, lines):
-        intra = is_intra_state(head['place_of_supply'], Organization.get().state)
+    def write(self, obj, head, lines, user=None):
+        user_org = get_user_org(user) if user else getattr(obj, 'organization', None)
+        org_state = user_org.state if user_org else (Organization.get().state if Organization.get() else '')
+        intra = is_intra_state(head['place_of_supply'], org_state)
         comp, tot = compute(lines, intra)
         for k, v in head.items():
             setattr(obj, k, v)
@@ -1466,27 +1492,33 @@ class DocResource(Resource):
                                                  line_total=l['line_total'], position=l['position']) for l in comp])
 
     def create(self, data, user):
-        head, lines = self.parse(data)
-        services.check_transaction_lock(head['date'])
+        head, lines = self.parse(data, user=user)
+        user_org = get_user_org(user)
+        services.check_transaction_lock(head['date'], org=user_org)
         num = data.get('number')
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
-        if not num or self.Model.objects.filter(number=num).exists():
-            num = next_number(pfx)
+        num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
+        if not num or num_exists:
+            num = next_number(pfx, org=user_org)
         else:
             import re
             m = re.match(rf'^{re.escape(pfx)}-(\d+)$', num)
             if m:
                 val = int(m.group(1))
-                seq, _ = Sequence.objects.get_or_create(key=pfx)
+                seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
+                seq, _ = Sequence.objects.get_or_create(key=seq_key)
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
         obj = self.Model(number=num, status='draft')
-        self.write(obj, head, lines)
+        if hasattr(self.Model, 'organization'):
+            obj.organization = user_org
+        self.write(obj, head, lines, user=user)
         return obj
 
     def update(self, obj, data, user):
-        services.check_transaction_lock(obj.date)
+        user_org = get_user_org(user)
+        services.check_transaction_lock(obj.date, org=user_org)
         is_inv = isinstance(obj, Invoice)
         is_ret = isinstance(obj, RetainerInvoice)
         if obj.status != 'draft':
@@ -1496,17 +1528,17 @@ class DocResource(Resource):
                 services.apply_stock(obj, +1, 'sale_void', user)
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, -1, 'purchase_void', user)
-            head, lines = self.parse(data)
-            services.check_transaction_lock(head['date'])
-            self.write(obj, head, lines)
+            head, lines = self.parse(data, user=user)
+            services.check_transaction_lock(head['date'], org=user_org)
+            self.write(obj, head, lines, user=user)
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, -1, 'sale', user)
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, +1, 'purchase', user)
             return
-        head, lines = self.parse(data)
-        services.check_transaction_lock(head['date'])
-        self.write(obj, head, lines)
+        head, lines = self.parse(data, user=user)
+        services.check_transaction_lock(head['date'], org=user_org)
+        self.write(obj, head, lines, user=user)
 
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
@@ -1841,7 +1873,7 @@ class PaymentResource(Resource):
             p = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str)).first()
             if not p:
                 org = Organization.get()
-                p = self.Party.objects.create(name=p_str, active=True, state=org.state)
+                p = self.Party.objects.create(name=p_str, active=True, state=org.state if org else '', organization=org)
             rec[self.party_attr] = p.pk
         elif not party_val:
             first_p = self.Party.objects.first()
@@ -1913,7 +1945,10 @@ class PaymentResource(Resource):
             if did in seen:
                 fail('The same document appears more than once.')
             seen.add(did)
-            doc = self.Doc.objects.select_for_update().filter(pk=did).first()
+            dqs = self.Doc.objects.select_for_update().filter(pk=did)
+            if hasattr(self.Doc, 'organization') and getattr(pay, 'organization', None):
+                dqs = dqs.filter(organization=pay.organization)
+            doc = dqs.first()
             if doc is None:
                 fail('Document not found.')
             if getattr(doc, self.party_attr + '_id') != getattr(pay, self.party_attr + '_id'):
@@ -1936,7 +1971,13 @@ class PaymentResource(Resource):
     def create(self, data, user):
         c = Cleaner(data)
         pid = c.integer(self.party_attr, lo=1, required=True)
-        party = self.Party.objects.filter(pk=pid).first() if pid else None
+        user_org = get_user_org(user)
+        party = None
+        if pid:
+            pqs = self.Party.objects.filter(pk=pid)
+            if user_org:
+                pqs = pqs.filter(organization=user_org)
+            party = pqs.first()
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
         out = {'date': c.date('date', required=True), 'mode': c.choice('mode', MODE_KEYS, 'bank_transfer'),
@@ -1944,8 +1985,11 @@ class PaymentResource(Resource):
                'amount': c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999')),
                'reference': c.text('reference', max_len=80), 'notes': c.text('notes', max_len=2000)}
         c.done()
-        services.check_transaction_lock(out['date'])
-        pay = self.Model.objects.create(number=next_number(self.prefix), created_by=user, **{self.party_attr: party}, **out)
+        services.check_transaction_lock(out['date'], org=user_org)
+        extra = {}
+        if hasattr(self.Model, 'organization'):
+            extra['organization'] = user_org
+        pay = self.Model.objects.create(number=next_number(self.prefix, org=user_org), created_by=user, **{self.party_attr: party}, **extra, **out)
         self.allocate(pay, data.get('allocations'))
         if isinstance(pay, PaymentReceived):
             services.post_payment_received_journal(pay, user)
@@ -2104,11 +2148,12 @@ class StockAdjustmentResource(StockMovementResource):
         wid = c.integer('warehouse_id', required=False)
         if wid is None:
             wid = c.integer('warehouse', required=False)
-        wh = Warehouse.objects.filter(pk=wid).first() if wid else None
+        user_org = get_user_org(user)
+        wh = Warehouse.objects.filter(pk=wid, organization=user_org).first() if (wid and user_org) else (Warehouse.objects.filter(pk=wid).first() if wid else None)
         wh_code = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
         reason = c.choice('reason', REASONS, required=True)
         notes = c.text('notes', max_len=1000)
-        item = Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True).first() if iid else None
+        item = Item.objects.select_for_update().filter(pk=iid, organization=user_org, item_type='goods', track_inventory=True).first() if (iid and user_org) else (Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True).first() if iid else None)
         if iid and item is None:
             c.err('item', 'Select an inventory-tracked goods item.')
         c.done()
@@ -2128,10 +2173,10 @@ class StockAdjustmentResource(StockMovementResource):
             else:
                 adjusted_at = timezone.now()
 
-        ref = next_number('ADJ')
+        ref = next_number('ADJ', org=user_org)
         services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes,
                             warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
-        return StockMovement.objects.filter(reference=ref).first()
+        return StockMovement.objects.filter(reference=ref, organization=user_org).first() if user_org else StockMovement.objects.filter(reference=ref).first()
 
 @api_view
 def stock_move_action_view(request):
@@ -2162,6 +2207,15 @@ def stock_move_action_view(request):
     reason = c.text('reason', max_len=100) or 'Warehouse Transfer'
     notes = c.text('notes', max_len=1000)
     c.done()
+
+    user_org = get_user_org(request.user)
+    if user_org:
+        if not Item.objects.filter(pk=iid, organization=user_org).exists():
+            raise ApiError(404, 'Item not found in your organization.')
+        if not Warehouse.objects.filter(pk=from_wh_id, organization=user_org).exists():
+            raise ApiError(404, 'Source warehouse not found in your organization.')
+        if not Warehouse.objects.filter(pk=to_wh_id, organization=user_org).exists():
+            raise ApiError(404, 'Destination warehouse not found in your organization.')
 
     adjusted_at = None
     if on_date:
@@ -3034,7 +3088,7 @@ class SalesOrderResource(Resource):
             cust = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
             if not cust:
                 org = Organization.get()
-                cust = Customer.objects.create(name=c_str, active=True, state=org.state)
+                cust = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = cust.pk
         elif not cust_val:
             first_c = Customer.objects.first()
@@ -3324,7 +3378,7 @@ class PurchaseOrderResource(Resource):
             ven = Vendor.objects.filter(Q(name__iexact=v_str) | Q(company__iexact=v_str) | Q(email__iexact=v_str)).first()
             if not ven:
                 org = Organization.get()
-                ven = Vendor.objects.create(name=v_str, active=True, state=org.state)
+                ven = Vendor.objects.create(name=v_str, active=True, state=org.state if org else '', organization=org)
             rec['vendor'] = ven.pk
         elif not ven_val:
             first_v = Vendor.objects.first()
@@ -3462,7 +3516,7 @@ class ExpenseResource(Resource):
             ven = Vendor.objects.filter(Q(name__iexact=str(ven_val).strip()) | Q(company__iexact=str(ven_val).strip())).first()
             if not ven:
                 org = Organization.get()
-                ven = Vendor.objects.create(name=str(ven_val).strip(), active=True, state=org.state)
+                ven = Vendor.objects.create(name=str(ven_val).strip(), active=True, state=org.state if org else '', organization=org)
             rec['vendor'] = ven.pk
 
         if not rec.get('date'):
@@ -3560,7 +3614,7 @@ class CreditNoteResource(Resource):
             cust = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
             if not cust:
                 org = Organization.get()
-                cust = Customer.objects.create(name=c_str, active=True, state=org.state)
+                cust = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = cust.pk
         elif not cust_val:
             first_c = Customer.objects.first()
@@ -3724,7 +3778,7 @@ class VendorCreditResource(Resource):
             ven = Vendor.objects.filter(Q(name__iexact=v_str) | Q(company__iexact=v_str) | Q(email__iexact=v_str)).first()
             if not ven:
                 org = Organization.get()
-                ven = Vendor.objects.create(name=v_str, active=True, state=org.state)
+                ven = Vendor.objects.create(name=v_str, active=True, state=org.state if org else '', organization=org)
             rec['vendor'] = ven.pk
         elif not ven_val:
             first_v = Vendor.objects.first()
@@ -3888,7 +3942,7 @@ class RecurringInvoiceResource(Resource):
             c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
             if not c:
                 org = Organization.get()
-                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+                c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = c.pk
         elif not cust_val:
             first_c = Customer.objects.first()
@@ -3983,7 +4037,7 @@ class DeliveryChallanResource(Resource):
             c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
             if not c:
                 org = Organization.get()
-                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+                c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = c.pk
         elif not cust_val:
             first_c = Customer.objects.first()
@@ -4172,7 +4226,7 @@ class ProjectResource(Resource):
             c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str)).first()
             if not c:
                 org = Organization.get()
-                c = Customer.objects.create(name=c_str, active=True, state=org.state)
+                c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = c.pk
 
     def row(self, o):
@@ -4411,7 +4465,7 @@ class WarehouseResource(Resource):
             'active': o.active
         }
 
-    def clean(self, data, instance=None):
+    def clean(self, data, instance=None, user=None):
         c = Cleaner(data)
         name = c.text('name', required=True, max_len=100)
         code = c.text('code', required=True, max_len=30, upper=True)
@@ -4548,6 +4602,7 @@ def me(request):
     u = request.user
     role = get_user_role(u)
     profile = getattr(u, 'profile', None)
+    user_org = get_user_org(u)
     return j({
         'user': {
             'id': u.pk,
@@ -4570,21 +4625,24 @@ def me(request):
                 'is_read_only': role == UserProfile.AUDITOR,
             }
         },
-        'organization': org_json(Organization.get()),
+        'organization': org_json(user_org) if user_org else (org_json(Organization.get()) if Organization.get() else None),
         'today': timezone.localdate(),
         'counts': {
-            'customers': Customer.objects.count(),
-            'vendors': Vendor.objects.count(),
-            'items': Item.objects.count(),
-            'invoices': Invoice.objects.exclude(status='draft').count(),
-            'bills': Bill.objects.exclude(status='draft').count(),
-            'payments': PaymentReceived.objects.count() + PaymentMade.objects.count()
+            'customers': (Customer.objects.filter(organization=user_org) if user_org else Customer.objects.none()).count(),
+            'vendors': (Vendor.objects.filter(organization=user_org) if user_org else Vendor.objects.none()).count(),
+            'items': (Item.objects.filter(organization=user_org) if user_org else Item.objects.none()).count(),
+            'invoices': (Invoice.objects.filter(organization=user_org).exclude(status='draft') if user_org else Invoice.objects.none()).count(),
+            'bills': (Bill.objects.filter(organization=user_org).exclude(status='draft') if user_org else Bill.objects.none()).count(),
+            'payments': ((PaymentReceived.objects.filter(organization=user_org).count() + PaymentMade.objects.filter(organization=user_org).count()) if user_org else 0)
         }
     })
 
 @api_view
 def organization(request):
-    org = Organization.get()
+    user_org = get_user_org(request.user)
+    org = user_org or Organization.get()
+    if not org:
+        raise ApiError(404, 'Organization not found.')
     if request.method == 'GET':
         return j(org_json(org))
     if request.method not in ('PUT', 'PATCH'):
@@ -4621,9 +4679,10 @@ def organization(request):
 
 @api_view
 def attachments_view(request, pk=None):
+    user_org = get_user_org(request.user)
     if request.method == 'GET':
         if pk:
-            att = Attachment.objects.filter(pk=pk).first()
+            att = Attachment.objects.filter(pk=pk, organization=user_org).first() if user_org else (Attachment.objects.filter(pk=pk).first() if request.user.is_superuser else None)
             if not att:
                 raise ApiError(404, 'Attachment not found.')
             return j({'id': att.pk, 'entity_type': att.entity_type, 'entity_id': att.entity_id,
@@ -4632,7 +4691,7 @@ def attachments_view(request, pk=None):
                       'created_at': att.created_at})
         etype = request.GET.get('entity_type', '').strip()
         eid = request.GET.get('entity_id', '').strip()
-        qs = Attachment.objects.all()
+        qs = Attachment.objects.filter(organization=user_org) if user_org else (Attachment.objects.all() if request.user.is_superuser else Attachment.objects.none())
         if etype:
             qs = qs.filter(entity_type=etype)
         if eid and eid.isdigit():
@@ -4651,6 +4710,7 @@ def attachments_view(request, pk=None):
             if not f:
                 raise ApiError(400, 'File is required.')
             att = Attachment.objects.create(
+                organization=user_org,
                 entity_type=etype, entity_id=eid, file=f,
                 filename=f.name, file_size=f.size, mime_type=getattr(f, 'content_type', ''),
                 created_by=request.user
@@ -4668,6 +4728,7 @@ def attachments_view(request, pk=None):
             mtype = c.text('mime_type', max_len=100)
             c.done()
             att = Attachment.objects.create(
+                organization=user_org,
                 entity_type=etype, entity_id=eid, filename=fname, file_size=fsize,
                 file_data=fdata, mime_type=mtype, created_by=request.user
             )
@@ -4676,7 +4737,7 @@ def attachments_view(request, pk=None):
     if request.method == 'DELETE':
         if not pk:
             raise ApiError(400, 'Attachment ID required.')
-        att = Attachment.objects.filter(pk=pk).first()
+        att = Attachment.objects.filter(pk=pk, organization=user_org).first() if user_org else (Attachment.objects.filter(pk=pk).first() if request.user.is_superuser else None)
         if att:
             if att.file:
                 try:
@@ -4691,10 +4752,11 @@ def attachments_view(request, pk=None):
 def lookup(request, name):
     user_org = get_user_org(request.user)
     def org_filter(qs):
-        if user_org and hasattr(qs.model, 'organization'):
-            if user_org.pk == 1:
-                return qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-            return qs.filter(organization=user_org)
+        if hasattr(qs.model, 'organization'):
+            if user_org:
+                return qs.filter(organization=user_org)
+            if request.user.is_authenticated and not request.user.is_superuser:
+                return qs.none()
         return qs
 
     if name == 'customers':
@@ -4710,18 +4772,18 @@ def lookup(request, name):
                  'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': format_qty(o.stock), 'unit': o.unit}
                 for o in org_filter(Item.objects.filter(active=True)).select_related('warehouse', 'preferred_vendor').order_by('name')]
     elif name == 'accounts':
-        services.ensure_default_accounts()
+        services.ensure_default_accounts(user_org)
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
-                for o in Account.objects.filter(active=True).order_by('code')]
+                for o in org_filter(Account.objects.filter(active=True)).order_by('code')]
     elif name == 'bank-accounts':
         data = [{'id': o.pk, 'name': o.name, 'bank_name': o.bank_name, 'account_number': o.account_number, 'balance': o.current_balance}
                 for o in org_filter(BankAccount.objects.filter(active=True)).order_by('name')]
     elif name == 'folders':
         data = [{'id': o.pk, 'name': o.name, 'color': o.color}
-                for o in DocumentFolder.objects.all().order_by('name')]
+                for o in org_filter(DocumentFolder.objects.all()).order_by('name')]
     elif name == 'categories':
         data = [{'id': o.pk, 'name': o.name}
-                for o in ItemCategory.objects.all().order_by('name')]
+                for o in org_filter(ItemCategory.objects.all()).order_by('name')]
     elif name == 'projects':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id}
                 for o in org_filter(Project.objects.filter(status='active')).order_by('name')]
@@ -4738,16 +4800,19 @@ def lookup(request, name):
     elif name == 'salespersons':
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in User.objects.filter(is_active=True).order_by('username')]
+        sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+        data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in sp_qs.order_by('username')]
     elif name == 'next-quote-number':
-        org = Organization.get()
-        pfx = org.quote_prefix or 'QT'
-        seq = Sequence.objects.filter(key=pfx).first()
+        org = user_org or Organization.get()
+        pfx = org.quote_prefix or 'QT' if org else 'QT'
+        seq_key = f"{org.pk}_{pfx}"[:20] if org else pfx
+        seq = Sequence.objects.filter(key=seq_key).first()
         nxt = (seq.value + 1) if seq else 1
         data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
     elif name in ('next-so-number', 'next-sales-order-number'):
         pfx = 'SO'
-        seq = Sequence.objects.filter(key=pfx).first()
+        seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
+        seq = Sequence.objects.filter(key=seq_key).first()
         nxt = (seq.value + 1) if seq else 1
         data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
     else:
@@ -4755,14 +4820,13 @@ def lookup(request, name):
     return j(data)
 
 @api_view
-
-
-@api_view
 def quote_sequence_view(request):
-    org = Organization.get()
-    pfx = org.quote_prefix or 'QT'
+    user_org = get_user_org(request.user)
+    org = user_org or Organization.get()
+    pfx = org.quote_prefix or 'QT' if org else 'QT'
+    seq_key = f"{org.pk}_{pfx}"[:20] if org else pfx
     if request.method == 'GET':
-        seq = Sequence.objects.filter(key=pfx).first()
+        seq = Sequence.objects.filter(key=seq_key).first()
         nxt = (seq.value + 1) if seq else 1
         return j({
             'prefix': pfx,
@@ -4786,10 +4850,12 @@ def quote_sequence_view(request):
         except (TypeError, ValueError):
             raise ApiError(400, 'Next sequence number must be a positive integer.')
 
-        org.quote_prefix = new_pfx
-        org.save(update_fields=['quote_prefix'])
+        if org:
+            org.quote_prefix = new_pfx
+            org.save(update_fields=['quote_prefix'])
 
-        seq, _ = Sequence.objects.get_or_create(key=new_pfx)
+        new_key = f"{org.pk}_{new_pfx}"[:20] if org else new_pfx
+        seq, _ = Sequence.objects.get_or_create(key=new_key)
         seq.value = max(0, next_seq - 1)
         seq.save(update_fields=['value'])
 
@@ -4819,10 +4885,11 @@ def search_view(request):
         return j([])
     user_org = get_user_org(request.user)
     def org_filter(qs):
-        if user_org and hasattr(qs.model, 'organization'):
-            if user_org.pk == 1:
-                return qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-            return qs.filter(organization=user_org)
+        if hasattr(qs.model, 'organization'):
+            if user_org:
+                return qs.filter(organization=user_org)
+            if request.user.is_authenticated and not request.user.is_superuser:
+                return qs.none()
         return qs
     out = []
     for o in org_filter(Customer.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q)))[:5]:
@@ -4835,7 +4902,12 @@ def search_view(request):
         out.append({'type': 'bill', 'id': o.pk, 'label': o.number, 'sub': f'Bill · {o.vendor.name}'})
     for o in org_filter(Item.objects.filter(Q(name__icontains=q) | Q(sku__icontains=q)))[:5]:
         out.append({'type': 'item', 'id': o.pk, 'label': o.name, 'sub': f'Item · {o.sku}'})
-    for o in ManagedDocument.objects.filter(is_deleted=False).filter(Q(title__icontains=q) | Q(filename__icontains=q))[:5]:
+    doc_qs = ManagedDocument.objects.filter(is_deleted=False)
+    if user_org:
+        doc_qs = doc_qs.filter(organization=user_org)
+    elif request.user.is_authenticated and not request.user.is_superuser:
+        doc_qs = doc_qs.none()
+    for o in doc_qs.filter(Q(title__icontains=q) | Q(filename__icontains=q))[:5]:
         out.append({'type': 'document', 'id': o.pk, 'label': o.title, 'sub': f'Document · {o.category}'})
     return j(out)
 
@@ -4863,40 +4935,42 @@ def reports_view(request, name):
     if request.method != 'GET':
         raise ApiError(405, 'Method not allowed.')
     start, end = parse_range(request)
+    user_org = get_user_org(request.user)
     if name == 'trial-balance':
         as_of = request.GET.get('as_of')
         as_of_date = Cleaner({'as_of': as_of}).date('as_of') if as_of else end
-        return j(services.trial_balance_report(as_of_date))
+        return j(services.trial_balance_report(as_of_date, org=user_org))
     elif name == 'general-ledger':
         acc_id = request.GET.get('account')
-        return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end))
+        return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org))
     elif name == 'profit-loss':
-        return j(services.profit_and_loss_report(start, end))
+        return j(services.profit_and_loss_report(start, end, org=user_org))
     elif name == 'balance-sheet':
         as_of = request.GET.get('as_of')
         as_of_date = Cleaner({'as_of': as_of}).date('as_of') if as_of else end
-        return j(services.balance_sheet_report(as_of_date))
+        return j(services.balance_sheet_report(as_of_date, org=user_org))
     elif name == 'cash-flow':
-        return j(services.cash_flow_report(start, end))
+        return j(services.cash_flow_report(start, end, org=user_org))
     elif name == 'gstr1':
-        data = services.gstr1_report(start, end)
+        data = services.gstr1_report(start, end, org=user_org)
         if request.GET.get('export') == 'json':
             resp = HttpResponse(json.dumps(data, cls=DjangoJSONEncoder, indent=2), content_type='application/json')
             resp['Content-Disposition'] = f'attachment; filename="GSTR1_{data["gstin"]}_{start}_{end}.json"'
             return resp
         return j(data)
     elif name == 'gstr3b':
-        return j(services.gstr3b_report(start, end))
+        return j(services.gstr3b_report(start, end, org=user_org))
     elif name == 'itc-summary':
-        return j(services.itc_summary_report(start, end))
+        return j(services.itc_summary_report(start, end, org=user_org))
     elif name == 'tax-liability':
-        return j(services.tax_liability_report(start, end))
+        return j(services.tax_liability_report(start, end, org=user_org))
     elif name == 'business-overview':
-        return j(services.dashboard(start, end))
+        return j(services.dashboard(start, end, org=user_org))
     elif name == 'sales-by-customer':
         rows = []
-        for cust in Customer.objects.filter(active=True):
-            invs = Invoice.objects.filter(customer=cust, status='sent', date__range=(start, end))
+        cust_qs = Customer.objects.filter(organization=user_org, active=True) if user_org else Customer.objects.none()
+        for cust in cust_qs:
+            invs = Invoice.objects.filter(organization=user_org, customer=cust, status='sent', date__range=(start, end)) if user_org else Invoice.objects.none()
             cnt = invs.count()
             tot = sum((i.total for i in invs), Z)
             taxable = sum((i.subtotal for i in invs), Z)
@@ -4906,8 +4980,9 @@ def reports_view(request, name):
         return j({'period': {'start': start, 'end': end}, 'results': rows})
     elif name == 'sales-by-item':
         rows = []
-        for it in Item.objects.filter(active=True):
-            lines = InvoiceLine.objects.filter(item=it, invoice__status='sent', invoice__date__range=(start, end))
+        item_qs = Item.objects.filter(organization=user_org, active=True) if user_org else Item.objects.none()
+        for it in item_qs:
+            lines = InvoiceLine.objects.filter(invoice__organization=user_org, item=it, invoice__status='sent', invoice__date__range=(start, end)) if user_org else InvoiceLine.objects.none()
             qty_sum = sum((l.quantity for l in lines), Decimal('0.000'))
             tot = sum((l.line_total for l in lines), Z)
             if lines.exists():
@@ -4916,8 +4991,9 @@ def reports_view(request, name):
         return j({'period': {'start': start, 'end': end}, 'results': rows})
     elif name == 'purchases-by-vendor':
         rows = []
-        for ven in Vendor.objects.filter(active=True):
-            bills = Bill.objects.filter(vendor=ven, status='open', date__range=(start, end))
+        ven_qs = Vendor.objects.filter(organization=user_org, active=True) if user_org else Vendor.objects.none()
+        for ven in ven_qs:
+            bills = Bill.objects.filter(organization=user_org, vendor=ven, status='open', date__range=(start, end)) if user_org else Bill.objects.none()
             cnt = bills.count()
             tot = sum((b.total for b in bills), Z)
             if cnt > 0:
@@ -4926,7 +5002,8 @@ def reports_view(request, name):
         return j({'period': {'start': start, 'end': end}, 'results': rows})
     elif name == 'inventory-summary':
         rows = []
-        for it in Item.objects.filter(item_type='goods', track_inventory=True, active=True).select_related('warehouse'):
+        items = (Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()).select_related('warehouse')
+        for it in items:
             val = it.stock * it.purchase_price
             status = 'Low stock' if 0 < it.stock <= it.reorder_level else ('Out of stock' if it.stock <= 0 else 'In stock')
             rows.append({
@@ -4938,11 +5015,11 @@ def reports_view(request, name):
             })
         return j({'results': rows, 'total_valuation': sum((r['valuation'] for r in rows), Z)})
     elif name == 'receivables-aging':
-        inv_open = list(invoice_qs().filter(status='sent', paid_sum__lt=F('total')))
+        inv_open = list(invoice_qs(org=user_org).filter(status='sent', paid_sum__lt=F('total')))
         today = timezone.localdate()
         return j({'aging': services._aging(inv_open, today), 'invoices': [{'number': i.number, 'customer': i.customer.name, 'due_date': i.due_date, 'overdue_days': max(0, (today - i.due_date).days), 'balance': i.total - q2(i.paid_sum)} for i in inv_open]})
     elif name == 'payables-aging':
-        bill_open = list(bill_qs().filter(status='open', paid_sum__lt=F('total')))
+        bill_open = list(bill_qs(org=user_org).filter(status='open', paid_sum__lt=F('total')))
         today = timezone.localdate()
         return j({'aging': services._aging(bill_open, today), 'bills': [{'number': b.number, 'vendor': b.vendor.name, 'due_date': b.due_date, 'overdue_days': max(0, (today - b.due_date).days), 'balance': b.total - q2(b.paid_sum)} for b in bill_open]})
     else:
@@ -5976,7 +6053,8 @@ def developer_webhook_test_view(request, pk):
 
 @api_view
 def assistant_accounting_context_view(request):
-    res = services.get_live_accounting_context()
+    user_org = get_user_org(request.user)
+    res = services.get_live_accounting_context(org=user_org)
     return j(res)
 
 @api_view
@@ -5996,5 +6074,286 @@ def parse_import_file_view(request):
         return j(res)
     except Exception as e:
         raise ApiError(400, f"Failed to parse file: {str(e)}")
+
+def superuser_required(fn):
+    @wraps(fn)
+    def wrapper(request, *args, **kwargs):
+        if not request.user or not request.user.is_authenticated:
+            return JsonResponse({'error': 'Authentication required.'}, status=401)
+        if not request.user.is_superuser:
+            return JsonResponse({'error': 'Permission denied: Super Admin platform access required.'}, status=403)
+        return fn(request, *args, **kwargs)
+    return wrapper
+
+@api_view
+@superuser_required
+def super_admin_overview_view(request):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    now = timezone.now()
+    today = timezone.localdate()
+
+    total_users = User.objects.count()
+    active_users = User.objects.filter(is_active=True).count()
+    inactive_users = total_users - active_users
+
+    total_companies = Organization.objects.count()
+    active_companies = Organization.objects.filter(is_active=True).count()
+    inactive_companies = total_companies - active_companies
+
+    # New registrations over time (last 30 days)
+    start_30 = now - timedelta(days=30)
+    users_30 = User.objects.filter(date_joined__gte=start_30).order_by('date_joined')
+    trend_map = {}
+    for i in range(30):
+        d = (today - timedelta(days=29 - i)).strftime('%Y-%m-%d')
+        trend_map[d] = 0
+    for u in users_30:
+        d_str = u.date_joined.strftime('%Y-%m-%d')
+        if d_str in trend_map:
+            trend_map[d_str] += 1
+    registration_trend = [{'date': d, 'count': cnt} for d, cnt in trend_map.items()]
+
+    # Total business records breakdown by company
+    companies_summary = []
+    for org in Organization.objects.all().order_by('-id')[:50]:
+        users_count = UserProfile.objects.filter(organization=org).count()
+        cust_cnt = Customer.objects.filter(organization=org).count()
+        vend_cnt = Vendor.objects.filter(organization=org).count()
+        item_cnt = Item.objects.filter(organization=org).count()
+        inv_cnt = Invoice.objects.filter(organization=org).count()
+        bill_cnt = Bill.objects.filter(organization=org).count()
+        pay_cnt = PaymentReceived.objects.filter(organization=org).count() + PaymentMade.objects.filter(organization=org).count()
+        adj_cnt = StockMovement.objects.filter(organization=org, kind='adjustment').count()
+        total_records = cust_cnt + vend_cnt + item_cnt + inv_cnt + bill_cnt + pay_cnt + adj_cnt
+
+        companies_summary.append({
+            'id': org.pk,
+            'name': org.name,
+            'legal_name': org.company_id or org.name,
+            'state': org.state,
+            'gstin': org.gstin or 'Unregistered',
+            'created_at': org.created_at.strftime('%Y-%m-%d %H:%M') if org.created_at else '',
+            'is_active': org.is_active,
+            'users_count': users_count,
+            'total_records': total_records,
+            'record_counts': {
+                'customers': cust_cnt,
+                'vendors': vend_cnt,
+                'items': item_cnt,
+                'invoices': inv_cnt,
+                'bills': bill_cnt,
+                'payments': pay_cnt,
+                'stock_adjustments': adj_cnt
+            }
+        })
+
+    # Recent platform audit activity
+    recent_activity = []
+    for log in AuditLog.objects.select_related('user').order_by('-timestamp')[:20]:
+        recent_activity.append({
+            'id': log.pk,
+            'timestamp': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'user': log.user.username if log.user else 'System',
+            'action': log.action,
+            'model_name': log.entity_type,
+            'object_id': log.entity_id,
+            'summary': log.summary,
+            'ip_address': log.ip_address or ''
+        })
+
+    # Recent user registrations
+    recent_users = []
+    for u in User.objects.select_related('profile__organization').order_by('-date_joined')[:10]:
+        org = getattr(getattr(u, 'profile', None), 'organization', None)
+        recent_users.append({
+            'id': u.pk,
+            'username': u.username,
+            'email': u.email,
+            'full_name': u.get_full_name() or u.username,
+            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M'),
+            'is_active': u.is_active,
+            'company': org.name if org else 'None',
+            'role': getattr(getattr(u, 'profile', None), 'role', 'admin')
+        })
+
+    return j({
+        'kpis': {
+            'total_users': total_users,
+            'active_users': active_users,
+            'inactive_users': inactive_users,
+            'total_companies': total_companies,
+            'active_companies': active_companies,
+            'inactive_companies': inactive_companies
+        },
+        'registration_trend': registration_trend,
+        'companies': companies_summary,
+        'recent_activity': recent_activity,
+        'recent_users': recent_users
+    })
+
+@api_view
+@superuser_required
+def super_admin_users_view(request):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    q = request.GET.get('q', '').strip()
+    company_id = request.GET.get('company_id', '').strip()
+    status = request.GET.get('status', '').strip()
+    role = request.GET.get('role', '').strip()
+
+    qs = User.objects.select_related('profile__organization').order_by('-date_joined')
+    if q:
+        qs = qs.filter(
+            Q(username__icontains=q) |
+            Q(email__icontains=q) |
+            Q(first_name__icontains=q) |
+            Q(last_name__icontains=q) |
+            Q(profile__organization__name__icontains=q)
+        )
+    if company_id and company_id.isdigit():
+        qs = qs.filter(profile__organization_id=int(company_id))
+    if status == 'active':
+        qs = qs.filter(is_active=True)
+    elif status == 'inactive':
+        qs = qs.filter(is_active=False)
+    if role:
+        qs = qs.filter(profile__role=role)
+
+    users_list = []
+    for u in qs[:100]:
+        profile = getattr(u, 'profile', None)
+        org = getattr(profile, 'organization', None)
+        users_list.append({
+            'id': u.pk,
+            'username': u.username,
+            'email': u.email,
+            'full_name': u.get_full_name() or u.username,
+            'is_active': u.is_active,
+            'is_staff': u.is_staff,
+            'is_superuser': u.is_superuser,
+            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M') if u.date_joined else '',
+            'last_login': u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else 'Never',
+            'company_id': org.pk if org else None,
+            'company_name': org.name if org else 'No Company',
+            'role': profile.role if profile else 'admin'
+        })
+    return j({'users': users_list, 'total_count': qs.count()})
+
+@api_view
+@superuser_required
+def super_admin_toggle_user_view(request, pk):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    target_user = User.objects.filter(pk=pk).first()
+    if not target_user:
+        raise ApiError(404, 'User not found.')
+    if target_user.pk == request.user.pk:
+        raise ApiError(400, 'Cannot deactivate your own active superuser account.')
+
+    target_user.is_active = not target_user.is_active
+    target_user.save(update_fields=['is_active'])
+
+    action_label = 'Activated' if target_user.is_active else 'Deactivated'
+    services.log_audit(
+        request.user,
+        'update',
+        'User',
+        target_user.pk,
+        f"Super Admin {action_label} user {target_user.username} ({target_user.email})"
+    )
+    return j({
+        'status': 'ok',
+        'user_id': target_user.pk,
+        'is_active': target_user.is_active,
+        'message': f"User {target_user.username} successfully {action_label.lower()}."
+    })
+
+@api_view
+@superuser_required
+def super_admin_company_detail_view(request, pk):
+    org = Organization.objects.filter(pk=pk).first()
+    if not org:
+        raise ApiError(404, 'Company not found.')
+
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    company_users = []
+    for u in User.objects.filter(profile__organization=org).order_by('username'):
+        profile = getattr(u, 'profile', None)
+        company_users.append({
+            'id': u.pk,
+            'username': u.username,
+            'email': u.email,
+            'full_name': u.get_full_name() or u.username,
+            'role': profile.role if profile else 'admin',
+            'is_active': u.is_active,
+            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M') if u.date_joined else ''
+        })
+
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    sub_data = {
+        'plan_tier': sub.plan_tier if sub else 'standard',
+        'status': sub.status if sub else 'active',
+        'current_period_end': sub.current_period_end.strftime('%Y-%m-%d') if sub and sub.current_period_end else '',
+        'max_users': sub.max_users if sub else 10
+    }
+
+    record_counts = {
+        'customers': Customer.objects.filter(organization=org).count(),
+        'vendors': Vendor.objects.filter(organization=org).count(),
+        'items': Item.objects.filter(organization=org).count(),
+        'invoices': Invoice.objects.filter(organization=org).count(),
+        'bills': Bill.objects.filter(organization=org).count(),
+        'payments': PaymentReceived.objects.filter(organization=org).count() + PaymentMade.objects.filter(organization=org).count(),
+        'stock_adjustments': StockMovement.objects.filter(organization=org, kind='adjustment').count()
+    }
+
+    return j({
+        'company': {
+            'id': org.pk,
+            'name': org.name,
+            'legal_name': org.company_id or org.name,
+            'company_id': org.company_id,
+            'state': org.state,
+            'gstin': org.gstin or '',
+            'email': org.email or '',
+            'phone': org.phone or '',
+            'address': org.address or '',
+            'city': org.city or '',
+            'pincode': org.pincode or '',
+            'country': org.country or 'India',
+            'created_at': org.created_at.strftime('%Y-%m-%d %H:%M') if org.created_at else '',
+            'is_active': org.is_active
+        },
+        'record_counts': record_counts,
+        'users': company_users,
+        'subscription': sub_data
+    })
+
+@api_view
+@superuser_required
+def super_admin_toggle_company_view(request, pk):
+    org = Organization.objects.filter(pk=pk).first()
+    if not org:
+        raise ApiError(404, 'Company not found.')
+
+    org.is_active = not org.is_active
+    org.save(update_fields=['is_active'])
+
+    action_label = 'Activated' if org.is_active else 'Deactivated'
+    services.log_audit(
+        request.user,
+        'update',
+        'Organization',
+        org.pk,
+        f"Super Admin {action_label} company {org.name} (ID: {org.pk})"
+    )
+    return j({
+        'status': 'ok',
+        'company_id': org.pk,
+        'is_active': org.is_active,
+        'message': f"Company {org.name} successfully {action_label.lower()}."
+    })
 
 

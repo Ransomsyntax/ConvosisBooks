@@ -28,6 +28,8 @@ class Organization(models.Model):
     opening_cash = models.DecimalField(default=Decimal('0.00'), **MONEY)
     quote_prefix = models.CharField(max_length=20, blank=True, default='QT')
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='owned_organizations')
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -38,12 +40,10 @@ class Organization(models.Model):
             profile = getattr(user, 'profile', None)
             if profile and profile.organization:
                 return profile.organization
-        obj = cls.objects.filter(pk=1).first()
-        if not obj:
-            obj = cls.objects.first()
-        if not obj:
-            obj = cls.objects.create(pk=1, name='Convosis Technologies Pvt Ltd')
-        return obj
+            if getattr(user, 'is_superuser', False):
+                return cls.objects.first()
+            return None
+        return cls.objects.first()
 
     def __str__(self):
         return self.name
@@ -254,6 +254,7 @@ class BillAllocation(models.Model):
         constraints = [models.UniqueConstraint(fields=['payment', 'bill'], name='uniq_bill_alloc')]
 
 class StockMovement(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_movements')
     KINDS = [('opening', 'Opening stock'), ('sale', 'Sale'), ('sale_void', 'Sale voided'),
              ('purchase', 'Purchase'), ('purchase_void', 'Purchase voided'), ('adjustment', 'Adjustment'),
              ('transfer', 'Warehouse Transfer')]
@@ -277,6 +278,7 @@ class StockMovement(models.Model):
         ordering = ['-date', '-id']
 
 class Attachment(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='attachments')
     entity_type = models.CharField(max_length=40, db_index=True)   
     entity_id = models.PositiveIntegerField(db_index=True)
     file = models.FileField(upload_to='attachments/%Y/%m/', blank=True, null=True)
@@ -294,6 +296,7 @@ class Attachment(models.Model):
         return f'{self.filename} ({self.entity_type} #{self.entity_id})'
 
 class Account(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='accounts')
     ASSET, LIABILITY, EQUITY, INCOME, EXPENSE = 'asset', 'liability', 'equity', 'income', 'expense'
     TYPES = [
         (ASSET, 'Asset'),
@@ -303,7 +306,7 @@ class Account(models.Model):
         (EXPENSE, 'Expense'),
     ]
 
-    code = models.CharField(max_length=30, unique=True)
+    code = models.CharField(max_length=30)
     name = models.CharField(max_length=150)
     account_type = models.CharField(max_length=20, choices=TYPES)
     sub_type = models.CharField(max_length=60, blank=True, default='') 
@@ -314,12 +317,14 @@ class Account(models.Model):
 
     class Meta:
         ordering = ['code', 'name']
+        constraints = [models.UniqueConstraint(fields=['organization', 'code'], name='unique_org_account_code')]
 
     def __str__(self):
         return f'{self.code} - {self.name}'
 
 class Journal(models.Model):
-    number = models.CharField(max_length=40, unique=True)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='journals')
+    number = models.CharField(max_length=40)
     date = models.DateField()
     entry_type = models.CharField(max_length=40, default='manual') 
     reference = models.CharField(max_length=80, blank=True)
@@ -329,6 +334,7 @@ class Journal(models.Model):
 
     class Meta:
         ordering = ['-date', '-id']
+        constraints = [models.UniqueConstraint(fields=['organization', 'number'], name='unique_org_journal_number')]
 
     def __str__(self):
         return f'{self.number} ({self.date})'
@@ -345,13 +351,16 @@ class JournalItem(models.Model):
 
 class LockDate(models.Model):
     """Enforce transaction locking prior to this date for compliance and auditing."""
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='lock_dates')
     lock_date = models.DateField()
     reason = models.CharField(max_length=255, blank=True, default='Books closed for accounting period')
     updated_at = models.DateTimeField(auto_now=True)
     locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 
     @classmethod
-    def get_lock(cls):
+    def get_lock(cls, org=None):
+        if org:
+            return cls.objects.filter(organization=org).first()
         return cls.objects.first()
 
 class AuditLog(models.Model):
@@ -376,6 +385,7 @@ class AuditLog(models.Model):
         return f'[{self.timestamp:%Y-%m-%d %H:%M}] {self.action} {self.entity_type} #{self.entity_id}'
 
 class CustomField(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='custom_fields')
     module = models.CharField(max_length=40) 
     name = models.CharField(max_length=60)
     label = models.CharField(max_length=100)
@@ -388,6 +398,7 @@ class CustomField(models.Model):
         ordering = ['module', 'label']
 
 class WorkflowRule(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='workflow_rules')
     name = models.CharField(max_length=150)
     event = models.CharField(max_length=60) 
     condition_field = models.CharField(max_length=60, blank=True)
@@ -399,6 +410,7 @@ class WorkflowRule(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class WebhookConfig(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='webhook_configs')
     name = models.CharField(max_length=100)
     url = models.URLField()
     secret = models.CharField(max_length=100, blank=True)
@@ -442,6 +454,7 @@ class BankAccount(models.Model):
         return f'{self.name} ({self.bank_name})'
 
 class BankTransaction(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_transactions')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='transactions')
     date = models.DateField()
     description = models.CharField(max_length=300)
@@ -469,18 +482,21 @@ class BankTransaction(models.Model):
         ordering = ['-date', '-id']
 
 class DocumentFolder(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='document_folders')
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     color = models.CharField(max_length=30, blank=True, default='#1877f2')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['name']
+        constraints = [models.UniqueConstraint(fields=['organization', 'name'], name='unique_org_doc_folder_name')]
 
     def __str__(self):
         return self.name
 
 class ManagedDocument(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='managed_documents')
     CATEGORIES = [
         ('invoice', 'Invoice'),
         ('bill', 'Vendor Bill'),
@@ -582,6 +598,7 @@ class RetainerInvoiceLine(Line):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='lines')
 
 class RetainerPayment(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='retainer_payments')
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='payments')
     payment_received = models.ForeignKey('books.PaymentReceived', null=True, blank=True, on_delete=models.SET_NULL, related_name='retainer_payments')
     date = models.DateField()
@@ -676,6 +693,7 @@ class VendorCreditLine(Line):
     vendor_credit = models.ForeignKey(VendorCredit, on_delete=models.CASCADE, related_name='lines')
 
 class EWayBill(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='eway_bills')
     bill_number = models.CharField(max_length=16, unique=True)
     doc_type = models.CharField(max_length=10, default='INV')
     doc_number = models.CharField(max_length=40)
@@ -699,6 +717,7 @@ class EWayBill(models.Model):
         return f'EWB #{self.bill_number} for {self.doc_number}'
 
 class EInvoiceRecord(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='einvoice_records')
     invoice = models.OneToOneField(Invoice, on_delete=models.CASCADE, related_name='einvoice')
     irn = models.CharField(max_length=64, unique=True)
     ack_no = models.CharField(max_length=30)
@@ -726,6 +745,7 @@ class Project(models.Model):
         return self.name
 
 class TimeLog(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='time_logs')
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='timelogs')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     date = models.DateField()
@@ -739,12 +759,14 @@ class TimeLog(models.Model):
         ordering = ['-date', '-id']
 
 class ItemCategory(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='item_categories')
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['name']
+        constraints = [models.UniqueConstraint(fields=['organization', 'name'], name='unique_org_item_category_name')]
 
     def __str__(self):
         return self.name
@@ -767,7 +789,7 @@ class PriceList(models.Model):
 class Warehouse(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='warehouses')
     name = models.CharField(max_length=100)
-    code = models.CharField(max_length=30, unique=True)
+    code = models.CharField(max_length=30)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_warehouses')
     address = models.TextField(blank=True)
     city = models.CharField(max_length=100, blank=True)
@@ -778,6 +800,7 @@ class Warehouse(models.Model):
 
     class Meta:
         ordering = ['name']
+        constraints = [models.UniqueConstraint(fields=['organization', 'code'], name='unique_org_warehouse_code')]
 
     def __str__(self):
         if self.parent:
@@ -785,6 +808,7 @@ class Warehouse(models.Model):
         return f'{self.name} ({self.code})'
 
 class PaymentTransaction(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='payment_transactions')
     gateway = models.CharField(max_length=40, default='upi')
     transaction_id = models.CharField(max_length=100, unique=True)
     invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL, related_name='payment_txns')
@@ -799,6 +823,7 @@ class PaymentTransaction(models.Model):
         ordering = ['-created_at']
 
 class FinancialAnomaly(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='financial_anomalies')
     TYPES = [
         ('duplicate_bill', 'Duplicate Bill Detected'),
         ('spending_spike', 'Unusual Spending Spike'),
@@ -822,6 +847,7 @@ class FinancialAnomaly(models.Model):
         return f'[{self.severity.upper()}] {self.title}'
 
 class BankFeedConnection(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_feed_connections')
     bank_account = models.OneToOneField(BankAccount, on_delete=models.CASCADE, related_name='feed_connection')
     provider = models.CharField(max_length=50, default='setu_aa')
     provider_name = models.CharField(max_length=100, default='Open Banking Live Feed')
@@ -838,6 +864,7 @@ class BankFeedConnection(models.Model):
         return f'{self.provider} feed for {self.bank_account.name}'
 
 class BankStatementBatch(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_statement_batches')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='statement_batches')
     batch_number = models.CharField(max_length=50, unique=True)
     filename = models.CharField(max_length=255)
@@ -856,6 +883,7 @@ class BankStatementBatch(models.Model):
         return f'{self.batch_number} ({self.source}) - {self.imported_count} imported'
 
 class BankRule(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_rules')
     name = models.CharField(max_length=150)
     priority = models.PositiveSmallIntegerField(default=10)
     field = models.CharField(max_length=40, default='description')
@@ -877,6 +905,7 @@ class BankRule(models.Model):
         return f'{self.name} ({self.field} {self.operator} "{self.value}")'
 
 class BankReconciliation(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_reconciliations')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='reconciliations')
     reconciliation_number = models.CharField(max_length=50, unique=True)
     statement_date = models.DateField()
@@ -899,6 +928,7 @@ class BankReconciliation(models.Model):
         return f'{self.reconciliation_number} - {self.bank_account.name} ({self.statement_date})'
 
 class BankDeposit(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_deposits')
     number = models.CharField(max_length=40, unique=True)
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits')
     date = models.DateField()
@@ -920,6 +950,7 @@ class BankDeposit(models.Model):
         return f'{self.number} (₹{self.amount}) -> {self.bank_account.name}'
 
 class BankTransfer(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_transfers')
     number = models.CharField(max_length=40, unique=True)
     from_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='outgoing_transfers')
     to_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='incoming_transfers')
@@ -939,6 +970,7 @@ class BankTransfer(models.Model):
         return f'{self.number} ({self.from_account.name} -> {self.to_account.name}: ₹{self.amount})'
 
 class GSTRReturn(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='gstr_returns')
     GSTR1, GSTR3B = 'GSTR1', 'GSTR3B'
     TYPES = [(GSTR1, 'GSTR-1 (Outward Supplies)'), (GSTR3B, 'GSTR-3B (Summary Return)')]
 
@@ -988,6 +1020,7 @@ class UserProfile(models.Model):
         return f'{self.user.username} ({self.role})'
 
 class SecurityBackupRecord(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='security_backups')
     snapshot_id = models.CharField(max_length=60, unique=True)
     filename = models.CharField(max_length=255)
     file_size_bytes = models.PositiveIntegerField(default=0)
@@ -1005,6 +1038,7 @@ class SecurityBackupRecord(models.Model):
         return f'Backup {self.snapshot_id} ({self.status})'
 
 class BackgroundTask(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='background_tasks')
     task_id = models.CharField(max_length=50, unique=True)
     task_type = models.CharField(max_length=50)
     status = models.CharField(max_length=30, default='completed')
@@ -1022,6 +1056,7 @@ class BackgroundTask(models.Model):
         return f'Task {self.task_id} ({self.task_type}: {self.status})'
 
 class CustomerPortalAccess(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='customer_portal_accesses')
     token = models.CharField(max_length=64, unique=True)
     customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name='portal_access')
     portal_username = models.CharField(max_length=100, blank=True)
@@ -1036,6 +1071,7 @@ class CustomerPortalAccess(models.Model):
         return f'Portal for {self.customer.name}'
 
 class VendorPortalAccess(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='vendor_portal_accesses')
     token = models.CharField(max_length=64, unique=True)
     vendor = models.OneToOneField(Vendor, on_delete=models.CASCADE, related_name='portal_access')
     is_active = models.BooleanField(default=True)
@@ -1047,6 +1083,7 @@ class VendorPortalAccess(models.Model):
         return f'Portal for {self.vendor.name}'
 
 class Notification(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='notifications')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
     title = models.CharField(max_length=200)
     message = models.TextField()
@@ -1062,6 +1099,7 @@ class Notification(models.Model):
         return f'{self.title} ({self.category})'
 
 class TenantSubscription(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='subscriptions')
     STARTER, GROWTH, ENTERPRISE = 'starter', 'growth', 'enterprise'
     TIERS = [
         (STARTER, 'Starter Edition (Small Business)'),
@@ -1085,6 +1123,7 @@ class TenantSubscription(models.Model):
         return f'{self.tier} ({self.status})'
 
 class DeveloperApiKey(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='developer_api_keys')
     name = models.CharField(max_length=100)
     key_prefix = models.CharField(max_length=16, default='sk_live_')
     masked_key = models.CharField(max_length=40)
@@ -1101,6 +1140,7 @@ class DeveloperApiKey(models.Model):
         return f'{self.name} ({self.masked_key})'
 
 class WebhookSubscription(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='webhook_subscriptions')
     endpoint_url = models.URLField()
     secret = models.CharField(max_length=64)
     events = models.JSONField(default=list, blank=True)

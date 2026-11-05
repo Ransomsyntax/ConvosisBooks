@@ -6750,3 +6750,418 @@ async function viewSalesOrderDetail(id) {
 }
 window.viewSalesOrderDetail = viewSalesOrderDetail;
 window.openUniversalImportModal = openUniversalImportModal;
+
+
+// ==========================================
+// Platform Super Admin Dashboard
+// ==========================================
+async function superAdminDashboard(root) {
+  if (!APP.user || !APP.user.is_superuser) {
+    root.innerHTML = `
+      <div class="bc">Home / Platform / Super Admin</div>
+      <div class="card" style="padding:40px;text-align:center;margin-top:20px;border-left:4px solid var(--danger);">
+        <i class="fa-solid fa-shield-halved" style="font-size:48px;color:var(--danger);margin-bottom:16px;"></i>
+        <h2 style="font-size:20px;margin-bottom:8px;">Access Denied: Super Admin Only</h2>
+        <p style="color:var(--muted);max-width:520px;margin:0 auto 16px;">
+          This platform dashboard is restricted strictly to authorized Django platform superusers. Your account (<strong>${esc(APP.user ? APP.user.username : 'Guest')}</strong>) is an organization account and does not hold global superuser permissions.
+        </p>
+        <button class="btn p" onclick="location.hash='#/home/dashboard'" type="button">Return to Company Dashboard</button>
+      </div>`;
+    return;
+  }
+
+  root.innerHTML = `<div class="spin" style="margin:40px auto;">Loading Platform Super Admin Control Center…</div>`;
+  try {
+    const data = await api('super-admin/overview/');
+    renderSuperAdminUI(root, data);
+  } catch (err) {
+    root.innerHTML = `<div class="card" style="padding:20px;color:var(--danger);margin-top:20px;">Failed to load Super Admin Dashboard: ${esc(err.message || 'Unauthorized')}</div>`;
+  }
+}
+
+function renderSuperAdminUI(root, data) {
+  const k = data.kpis || {};
+  let activeTab = 'companies';
+
+  function buildHtml() {
+    return `
+      <div class="bc">Home / Platform / Super Admin Control Center</div>
+      <div class="hd" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <h1 style="margin:0;">Platform Super Admin</h1>
+            <span class="pastel-chip chip-rose" style="font-weight:700;font-size:11px;letter-spacing:0.5px;">SYSTEM LEVEL</span>
+          </div>
+          <div class="sub" style="margin-top:4px;">
+            Cross-tenant administration, company data isolation, platform user management, and security audit logs.
+          </div>
+        </div>
+        <div class="act" style="display:flex;gap:8px;">
+          <button class="btn" id="btnSuperAdminRefresh" type="button"><i class="fa-solid fa-rotate"></i> Refresh</button>
+          <button class="btn p" id="btnExportPlatformSummary" type="button"><i class="fa-solid fa-file-export"></i> Export Report</button>
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      <div class="dash-kpis" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:16px;margin-top:16px;">
+        <div class="card" style="padding:16px;border-top:3px solid #3b82f6;">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;font-weight:600;">Total Companies</div>
+          <div style="font-size:26px;font-weight:700;margin-top:6px;color:var(--text);">${k.total_companies || 0}</div>
+          <div style="font-size:12px;color:#10b981;margin-top:4px;">
+            <i class="fa-solid fa-circle-check"></i> ${k.active_companies || 0} Active &bull; ${k.inactive_companies || 0} Inactive
+          </div>
+        </div>
+
+        <div class="card" style="padding:16px;border-top:3px solid #10b981;">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;font-weight:600;">Total Registered Users</div>
+          <div style="font-size:26px;font-weight:700;margin-top:6px;color:var(--text);">${k.total_users || 0}</div>
+          <div style="font-size:12px;color:#3b82f6;margin-top:4px;">
+            <i class="fa-solid fa-users"></i> ${k.active_users || 0} Active Users
+          </div>
+        </div>
+
+        <div class="card" style="padding:16px;border-top:3px solid #f59e0b;">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;font-weight:600;">Inactive Accounts</div>
+          <div style="font-size:26px;font-weight:700;margin-top:6px;color:var(--text);">${k.inactive_users || 0}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+            Deactivated or Pending Activation
+          </div>
+        </div>
+
+        <div class="card" style="padding:16px;border-top:3px solid #8b5cf6;">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;font-weight:600;">Data Isolation Status</div>
+          <div style="font-size:18px;font-weight:700;margin-top:8px;color:#10b981;">
+            <i class="fa-solid fa-shield-check"></i> 100% Isolated
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">
+            Strict Multi-Tenant Scoping Active
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div style="display:flex;gap:8px;margin-top:20px;border-bottom:1px solid var(--border);">
+        <button class="btn tab-btn ${activeTab === 'companies' ? 'p' : ''}" id="tabCompanies" type="button" style="border-radius:6px 6px 0 0;">
+          <i class="fa-solid fa-building"></i> Companies & Records (${(data.companies || []).length})
+        </button>
+        <button class="btn tab-btn ${activeTab === 'users' ? 'p' : ''}" id="tabUsers" type="button" style="border-radius:6px 6px 0 0;">
+          <i class="fa-solid fa-user-shield"></i> User Management
+        </button>
+        <button class="btn tab-btn ${activeTab === 'audit' ? 'p' : ''}" id="tabAudit" type="button" style="border-radius:6px 6px 0 0;">
+          <i class="fa-solid fa-list-check"></i> Platform Audit Activity
+        </button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div id="superAdminTabContent" style="margin-top:16px;"></div>
+    `;
+  }
+
+  function renderTabContent() {
+    const container = root.querySelector('#superAdminTabContent');
+    if (!container) return;
+
+    if (activeTab === 'companies') {
+      const companies = data.companies || [];
+      container.innerHTML = `
+        <div class="card" style="padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <h3 style="font-size:15px;margin:0;">Registered Companies & Business Records Breakdown</h3>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+                Complete record counts per tenant ensuring no cross-company leakage.
+              </div>
+            </div>
+          </div>
+          <div class="table-wrap" style="overflow-x:auto;">
+            <table class="table" style="width:100%;font-size:13px;border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:2px solid var(--border);text-align:left;">
+                  <th style="padding:8px;">ID</th>
+                  <th style="padding:8px;">Company Name</th>
+                  <th style="padding:8px;">State & GSTIN</th>
+                  <th style="padding:8px;text-align:center;">Users</th>
+                  <th style="padding:8px;text-align:center;">Customers</th>
+                  <th style="padding:8px;text-align:center;">Vendors</th>
+                  <th style="padding:8px;text-align:center;">Items</th>
+                  <th style="padding:8px;text-align:center;">Invoices</th>
+                  <th style="padding:8px;text-align:center;">Bills</th>
+                  <th style="padding:8px;text-align:center;">Payments</th>
+                  <th style="padding:8px;text-align:center;">Total Records</th>
+                  <th style="padding:8px;">Status</th>
+                  <th style="padding:8px;text-align:right;">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${companies.length === 0 ? `<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--muted);">No companies found.</td></tr>` : ''}
+                ${companies.map(c => `
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:8px;color:var(--muted);">#${c.id}</td>
+                    <td style="padding:8px;">
+                      <strong>${esc(c.name)}</strong>
+                      ${c.legal_name && c.legal_name !== c.name ? `<div style="font-size:11px;color:var(--muted);">${esc(c.legal_name)}</div>` : ''}
+                    </td>
+                    <td style="padding:8px;">
+                      <div>${esc(c.state || 'N/A')}</div>
+                      <div style="font-size:11px;color:var(--muted);">${esc(c.gstin || 'Unregistered')}</div>
+                    </td>
+                    <td style="padding:8px;text-align:center;"><span class="pastel-chip chip-sky" style="font-size:11px;">${c.users_count}</span></td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.customers}</td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.vendors}</td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.items}</td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.invoices}</td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.bills}</td>
+                    <td style="padding:8px;text-align:center;">${c.record_counts.payments}</td>
+                    <td style="padding:8px;text-align:center;"><strong>${c.total_records}</strong></td>
+                    <td style="padding:8px;">
+                      ${c.is_active ? `<span class="pastel-chip chip-emerald" style="font-size:11px;">Active</span>` : `<span class="pastel-chip chip-rose" style="font-size:11px;">Deactivated</span>`}
+                    </td>
+                    <td style="padding:8px;text-align:right;">
+                      <button class="btn btn-sm btnToggleCompany" data-id="${c.id}" data-name="${esc(c.name)}" data-active="${c.is_active}" type="button" style="font-size:11px;padding:3px 8px;">
+                        ${c.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      container.querySelectorAll('.btnToggleCompany').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const cid = btn.dataset.id;
+          const cname = btn.dataset.name;
+          const isActive = btn.dataset.active === 'true';
+          const actionText = isActive ? 'Deactivate' : 'Activate';
+          const conf = await confirmBox({
+            title: `${actionText} Company`,
+            message: `Are you sure you want to ${actionText.toLowerCase()} company "${cname}"? ${isActive ? 'Users of this company will be blocked from logging in.' : 'Users will be granted access.'}`,
+            danger: isActive,
+            okText: actionText
+          });
+          if (!conf) return;
+          try {
+            await api(`super-admin/companies/${cid}/toggle-active/`, { method: 'POST', body: {} });
+            toast(`Company ${cname} ${actionText.toLowerCase()}d successfully!`, 'ok');
+            const refreshed = await api('super-admin/overview/');
+            renderSuperAdminUI(root, refreshed);
+          } catch (err) { toast(err.message, 'err'); }
+        });
+      });
+    } else if (activeTab === 'users') {
+      container.innerHTML = `
+        <div class="card" style="padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <h3 style="font-size:15px;margin:0;">User Management & Access Control</h3>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+                Filter users across all tenant companies, inspect roles, and manage active status.
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <input type="text" id="suUserSearch" class="inp" placeholder="Search user, email, company…" style="width:220px;font-size:12px;padding:6px 10px;">
+              <select id="suUserStatusFilter" class="inp" style="width:120px;font-size:12px;padding:6px 10px;">
+                <option value="">All Statuses</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+              <select id="suUserCompanyFilter" class="inp" style="width:160px;font-size:12px;padding:6px 10px;">
+                <option value="">All Companies</option>
+                ${(data.companies || []).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+              </select>
+              <button class="btn btn-sm" id="btnFilterUsers" type="button"><i class="fa-solid fa-filter"></i> Filter</button>
+            </div>
+          </div>
+          <div id="suUsersTableWrap">
+            <div class="spin" style="margin:20px auto;">Loading users…</div>
+          </div>
+        </div>
+      `;
+
+      loadUsersTable();
+
+      const searchInput = container.querySelector('#suUserSearch');
+      const statusSelect = container.querySelector('#suUserStatusFilter');
+      const companySelect = container.querySelector('#suUserCompanyFilter');
+      const filterBtn = container.querySelector('#btnFilterUsers');
+
+      filterBtn.addEventListener('click', () => loadUsersTable());
+      searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadUsersTable(); });
+      statusSelect.addEventListener('change', () => loadUsersTable());
+      companySelect.addEventListener('change', () => loadUsersTable());
+
+      async function loadUsersTable() {
+        const wrap = container.querySelector('#suUsersTableWrap');
+        if (!wrap) return;
+        wrap.innerHTML = `<div class="spin" style="margin:20px auto;">Loading users…</div>`;
+        const q = searchInput ? searchInput.value.trim() : '';
+        const st = statusSelect ? statusSelect.value : '';
+        const cid = companySelect ? companySelect.value : '';
+        try {
+          const res = await api(`super-admin/users/?q=${encodeURIComponent(q)}&status=${encodeURIComponent(st)}&company_id=${encodeURIComponent(cid)}`);
+          const users = res.users || [];
+          wrap.innerHTML = `
+            <div class="table-wrap" style="overflow-x:auto;">
+              <table class="table" style="width:100%;font-size:13px;border-collapse:collapse;">
+                <thead>
+                  <tr style="border-bottom:2px solid var(--border);text-align:left;">
+                    <th style="padding:8px;">User</th>
+                    <th style="padding:8px;">Email</th>
+                    <th style="padding:8px;">Company</th>
+                    <th style="padding:8px;">Role</th>
+                    <th style="padding:8px;">Status</th>
+                    <th style="padding:8px;">Registered</th>
+                    <th style="padding:8px;">Last Login</th>
+                    <th style="padding:8px;text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${users.length === 0 ? `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted);">No users matched the criteria.</td></tr>` : ''}
+                  ${users.map(u => `
+                    <tr style="border-bottom:1px solid var(--border);">
+                      <td style="padding:8px;">
+                        <div style="font-weight:600;">${esc(u.username)}</div>
+                        <div style="font-size:11px;color:var(--muted);">${esc(u.full_name)}</div>
+                      </td>
+                      <td style="padding:8px;">${esc(u.email || 'None')}</td>
+                      <td style="padding:8px;">
+                        <span class="pastel-chip chip-sky" style="font-size:11px;">${esc(u.company_name)}</span>
+                      </td>
+                      <td style="padding:8px;">
+                        <span style="text-transform:capitalize;font-size:12px;">${esc(u.role)}</span>
+                        ${u.is_superuser ? `<span class="pastel-chip chip-rose" style="font-size:10px;margin-left:4px;">SUPERUSER</span>` : ''}
+                      </td>
+                      <td style="padding:8px;">
+                        ${u.is_active ? `<span class="pastel-chip chip-emerald" style="font-size:11px;">Active</span>` : `<span class="pastel-chip chip-rose" style="font-size:11px;">Inactive</span>`}
+                      </td>
+                      <td style="padding:8px;color:var(--muted);font-size:11px;">${esc(u.date_joined)}</td>
+                      <td style="padding:8px;color:var(--muted);font-size:11px;">${esc(u.last_login)}</td>
+                      <td style="padding:8px;text-align:right;">
+                        ${u.id === APP.user.id ? `<span style="font-size:11px;color:var(--muted);">(Current User)</span>` : `
+                          <button class="btn btn-sm btnToggleUser" data-id="${u.id}" data-username="${esc(u.username)}" data-active="${u.is_active}" type="button" style="font-size:11px;padding:3px 8px;">
+                            ${u.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        `}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+
+          wrap.querySelectorAll('.btnToggleUser').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const uid = btn.dataset.id;
+              const un = btn.dataset.username;
+              const isAct = btn.dataset.active === 'true';
+              const actText = isAct ? 'Deactivate' : 'Activate';
+              const conf = await confirmBox({
+                title: `${actText} User Account`,
+                message: `Are you sure you want to ${actText.toLowerCase()} user "${un}"? ${isAct ? 'The user will be blocked from logging into the platform.' : 'The user will be able to log in.'}`,
+                danger: isAct,
+                okText: actText
+              });
+              if (!conf) return;
+              try {
+                await api(`super-admin/users/${uid}/toggle-active/`, { method: 'POST', body: {} });
+                toast(`User ${un} ${actText.toLowerCase()}d successfully!`, 'ok');
+                loadUsersTable();
+              } catch (err) { toast(err.message, 'err'); }
+            });
+          });
+        } catch (err) {
+          wrap.innerHTML = `<div style="color:var(--danger);padding:16px;">Failed to load users: ${esc(err.message)}</div>`;
+        }
+      }
+    } else if (activeTab === 'audit') {
+      const logs = data.recent_activity || [];
+      container.innerHTML = `
+        <div class="card" style="padding:16px;">
+          <div style="margin-bottom:12px;">
+            <h3 style="font-size:15px;margin:0;">Recent Platform Audit & Governance Trail</h3>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+              Immutable security activity records captured across all tenant operations.
+            </div>
+          </div>
+          <div class="table-wrap" style="overflow-x:auto;">
+            <table class="table" style="width:100%;font-size:13px;border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:2px solid var(--border);text-align:left;">
+                  <th style="padding:8px;">Timestamp</th>
+                  <th style="padding:8px;">User</th>
+                  <th style="padding:8px;">Action</th>
+                  <th style="padding:8px;">Entity</th>
+                  <th style="padding:8px;">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs.length === 0 ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">No audit entries found.</td></tr>` : ''}
+                ${logs.map(l => `
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:8px;font-size:11px;color:var(--muted);white-space:nowrap;">${esc(l.timestamp)}</td>
+                    <td style="padding:8px;"><strong>${esc(l.user)}</strong></td>
+                    <td style="padding:8px;"><span class="pastel-chip chip-amber" style="font-size:10px;text-transform:uppercase;">${esc(l.action)}</span></td>
+                    <td style="padding:8px;"><code>${esc(l.model_name)}</code> ${l.object_id ? `<span style="font-size:11px;color:var(--muted);">#${esc(l.object_id)}</span>` : ''}</td>
+                    <td style="padding:8px;">${esc(l.summary)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  root.innerHTML = buildHtml();
+  renderTabContent();
+
+  root.querySelector('#tabCompanies').addEventListener('click', () => {
+    activeTab = 'companies';
+    root.innerHTML = buildHtml();
+    attachHeaderEvents();
+    renderTabContent();
+  });
+  root.querySelector('#tabUsers').addEventListener('click', () => {
+    activeTab = 'users';
+    root.innerHTML = buildHtml();
+    attachHeaderEvents();
+    renderTabContent();
+  });
+  root.querySelector('#tabAudit').addEventListener('click', () => {
+    activeTab = 'audit';
+    root.innerHTML = buildHtml();
+    attachHeaderEvents();
+    renderTabContent();
+  });
+
+  function attachHeaderEvents() {
+    root.querySelector('#btnSuperAdminRefresh')?.addEventListener('click', async () => {
+      try {
+        const fresh = await api('super-admin/overview/');
+        renderSuperAdminUI(root, fresh);
+        toast('Platform Super Admin data refreshed.', 'ok');
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    root.querySelector('#btnExportPlatformSummary')?.addEventListener('click', () => {
+      const companies = data.companies || [];
+      let csv = "Company ID,Company Name,Legal Name,State,GSTIN,Users Count,Customers,Vendors,Items,Invoices,Bills,Payments,Total Records,Active\n";
+      companies.forEach(c => {
+        csv += `"${c.id}","${c.name.replace(/"/g, '""')}","${(c.legal_name || '').replace(/"/g, '""')}","${c.state}","${c.gstin}",${c.users_count},${c.record_counts.customers},${c.record_counts.vendors},${c.record_counts.items},${c.record_counts.invoices},${c.record_counts.bills},${c.record_counts.payments},${c.total_records},${c.is_active}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `platform_tenants_summary_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  attachHeaderEvents();
+}
+window.superAdminDashboard = superAdminDashboard;

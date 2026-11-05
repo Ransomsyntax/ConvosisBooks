@@ -44,6 +44,9 @@ def login_view(request, tab=None):
                     state='Kerala'
                 )
                 UserProfile.objects.create(user=user, role=UserProfile.ADMIN, organization=org)
+                from . import services
+                services.ensure_default_accounts(org)
+                services.log_audit(user, 'signup', 'organization', org.pk, f'User {username} registered company {org.name}')
                 auth_login(request, user)
                 next_url = request.POST.get('next') or request.GET.get('next') or '/'
                 return redirect(next_url)
@@ -56,16 +59,40 @@ def login_view(request, tab=None):
                 if user.is_active:
                     profile = getattr(user, 'profile', None)
                     if not profile:
-                        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
-                        UserProfile.objects.create(
-                            user=user,
-                            role=UserProfile.ADMIN if (user.is_superuser or user.is_staff) else UserProfile.ACCOUNTANT,
-                            organization=default_org
+                        if user.is_superuser:
+                            org = Organization.objects.first()
+                            UserProfile.objects.create(
+                                user=user,
+                                role=UserProfile.ADMIN,
+                                organization=org
+                            )
+                        else:
+                            company_title = f"{user.get_full_name() or user.username}'s Company"
+                            org = Organization.objects.create(
+                                name=company_title,
+                                owner=user,
+                                email=user.email or f"{user.username}@company.com",
+                                state='Kerala'
+                            )
+                            UserProfile.objects.create(
+                                user=user,
+                                role=UserProfile.ADMIN,
+                                organization=org
+                            )
+                            from . import services
+                            services.ensure_default_accounts(org)
+                    elif not profile.organization and not user.is_superuser:
+                        company_title = f"{user.get_full_name() or user.username}'s Company"
+                        org = Organization.objects.create(
+                            name=company_title,
+                            owner=user,
+                            email=user.email or f"{user.username}@company.com",
+                            state='Kerala'
                         )
-                    elif not profile.organization:
-                        default_org = Organization.objects.filter(pk=1).first() or Organization.objects.first()
-                        profile.organization = default_org
+                        profile.organization = org
                         profile.save(update_fields=['organization'])
+                        from . import services
+                        services.ensure_default_accounts(org)
                     auth_login(request, user)
                     next_url = request.POST.get('next') or request.GET.get('next') or '/'
                     return redirect(next_url)

@@ -110,6 +110,7 @@ const ROUTES = {
   'settings/subscription-billing': r => subscriptionBillingPage(r),
   'settings/tenant-admin': r => tenantAdminPage(r),
   'developer/platform': r => developerPlatformPage(r),
+  'platform/super-admin': r => superAdminDashboard(r),
 
   'reports': r => reportsCenterPage(r),
   'reports/reports-center': r => reportsCenterPage(r),
@@ -254,6 +255,11 @@ function applyOrg() {
   const av = $('#sidebarUserAvatar'); if (av) av.textContent = (APP.user.name || 'A')[0].toUpperCase();
   const un = $('#sidebarUserName'); if (un) un.textContent = APP.user.name || APP.user.username || 'Admin';
   const ur = $('#sidebarUserRole'); if (ur) ur.textContent = rDisp;
+
+  const btnSuperAdmin = $('#btnSuperAdminNav');
+  if (btnSuperAdmin) {
+    btnSuperAdmin.style.display = (APP.user && APP.user.is_superuser) ? 'flex' : 'none';
+  }
 
   if (APP.user && APP.user.permissions) {
     if (APP.user.permissions.is_read_only) {

@@ -97,6 +97,14 @@ urlpatterns = [
     path('import/parse-file/', api.parse_import_file_view),
 
     path('quotes/sequence/', api.quote_sequence_view),
+
+    # Super Admin Platform Dashboard Endpoints
+    path('super-admin/overview/', api.super_admin_overview_view),
+    path('super-admin/users/', api.super_admin_users_view),
+    path('super-admin/users/<int:pk>/toggle-active/', api.super_admin_toggle_user_view),
+    path('super-admin/companies/<int:pk>/', api.super_admin_company_detail_view),
+    path('super-admin/companies/<int:pk>/toggle-active/', api.super_admin_toggle_company_view),
+
     path('<slug:name>/', api.collection),
     path('<slug:name>/<int:pk>/', api.item),
     path('<slug:name>/<int:pk>/<slug:act>/', api.action),

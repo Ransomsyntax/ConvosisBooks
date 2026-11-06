@@ -191,7 +191,7 @@ class Bill(Document):
         return self.number
 
 class Line(models.Model):
-    item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     description = models.CharField(max_length=500)
     hsn_sac = models.CharField(max_length=10, blank=True)
     quantity = models.DecimalField(**QTY)
@@ -637,7 +637,7 @@ class DeliveryChallan(models.Model):
 
 class DeliveryChallanLine(models.Model):
     challan = models.ForeignKey(DeliveryChallan, on_delete=models.CASCADE, related_name='lines')
-    item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     description = models.CharField(max_length=500)
     hsn_sac = models.CharField(max_length=10, blank=True)
     quantity = models.DecimalField(**QTY)

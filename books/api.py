@@ -578,6 +578,9 @@ class Resource:
                     with transaction.atomic():
                         self.destroy(obj)
                     deleted_count += 1
+                except ProtectedError:
+                    obj_name = getattr(obj, 'name', getattr(obj, 'number', f'Record #{item_id}'))
+                    errors.append({'id': item_id, 'error': f"Cannot delete '{obj_name}' because it is referenced by existing transactions."})
                 except Exception as err:
                     errors.append({'id': item_id, 'error': str(err)})
 
@@ -604,8 +607,12 @@ class Resource:
                 self.update(obj, body(request), request.user)
             return j(self.detail(self.get_object(pk, request)))
         if request.method == 'DELETE':
-            with transaction.atomic():
-                self.destroy(obj)
+            try:
+                with transaction.atomic():
+                    self.destroy(obj)
+            except ProtectedError:
+                obj_name = getattr(obj, 'name', getattr(obj, 'number', f'Record #{pk}'))
+                raise ApiError(400, f"Cannot delete '{obj_name}' because it is referenced by existing transactions.")
             return HttpResponse(status=204)
         raise ApiError(405, 'Method not allowed.')
 
@@ -1038,6 +1045,20 @@ class ItemResource(Resource):
             if wh:
                 rec['warehouse_id'] = wh.pk
                 rec['warehouse_code'] = wh.code
+
+    def destroy(self, obj):
+        from .models import (
+            InvoiceLine, BillLine, QuoteLine, SalesOrderLine,
+            RetainerInvoiceLine, DeliveryChallanLine, CreditNoteLine,
+            PurchaseOrderLine, VendorCreditLine
+        )
+        for line_model in [
+            InvoiceLine, BillLine, QuoteLine, SalesOrderLine,
+            RetainerInvoiceLine, DeliveryChallanLine, CreditNoteLine,
+            PurchaseOrderLine, VendorCreditLine
+        ]:
+            line_model.objects.filter(item=obj).update(item=None)
+        obj.delete()
 
     def base_qs(self):
         return self.model.objects.select_related('warehouse', 'preferred_vendor').all()

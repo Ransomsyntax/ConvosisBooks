@@ -91,3 +91,60 @@ class BulkDeleteTestCase(TestCase):
         self.assertEqual(data.get('failed'), 1)
         self.assertFalse(Customer.objects.filter(id=c_alpha.id).exists())
         self.assertTrue(Customer.objects.filter(id=c_beta.id).exists())
+
+    def test_delete_item_referenced_by_quote_line(self):
+        from decimal import Decimal
+        from books.models import Quote, QuoteLine, Invoice, InvoiceLine
+
+        item = Item.objects.create(
+            organization=self.org1,
+            name='Test Product Chair',
+            sku='TP-CHR-01',
+            selling_price=Decimal('1500.00'),
+            purchase_price=Decimal('1000.00'),
+            item_type='goods'
+        )
+        customer = Customer.objects.create(
+            organization=self.org1,
+            name='Customer For Quote',
+            email='quotecust@test.com'
+        )
+        quote = Quote.objects.create(
+            organization=self.org1,
+            customer=customer,
+            number='QT-TEST-001',
+            date='2026-11-06',
+            due_date='2026-11-20',
+            status='draft',
+            total=Decimal('3000.00')
+        )
+        ql = QuoteLine.objects.create(
+            quote=quote,
+            item=item,
+            description='Test Product Chair',
+            quantity=Decimal('2.000'),
+            rate=Decimal('1500.00'),
+            taxable=Decimal('3000.00'),
+            tax_amount=Decimal('0.00'),
+            line_total=Decimal('3000.00')
+        )
+
+        # Deleting the item via bulk DELETE
+        res = self.client1.delete(
+            '/api/items/',
+            data=json.dumps({'ids': [item.id]}),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data.get('status'), 'ok')
+        self.assertEqual(data.get('deleted'), 1)
+
+        # Confirm Item is deleted
+        self.assertFalse(Item.objects.filter(id=item.id).exists())
+
+        # Confirm Quote and QuoteLine still exist with item=None
+        ql.refresh_from_db()
+        self.assertIsNone(ql.item)
+        self.assertEqual(ql.description, 'Test Product Chair')
+        self.assertEqual(ql.line_total, Decimal('3000.00'))

@@ -14,6 +14,8 @@ urlpatterns = [
     path('lookup/<slug:name>/', api.lookup),
 
     path('reports/<slug:name>/', api.reports_view),
+    path('inventory/opening-stock-preview/', api.opening_stock_preview_view),
+    path('inventory/stock-in-hand-preview/', api.stock_in_hand_preview_view),
 
     path('banking/dashboard-summary/', api.banking_dashboard_summary_view),
     path('banking/statement-import/', api.banking_import_view),

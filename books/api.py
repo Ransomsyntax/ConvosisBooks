@@ -1064,6 +1064,8 @@ class ItemResource(Resource):
         return self.model.objects.select_related('warehouse', 'preferred_vendor').all()
 
     def filter_qs(self, qs, request):
+        self._request = request
+        self._current_org = get_user_org(request.user)
         g = request.GET
         if g.get('type') in ('goods', 'service'):
             qs = qs.filter(item_type=g['type'])
@@ -1082,26 +1084,65 @@ class ItemResource(Resource):
             qs = qs.filter(item_type='goods', track_inventory=True, stock__gt=0, reorder_level__gt=0, stock__lte=F('reorder_level'))
         return qs
 
+    def rows(self, objs):
+        tracked_objs = [o for o in objs if o.item_type == 'goods' and o.track_inventory]
+        if tracked_objs:
+            org = getattr(self, '_current_org', None) or (tracked_objs[0].organization if tracked_objs else None)
+            self._stock_summary = services.get_stock_movement_summary(tracked_objs, org=org)
+        else:
+            self._stock_summary = {}
+        return [self.row(o) for o in objs]
+
+    def detail(self, o):
+        if o.item_type == 'goods' and o.track_inventory:
+            self._stock_summary = services.get_stock_movement_summary([o], org=getattr(self, '_current_org', None) or getattr(o, 'organization', None))
+        else:
+            self._stock_summary = {}
+        return self.row(o)
+
     def row(self, o):
         tracked = o.item_type == 'goods' and o.track_inventory
+        stock_sum = getattr(self, '_stock_summary', {}).get(o.pk)
+        if not stock_sum and tracked:
+            stock_sum = services.get_stock_movement_summary([o], org=getattr(self, '_current_org', None) or getattr(o, 'organization', None)).get(o.pk)
+
+        opening_stock = stock_sum['opening_stock'] if stock_sum else Decimal('0.000')
+        stock_in = stock_sum['stock_in'] if stock_sum else Decimal('0.000')
+        stock_out = stock_sum['stock_out'] if stock_sum else Decimal('0.000')
+        transfer_in = stock_sum['transfer_in'] if stock_sum else Decimal('0.000')
+        transfer_out = stock_sum['transfer_out'] if stock_sum else Decimal('0.000')
+        avail_stock = stock_sum['available_stock'] if stock_sum else o.stock
+        stock_val = stock_sum['stock_value'] if stock_sum else q2(avail_stock * o.purchase_price)
+
         if not o.active:
             status = 'Inactive'
-        elif tracked and o.stock <= 0:
+        elif tracked and avail_stock <= 0:
             status = 'Out of stock'
-        elif tracked and o.reorder_level > 0 and o.stock <= o.reorder_level:
+        elif tracked and o.reorder_level > 0 and avail_stock <= o.reorder_level:
             status = 'Low stock'
         else:
             status = 'Active'
+
         return {
             'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'category': o.category, 'hsn_sac': o.hsn_sac,
             'unit': o.unit, 'description': o.description, 'selling_price': o.selling_price,
             'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate, 'track_inventory': tracked,
-            'stock': format_qty(o.stock) if tracked else None,
+            'stock': format_qty(avail_stock) if tracked else None,
+            'opening_stock': format_qty(opening_stock) if tracked else None,
+            'opening_stock_value': float(stock_sum['opening_stock_value']) if stock_sum else 0.0,
+            'opening_date': stock_sum['opening_date'].strftime('%d/%m/%Y') if (stock_sum and stock_sum['opening_date']) else '',
+            'stock_in': format_qty(stock_in) if tracked else None,
+            'stock_out': format_qty(stock_out) if tracked else None,
+            'transfer_in': format_qty(transfer_in) if tracked else None,
+            'transfer_out': format_qty(transfer_out) if tracked else None,
+            'stock_in_hand': format_qty(avail_stock) if tracked else None,
+            'closing_stock': format_qty(avail_stock) if tracked else None,
+            'stock_value': float(stock_val) if tracked else None,
             'reorder_level': format_qty(o.reorder_level) if tracked else None,
             'warehouse_id': o.warehouse_id,
             'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
             'warehouse_name': o.warehouse.name if o.warehouse else '',
-            'valuation': q2(o.stock * o.purchase_price) if tracked else None, 'active': o.active, 'status': status,
+            'valuation': stock_val if tracked else None, 'active': o.active, 'status': status,
             'image_data': o.image_data, 'tax_preference': o.tax_preference,
             'sales_account': o.sales_account, 'purchase_account': o.purchase_account,
             'preferred_vendor_id': o.preferred_vendor_id,
@@ -5159,19 +5200,142 @@ def reports_view(request, name):
         rows.sort(key=lambda x: -x['total'])
         return j({'period': {'start': start, 'end': end}, 'results': rows})
     elif name == 'inventory-summary':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        if item_id:
+            items_qs = items_qs.filter(pk=item_id)
+        if wh:
+            items_qs = items_qs.filter(Q(warehouse_code=wh) | Q(warehouse__code=wh))
+        summary_map = services.get_stock_movement_summary(list(items_qs), org=user_org, warehouse=wh, start=start, end=end)
         rows = []
-        items = (Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()).select_related('warehouse')
-        for it in items:
-            val = it.stock * it.purchase_price
-            status = 'Low stock' if 0 < it.stock <= it.reorder_level else ('Out of stock' if it.stock <= 0 else 'In stock')
+        for s in summary_map.values():
             rows.append({
-                'item': it.name, 'sku': it.sku,
-                'warehouse_code': it.warehouse_code or (it.warehouse.code if it.warehouse else 'WH-MAIN'),
-                'stock': format_qty(it.stock), 'unit': it.unit,
-                'cost_price': it.purchase_price, 'valuation': val,
-                'reorder_level': format_qty(it.reorder_level), 'status': status
+                'id': s['item_id'],
+                'item_id': s['item_id'],
+                'item': s['name'],
+                'sku': s['sku'],
+                'warehouse_code': s['warehouse_code'],
+                'warehouse_name': s['warehouse_name'],
+                'opening_stock': format_qty(s['opening_stock']),
+                'opening_stock_val': float(s['opening_stock_value']),
+                'opening_date': s['opening_date'].strftime('%d/%m/%Y') if s['opening_date'] else '',
+                'stock_in': format_qty(s['stock_in']),
+                'stock_out': format_qty(s['stock_out']),
+                'transfer_in': format_qty(s['transfer_in']),
+                'transfer_out': format_qty(s['transfer_out']),
+                'current_stock': format_qty(s['available_stock']),
+                'stock_in_hand': format_qty(s['available_stock']),
+                'closing_stock': format_qty(s['closing_stock']),
+                'stock': format_qty(s['available_stock']),
+                'unit': s['unit'],
+                'cost_price': float(s['purchase_price']),
+                'purchase_price': float(s['purchase_price']),
+                'valuation': float(s['stock_value']),
+                'stock_value': float(s['stock_value']),
+                'reorder_level': format_qty(s['reorder_level']),
+                'status': s['status']
             })
-        return j({'results': rows, 'total_valuation': sum((r['valuation'] for r in rows), Z)})
+        return j({
+            'results': rows,
+            'total_opening_stock': sum((float(s['opening_stock']) for s in summary_map.values()), 0.0),
+            'total_stock_in': sum((float(s['stock_in']) for s in summary_map.values()), 0.0),
+            'total_stock_out': sum((float(s['stock_out']) for s in summary_map.values()), 0.0),
+            'total_transfer_in': sum((float(s['transfer_in']) for s in summary_map.values()), 0.0),
+            'total_transfer_out': sum((float(s['transfer_out']) for s in summary_map.values()), 0.0),
+            'total_stock_in_hand': sum((float(s['available_stock']) for s in summary_map.values()), 0.0),
+            'total_valuation': sum((float(s['stock_value']) for s in summary_map.values()), 0.0)
+        })
+    elif name == 'stock-in-report':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        return j(services.get_stock_in_report_data(user_org, warehouse=wh, start=start, end=end, item_id=item_id))
+    elif name == 'stock-out-report':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        return j(services.get_stock_out_report_data(user_org, warehouse=wh, start=start, end=end, item_id=item_id))
+    elif name == 'stock-transfer-report':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        return j(services.get_stock_transfer_report_data(user_org, warehouse=wh, start=start, end=end, item_id=item_id))
+    elif name == 'opening-stock-report':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        if item_id:
+            items_qs = items_qs.filter(pk=item_id)
+        if wh:
+            items_qs = items_qs.filter(Q(warehouse_code=wh) | Q(warehouse__code=wh))
+        summary_map = services.get_stock_movement_summary(list(items_qs), org=user_org, warehouse=wh, start=start, end=end)
+        rows = []
+        tot_qty = Decimal('0.000')
+        tot_val = Decimal('0.00')
+        for s in summary_map.values():
+            tot_qty += s['opening_stock']
+            tot_val += s['opening_stock_value']
+            rows.append({
+                'item_id': s['item_id'],
+                'product_name': s['name'],
+                'sku': s['sku'] or '—',
+                'warehouse': s['warehouse_code'],
+                'warehouse_name': s['warehouse_name'],
+                'opening_quantity': format_qty(s['opening_stock']),
+                'unit': s['unit'],
+                'rate': float(s['purchase_price']),
+                'opening_stock_value': float(s['opening_stock_value']),
+                'transaction_date': s['opening_date'].strftime('%d/%m/%Y') if s['opening_date'] else ''
+            })
+        return j({
+            'results': rows,
+            'total_opening_quantity': float(tot_qty),
+            'total_opening_value': float(tot_val),
+            'count': len(rows)
+        })
+    elif name == 'stock-in-hand-report':
+        wh = request.GET.get('warehouse')
+        i_id = request.GET.get('item')
+        item_id = int(i_id) if i_id and i_id.isdigit() else None
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        if item_id:
+            items_qs = items_qs.filter(pk=item_id)
+        if wh:
+            items_qs = items_qs.filter(Q(warehouse_code=wh) | Q(warehouse__code=wh))
+        summary_map = services.get_stock_movement_summary(list(items_qs), org=user_org, warehouse=wh, start=start, end=end)
+        rows = []
+        tot_avail = Decimal('0.000')
+        tot_val = Decimal('0.00')
+        for s in summary_map.values():
+            tot_avail += s['available_stock']
+            tot_val += s['stock_value']
+            rows.append({
+                'item_id': s['item_id'],
+                'product_name': s['name'],
+                'sku': s['sku'] or '—',
+                'warehouse': s['warehouse_code'],
+                'warehouse_name': s['warehouse_name'],
+                'opening_stock': format_qty(s['opening_stock']),
+                'total_stock_in': format_qty(s['stock_in']),
+                'total_stock_out': format_qty(s['stock_out']),
+                'transfer_in': format_qty(s['transfer_in']),
+                'transfer_out': format_qty(s['transfer_out']),
+                'available_stock': format_qty(s['available_stock']),
+                'closing_balance': format_qty(s['closing_stock']),
+                'unit': s['unit'],
+                'rate': float(s['purchase_price']),
+                'stock_value': float(s['stock_value']),
+                'status': s['status']
+            })
+        return j({
+            'results': rows,
+            'total_available_stock': float(tot_avail),
+            'total_stock_value': float(tot_val),
+            'count': len(rows)
+        })
     elif name == 'receivables-aging':
         inv_open = list(invoice_qs(org=user_org).filter(status='sent', paid_sum__lt=F('total')))
         today = timezone.localdate()
@@ -5182,6 +5346,30 @@ def reports_view(request, name):
         return j({'aging': services._aging(bill_open, today), 'bills': [{'number': b.number, 'vendor': b.vendor.name, 'due_date': b.due_date, 'overdue_days': max(0, (today - b.due_date).days), 'balance': b.total - q2(b.paid_sum)} for b in bill_open]})
     else:
         raise ApiError(404, f"Report '{name}' not found.")
+
+@api_view
+def opening_stock_preview_view(request):
+    if request.method != 'GET':
+        raise ApiError(405, 'Method not allowed.')
+    item_id = request.GET.get('item_id')
+    if not item_id or not item_id.isdigit():
+        raise ApiError(400, 'Valid item_id parameter is required.')
+    warehouse = request.GET.get('warehouse')
+    user_org = get_user_org(request.user)
+    data = services.get_opening_stock_preview(user_org, int(item_id), warehouse=warehouse)
+    return j(data)
+
+@api_view
+def stock_in_hand_preview_view(request):
+    if request.method != 'GET':
+        raise ApiError(405, 'Method not allowed.')
+    item_id = request.GET.get('item_id')
+    if not item_id or not item_id.isdigit():
+        raise ApiError(400, 'Valid item_id parameter is required.')
+    warehouse = request.GET.get('warehouse')
+    user_org = get_user_org(request.user)
+    data = services.get_stock_in_hand_preview(user_org, int(item_id), warehouse=warehouse)
+    return j(data)
 
 @api_view
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)

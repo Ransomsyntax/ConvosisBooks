@@ -4,14 +4,32 @@ const IC = { home: 'M3 11l9-8 9 8v10h-6v-6H9v6H3z', items: 'M3 7l9-4 9 4v10l-9 4
 const NAV = [
   ['Home', 'home', ['Dashboard', 'Getting Started', 'Recent Updates']],
   ['Items', 'items', ['Items', 'Item Categories', 'Price Lists']],
-  ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Movement', 'Warehouses']],
+  ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Warehouses']],
   ['Sales', 'sales', ['Customers', 'Quotes', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
   ['Banking', 'banking', []],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
   ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
-  ['Reports', 'reports', ['Reports Center', 'Business Overview', 'Sales Reports', 'Purchase Reports', 'Inventory Reports', 'Receivables', 'Payables', 'Tax Reports', 'Accounting Reports', 'Cash Flow Reports']],
+  ['Reports', 'reports', [
+    'Stock Movement',
+    'Inventory Summary',
+    'Stock In Report',
+    'Stock Out Report',
+    'Stock Transfer Report',
+    'Opening Stock Report',
+    'Stock in Hand Report',
+    'Reports Center',
+    'Business Overview',
+    'Sales Reports',
+    'Purchase Reports',
+    'Inventory Reports',
+    'Receivables',
+    'Payables',
+    'Tax Reports',
+    'Accounting Reports',
+    'Cash Flow Reports'
+  ]],
   ['Documents', 'documents', ['All Documents', 'Files', 'Bank Statements', 'Folders', 'Trash']],
   ['Convosis Payments', 'pay', ['Payment Overview', 'Payment Transactions', 'Payment Settings']],
 ];
@@ -44,7 +62,7 @@ const ROUTES = {
   'inventory': r => listPage(r, LISTS.inventory),
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
-  'inventory/stock-movement': r => listPage(r, LISTS.movements),
+  'inventory/stock-movement': r => { location.hash = '#/reports/stock-movement'; },
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
   'sales': r => listPage(r, LISTS.quotes),
@@ -114,6 +132,13 @@ const ROUTES = {
 
   'reports': r => reportsCenterPage(r),
   'reports/reports-center': r => reportsCenterPage(r),
+  'reports/stock-movement': r => listPage(r, LISTS.movements),
+  'reports/inventory-summary': r => listPage(r, LISTS.inventory),
+  'reports/stock-in-report': r => stockInReportPage(r),
+  'reports/stock-out-report': r => stockOutReportPage(r),
+  'reports/stock-transfer-report': r => stockTransferReportPage(r),
+  'reports/opening-stock-report': r => openingStockReportPage(r),
+  'reports/stock-in-hand-report': r => stockInHandReportPage(r),
   'reports/business-overview': r => profitAndLossPage(r),
   'reports/sales-reports': r => reportTablePage(r, 'sales-by-customer', 'Sales By Customer Report', 'Sales'),
   'reports/purchase-reports': r => reportTablePage(r, 'purchases-by-vendor', 'Purchases By Vendor Report', 'Purchases'),
@@ -157,7 +182,8 @@ const NAV_NEW_ACTIONS = {
   'items/item-categories': () => categoryModal(),
   'items/price-lists': () => priceListModal(),
   'inventory/stock-adjustments': () => adjustForm(),
-  'inventory/stock-movement': () => stockMoveModal(),
+  'reports/stock-movement': () => stockMoveModal(),
+  'reports/stock-transfer-report': () => stockMoveModal(),
   'inventory/warehouses': () => warehouseModal(),
   'sales/customers': () => partyForm('customers'),
   'sales/quotes': () => quoteForm(),
@@ -196,10 +222,19 @@ function drawNav(cur) {
     const hasSub = ch && ch.length > 0;
     const isAct = cur === k || cur.startsWith(k + '/');
     const isOpen = openG.includes(k);
-    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${ch.map(c => {
+    const reportingBadge = k === 'reports' ? '<span class="pastel-chip chip-sky" style="font-size:10px;margin-left:6px;font-weight:700;padding:1px 6px;">Reporting</span>' : '';
+    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${reportingBadge}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${ch.map((c, cIdx) => {
       const target = k + '/' + slug(c);
       const hasAdd = Boolean(getNavAddAction(k, c));
-      return `<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
+      let categoryHeader = '';
+      if (k === 'reports') {
+        if (cIdx === 0) {
+          categoryHeader = `<div style="padding:6px 14px 2px;font-size:10px;font-weight:700;letter-spacing:0.05em;color:var(--mu);text-transform:uppercase;display:flex;align-items:center;gap:6px;"><span class="pastel-chip chip-sky" style="font-size:9px;padding:1px 5px;">Reporting</span> Stock & Inventory</div>`;
+        } else if (c === 'Reports Center') {
+          categoryHeader = `<div style="padding:8px 14px 2px;font-size:10px;font-weight:700;letter-spacing:0.05em;color:var(--mu);text-transform:uppercase;">Financial & Tax</div>`;
+        }
+      }
+      return `${categoryHeader}<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
     }).join('')}</div>` : ''}</div>`;
 
   }).join('');

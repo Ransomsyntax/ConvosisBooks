@@ -175,6 +175,7 @@ def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjuste
         reference = next_number('TRF')
 
     mv = StockMovement.objects.create(
+        organization=org,
         item=item, date=on, adjusted_at=adjusted_at,
         warehouse=from_wh, warehouse_code=from_wh.code,
         to_warehouse=to_wh, to_warehouse_code=to_wh.code,
@@ -5271,3 +5272,366 @@ def parse_import_file(file_obj, filename=''):
         'total_rows': len(clean_rows),
         'records': records
     }
+
+
+def get_stock_movement_summary(item_or_items, org=None, warehouse=None, start=None, end=None):
+    from .models import Item, StockMovement
+    if isinstance(item_or_items, (list, tuple)):
+        items_list = list(item_or_items)
+    elif hasattr(item_or_items, '__iter__') and not isinstance(item_or_items, Item):
+        items_list = list(item_or_items)
+    elif isinstance(item_or_items, Item):
+        items_list = [item_or_items]
+    else:
+        items_qs = Item.objects.filter(item_type='goods', track_inventory=True)
+        if org:
+            items_qs = items_qs.filter(organization=org)
+        if warehouse:
+            items_qs = items_qs.filter(Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse))
+        items_list = list(items_qs)
+
+    summary_map = {}
+    for it in items_list:
+        summary_map[it.pk] = {
+            'item_id': it.pk,
+            'name': it.name,
+            'sku': it.sku or '',
+            'unit': it.unit or 'nos',
+            'warehouse_code': it.warehouse_code or (it.warehouse.code if it.warehouse else 'WH-MAIN'),
+            'warehouse_name': it.warehouse.name if it.warehouse else '',
+            'purchase_price': it.purchase_price,
+            'selling_price': it.selling_price,
+            'reorder_level': it.reorder_level,
+            'opening_stock': Decimal('0.000'),
+            'opening_date': None,
+            'opening_stock_value': Decimal('0.00'),
+            'stock_in': Decimal('0.000'),
+            'stock_in_value': Decimal('0.00'),
+            'stock_out': Decimal('0.000'),
+            'stock_out_value': Decimal('0.00'),
+            'transfer_in': Decimal('0.000'),
+            'transfer_out': Decimal('0.000'),
+            'available_stock': Decimal('0.000'),
+            'stock_in_hand': Decimal('0.000'),
+            'closing_stock': Decimal('0.000'),
+            'stock_value': Decimal('0.00'),
+            'status': 'In stock'
+        }
+
+    if items_list:
+        mvs = StockMovement.objects.filter(item__in=items_list)
+        if org:
+            mvs = mvs.filter(organization=org)
+        if start:
+            mvs = mvs.filter(date__gte=start)
+        if end:
+            mvs = mvs.filter(date__lte=end)
+        if warehouse:
+            mvs = mvs.filter(
+                Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse) |
+                Q(to_warehouse_code=warehouse) | Q(to_warehouse__code=warehouse)
+            )
+
+        for m in mvs:
+            entry = summary_map.get(m.item_id)
+            if not entry:
+                continue
+            k = m.kind
+            ch = m.change or Decimal('0.000')
+            if k == 'opening':
+                entry['opening_stock'] += ch
+                if not entry['opening_date'] or m.date < entry['opening_date']:
+                    entry['opening_date'] = m.date
+            elif k in ('purchase', 'sale_void'):
+                entry['stock_in'] += abs(ch)
+            elif k in ('sale', 'purchase_void'):
+                entry['stock_out'] += abs(ch)
+            elif k == 'adjustment':
+                if ch >= 0:
+                    entry['stock_in'] += ch
+                else:
+                    entry['stock_out'] += abs(ch)
+            elif k == 'transfer':
+                if warehouse:
+                    src_wh = m.warehouse_code or (m.warehouse.code if m.warehouse else '')
+                    dst_wh = m.to_warehouse_code or (m.to_warehouse.code if m.to_warehouse else '')
+                    if dst_wh == warehouse:
+                        entry['transfer_in'] += abs(ch)
+                    if src_wh == warehouse:
+                        entry['transfer_out'] += abs(ch)
+                else:
+                    entry['transfer_in'] += abs(ch)
+                    entry['transfer_out'] += abs(ch)
+
+    for it in items_list:
+        entry = summary_map[it.pk]
+        if warehouse:
+            avail = entry['opening_stock'] + entry['stock_in'] - entry['stock_out'] + entry['transfer_in'] - entry['transfer_out']
+        else:
+            avail = entry['opening_stock'] + entry['stock_in'] - entry['stock_out']
+
+        if entry['opening_stock'] == 0 and entry['stock_in'] == 0 and entry['stock_out'] == 0 and entry['transfer_in'] == 0 and entry['transfer_out'] == 0:
+            if it.stock != 0:
+                entry['opening_stock'] = it.stock
+                avail = it.stock
+
+        if not entry['opening_date']:
+            entry['opening_date'] = it.created_at.date() if it.created_at else timezone.localdate()
+
+        entry['opening_stock_value'] = (entry['opening_stock'] * it.purchase_price).quantize(Decimal('0.01'))
+        entry['stock_in_value'] = (entry['stock_in'] * it.purchase_price).quantize(Decimal('0.01'))
+        entry['stock_out_value'] = (entry['stock_out'] * it.purchase_price).quantize(Decimal('0.01'))
+        entry['available_stock'] = avail
+        entry['stock_in_hand'] = avail
+        entry['closing_stock'] = avail
+        entry['stock_value'] = (avail * it.purchase_price).quantize(Decimal('0.01'))
+
+        if avail <= 0:
+            entry['status'] = 'Out of stock'
+        elif it.reorder_level > 0 and avail <= it.reorder_level:
+            entry['status'] = 'Low stock'
+        else:
+            entry['status'] = 'In stock'
+
+    return summary_map
+
+
+def get_opening_stock_preview(org, item_id, warehouse=None):
+    from .models import Item, StockMovement
+    item = Item.objects.filter(pk=item_id, organization=org).first() if org else Item.objects.filter(pk=item_id).first()
+    if not item:
+        raise ApiError(404, 'Item not found.')
+
+    summary_map = get_stock_movement_summary([item], org=org, warehouse=warehouse)
+    item_summary = summary_map[item.pk]
+
+    all_org_items = Item.objects.filter(organization=org, item_type='goods', track_inventory=True) if org else Item.objects.filter(item_type='goods', track_inventory=True)
+    all_summary = get_stock_movement_summary(all_org_items, org=org, warehouse=warehouse)
+
+    tot_opening_qty = sum((s['opening_stock'] for s in all_summary.values()), Decimal('0.000'))
+    tot_opening_val = sum((s['opening_stock_value'] for s in all_summary.values()), Decimal('0.00'))
+
+    mvs = StockMovement.objects.filter(item=item, kind='opening')
+    if org:
+        mvs = mvs.filter(organization=org)
+    if warehouse:
+        mvs = mvs.filter(Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse))
+
+    product_details = []
+    for m in mvs.order_by('-date', '-id'):
+        product_details.append({
+            'date': m.date.strftime('%d/%m/%Y') if m.date else '',
+            'reference': m.reference or 'Initial Opening',
+            'warehouse': m.warehouse_code or (m.warehouse.code if m.warehouse else item_summary['warehouse_code']),
+            'quantity': format(m.change.normalize(), 'f') if m.change else '0',
+            'rate': float(item.purchase_price),
+            'value': float((m.change * item.purchase_price).quantize(Decimal('0.01'))),
+            'notes': m.notes or m.reason or 'Opening Stock Entry'
+        })
+
+    if not product_details and item_summary['opening_stock'] > 0:
+        product_details.append({
+            'date': item_summary['opening_date'].strftime('%d/%m/%Y') if item_summary['opening_date'] else '',
+            'reference': 'Initial Stock',
+            'warehouse': item_summary['warehouse_code'],
+            'quantity': format(item_summary['opening_stock'].normalize(), 'f'),
+            'rate': float(item.purchase_price),
+            'value': float(item_summary['opening_stock_value']),
+            'notes': 'Initial System Opening Stock'
+        })
+
+    return {
+        'product_name': item.name,
+        'sku': item.sku or '—',
+        'warehouse': item_summary['warehouse_code'],
+        'warehouse_name': item_summary['warehouse_name'],
+        'opening_quantity': float(item_summary['opening_stock']),
+        'unit': item.unit or 'nos',
+        'rate': float(item.purchase_price),
+        'opening_stock_value': float(item_summary['opening_stock_value']),
+        'transaction_date': item_summary['opening_date'].strftime('%d/%m/%Y') if item_summary['opening_date'] else '',
+        'total_opening_quantity': float(tot_opening_qty),
+        'total_opening_value': float(tot_opening_val),
+        'product_details': product_details
+    }
+
+
+def get_stock_in_hand_preview(org, item_id, warehouse=None):
+    from .models import Item, StockMovement
+    item = Item.objects.filter(pk=item_id, organization=org).first() if org else Item.objects.filter(pk=item_id).first()
+    if not item:
+        raise ApiError(404, 'Item not found.')
+
+    summary_map = get_stock_movement_summary([item], org=org, warehouse=warehouse)
+    item_summary = summary_map[item.pk]
+
+    mvs = StockMovement.objects.filter(item=item)
+    if org:
+        mvs = mvs.filter(organization=org)
+    if warehouse:
+        mvs = mvs.filter(
+            Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse) |
+            Q(to_warehouse_code=warehouse) | Q(to_warehouse__code=warehouse)
+        )
+
+    recent_movements = []
+    for m in mvs.order_by('-date', '-id')[:25]:
+        ch = m.change or Decimal('0.000')
+        sign = '+' if ch > 0 else ''
+        recent_movements.append({
+            'date': m.date.strftime('%d/%m/%Y') if m.date else '',
+            'type': m.get_kind_display(),
+            'reference': m.reference or '—',
+            'warehouse': m.to_warehouse_code if m.kind == 'transfer' else (m.warehouse_code or (m.warehouse.code if m.warehouse else '')),
+            'from_warehouse': m.warehouse_code or (m.warehouse.code if m.warehouse else ''),
+            'to_warehouse': m.to_warehouse_code or (m.to_warehouse.code if m.to_warehouse else ''),
+            'change': f"{sign}{format(ch.normalize(), 'f')}",
+            'balance_after': format(m.balance_after.normalize(), 'f') if m.balance_after else '0',
+            'reason': m.reason or '—'
+        })
+
+    return {
+        'product_name': item.name,
+        'sku': item.sku or '—',
+        'warehouse': item_summary['warehouse_code'],
+        'warehouse_name': item_summary['warehouse_name'],
+        'opening_stock': float(item_summary['opening_stock']),
+        'total_stock_in': float(item_summary['stock_in']),
+        'total_stock_out': float(item_summary['stock_out']),
+        'transfer_in': float(item_summary['transfer_in']),
+        'transfer_out': float(item_summary['transfer_out']),
+        'available_stock': float(item_summary['available_stock']),
+        'unit': item.unit or 'nos',
+        'rate': float(item.purchase_price),
+        'stock_value': float(item_summary['stock_value']),
+        'calculation_formula': 'Available Stock = Opening Stock + Stock In - Stock Out + Transfer In - Transfer Out',
+        'status': item_summary['status'],
+        'recent_movements': recent_movements
+    }
+
+
+def get_stock_in_report_data(org, warehouse=None, start=None, end=None, item_id=None):
+    from .models import StockMovement
+    qs = StockMovement.objects.filter(organization=org) if org else StockMovement.objects.none()
+    qs = qs.filter(Q(kind__in=['purchase', 'sale_void']) | Q(kind='adjustment', change__gt=0))
+    if warehouse:
+        qs = qs.filter(Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse))
+    if start:
+        qs = qs.filter(date__gte=start)
+    if end:
+        qs = qs.filter(date__lte=end)
+    if item_id:
+        qs = qs.filter(item_id=item_id)
+
+    rows = []
+    tot_qty = Decimal('0.000')
+    tot_val = Decimal('0.00')
+    for m in qs.select_related('item', 'warehouse').order_by('-date', '-id'):
+        it = m.item
+        qty = abs(m.change or Decimal('0.000'))
+        val = (qty * it.purchase_price).quantize(Decimal('0.01'))
+        tot_qty += qty
+        tot_val += val
+        rows.append({
+            'date': m.date.strftime('%d/%m/%Y') if m.date else '',
+            'item': it.name,
+            'sku': it.sku or '—',
+            'warehouse': m.warehouse_code or (m.warehouse.code if m.warehouse else 'WH-MAIN'),
+            'type': m.get_kind_display(),
+            'reference': m.reference or '—',
+            'quantity': format(qty.normalize(), 'f'),
+            'unit': it.unit or 'nos',
+            'rate': float(it.purchase_price),
+            'value': float(val),
+            'reason': m.reason or 'Stock Inward'
+        })
+    return {
+        'results': rows,
+        'total_quantity': float(tot_qty),
+        'total_value': float(tot_val),
+        'count': len(rows)
+    }
+
+
+def get_stock_out_report_data(org, warehouse=None, start=None, end=None, item_id=None):
+    from .models import StockMovement
+    qs = StockMovement.objects.filter(organization=org) if org else StockMovement.objects.none()
+    qs = qs.filter(Q(kind__in=['sale', 'purchase_void']) | Q(kind='adjustment', change__lt=0))
+    if warehouse:
+        qs = qs.filter(Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse))
+    if start:
+        qs = qs.filter(date__gte=start)
+    if end:
+        qs = qs.filter(date__lte=end)
+    if item_id:
+        qs = qs.filter(item_id=item_id)
+
+    rows = []
+    tot_qty = Decimal('0.000')
+    tot_val = Decimal('0.00')
+    for m in qs.select_related('item', 'warehouse').order_by('-date', '-id'):
+        it = m.item
+        qty = abs(m.change or Decimal('0.000'))
+        val = (qty * it.purchase_price).quantize(Decimal('0.01'))
+        tot_qty += qty
+        tot_val += val
+        rows.append({
+            'date': m.date.strftime('%d/%m/%Y') if m.date else '',
+            'item': it.name,
+            'sku': it.sku or '—',
+            'warehouse': m.warehouse_code or (m.warehouse.code if m.warehouse else 'WH-MAIN'),
+            'type': m.get_kind_display(),
+            'reference': m.reference or '—',
+            'quantity': format(qty.normalize(), 'f'),
+            'unit': it.unit or 'nos',
+            'rate': float(it.purchase_price),
+            'value': float(val),
+            'reason': m.reason or 'Stock Outward'
+        })
+    return {
+        'results': rows,
+        'total_quantity': float(tot_qty),
+        'total_value': float(tot_val),
+        'count': len(rows)
+    }
+
+
+def get_stock_transfer_report_data(org, warehouse=None, start=None, end=None, item_id=None):
+    from .models import StockMovement
+    qs = StockMovement.objects.filter(organization=org, kind='transfer') if org else StockMovement.objects.none()
+    if warehouse:
+        qs = qs.filter(
+            Q(warehouse_code=warehouse) | Q(warehouse__code=warehouse) |
+            Q(to_warehouse_code=warehouse) | Q(to_warehouse__code=warehouse)
+        )
+    if start:
+        qs = qs.filter(date__gte=start)
+    if end:
+        qs = qs.filter(date__lte=end)
+    if item_id:
+        qs = qs.filter(item_id=item_id)
+
+    rows = []
+    tot_qty = Decimal('0.000')
+    for m in qs.select_related('item', 'warehouse', 'to_warehouse').order_by('-date', '-id'):
+        it = m.item
+        qty = abs(m.change or Decimal('0.000'))
+        tot_qty += qty
+        rows.append({
+            'date': m.date.strftime('%d/%m/%Y') if m.date else '',
+            'reference': m.reference or '—',
+            'item': it.name,
+            'sku': it.sku or '—',
+            'from_warehouse': m.warehouse_code or (m.warehouse.code if m.warehouse else '—'),
+            'to_warehouse': m.to_warehouse_code or (m.to_warehouse.code if m.to_warehouse else '—'),
+            'quantity': format(qty.normalize(), 'f'),
+            'unit': it.unit or 'nos',
+            'reason': m.reason or 'Warehouse Transfer',
+            'notes': m.notes or '—'
+        })
+    return {
+        'results': rows,
+        'total_quantity': float(tot_qty),
+        'count': len(rows)
+    }
+

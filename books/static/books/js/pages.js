@@ -1410,13 +1410,19 @@ const LISTS = {
       { h: 'Warehouse Code', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || 'WH-MAIN')}</span>` },
       { h: 'Item', s: 'name', f: r => esc(r.name) },
       { h: 'SKU', s: 'sku', f: r => esc(r.sku || '—') },
-      { h: 'On hand', s: 'stock', r: 1, f: r => qty(r.stock) + ' ' + esc(r.unit) },
-      { h: 'Reorder at', r: 1, f: r => r.reorder_level == null ? '—' : qty(r.reorder_level) },
+      { h: 'Opening Stock', s: 'opening_stock', r: 1, f: r => `<button class="lk" type="button" data-act="preview-opening" data-id="${r.id}" title="Click to view Opening Stock Details" style="font-weight:600;color:var(--p, #2563eb);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;">${qty(r.opening_stock || 0)}</button>` },
+      { h: 'Stock In', s: 'stock_in', r: 1, f: r => `<span class="up" style="font-weight:600;color:#10b981;">+${qty(r.stock_in || 0)}</span>` },
+      { h: 'Stock Out', s: 'stock_out', r: 1, f: r => `<span class="dn" style="font-weight:600;color:#ef4444;">-${qty(r.stock_out || 0)}</span>` },
+      { h: 'Transfer In', s: 'transfer_in', r: 1, f: r => `<span class="up" style="font-weight:600;color:#0ea5e9;">+${qty(r.transfer_in || 0)}</span>` },
+      { h: 'Transfer Out', s: 'transfer_out', r: 1, f: r => `<span class="dn" style="font-weight:600;color:#f97316;">-${qty(r.transfer_out || 0)}</span>` },
+      { h: 'Current Stock / In Hand', s: 'stock', r: 1, f: r => `<button class="lk" type="button" data-act="preview-stock" data-id="${r.id}" title="Click to view Stock in Hand & Balance Details" style="font-weight:700;color:var(--p, #2563eb);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;">${qty(r.stock_in_hand != null ? r.stock_in_hand : (r.stock || 0))} ${esc(r.unit || '')}</button>` },
+      { h: 'Closing Stock', s: 'closing_stock', r: 1, f: r => `<span style="font-weight:600;">${qty(r.closing_stock != null ? r.closing_stock : (r.stock || 0))}</span>` },
       { h: 'Unit cost', ...money(r => inr(r.purchase_price)) },
-      { h: 'Stock value', ...money(r => inr(r.valuation)) },
+      { h: 'Total Stock Value', ...money(r => inr(r.stock_value != null ? r.stock_value : r.valuation)) },
       { h: 'Status', f: r => badge(r.status) }
     ],
-    actions: () => [['adjust', 'Adjust']], onAction: (a, r) => adjustForm(r.id),
+    actions: () => [['adjust', 'Adjust'], ['preview-opening', 'Opening Preview'], ['preview-stock', 'Stock in Hand Preview']],
+    onAction: (a, r) => a === 'preview-opening' ? previewOpeningStockModal(r.id, r.warehouse_code) : a === 'preview-stock' ? previewStockInHandModal(r.id, r.warehouse_code) : a === 'adjust' ? adjustForm(r.id) : null,
   },
   adjustments: {
     api: 'stock-adjustments', title: 'Stock Adjustments', bc: 'Inventory', newLabel: 'New adjustment', onNew: () => adjustForm(), ordering: '-date', empty: 'No stock adjustments yet.',
@@ -1435,7 +1441,7 @@ const LISTS = {
     ],
   },
   movements: {
-    api: 'stock-movements', title: 'Stock Movement', bc: 'Inventory', newLabel: 'Move stock', onNew: () => stockMoveModal(), ordering: '-date', empty: 'No stock movements yet.',
+    api: 'stock-movements', title: 'Stock Movement', bc: 'Reports', newLabel: 'Move stock', onNew: () => stockMoveModal(), ordering: '-date', empty: 'No stock movements yet.',
     filters: [
       { name: 'kind', label: 'Type', opts: [['', 'All types'], ['transfer', 'Warehouse Transfers'], ['opening', 'Opening stock'], ['sale', 'Sales'], ['sale_void', 'Sales voided'], ['purchase', 'Purchases'], ['purchase_void', 'Purchases voided'], ['adjustment', 'Adjustments']] },
       { name: 'warehouse', label: 'Warehouse', loadOpts: async () => [['', 'All Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
@@ -5358,34 +5364,80 @@ async function cashFlowPage(root) {
 }
 
 function reportsCenterPage(root) {
-  const cards = [
-    { title: 'Business Overview (P&L)', sub: 'Gross profit, operating margin, net profit breakdown', href: '#/reports/business-overview', icon: '📊' },
+  const reportingCards = [
+    { title: 'Stock Movement', sub: 'Comprehensive stock movement history, transfers, stock in/out, and warehouse tracking', href: '#/reports/stock-movement', icon: '🔄' },
+    { title: 'Inventory Summary', sub: 'Integrated stock summary with opening, inward, outward, transfers, and total valuation', href: '#/reports/inventory-summary', icon: '📦' },
+    { title: 'Stock In Report', sub: 'Detailed breakdown of all inbound stock from purchases, sales returns, and positive adjustments', href: '#/reports/stock-in-report', icon: '📥' },
+    { title: 'Stock Out Report', sub: 'Complete register of stock dispatched for invoices, purchase returns, and negative adjustments', href: '#/reports/stock-out-report', icon: '📤' },
+    { title: 'Stock Transfer Report', sub: 'Inter-warehouse stock relocation records with source and destination warehouse audit', href: '#/reports/stock-transfer-report', icon: '🚚' },
+    { title: 'Opening Stock Report', sub: 'Product-wise and warehouse-wise opening stock balances, quantities, rates, and values', href: '#/reports/opening-stock-report', icon: '📋' },
+    { title: 'Stock in Hand Report', sub: 'Available stock balances, closing quantities, and stock valuation per warehouse and product', href: '#/reports/stock-in-hand-report', icon: '📊' },
+  ];
+
+  const financialCards = [
+    { title: 'Business Overview (P&L)', sub: 'Gross profit, operating margin, net profit breakdown', href: '#/reports/business-overview', icon: '📈' },
     { title: 'Trial Balance', sub: 'Checks whether total debits and credits match in the trial balance.', href: '#/reports/accounting-reports', icon: '⚖️' },
     { title: 'Statement of Cash Flows', sub: 'Operating, investing, and financing cash flows', href: '#/reports/cash-flow-reports', icon: '💸' },
-    { title: 'Sales Reports by Customer', sub: 'Customer-wise turnover and GST breakdown', href: '#/reports/sales-reports', icon: '📈' },
+    { title: 'Sales Reports by Customer', sub: 'Customer-wise turnover and GST breakdown', href: '#/reports/sales-reports', icon: '👥' },
     { title: 'Purchases Reports by Vendor', sub: 'Vendor bill volume and expenditure trends', href: '#/reports/purchase-reports', icon: '🛒' },
     { title: 'Accounts Receivable Aging', sub: 'Outstanding invoices bucketed by overdue duration', href: '#/reports/receivables', icon: '⏳' },
     { title: 'Accounts Payable Aging', sub: 'Vendor payables classified by payment terms', href: '#/reports/payables', icon: '📅' },
-    { title: 'Inventory Valuation Summary', sub: 'Stock on hand, cost valuation, and reorder levels', href: '#/reports/inventory-reports', icon: '📦' },
     { title: 'Statutory GST Reports', sub: 'GSTR-1, GSTR-3B, and Input Tax Credit returns', href: '#/reports/tax-reports', icon: '🏛️' },
   ];
 
   root.innerHTML = `
     <div class="bc">Home / Reports</div>
     <div class="hd">
-      <h1>Financial Reports Center</h1>
-      <div class="sub" style="margin-top:2px;">Enterprise general ledger reporting, statutory compliance and management accounting statements</div>
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Reports Center</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:12px;padding:3px 10px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:4px;">Enterprise stock movements, inventory traceability, and financial accounting reports</div>
+      </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:16px;">
-      ${cards.map(c => `
-        <a href="${c.href}" class="card" style="padding:18px;display:flex;align-items:flex-start;gap:14px;text-decoration:none;transition:transform 0.15s,box-shadow 0.15s;">
-          <div style="font-size:26px;flex-shrink:0;">${c.icon}</div>
-          <div>
-            <div style="font-weight:700;color:var(--tx);font-size:15px;margin-bottom:4px;">${esc(c.title)}</div>
-            <div class="sub" style="font-size:12px;line-height:1.4;">${esc(c.sub)}</div>
-          </div>
-        </a>
-      `).join('')}
+
+    <!-- Reporting Section (Inventory & Stock Movement) -->
+    <div style="margin-top:20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h2 style="font-size:15px;font-weight:700;margin:0;color:var(--tx);">Inventory & Stock Movement</h2>
+          <span class="pastel-chip chip-sky" style="font-size:11px;font-weight:700;">Reporting</span>
+        </div>
+        <span style="font-size:12px;color:var(--tx-muted);">7 Reports</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;">
+        ${reportingCards.map(c => `
+          <a href="${c.href}" class="card" style="padding:16px 18px;display:flex;align-items:flex-start;gap:14px;text-decoration:none;transition:transform 0.15s,box-shadow 0.15s;border:1px solid var(--border);">
+            <div style="font-size:24px;flex-shrink:0;">${c.icon}</div>
+            <div>
+              <div style="font-weight:700;color:var(--tx);font-size:14px;margin-bottom:3px;display:flex;align-items:center;gap:6px;">
+                ${esc(c.title)}
+              </div>
+              <div class="sub" style="font-size:12px;line-height:1.4;">${esc(c.sub)}</div>
+            </div>
+          </a>
+        `).join('')}
+      </div>
+    </div>
+
+    <!-- Financial Statements Section -->
+    <div style="margin-top:28px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+        <h2 style="font-size:15px;font-weight:700;margin:0;color:var(--tx);">Financial & Management Statements</h2>
+        <span style="font-size:12px;color:var(--tx-muted);">Accounting & Tax</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;">
+        ${financialCards.map(c => `
+          <a href="${c.href}" class="card" style="padding:16px 18px;display:flex;align-items:flex-start;gap:14px;text-decoration:none;transition:transform 0.15s,box-shadow 0.15s;border:1px solid var(--border);">
+            <div style="font-size:24px;flex-shrink:0;">${c.icon}</div>
+            <div>
+              <div style="font-weight:700;color:var(--tx);font-size:14px;margin-bottom:3px;">${esc(c.title)}</div>
+              <div class="sub" style="font-size:12px;line-height:1.4;">${esc(c.sub)}</div>
+            </div>
+          </a>
+        `).join('')}
+      </div>
     </div>
   `;
 }
@@ -5424,6 +5476,882 @@ async function reportTablePage(root, reportName, title, bc) {
     `;
   } catch (e) { $('#rt-table', root).innerHTML = errBox(e.message, true); }
 }
+
+async function previewOpeningStockModal(itemId, warehouse) {
+  try {
+    const url = `inventory/opening-stock-preview/?item_id=${encodeURIComponent(itemId)}${warehouse ? '&warehouse=' + encodeURIComponent(warehouse) : ''}`;
+    const data = await api(url);
+    const body = `
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #3b82f6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Opening Quantity</div>
+          <div style="font-size:20px;font-weight:700;color:var(--tx);margin-top:4px;">${qty(data.opening_quantity)} <small style="font-size:12px;color:var(--tx-muted);font-weight:500;">${esc(data.unit)}</small></div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #10b981;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Unit Cost / Rate</div>
+          <div style="font-size:20px;font-weight:700;color:var(--tx);margin-top:4px;">${inr(data.rate)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #8b5cf6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Opening Stock Value</div>
+          <div style="font-size:20px;font-weight:700;color:#10b981;margin-top:4px;">${inr(data.opening_stock_value)}</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:16px;margin-bottom:16px;">
+        <h4 style="margin:0 0 12px;font-size:13px;font-weight:700;text-transform:uppercase;color:var(--tx-muted);letter-spacing:0.04em;">Product & Warehouse Information</h4>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;font-size:13px;">
+          <div><span style="color:var(--tx-muted);">Product Name:</span> <b>${esc(data.product_name)}</b></div>
+          <div><span style="color:var(--tx-muted);">SKU / Item Code:</span> <code>${esc(data.sku)}</code></div>
+          <div><span style="color:var(--tx-muted);">Warehouse:</span> <span class="pastel-chip chip-lavender" style="font-weight:600;">${esc(data.warehouse || 'WH-MAIN')}</span> ${data.warehouse_name ? `<small>(${esc(data.warehouse_name)})</small>` : ''}</div>
+          <div><span style="color:var(--tx-muted);">Transaction Date:</span> <b>${esc(data.transaction_date || '—')}</b></div>
+          <div><span style="color:var(--tx-muted);">Unit of Measurement:</span> <b>${esc(data.unit)}</b></div>
+          <div><span style="color:var(--tx-muted);">Opening Valuation:</span> <b style="color:#10b981;">${inr(data.opening_stock_value)}</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="tb" style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+          <h4 style="margin:0;font-size:13px;font-weight:700;">Product-wise Opening Stock Details</h4>
+          <span style="font-size:12px;color:var(--tx-muted);">Total Org Opening: <b>${qty(data.total_opening_quantity)}</b> (Valuation: <b>${inr(data.total_opening_value)}</b>)</span>
+        </div>
+        <div class="tw">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Reference</th>
+                <th>Warehouse</th>
+                <th style="text-align:right;">Opening Qty</th>
+                <th style="text-align:right;">Rate</th>
+                <th style="text-align:right;">Opening Value</th>
+                <th>Notes / Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(data.product_details && data.product_details.length) ? data.product_details.map(d => `
+                <tr>
+                  <td>${esc(d.date || '—')}</td>
+                  <td><code>${esc(d.reference || '—')}</code></td>
+                  <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(d.warehouse)}</span></td>
+                  <td style="text-align:right;font-weight:600;">${qty(d.quantity)} ${esc(data.unit)}</td>
+                  <td style="text-align:right;">${inr(d.rate)}</td>
+                  <td style="text-align:right;font-weight:600;color:#10b981;">${inr(d.value)}</td>
+                  <td><small style="color:var(--tx-muted);">${esc(d.notes || '—')}</small></td>
+                </tr>
+              `).join('') : `<tr><td colspan="7" class="empty" style="text-align:center;padding:24px;">No opening stock entries recorded for this item.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    Modal.open({
+      title: `Opening Stock Details - ${data.product_name}`,
+      body,
+      footer: `<button type="button" class="btn p" data-close>Close</button>`,
+      wide: true,
+      dialog: true
+    });
+  } catch (err) {
+    toast(err.message || 'Failed to load opening stock preview', 'err');
+  }
+}
+window.previewOpeningStockModal = previewOpeningStockModal;
+
+async function previewStockInHandModal(itemId, warehouse) {
+  try {
+    const url = `inventory/stock-in-hand-preview/?item_id=${encodeURIComponent(itemId)}${warehouse ? '&warehouse=' + encodeURIComponent(warehouse) : ''}`;
+    const data = await api(url);
+    const body = `
+      <div style="background:var(--bg-subtle, #f8fafc);border:1px solid var(--border);border-left:4px solid var(--accent, #2563eb);padding:14px 18px;border-radius:8px;margin-bottom:16px;">
+        <div style="font-weight:700;font-size:13px;color:var(--tx);margin-bottom:4px;">Stock Balance Formula:</div>
+        <div style="font-size:13px;color:var(--tx);font-family:monospace;background:rgba(0,0,0,0.03);padding:6px 10px;border-radius:4px;display:inline-block;">
+          Available Stock = Opening Stock + Stock In - Stock Out + Transfer In - Transfer Out
+        </div>
+        <div style="font-size:14px;margin-top:8px;font-weight:600;color:var(--tx);">
+          <span style="color:#2563eb;">${qty(data.available_stock)} ${esc(data.unit)}</span> =
+          ${qty(data.opening_stock)} <small style="color:var(--tx-muted);">(Opening)</small>
+          + ${qty(data.total_stock_in)} <small style="color:var(--tx-muted);">(In)</small>
+          - ${qty(data.total_stock_out)} <small style="color:var(--tx-muted);">(Out)</small>
+          + ${qty(data.transfer_in)} <small style="color:var(--tx-muted);">(Transfer In)</small>
+          - ${qty(data.transfer_out)} <small style="color:var(--tx-muted);">(Transfer Out)</small>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #2563eb;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Available Stock / In Hand</div>
+          <div style="font-size:22px;font-weight:700;color:#2563eb;margin-top:4px;">${qty(data.available_stock)} <small style="font-size:13px;font-weight:500;">${esc(data.unit)}</small></div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #10b981;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Stock Value</div>
+          <div style="font-size:22px;font-weight:700;color:#10b981;margin-top:4px;">${inr(data.stock_value)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #f59e0b;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Unit Cost Rate</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${inr(data.rate)}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="tb" style="padding:10px 14px;border-bottom:1px solid var(--border);">
+          <h4 style="margin:0;font-size:13px;font-weight:700;">Stock Breakdown & Quantities</h4>
+        </div>
+        <div class="tw">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th>Product Name</th>
+                <th>SKU</th>
+                <th>Warehouse</th>
+                <th style="text-align:right;">Opening</th>
+                <th style="text-align:right;">Stock In</th>
+                <th style="text-align:right;">Stock Out</th>
+                <th style="text-align:right;">Transfer In</th>
+                <th style="text-align:right;">Transfer Out</th>
+                <th style="text-align:right;">Available Stock</th>
+                <th style="text-align:right;">Stock Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>${esc(data.product_name)}</b></td>
+                <td><code>${esc(data.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender">${esc(data.warehouse || 'WH-MAIN')}</span></td>
+                <td style="text-align:right;">${qty(data.opening_stock)}</td>
+                <td style="text-align:right;color:#10b981;font-weight:600;">+${qty(data.total_stock_in)}</td>
+                <td style="text-align:right;color:#ef4444;font-weight:600;">-${qty(data.total_stock_out)}</td>
+                <td style="text-align:right;color:#10b981;">+${qty(data.transfer_in)}</td>
+                <td style="text-align:right;color:#ef4444;">-${qty(data.transfer_out)}</td>
+                <td style="text-align:right;font-weight:700;color:#2563eb;">${qty(data.available_stock)} ${esc(data.unit)}</td>
+                <td style="text-align:right;font-weight:700;color:#10b981;">${inr(data.stock_value)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="tb" style="padding:10px 14px;border-bottom:1px solid var(--border);">
+          <h4 style="margin:0;font-size:13px;font-weight:700;">Recent Stock Movements & Traceability</h4>
+        </div>
+        <div class="tw">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Reference</th>
+                <th>Warehouse</th>
+                <th>Change</th>
+                <th>Balance After</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(data.recent_movements && data.recent_movements.length) ? data.recent_movements.map(m => `
+                <tr>
+                  <td>${esc(m.date)}</td>
+                  <td><span class="st in">${esc(m.type)}</span></td>
+                  <td><code>${esc(m.reference)}</code></td>
+                  <td>${m.to_warehouse ? `<span class="pastel-chip chip-sky">${esc(m.from_warehouse)} → ${esc(m.to_warehouse)}</span>` : `<span class="pastel-chip chip-lavender">${esc(m.warehouse)}</span>`}</td>
+                  <td style="font-weight:600;" class="${m.change.startsWith('+') ? 'up' : 'dn'}">${esc(m.change)}</td>
+                  <td style="font-weight:600;">${qty(m.balance_after)}</td>
+                  <td><small style="color:var(--tx-muted);">${esc(m.reason)}</small></td>
+                </tr>
+              `).join('') : `<tr><td colspan="7" class="empty" style="text-align:center;padding:24px;">No movements recorded yet for this item.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    Modal.open({
+      title: `Stock in Hand & Balance - ${data.product_name}`,
+      body,
+      footer: `<button type="button" class="btn p" data-close>Close</button>`,
+      wide: true,
+      dialog: true
+    });
+  } catch (err) {
+    toast(err.message || 'Failed to load stock in hand preview', 'err');
+  }
+}
+window.previewStockInHandModal = previewStockInHandModal;
+
+async function stockInReportPage(root) {
+  PAGE.reload = () => stockInReportPage(root);
+  const warehouses = await api('lookup/warehouses/').catch(() => []);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Stock In Report</div>
+    <div class="hd">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Stock In Report</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:11px;padding:2px 8px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:2px;">Complete record of all inventory inward receipts, purchases, sales returns, and positive adjustments</div>
+      </div>
+      <div class="act">
+        <button class="btn" id="btn-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--bg-subtle, #f8fafc);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">Warehouse:</label>
+        <select class="in" id="rep-wh" style="width:160px;">
+          <option value="">All Warehouses</option>
+          ${warehouses.map(w => `<option value="${esc(w.code)}">${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">From:</label>
+        <input class="in" type="date" id="rep-start" style="width:130px;">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">To:</label>
+        <input class="in" type="date" id="rep-end" style="width:130px;">
+      </div>
+      <div style="flex:1;min-width:180px;">
+        <input class="in" type="search" id="rep-search" placeholder="Search item, SKU, reference…">
+      </div>
+      <button class="btn p" id="rep-apply" type="button">Apply Filter</button>
+    </div>
+
+    <div id="rep-kpis" style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;"></div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="tw" id="rep-table">${spinner}</div>
+    </div>
+  `;
+
+  async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const start = $('#rep-start', root).value;
+    const end = $('#rep-end', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/stock-in-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+    if (start) url += `start=${encodeURIComponent(start)}&`;
+    if (end) url += `end=${encodeURIComponent(end)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.item || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.reference || '').toLowerCase().includes(q));
+      }
+
+      const totQty = rows.reduce((acc, r) => acc + (parseFloat(r.quantity) || 0), 0);
+      const totVal = rows.reduce((acc, r) => acc + (parseFloat(r.value) || 0), 0);
+
+      $('#rep-kpis', root).innerHTML = `
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #10b981;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Inward Quantity</div>
+          <div style="font-size:22px;font-weight:700;color:#10b981;margin-top:4px;">${qty(totQty)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #3b82f6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Inward Value</div>
+          <div style="font-size:22px;font-weight:700;color:#3b82f6;margin-top:4px;">${inr(totVal)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #8b5cf6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Inward Entries</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${rows.length}</div>
+        </div>
+      `;
+
+      if (!rows.length) {
+        $('#rep-table', root).innerHTML = `<div class="empty" style="padding:32px;text-align:center;">No stock inward records found matching the criteria.</div>`;
+        return;
+      }
+
+      $('#rep-table', root).innerHTML = `
+        <table style="width:100%;">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Item Name</th>
+              <th>SKU</th>
+              <th>Warehouse</th>
+              <th>Type</th>
+              <th>Reference</th>
+              <th style="text-align:right;">In Qty</th>
+              <th style="text-align:right;">Unit Rate</th>
+              <th style="text-align:right;">Total In Value</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>${esc(r.date)}</td>
+                <td><b>${esc(r.item)}</b></td>
+                <td><code>${esc(r.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(r.warehouse)}</span></td>
+                <td><span class="st in">${esc(r.type)}</span></td>
+                <td><code>${esc(r.reference)}</code></td>
+                <td style="text-align:right;font-weight:700;color:#10b981;">+${qty(r.quantity)} ${esc(r.unit)}</td>
+                <td style="text-align:right;">${inr(r.rate)}</td>
+                <td style="text-align:right;font-weight:700;color:#10b981;">${inr(r.value)}</td>
+                <td><small style="color:var(--tx-muted);">${esc(r.reason)}</small></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      $('#rep-table', root).innerHTML = errBox(e.message, true);
+    }
+  }
+
+  $('#rep-apply', root).addEventListener('click', loadData);
+  $('#rep-search', root).addEventListener('input', () => { clearTimeout(root._st); root._st = setTimeout(loadData, 300); });
+  $('#btn-export-csv', root).addEventListener('click', () => exportTableToCsv($('#rep-table table', root), `stock_in_report_${iso(new Date())}.csv`));
+  loadData();
+}
+window.stockInReportPage = stockInReportPage;
+
+async function stockOutReportPage(root) {
+  PAGE.reload = () => stockOutReportPage(root);
+  const warehouses = await api('lookup/warehouses/').catch(() => []);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Stock Out Report</div>
+    <div class="hd">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Stock Out Report</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:11px;padding:2px 8px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:2px;">Complete record of all inventory dispatches, sales deliveries, purchase returns, and negative adjustments</div>
+      </div>
+      <div class="act">
+        <button class="btn" id="btn-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--bg-subtle, #f8fafc);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">Warehouse:</label>
+        <select class="in" id="rep-wh" style="width:160px;">
+          <option value="">All Warehouses</option>
+          ${warehouses.map(w => `<option value="${esc(w.code)}">${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">From:</label>
+        <input class="in" type="date" id="rep-start" style="width:130px;">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">To:</label>
+        <input class="in" type="date" id="rep-end" style="width:130px;">
+      </div>
+      <div style="flex:1;min-width:180px;">
+        <input class="in" type="search" id="rep-search" placeholder="Search item, SKU, reference…">
+      </div>
+      <button class="btn p" id="rep-apply" type="button">Apply Filter</button>
+    </div>
+
+    <div id="rep-kpis" style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;"></div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="tw" id="rep-table">${spinner}</div>
+    </div>
+  `;
+
+  async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const start = $('#rep-start', root).value;
+    const end = $('#rep-end', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/stock-out-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+    if (start) url += `start=${encodeURIComponent(start)}&`;
+    if (end) url += `end=${encodeURIComponent(end)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.item || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.reference || '').toLowerCase().includes(q));
+      }
+
+      const totQty = rows.reduce((acc, r) => acc + (parseFloat(r.quantity) || 0), 0);
+      const totVal = rows.reduce((acc, r) => acc + (parseFloat(r.value) || 0), 0);
+
+      $('#rep-kpis', root).innerHTML = `
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #ef4444;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Outward Quantity</div>
+          <div style="font-size:22px;font-weight:700;color:#ef4444;margin-top:4px;">${qty(totQty)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #f97316;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Outward Value</div>
+          <div style="font-size:22px;font-weight:700;color:#f97316;margin-top:4px;">${inr(totVal)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #8b5cf6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Outward Entries</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${rows.length}</div>
+        </div>
+      `;
+
+      if (!rows.length) {
+        $('#rep-table', root).innerHTML = `<div class="empty" style="padding:32px;text-align:center;">No stock outward records found matching the criteria.</div>`;
+        return;
+      }
+
+      $('#rep-table', root).innerHTML = `
+        <table style="width:100%;">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Item Name</th>
+              <th>SKU</th>
+              <th>Warehouse</th>
+              <th>Type</th>
+              <th>Reference</th>
+              <th style="text-align:right;">Out Qty</th>
+              <th style="text-align:right;">Unit Rate</th>
+              <th style="text-align:right;">Total Out Value</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>${esc(r.date)}</td>
+                <td><b>${esc(r.item)}</b></td>
+                <td><code>${esc(r.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(r.warehouse)}</span></td>
+                <td><span class="st ba">${esc(r.type)}</span></td>
+                <td><code>${esc(r.reference)}</code></td>
+                <td style="text-align:right;font-weight:700;color:#ef4444;">-${qty(r.quantity)} ${esc(r.unit)}</td>
+                <td style="text-align:right;">${inr(r.rate)}</td>
+                <td style="text-align:right;font-weight:700;color:#ef4444;">${inr(r.value)}</td>
+                <td><small style="color:var(--tx-muted);">${esc(r.reason)}</small></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      $('#rep-table', root).innerHTML = errBox(e.message, true);
+    }
+  }
+
+  $('#rep-apply', root).addEventListener('click', loadData);
+  $('#rep-search', root).addEventListener('input', () => { clearTimeout(root._st); root._st = setTimeout(loadData, 300); });
+  $('#btn-export-csv', root).addEventListener('click', () => exportTableToCsv($('#rep-table table', root), `stock_out_report_${iso(new Date())}.csv`));
+  loadData();
+}
+window.stockOutReportPage = stockOutReportPage;
+
+async function stockTransferReportPage(root) {
+  PAGE.reload = () => stockTransferReportPage(root);
+  const warehouses = await api('lookup/warehouses/').catch(() => []);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Stock Transfer Report</div>
+    <div class="hd">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Stock Transfer Report</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:11px;padding:2px 8px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:2px;">Audit trail of inter-warehouse stock movements, relocations, and transit tracking</div>
+      </div>
+      <div class="act">
+        <button class="btn p" id="btn-new-transfer" type="button"><i class="fa-solid fa-plus"></i> Move Stock</button>
+        <button class="btn" id="btn-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--bg-subtle, #f8fafc);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">Warehouse:</label>
+        <select class="in" id="rep-wh" style="width:160px;">
+          <option value="">All Warehouses</option>
+          ${warehouses.map(w => `<option value="${esc(w.code)}">${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">From:</label>
+        <input class="in" type="date" id="rep-start" style="width:130px;">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">To:</label>
+        <input class="in" type="date" id="rep-end" style="width:130px;">
+      </div>
+      <div style="flex:1;min-width:180px;">
+        <input class="in" type="search" id="rep-search" placeholder="Search item, SKU, transfer reference…">
+      </div>
+      <button class="btn p" id="rep-apply" type="button">Apply Filter</button>
+    </div>
+
+    <div id="rep-kpis" style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;"></div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="tw" id="rep-table">${spinner}</div>
+    </div>
+  `;
+
+  $('#btn-new-transfer', root).addEventListener('click', () => stockMoveModal());
+
+  async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const start = $('#rep-start', root).value;
+    const end = $('#rep-end', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/stock-transfer-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+    if (start) url += `start=${encodeURIComponent(start)}&`;
+    if (end) url += `end=${encodeURIComponent(end)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.item || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.reference || '').toLowerCase().includes(q));
+      }
+
+      const totQty = rows.reduce((acc, r) => acc + (parseFloat(r.quantity) || 0), 0);
+
+      $('#rep-kpis', root).innerHTML = `
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #0ea5e9;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Transferred Qty</div>
+          <div style="font-size:22px;font-weight:700;color:#0ea5e9;margin-top:4px;">${qty(totQty)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #8b5cf6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Transfer Events</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${rows.length}</div>
+        </div>
+      `;
+
+      if (!rows.length) {
+        $('#rep-table', root).innerHTML = `<div class="empty" style="padding:32px;text-align:center;">No stock transfer records found matching the criteria.</div>`;
+        return;
+      }
+
+      $('#rep-table', root).innerHTML = `
+        <table style="width:100%;">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Reference</th>
+              <th>Item Name</th>
+              <th>SKU</th>
+              <th>Source Warehouse</th>
+              <th>Destination Warehouse</th>
+              <th style="text-align:right;">Transferred Qty</th>
+              <th>Reason</th>
+              <th>Notes / Transit</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>${esc(r.date)}</td>
+                <td><code>${esc(r.reference)}</code></td>
+                <td><b>${esc(r.item)}</b></td>
+                <td><code>${esc(r.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(r.from_warehouse)}</span></td>
+                <td><span class="pastel-chip chip-sky" style="font-size:11px;">${esc(r.to_warehouse)}</span></td>
+                <td style="text-align:right;font-weight:700;color:#0ea5e9;">${qty(r.quantity)} ${esc(r.unit)}</td>
+                <td>${esc(r.reason)}</td>
+                <td><small style="color:var(--tx-muted);">${esc(r.notes || '—')}</small></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      $('#rep-table', root).innerHTML = errBox(e.message, true);
+    }
+  }
+
+  $('#rep-apply', root).addEventListener('click', loadData);
+  $('#rep-search', root).addEventListener('input', () => { clearTimeout(root._st); root._st = setTimeout(loadData, 300); });
+  $('#btn-export-csv', root).addEventListener('click', () => exportTableToCsv($('#rep-table table', root), `stock_transfer_report_${iso(new Date())}.csv`));
+  loadData();
+}
+window.stockTransferReportPage = stockTransferReportPage;
+
+async function openingStockReportPage(root) {
+  PAGE.reload = () => openingStockReportPage(root);
+  const warehouses = await api('lookup/warehouses/').catch(() => []);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Opening Stock Report</div>
+    <div class="hd">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Opening Stock Report</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:11px;padding:2px 8px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:2px;">Initial inventory balances, opening quantities, cost rates, and opening asset valuation per product</div>
+      </div>
+      <div class="act">
+        <button class="btn" id="btn-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--bg-subtle, #f8fafc);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">Warehouse:</label>
+        <select class="in" id="rep-wh" style="width:160px;">
+          <option value="">All Warehouses</option>
+          ${warehouses.map(w => `<option value="${esc(w.code)}">${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px;">
+        <input class="in" type="search" id="rep-search" placeholder="Search product name, SKU, warehouse…">
+      </div>
+      <button class="btn p" id="rep-apply" type="button">Apply Filter</button>
+    </div>
+
+    <div id="rep-kpis" style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;"></div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="tw" id="rep-table">${spinner}</div>
+    </div>
+  `;
+
+  async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/opening-stock-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.product_name || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.warehouse || '').toLowerCase().includes(q));
+      }
+
+      const totQty = rows.reduce((acc, r) => acc + (parseFloat(r.opening_quantity) || 0), 0);
+      const totVal = rows.reduce((acc, r) => acc + (parseFloat(r.opening_stock_value) || 0), 0);
+
+      $('#rep-kpis', root).innerHTML = `
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #3b82f6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Opening Quantity</div>
+          <div style="font-size:22px;font-weight:700;color:#3b82f6;margin-top:4px;">${qty(totQty)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #10b981;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Opening Value</div>
+          <div style="font-size:22px;font-weight:700;color:#10b981;margin-top:4px;">${inr(totVal)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #8b5cf6;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Tracked Goods Items</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${rows.length}</div>
+        </div>
+      `;
+
+      if (!rows.length) {
+        $('#rep-table', root).innerHTML = `<div class="empty" style="padding:32px;text-align:center;">No opening stock records found.</div>`;
+        return;
+      }
+
+      $('#rep-table', root).innerHTML = `
+        <table style="width:100%;">
+          <thead>
+            <tr>
+              <th>Product Name</th>
+              <th>SKU / Item Code</th>
+              <th>Warehouse</th>
+              <th style="text-align:right;">Opening Quantity</th>
+              <th>Unit</th>
+              <th style="text-align:right;">Rate</th>
+              <th style="text-align:right;">Opening Stock Value</th>
+              <th>Transaction Date</th>
+              <th style="text-align:center;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td><b>${esc(r.product_name)}</b></td>
+                <td><code>${esc(r.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(r.warehouse)}</span></td>
+                <td style="text-align:right;font-weight:700;color:#2563eb;">
+                  <button class="lk" type="button" data-act="prev" data-id="${r.item_id}" data-wh="${esc(r.warehouse)}" style="background:none;border:none;cursor:pointer;font-weight:700;text-decoration:underline;">
+                    ${qty(r.opening_quantity)}
+                  </button>
+                </td>
+                <td>${esc(r.unit)}</td>
+                <td style="text-align:right;">${inr(r.rate)}</td>
+                <td style="text-align:right;font-weight:700;color:#10b981;">${inr(r.opening_stock_value)}</td>
+                <td>${esc(r.transaction_date || '—')}</td>
+                <td style="text-align:center;">
+                  <button class="btn s" type="button" data-act="prev" data-id="${r.item_id}" data-wh="${esc(r.warehouse)}">Preview</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+      $('#rep-table', root).querySelectorAll('[data-act="prev"]').forEach(btn => {
+        btn.addEventListener('click', () => previewOpeningStockModal(btn.dataset.id, btn.dataset.wh));
+      });
+    } catch (e) {
+      $('#rep-table', root).innerHTML = errBox(e.message, true);
+    }
+  }
+
+  $('#rep-apply', root).addEventListener('click', loadData);
+  $('#rep-search', root).addEventListener('input', () => { clearTimeout(root._st); root._st = setTimeout(loadData, 300); });
+  $('#btn-export-csv', root).addEventListener('click', () => exportTableToCsv($('#rep-table table', root), `opening_stock_report_${iso(new Date())}.csv`));
+  loadData();
+}
+window.openingStockReportPage = openingStockReportPage;
+
+async function stockInHandReportPage(root) {
+  PAGE.reload = () => stockInHandReportPage(root);
+  const warehouses = await api('lookup/warehouses/').catch(() => []);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Stock in Hand Report</div>
+    <div class="hd">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h1 style="margin:0;">Stock in Hand Report</h1>
+          <span class="pastel-chip chip-sky" style="font-weight:700;font-size:11px;padding:2px 8px;">Reporting</span>
+        </div>
+        <div class="sub" style="margin-top:2px;">Current stock balances, available quantities, warehouse allocations, and real-time inventory valuation</div>
+      </div>
+      <div class="act">
+        <button class="btn" id="btn-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--bg-subtle, #f8fafc);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;font-weight:600;color:var(--tx-muted);">Warehouse:</label>
+        <select class="in" id="rep-wh" style="width:160px;">
+          <option value="">All Warehouses</option>
+          ${warehouses.map(w => `<option value="${esc(w.code)}">${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px;">
+        <input class="in" type="search" id="rep-search" placeholder="Search product name, SKU, warehouse…">
+      </div>
+      <button class="btn p" id="rep-apply" type="button">Apply Filter</button>
+    </div>
+
+    <div id="rep-kpis" style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;"></div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="tw" id="rep-table">${spinner}</div>
+    </div>
+  `;
+
+  async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/stock-in-hand-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.product_name || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.warehouse || '').toLowerCase().includes(q));
+      }
+
+      const totAvail = rows.reduce((acc, r) => acc + (parseFloat(r.available_stock) || 0), 0);
+      const totVal = rows.reduce((acc, r) => acc + (parseFloat(r.stock_value) || 0), 0);
+      const lowCount = rows.filter(r => r.status === 'Low stock').length;
+      const outCount = rows.filter(r => r.status === 'Out of stock').length;
+
+      $('#rep-kpis', root).innerHTML = `
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #2563eb;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Stock in Hand</div>
+          <div style="font-size:22px;font-weight:700;color:#2563eb;margin-top:4px;">${qty(totAvail)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #10b981;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Stock Valuation</div>
+          <div style="font-size:22px;font-weight:700;color:#10b981;margin-top:4px;">${inr(totVal)}</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #f59e0b;background:var(--bg-subtle, #f8fafc);">
+          <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Low Stock / Out of Stock</div>
+          <div style="font-size:22px;font-weight:700;color:var(--tx);margin-top:4px;">${lowCount + outCount} <small style="font-size:12px;color:var(--tx-muted);">(${lowCount} low, ${outCount} out)</small></div>
+        </div>
+      `;
+
+      if (!rows.length) {
+        $('#rep-table', root).innerHTML = `<div class="empty" style="padding:32px;text-align:center;">No stock in hand records found.</div>`;
+        return;
+      }
+
+      $('#rep-table', root).innerHTML = `
+        <table style="width:100%;">
+          <thead>
+            <tr>
+              <th>Product Name</th>
+              <th>SKU / Item Code</th>
+              <th>Warehouse</th>
+              <th style="text-align:right;">Opening</th>
+              <th style="text-align:right;">Stock In</th>
+              <th style="text-align:right;">Stock Out</th>
+              <th style="text-align:right;">Transfer In</th>
+              <th style="text-align:right;">Transfer Out</th>
+              <th style="text-align:right;">Available Stock</th>
+              <th style="text-align:right;">Rate</th>
+              <th style="text-align:right;">Stock Value</th>
+              <th>Status</th>
+              <th style="text-align:center;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td><b>${esc(r.product_name)}</b></td>
+                <td><code>${esc(r.sku)}</code></td>
+                <td><span class="pastel-chip chip-lavender" style="font-size:11px;">${esc(r.warehouse)}</span></td>
+                <td style="text-align:right;">${qty(r.opening_stock)}</td>
+                <td style="text-align:right;color:#10b981;">+${qty(r.total_stock_in)}</td>
+                <td style="text-align:right;color:#ef4444;">-${qty(r.total_stock_out)}</td>
+                <td style="text-align:right;color:#0ea5e9;">+${qty(r.transfer_in)}</td>
+                <td style="text-align:right;color:#f97316;">-${qty(r.transfer_out)}</td>
+                <td style="text-align:right;font-weight:700;color:#2563eb;">
+                  <button class="lk" type="button" data-act="prev" data-id="${r.item_id}" data-wh="${esc(r.warehouse)}" style="background:none;border:none;cursor:pointer;font-weight:700;text-decoration:underline;">
+                    ${qty(r.available_stock)} ${esc(r.unit)}
+                  </button>
+                </td>
+                <td style="text-align:right;">${inr(r.rate)}</td>
+                <td style="text-align:right;font-weight:700;color:#10b981;">${inr(r.stock_value)}</td>
+                <td>${badge(r.status)}</td>
+                <td style="text-align:center;">
+                  <button class="btn s" type="button" data-act="prev" data-id="${r.item_id}" data-wh="${esc(r.warehouse)}">Preview</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+      $('#rep-table', root).querySelectorAll('[data-act="prev"]').forEach(btn => {
+        btn.addEventListener('click', () => previewStockInHandModal(btn.dataset.id, btn.dataset.wh));
+      });
+    } catch (e) {
+      $('#rep-table', root).innerHTML = errBox(e.message, true);
+    }
+  }
+
+  $('#rep-apply', root).addEventListener('click', loadData);
+  $('#rep-search', root).addEventListener('input', () => { clearTimeout(root._st); root._st = setTimeout(loadData, 300); });
+  $('#btn-export-csv', root).addEventListener('click', () => exportTableToCsv($('#rep-table table', root), `stock_in_hand_report_${iso(new Date())}.csv`));
+  loadData();
+}
+window.stockInHandReportPage = stockInHandReportPage;
+
 
 async function transactionLockingPage(root) {
   PAGE.reload = () => transactionLockingPage(root);

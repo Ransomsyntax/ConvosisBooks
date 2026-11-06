@@ -23,6 +23,7 @@ class Organization(models.Model):
     template_theme = models.CharField(max_length=50, blank=True, default='convosis')
     template_color = models.CharField(max_length=30, blank=True, default='#1877f2')
     signature_title = models.CharField(max_length=100, blank=True, default='Authorized Signature')
+    signature_data = models.TextField(blank=True, default='')
     notes_default = models.TextField(blank=True, default='Thanks for your business.')
     terms_default = models.TextField(blank=True, default='Due on Receipt')
     opening_cash = models.DecimalField(default=Decimal('0.00'), **MONEY)
@@ -169,6 +170,10 @@ class Document(models.Model):
     total = models.DecimalField(default=Decimal('0.00'), **MONEY)
     order_number = models.CharField(max_length=60, blank=True, default='')
     notes = models.TextField(blank=True)
+    signature_data = models.TextField(blank=True, default='')
+    signed_by = models.CharField(max_length=150, blank=True, default='')
+    signed_at = models.DateTimeField(null=True, blank=True)
+    signature_title = models.CharField(max_length=100, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -633,6 +638,10 @@ class DeliveryChallan(models.Model):
     status = models.CharField(max_length=20, default='open')
     vehicle_number = models.CharField(max_length=50, blank=True)
     notes = models.TextField(blank=True)
+    signature_data = models.TextField(blank=True, default='')
+    signed_by = models.CharField(max_length=150, blank=True, default='')
+    signed_at = models.DateTimeField(null=True, blank=True)
+    signature_title = models.CharField(max_length=100, blank=True, default='Authorized Signature')
     created_at = models.DateTimeField(auto_now_add=True)
 
 class DeliveryChallanLine(models.Model):

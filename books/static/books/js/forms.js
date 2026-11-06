@@ -339,6 +339,368 @@ const TDS_OPTIONS = [
   ['194H', '194H - Commission or Brokerage (5%)']
 ];
 
+function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
+  const currentSig = doc.signature_data || '';
+  const currentTitle = doc.signature_title || (window.APP && window.APP.org && window.APP.org.signature_title) || 'Authorized Signatory';
+  const currentName = doc.signed_by || (window.APP && window.APP.user && (window.APP.user.name || window.APP.user.username)) || '';
+  const isOrgSetting = kind === 'organization';
+  const docTitle = isOrgSetting ? 'Company Default Signature' : `${doc.number ? doc.number : (kind || 'Document').replace('-', ' ').toUpperCase()} Signature`;
+
+  const m = Modal.open({
+    title: `✍️ Digital Signature · ${docTitle}`,
+    wide: false,
+    body: `
+      <div class="sig-modal-container" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="sig-mode-tabs" style="display:flex;gap:8px;border-bottom:1px solid var(--bd);padding-bottom:10px;">
+          <button type="button" class="btn p sig-tab-btn" data-sig-mode="draw" style="display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-pen-nib"></i> Draw
+          </button>
+          <button type="button" class="btn sig-tab-btn" data-sig-mode="type" style="display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-font"></i> Type
+          </button>
+          <button type="button" class="btn sig-tab-btn" data-sig-mode="upload" style="display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-upload"></i> Upload Image
+          </button>
+        </div>
+
+        <div id="sig-pane-draw" class="sig-pane">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:12px;color:var(--tx-muted);font-weight:500;">Draw your signature using mouse, stylus, or finger:</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--tx-muted);">Color:</span>
+              <button type="button" class="sig-color-btn active" data-color="#1e3a8a" style="width:20px;height:20px;border-radius:50%;background:#1e3a8a;border:2px solid #fff;box-shadow:0 0 0 2px #2563eb;cursor:pointer;"></button>
+              <button type="button" class="sig-color-btn" data-color="#0f172a" style="width:20px;height:20px;border-radius:50%;background:#0f172a;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;cursor:pointer;"></button>
+              <button type="button" class="sig-color-btn" data-color="#4338ca" style="width:20px;height:20px;border-radius:50%;background:#4338ca;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;cursor:pointer;"></button>
+              <button type="button" class="btn" id="btn-sig-clear" style="font-size:11px;padding:2px 8px;margin-left:8px;">Clear</button>
+            </div>
+          </div>
+          <div style="background:#fff;border:1px dashed #cbd5e1;border-radius:8px;position:relative;overflow:hidden;touch-action:none;">
+            <canvas id="sig-draw-canvas" width="460" height="150" style="width:100%;height:150px;display:block;cursor:crosshair;"></canvas>
+            <div id="sig-draw-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#94a3b8;font-size:14px;font-style:italic;">
+              Draw signature here
+            </div>
+          </div>
+        </div>
+
+        <div id="sig-pane-type" class="sig-pane" style="display:none;">
+          <div class="fg" style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Type your full name:</label>
+            <input type="text" class="in" id="sig-type-input" value="${esc(currentName)}" placeholder="e.g. Authorized Signer" style="width:100%;font-size:14px;">
+          </div>
+          <div class="fg" style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Signature Font Style:</label>
+            <select class="in" id="sig-font-select" style="width:100%;font-size:13px;">
+              <option value="'Brush Script MT', cursive">Script Casual (Brush)</option>
+              <option value="'Caveat', cursive">Caveat Handwriting</option>
+              <option value="'Dancing Script', cursive">Dancing Script Cursive</option>
+              <option value="'Great Vibes', cursive">Calligraphy Flourish</option>
+              <option value="italic serif">Classic Formal Serif Italic</option>
+            </select>
+          </div>
+          <div style="background:#fff;border:1px dashed #cbd5e1;border-radius:8px;padding:20px;text-align:center;min-height:90px;display:flex;align-items:center;justify-content:center;">
+            <div id="sig-type-preview" style="font-size:32px;color:#1e3a8a;font-family:'Brush Script MT', cursive;word-break:break-all;">
+              ${esc(currentName || 'Your Signature')}
+            </div>
+          </div>
+        </div>
+
+        <div id="sig-pane-upload" class="sig-pane" style="display:none;">
+          <div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:20px;text-align:center;">
+            <input type="file" id="sig-upload-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display:none;">
+            <button type="button" class="btn" id="btn-sig-pick-file" style="margin-bottom:8px;">
+              <i class="fa-solid fa-cloud-arrow-up"></i> Choose Signature Image
+            </button>
+            <div style="font-size:11px;color:var(--tx-muted);">Supports PNG, JPG, WEBP, SVG (transparent background recommended)</div>
+            <div id="sig-upload-preview-box" style="margin-top:12px;display:none;">
+              <img id="sig-upload-preview" src="" alt="Uploaded signature" style="max-height:80px;max-width:260px;object-fit:contain;border:1px solid #e2e8f0;padding:6px;border-radius:4px;background:#fff;">
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:12px 14px;border:1px solid var(--bd);">
+          <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="fg" style="margin:0;">
+              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Signer Name</label>
+              <input type="text" class="in" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name" style="font-size:12px;width:100%;">
+            </div>
+            <div class="fg" style="margin:0;">
+              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Designation / Title</label>
+              <input type="text" class="in" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory" style="font-size:12px;width:100%;">
+            </div>
+          </div>
+        </div>
+
+        ${currentSig ? `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <img src="${esc(currentSig)}" alt="Current signature" style="height:36px;max-width:100px;object-fit:contain;background:#fff;padding:2px;border:1px solid #dbeafe;border-radius:4px;">
+              <span style="font-size:12px;color:#1e3a8a;">This document is currently signed. You can update or remove it.</span>
+            </div>
+            <button type="button" class="btn d" id="btn-sig-unsign" style="font-size:12px;padding:4px 10px;">Remove Signature</button>
+          </div>
+        ` : ''}
+      </div>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn p" id="btn-sig-save" style="background:#2563eb;color:#fff;font-weight:600;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-check"></i> Save & Apply Signature
+        </button>
+      </div>
+    `
+  });
+
+  const canvas = $('#sig-draw-canvas', m.el);
+  const ctx = canvas ? canvas.getContext('2d') : null;
+  let isDrawing = false;
+  let hasDrawn = false;
+  let strokeColor = '#1e3a8a';
+  let activeMode = 'draw';
+  let uploadedDataUrl = '';
+
+  function getCoords(e) {
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  }
+
+  function startDraw(e) {
+    if (!ctx) return;
+    e.preventDefault();
+    isDrawing = true;
+    hasDrawn = true;
+    const ph = $('#sig-draw-placeholder', m.el);
+    if (ph) ph.style.display = 'none';
+    const { x, y } = getCoords(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+
+  function drawMove(e) {
+    if (!isDrawing || !ctx) return;
+    e.preventDefault();
+    const { x, y } = getCoords(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+
+  function stopDraw() {
+    if (isDrawing && ctx) {
+      isDrawing = false;
+      ctx.closePath();
+    }
+  }
+
+  if (canvas) {
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mousemove', drawMove);
+    window.addEventListener('mouseup', stopDraw);
+
+    canvas.addEventListener('touchstart', startDraw, { passive: false });
+    canvas.addEventListener('touchmove', drawMove, { passive: false });
+    window.addEventListener('touchend', stopDraw);
+  }
+
+  $('#btn-sig-clear', m.el)?.addEventListener('click', () => {
+    if (ctx && canvas) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      hasDrawn = false;
+      const ph = $('#sig-draw-placeholder', m.el);
+      if (ph) ph.style.display = 'flex';
+    }
+  });
+
+  $$('.sig-color-btn', m.el).forEach(b => {
+    b.addEventListener('click', () => {
+      $$('.sig-color-btn', m.el).forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.boxShadow = '0 0 0 1px #cbd5e1';
+      });
+      b.classList.add('active');
+      b.style.boxShadow = '0 0 0 2px #2563eb';
+      strokeColor = b.dataset.color;
+      const tp = $('#sig-type-preview', m.el);
+      if (tp) tp.style.color = strokeColor;
+    });
+  });
+
+  $$('.sig-tab-btn', m.el).forEach(b => {
+    b.addEventListener('click', () => {
+      $$('.sig-tab-btn', m.el).forEach(btn => btn.classList.remove('p'));
+      b.classList.add('p');
+      activeMode = b.dataset.sigMode;
+      const pDraw = $('#sig-pane-draw', m.el);
+      const pType = $('#sig-pane-type', m.el);
+      const pUpload = $('#sig-pane-upload', m.el);
+      if (pDraw) pDraw.style.display = activeMode === 'draw' ? '' : 'none';
+      if (pType) pType.style.display = activeMode === 'type' ? '' : 'none';
+      if (pUpload) pUpload.style.display = activeMode === 'upload' ? '' : 'none';
+    });
+  });
+
+  const typeIn = $('#sig-type-input', m.el);
+  const fontSel = $('#sig-font-select', m.el);
+  const typePrev = $('#sig-type-preview', m.el);
+  function updateTypePreview() {
+    if (typePrev && typeIn) {
+      typePrev.textContent = typeIn.value.trim() || 'Your Signature';
+      typePrev.style.fontFamily = fontSel ? fontSel.value : 'cursive';
+    }
+    const metaName = $('#sig-meta-name', m.el);
+    if (metaName && typeIn && !metaName.value) {
+      metaName.value = typeIn.value.trim();
+    }
+  }
+  if (typeIn) typeIn.addEventListener('input', updateTypePreview);
+  if (fontSel) fontSel.addEventListener('change', updateTypePreview);
+
+  const pickFileBtn = $('#btn-sig-pick-file', m.el);
+  const uploadInput = $('#sig-upload-file', m.el);
+  if (pickFileBtn && uploadInput) {
+    pickFileBtn.addEventListener('click', () => uploadInput.click());
+  }
+  if (uploadInput) {
+    uploadInput.addEventListener('change', () => {
+      const file = uploadInput.files[0];
+      if (!file) return;
+      const r = new FileReader();
+      r.onload = ev => {
+        uploadedDataUrl = ev.target.result;
+        const prev = $('#sig-upload-preview', m.el);
+        const box = $('#sig-upload-preview-box', m.el);
+        if (prev) prev.src = uploadedDataUrl;
+        if (box) box.style.display = 'block';
+      };
+      r.readAsDataURL(file);
+    });
+  }
+
+  function getSignatureDataUrl() {
+    if (activeMode === 'draw') {
+      if (!hasDrawn || !canvas) return null;
+      return canvas.toDataURL('image/png');
+    } else if (activeMode === 'type') {
+      const text = typeIn ? typeIn.value.trim() : '';
+      if (!text) return null;
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = 460;
+      offCanvas.height = 140;
+      const octx = offCanvas.getContext('2d');
+      octx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+      octx.font = `italic 38px ${fontSel ? fontSel.value : 'cursive'}`;
+      octx.fillStyle = strokeColor;
+      octx.textAlign = 'center';
+      octx.textBaseline = 'middle';
+      octx.fillText(text, offCanvas.width / 2, offCanvas.height / 2);
+      return offCanvas.toDataURL('image/png');
+    } else if (activeMode === 'upload') {
+      return uploadedDataUrl || null;
+    }
+    return null;
+  }
+
+  $('#btn-sig-save', m.el)?.addEventListener('click', async () => {
+    const sigData = getSignatureDataUrl() || currentSig;
+    if (!sigData) {
+      return toast('Please draw, type, or upload a signature first.', 'err');
+    }
+    const signerName = $('#sig-meta-name', m.el)?.value.trim() || '';
+    const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || 'Authorized Signatory';
+
+    try {
+      if (isOrgSetting) {
+        await api('organization/', {
+          method: 'PATCH',
+          body: { signature_data: sigData, signature_title: sigTitle }
+        });
+        if (window.APP && window.APP.org) {
+          window.APP.org.signature_data = sigData;
+          window.APP.org.signature_title = sigTitle;
+        }
+        toast('Company default signature saved successfully!', 'ok');
+        m.close();
+        if (onSigned) onSigned({ signature_data: sigData, signature_title: sigTitle });
+        return;
+      }
+
+      if (doc && doc.id) {
+        const res = await api(`${kind}/${doc.id}/sign/`, {
+          method: 'POST',
+          body: { signature_data: sigData, signed_by: signerName, signature_title: sigTitle }
+        });
+        doc.signature_data = sigData;
+        doc.signed_by = signerName;
+        doc.signature_title = sigTitle;
+        doc.signed_at = (res && res.signed_at) || new Date().toISOString();
+        toast('Document signed successfully!', 'ok');
+        m.close();
+        if (onSigned) onSigned(doc);
+      } else {
+        m.close();
+        if (onSigned) onSigned({ signature_data: sigData, signed_by: signerName, signature_title: sigTitle, signed_at: new Date().toISOString() });
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  const unsignBtn = $('#btn-sig-unsign', m.el);
+  if (unsignBtn) {
+    unsignBtn.addEventListener('click', async () => {
+      if (!(await confirmBox({
+        title: 'Remove Signature?',
+        message: 'Are you sure you want to remove the signature from this document?',
+        okText: 'Remove',
+        danger: true
+      }))) return;
+
+      try {
+        if (isOrgSetting) {
+          await api('organization/', {
+            method: 'PATCH',
+            body: { signature_data: '' }
+          });
+          if (window.APP && window.APP.org) window.APP.org.signature_data = '';
+          toast('Company signature removed.', 'ok');
+          m.close();
+          if (onSigned) onSigned({ signature_data: '', signature_title: currentTitle });
+          return;
+        }
+
+        if (doc && doc.id) {
+          await api(`${kind}/${doc.id}/unsign/`, { method: 'POST', body: {} });
+          doc.signature_data = '';
+          doc.signed_by = '';
+          doc.signed_at = null;
+          toast('Signature removed.', 'ok');
+          m.close();
+          if (onSigned) onSigned(doc);
+        } else {
+          m.close();
+          if (onSigned) onSigned({ signature_data: '', signed_by: '', signature_title: '', signed_at: null });
+        }
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+  }
+}
+
+window.openSignatureModal = openSignatureModal;
+
 async function partyForm(kind, id) {
   const isCust = kind === 'customers';
   const entityLabel = isCust ? 'Customer' : 'Vendor';
@@ -2563,6 +2925,23 @@ async function docForm(kind, id, targetEl, onDone) {
             <div id="doc-attach-badges" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
           </div>
 
+          <div style="margin-top:20px; padding:16px; border:1px solid var(--bd-glass); border-radius:10px; background:var(--surface-glass-subtle); display:flex; align-items:center; justify-content:space-between; gap:16px;">
+            <div>
+              <label style="font-weight:600; font-size:13px; display:flex; align-items:center; gap:6px; color:var(--tx);">
+                <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
+              </label>
+              <div style="font-size:11px; color:var(--tx-muted); margin-top:2px;" id="doc-sig-desc">
+                ${r.signature_data ? 'Document has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <input type="hidden" name="signature_data" id="doc-sig-input" value="${esc(r.signature_data || '')}">
+              <input type="hidden" name="signed_by" id="doc-signed-by" value="${esc(r.signed_by || '')}">
+              <input type="hidden" name="signature_title" id="doc-sig-title" value="${esc(r.signature_title || '')}">
+              <button type="button" class="btn" id="btn-doc-sign"><i class="fa-solid fa-pen-nib"></i> ${r.signature_data ? 'Change Signature' : 'Sign Document'}</button>
+            </div>
+          </div>
+
           <div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:28px; padding-top:18px; border-top:1px solid var(--bd-glass);">
             <button class="btn" type="button" id="btn-doc-cancel-btm">Cancel</button>
             <button class="btn" type="button" id="btn-doc-draft-btm" data-action="draft">Save as Draft</button>
@@ -2684,6 +3063,28 @@ async function docForm(kind, id, targetEl, onDone) {
         fileIn.value = '';
       });
     }
+
+    $('#btn-doc-sign', form)?.addEventListener('click', () => {
+      openSignatureModal({
+        signature_data: $('#doc-sig-input', form)?.value || '',
+        signed_by: $('#doc-signed-by', form)?.value || '',
+        signature_title: $('#doc-sig-title', form)?.value || '',
+        number: r.number
+      }, kind, updated => {
+        if ($('#doc-sig-input', form)) $('#doc-sig-input', form).value = updated.signature_data || '';
+        if ($('#doc-signed-by', form)) $('#doc-signed-by', form).value = updated.signed_by || '';
+        if ($('#doc-sig-title', form)) $('#doc-sig-title', form).value = updated.signature_title || '';
+        const desc = $('#doc-sig-desc', form);
+        const btn = $('#btn-doc-sign', form);
+        if (updated.signature_data) {
+          if (desc) desc.textContent = 'Custom digital signature attached.';
+          if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+        } else {
+          if (desc) desc.textContent = 'No custom signature attached.';
+          if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Document';
+        }
+      });
+    });
 
     const cancelFn = () => {
       if (onDone) onDone(null);
@@ -2808,7 +3209,23 @@ async function docForm(kind, id, targetEl, onDone) {
         <input type="file" id="doc-file-input-m" multiple style="display:none">
         <button type="button" class="btn" onclick="this.previousElementSibling.click()">+ Attach File</button>
       </div>
-      <div id="doc-attach-badges-m" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      <div id="doc-attach-badges-m" style="display:flex;flex-wrap:gap:6px;"></div>
+    </div>
+    <div style="margin-top:14px;padding:12px;border:1px solid var(--bd-glass);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+      <div>
+        <label style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
+        </label>
+        <div style="font-size:11px;color:var(--tx-muted);margin-top:2px;" id="doc-sig-desc-m">
+          ${r.signature_data ? 'Document has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="hidden" name="signature_data" id="doc-sig-input-m" value="${esc(r.signature_data || '')}">
+        <input type="hidden" name="signed_by" id="doc-signed-by-m" value="${esc(r.signed_by || '')}">
+        <input type="hidden" name="signature_title" id="doc-sig-title-m" value="${esc(r.signature_title || '')}">
+        <button type="button" class="btn" id="btn-doc-sign-m"><i class="fa-solid fa-pen-nib"></i> ${r.signature_data ? 'Change Signature' : 'Sign Document'}</button>
+      </div>
     </div>`,
     onReady: (form, m) => {
       const tb = $('#lines', form);
@@ -2897,6 +3314,29 @@ async function docForm(kind, id, targetEl, onDone) {
           fileIn.value = '';
         });
       }
+
+      $('#btn-doc-sign-m', form)?.addEventListener('click', () => {
+        openSignatureModal({
+          signature_data: $('#doc-sig-input-m', form)?.value || '',
+          signed_by: $('#doc-signed-by-m', form)?.value || '',
+          signature_title: $('#doc-sig-title-m', form)?.value || '',
+          number: r.number
+        }, kind, updated => {
+          if ($('#doc-sig-input-m', form)) $('#doc-sig-input-m', form).value = updated.signature_data || '';
+          if ($('#doc-signed-by-m', form)) $('#doc-signed-by-m', form).value = updated.signed_by || '';
+          if ($('#doc-sig-title-m', form)) $('#doc-sig-title-m', form).value = updated.signature_title || '';
+          const desc = $('#doc-sig-desc-m', form);
+          const btn = $('#btn-doc-sign-m', form);
+          if (updated.signature_data) {
+            if (desc) desc.textContent = 'Custom digital signature attached.';
+            if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+          } else {
+            if (desc) desc.textContent = 'No custom signature attached.';
+            if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Document';
+          }
+          m.markDirty();
+        });
+      });
 
       if (!due0) setDue();
       calc();
@@ -3082,6 +3522,19 @@ function orgForm() {
         ${fld({ name: 'signature_title', label: 'Signature Line Title', value: o.signature_title || 'Authorized Signature' })}
         ${fld({ name: 'terms_default', label: 'Default Terms & Conditions', type: 'textarea', value: o.terms_default || 'Due on Receipt', col: 'c2' })}
         ${fld({ name: 'notes_default', label: 'Default Notes', type: 'textarea', value: o.notes_default || 'Thanks for your business.', col: 'c2' })}
+        <div style="margin-top:14px;padding:14px;border:1px solid var(--bd-glass);border-radius:8px;display:flex;align-items:center;gap:18px;grid-column:span 2;">
+          <div style="width:130px;height:64px;border-radius:8px;border:1px solid var(--bd-glass);background:#fff;display:grid;place-items:center;overflow:hidden;padding:4px;">
+            <img id="org-sig-preview" src="${esc(o.signature_data || '')}" alt="Signature" style="max-width:100%;max-height:100%;object-fit:contain;display:${o.signature_data ? 'block' : 'none'};">
+            <span id="org-sig-empty" style="font-size:11px;color:var(--tx-muted);display:${o.signature_data ? 'none' : 'inline'};">No Signature</span>
+          </div>
+          <div style="flex:1;">
+            <label style="font-weight:600;font-size:13px;display:block;margin-bottom:4px;">Company Default Digital Signature</label>
+            <input type="hidden" name="signature_data" id="org-sig-input" value="${esc(o.signature_data || '')}">
+            <button type="button" class="btn" id="org-edit-sig-btn">✍️ Draw / Type / Upload Signature</button>
+            <button type="button" class="btn" id="org-reset-sig-btn" style="margin-left:6px;display:${o.signature_data ? 'inline-block' : 'none'};">Remove</button>
+            <div class="hp" style="margin-top:4px;">Used automatically on invoices, bills, and quotes when no individual signature is specified.</div>
+          </div>
+        </div>
       </div>
     </div>`,
     onReady: form => {
@@ -3114,6 +3567,32 @@ function orgForm() {
           $('#org-logo-input', form).value = '/static/books/img/convosis-logo.png';
         });
       }
+      $('#org-edit-sig-btn', form)?.addEventListener('click', () => {
+        openSignatureModal({ signature_data: $('#org-sig-input', form).value, signature_title: $('[name="signature_title"]', form)?.value }, 'organization', res => {
+          $('#org-sig-input', form).value = res.signature_data || '';
+          const prev = $('#org-sig-preview', form);
+          const empty = $('#org-sig-empty', form);
+          const rBtn = $('#org-reset-sig-btn', form);
+          if (res.signature_data) {
+            if (prev) { prev.src = res.signature_data; prev.style.display = 'block'; }
+            if (empty) empty.style.display = 'none';
+            if (rBtn) rBtn.style.display = 'inline-block';
+          } else {
+            if (prev) prev.style.display = 'none';
+            if (empty) empty.style.display = 'inline';
+            if (rBtn) rBtn.style.display = 'none';
+          }
+        });
+      });
+      $('#org-reset-sig-btn', form)?.addEventListener('click', () => {
+        $('#org-sig-input', form).value = '';
+        const prev = $('#org-sig-preview', form);
+        const empty = $('#org-sig-empty', form);
+        const rBtn = $('#org-reset-sig-btn', form);
+        if (prev) prev.style.display = 'none';
+        if (empty) empty.style.display = 'inline';
+        if (rBtn) rBtn.style.display = 'none';
+      });
     },
     onSubmit: async d => {
       APP.org = await api('organization/', { method: 'PUT', body: d });
@@ -5429,6 +5908,23 @@ async function quoteForm(id, onDone) {
           <div id="q-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
 
+        <div style="margin-top:20px;padding:16px;background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
+            </div>
+            <div class="sub" style="font-size:11.5px;margin-top:2px;" id="q-sig-desc">
+              ${qData && qData.signature_data ? 'Quote has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="hidden" id="q-signature-data" name="signature_data" value="${esc((qData && qData.signature_data) || '')}">
+            <input type="hidden" id="q-signed-by" name="signed_by" value="${esc((qData && qData.signed_by) || '')}">
+            <input type="hidden" id="q-signature-title" name="signature_title" value="${esc((qData && qData.signature_title) || '')}">
+            <button type="button" class="btn" id="btn-quote-sign"><i class="fa-solid fa-pen-nib"></i> ${((qData && qData.signature_data) || (APP.org && APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}</button>
+          </div>
+        </div>
+
         <div class="sub" style="margin-top:20px;font-size:12px;color:var(--tx-muted);">
           <b>Additional Fields:</b> Start adding custom fields for your quotes by going to <i>Settings ➡ Sales ➡ Quotes</i>.
         </div>
@@ -5642,6 +6138,28 @@ async function quoteForm(id, onDone) {
     fileInput.value = '';
   });
 
+  $('#btn-quote-sign', form)?.addEventListener('click', () => {
+    openSignatureModal({
+      signature_data: $('#q-signature-data', form)?.value || '',
+      signed_by: $('#q-signed-by', form)?.value || '',
+      signature_title: $('#q-signature-title', form)?.value || '',
+      number: qNumber
+    }, 'quotes', updated => {
+      if ($('#q-signature-data', form)) $('#q-signature-data', form).value = updated.signature_data || '';
+      if ($('#q-signed-by', form)) $('#q-signed-by', form).value = updated.signed_by || '';
+      if ($('#q-signature-title', form)) $('#q-signature-title', form).value = updated.signature_title || '';
+      const desc = $('#q-sig-desc', form);
+      const btn = $('#btn-quote-sign', form);
+      if (updated.signature_data) {
+        if (desc) desc.textContent = 'Custom digital signature attached.';
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (desc) desc.textContent = 'No custom signature attached.';
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Quote';
+      }
+    });
+  });
+
   $('#q-attach-badges', form).addEventListener('click', async e => {
     const del = e.target.closest('[data-del-att]');
     if (del) {
@@ -5703,6 +6221,9 @@ async function quoteForm(id, onDone) {
       tds_tcs_tax: num($('#q-tds-tax', form).value) || 0,
       adjustment: num($('#q-adj-val', form).value) || 0,
       adjustment_label: $('#q-adj-label', form).value.trim() || 'Adjustment',
+      signature_data: $('#q-signature-data', form)?.value || '',
+      signed_by: $('#q-signed-by', form)?.value || '',
+      signature_title: $('#q-signature-title', form)?.value || '',
       lines,
       force: true
     };
@@ -6428,6 +6949,29 @@ async function invoiceForm(id, targetEl, onDone) {
           <div id="inv-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
 
+        <div style="margin-top:20px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:20px;">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
+            </div>
+            <div style="font-size:11.5px;color:#64748b;margin-top:2px;" id="inv-sig-desc">
+              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (window.APP && window.APP.org && window.APP.org.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this invoice.')}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="inv-sig-preview-box" style="height:44px;min-width:90px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:2px 8px;">
+              <img id="inv-sig-preview" src="${esc((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data) || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'block' : 'none'};">
+              <span id="inv-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'none' : 'inline'};">None</span>
+            </div>
+            <input type="hidden" id="inv-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
+            <input type="hidden" id="inv-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
+            <input type="hidden" id="inv-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
+            <button type="button" class="btn" id="btn-inv-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Invoice'}
+            </button>
+          </div>
+        </div>
+
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-inv-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
@@ -6584,6 +7128,35 @@ async function invoiceForm(id, targetEl, onDone) {
   $('#inv-date', form).addEventListener('change', updateDueDate);
   $('#inv-terms', form).addEventListener('change', updateDueDate);
 
+  $('#btn-inv-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#inv-signature-data', form)?.value || '',
+      signed_by: $('#inv-signed-by', form)?.value || '',
+      signature_title: $('#inv-signature-title', form)?.value || '',
+      number: invNum
+    };
+    openSignatureModal(curSigObj, 'invoices', updated => {
+      if ($('#inv-signature-data', form)) $('#inv-signature-data', form).value = updated.signature_data || '';
+      if ($('#inv-signed-by', form)) $('#inv-signed-by', form).value = updated.signed_by || '';
+      if ($('#inv-signature-title', form)) $('#inv-signature-title', form).value = updated.signature_title || '';
+      const previewImg = $('#inv-sig-preview', form);
+      const noneSpan = $('#inv-sig-none', form);
+      const descEl = $('#inv-sig-desc', form);
+      const signBtn = $('#btn-inv-sign', form);
+      if (updated.signature_data) {
+        if (previewImg) { previewImg.src = updated.signature_data; previewImg.style.display = 'block'; }
+        if (noneSpan) noneSpan.style.display = 'none';
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (previewImg) previewImg.style.display = 'none';
+        if (noneSpan) noneSpan.style.display = 'inline';
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Invoice';
+      }
+    });
+  });
+
   tbody.addEventListener('change', e => {
     if (e.target.classList.contains('l-item')) {
       const it = byId[e.target.value];
@@ -6732,6 +7305,9 @@ async function invoiceForm(id, targetEl, onDone) {
       subject: $('#inv-subject', form).value.trim(),
       place_of_supply: $('#inv-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
       notes: $('#inv-notes', form).value.trim(),
+      signature_data: $('#inv-signature-data', form)?.value || '',
+      signed_by: $('#inv-signed-by', form)?.value || '',
+      signature_title: $('#inv-signature-title', form)?.value || '',
       lines: lines,
       force: true
     };

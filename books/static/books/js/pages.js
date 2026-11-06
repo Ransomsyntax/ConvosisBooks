@@ -1481,7 +1481,8 @@ const LISTS = {
       const isConverted = r.status === 'invoiced' || r.status === 'ordered' || !!r.converted_to_invoice_id || !!r.converted_to_sales_order_id;
       const acts = [
         ['view', 'View'],
-        ['edit', 'Edit']
+        ['edit', 'Edit'],
+        ['sign', r.signature_data ? 'Signed ✓' : 'Sign']
       ];
       if (r.status === 'draft') {
         acts.push(['send', 'Mark as Sent']);
@@ -1497,6 +1498,7 @@ const LISTS = {
     onAction: async (a, r) => {
       if (a === 'view') viewQuoteDetail(r.id);
       else if (a === 'edit') quoteForm(r.id);
+      else if (a === 'sign') openSignatureModal(r, 'quotes', () => refresh());
       else if (a === 'send') {
         try {
           await api(`quotes/${r.id}/send/`, { method: 'POST', body: {} });
@@ -1553,7 +1555,8 @@ const LISTS = {
     actions: r => {
       const acts = [
         ['view', 'View'],
-        ['edit', 'Edit']
+        ['edit', 'Edit'],
+        ['sign', r.signature_data ? 'Signed ✓' : 'Sign']
       ];
       if (r.status !== 'void' && r.status !== 'closed') {
         acts.push(['convert-inv', 'Convert to Invoice']);
@@ -1568,6 +1571,8 @@ const LISTS = {
         viewSalesOrderDetail(r.id);
       } else if (a === 'edit') {
         salesOrderForm(r.id);
+      } else if (a === 'sign') {
+        openSignatureModal(r, 'sales-orders', () => refresh());
       } else if (a === 'convert-inv') {
         try {
           const res = await api(`sales-orders/${r.id}/convert-to-invoice/`, { method: 'POST', body: {} });
@@ -1613,14 +1618,14 @@ const LISTS = {
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Challan#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Type', f: r => esc(r.challan_type) }, { h: 'Vehicle#', f: r => esc(r.vehicle_number || '—') }, { h: 'Status', f: r => badge(r.status) }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? challanModal(r.id) : null,
+    actions: r => [['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
+    onAction: (a, r) => a === 'edit' ? challanModal(r.id) : (a === 'sign' ? openSignatureModal(r, 'delivery-challans', () => refresh()) : null),
   },
   'credit-notes': {
     api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit Note#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party || r.customer_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
-    actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('credit-notes', r.id) : null,
+    actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('credit-notes', r.id) : (a === 'sign' ? openSignatureModal(r, 'credit-notes', () => refresh()) : null),
   },
   'e-way-bills': {
     api: 'e-way-bills', title: 'E-Way Bills', bc: 'Sales', newLabel: 'Generate e-Way Bill', onNew: () => ewayBillModal(), ordering: '-created_at', empty: 'No e-Way Bills generated yet.',
@@ -1656,14 +1661,14 @@ const LISTS = {
     api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('purchase-orders'), ordering: '-date', empty: 'No purchase orders yet.',
     filters: docStatusFilters('Confirmed'),
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'PO#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Delivery Date', s: 'delivery_date', f: r => fd(r.delivery_date || r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }],
-    actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('purchase-orders', r.id) : null,
+    actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('purchase-orders', r.id) : (a === 'sign' ? openSignatureModal(r, 'purchase-orders', () => refresh()) : null),
   },
   'vendor-credits': {
     api: 'vendor-credits', title: 'Vendor Credits', bc: 'Purchases', newLabel: 'New vendor credit', onNew: () => docForm('vendor-credits'), ordering: '-date', empty: 'No vendor credits yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
-    actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('vendor-credits', r.id) : null,
+    actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
+    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('vendor-credits', r.id) : (a === 'sign' ? openSignatureModal(r, 'vendor-credits', () => refresh()) : null),
   },
   projects: {
     api: 'projects', title: 'Projects', bc: 'Time Tracking', newLabel: 'New project', onNew: () => projectModal(), ordering: 'name', empty: 'No projects yet.',
@@ -1811,6 +1816,10 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const showWords = customOpts.show_words !== false;
   const showHsn = customOpts.show_hsn !== false;
   const title = customOpts.title || (isRetainer ? 'RETAINER INVOICE' : kind === 'invoices' ? 'TAX INVOICE' : 'BILL');
+  const sigData = d.signature_data || org.signature_data || '';
+  const sigTitle = d.signature_title || org.signature_title || 'Authorized Signature';
+  const signedBy = d.signed_by || '';
+  const signedAt = d.signed_at ? fd(d.signed_at) : '';
 
   const isPaid = d.status === 'Paid' || (d.raw_status !== 'draft' && num(d.balance) <= 0);
   const isOverdue = d.status === 'Overdue';
@@ -2007,10 +2016,21 @@ function renderDocSheet(d, kind, customOpts = {}) {
       </div>
 
       ${showSig ? `
-        <div class="doc-signature-sec">
-          <div class="doc-signature-box">
-            <div class="doc-sig-line"></div>
-            <div class="doc-sig-label">${esc(org.signature_title || 'Authorized Signature')}</div>
+        <div class="doc-signature-sec" style="margin-top:28px;display:flex;justify-content:flex-end;">
+          <div class="doc-signature-box" style="min-width:200px;text-align:center;cursor:pointer;padding:6px 12px;border-radius:6px;transition:background 0.2s;" title="Click to Sign or Change Signature" data-sig-click="1">
+            ${sigData ? `
+              <div style="height:64px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:6px;">
+                <img src="${esc(sigData)}" alt="Signature" style="max-height:60px;max-width:190px;object-fit:contain;display:block;">
+              </div>
+            ` : `
+              <div style="height:48px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;border:1px dashed #cbd5e1;border-radius:4px;margin-bottom:6px;padding:4px 8px;background:rgba(248,250,252,0.6);">
+                <i class="fa-solid fa-signature" style="margin-right:6px;color:#2563eb;"></i> Click to Add Signature
+              </div>
+            `}
+            <div class="doc-sig-line" style="border-top:1px solid #0f172a;margin-bottom:4px;"></div>
+            <div class="doc-sig-label" style="font-weight:700;font-size:12px;color:#0f172a;">${esc(sigTitle)}</div>
+            ${signedBy ? `<div style="font-size:11px;color:#475569;margin-top:2px;"><b>${esc(signedBy)}</b></div>` : ''}
+            ${signedAt ? `<div style="font-size:10px;color:#94a3b8;margin-top:1px;">Digitally Signed on ${esc(signedAt)}</div>` : ''}
           </div>
         </div>
       ` : ''}
@@ -2430,6 +2450,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           <div class="doc-detail-actions">
             ${inv ? `
               <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
               <button class="btn" type="button" data-act="send"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
               <button class="btn" type="button" data-act="share"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
               <button class="btn" type="button" data-act="remind"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
@@ -2437,6 +2458,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
               ${num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay" style="background:#2563eb;color:#fff;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>` : ''}
             ` : `
               <button class="btn" type="button" data-act="edit">Edit</button>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
               ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
               <button class="btn" type="button" data-act="print">PDF/Print</button>
               ${isRetainer ? `
@@ -2542,10 +2564,31 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       loadDetail(id);
       return;
     }
+    const sigBox = e.target.closest('[data-sig-click]');
+    if (sigBox && curDoc) {
+      return openSignatureModal(curDoc, kind, updated => {
+        curDoc.signature_data = updated.signature_data;
+        curDoc.signed_by = updated.signed_by;
+        curDoc.signature_title = updated.signature_title;
+        curDoc.signed_at = updated.signed_at;
+        renderMasterList();
+        renderDetailPane();
+      });
+    }
     const actBtn = e.target.closest('[data-act]');
     if (actBtn && curDoc) {
       const act = actBtn.dataset.act;
       const d = curDoc;
+      if (act === 'sign') {
+        return openSignatureModal(d, kind, updated => {
+          d.signature_data = updated.signature_data;
+          d.signed_by = updated.signed_by;
+          d.signature_title = updated.signature_title;
+          d.signed_at = updated.signed_at;
+          renderMasterList();
+          renderDetailPane();
+        });
+      }
       if (act === 'edit') return openForm(d.id);
       if (act === 'print') return window.print();
       if (act === 'share') {
@@ -2693,6 +2736,7 @@ async function docDetail(kind, id) {
     body: `
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
         <button class="btn" type="button" data-do="edit">Edit</button>
+        <button class="btn" type="button" data-do="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
         <button class="btn" type="button" data-do="print">PDF/Print</button>
         <button class="btn" type="button" data-do="custom">Customize Template</button>
         <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
@@ -2716,9 +2760,28 @@ async function docDetail(kind, id) {
   });
 
   m.el.addEventListener('click', async e => {
+    const sigBox = e.target.closest('[data-sig-click]');
+    if (sigBox) {
+      return openSignatureModal(d, kind, updated => {
+        d.signature_data = updated.signature_data;
+        d.signed_by = updated.signed_by;
+        d.signature_title = updated.signature_title;
+        d.signed_at = updated.signed_at;
+        $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+      });
+    }
     const a = e.target.closest('[data-do]'); if (!a) return;
     const act = a.dataset.do;
     try {
+      if (act === 'sign') {
+        return openSignatureModal(d, kind, updated => {
+          d.signature_data = updated.signature_data;
+          d.signed_by = updated.signed_by;
+          d.signature_title = updated.signature_title;
+          d.signed_at = updated.signed_at;
+          $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+        });
+      }
       if (act === 'print') return window.print();
       if (act === 'edit') { m.close(); return docMasterDetail($('#pg'), kind, id, true); }
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
@@ -6762,12 +6825,31 @@ async function viewQuoteDetail(id) {
               </div>
             </div>
           </div>
+
+          <div style="margin-top:24px;display:flex;justify-content:flex-end;">
+            <div style="min-width:200px;text-align:center;cursor:pointer;padding:6px 12px;border-radius:6px;" id="q-detail-sig-box" title="Click to Sign or Change Signature">
+              ${(q.signature_data || (APP.org && APP.org.signature_data)) ? `
+                <div style="height:60px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:6px;">
+                  <img src="${esc(q.signature_data || APP.org.signature_data)}" alt="Signature" style="max-height:56px;max-width:180px;object-fit:contain;display:block;">
+                </div>
+              ` : `
+                <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;border:1px dashed #cbd5e1;border-radius:4px;margin-bottom:6px;padding:4px 8px;background:#f8fafc;">
+                  <i class="fa-solid fa-signature" style="margin-right:6px;color:#2563eb;"></i> Click to Add Signature
+                </div>
+              `}
+              <div style="border-top:1px solid #0f172a;margin-bottom:4px;"></div>
+              <div style="font-weight:700;font-size:12px;color:#0f172a;">${esc(q.signature_title || (APP.org && APP.org.signature_title) || 'Authorized Signatory')}</div>
+              ${q.signed_by ? `<div style="font-size:11px;color:#475569;margin-top:2px;"><b>${esc(q.signed_by)}</b></div>` : ''}
+              ${q.signed_at ? `<div style="font-size:10px;color:#94a3b8;margin-top:1px;">Digitally Signed on ${fd(q.signed_at)}</div>` : ''}
+            </div>
+          </div>
         </div>
       `,
       footer: `
         <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:10px;">
           <div>
             <button type="button" class="btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
+            <button type="button" class="btn" id="btn-q-sign"><i class="fa-solid fa-signature"></i> ${q.signature_data ? 'Signed ✓' : 'Sign'}</button>
             ${!isConverted ? `<button type="button" class="btn" id="btn-view-edit-q"><i class="fa-solid fa-pen"></i> Edit Quote</button>` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -6791,6 +6873,15 @@ async function viewQuoteDetail(id) {
         </div>
       `
     });
+
+    const triggerQuoteSign = () => {
+      openSignatureModal(q, 'quotes', updated => {
+        Modal.close();
+        viewQuoteDetail(q.id);
+      });
+    };
+    $('#btn-q-sign')?.addEventListener('click', triggerQuoteSign);
+    $('#q-detail-sig-box')?.addEventListener('click', triggerQuoteSign);
 
     $('#btn-view-edit-q')?.addEventListener('click', () => {
       Modal.close();
@@ -6939,12 +7030,31 @@ async function viewSalesOrderDetail(id) {
               </div>
             </div>
           </div>
+
+          <div style="margin-top:24px;display:flex;justify-content:flex-end;">
+            <div style="min-width:200px;text-align:center;cursor:pointer;padding:6px 12px;border-radius:6px;" id="so-detail-sig-box" title="Click to Sign or Change Signature">
+              ${(so.signature_data || (APP.org && APP.org.signature_data)) ? `
+                <div style="height:60px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:6px;">
+                  <img src="${esc(so.signature_data || APP.org.signature_data)}" alt="Signature" style="max-height:56px;max-width:180px;object-fit:contain;display:block;">
+                </div>
+              ` : `
+                <div style="height:44px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;border:1px dashed #cbd5e1;border-radius:4px;margin-bottom:6px;padding:4px 8px;background:#f8fafc;">
+                  <i class="fa-solid fa-signature" style="margin-right:6px;color:#2563eb;"></i> Click to Add Signature
+                </div>
+              `}
+              <div style="border-top:1px solid #0f172a;margin-bottom:4px;"></div>
+              <div style="font-weight:700;font-size:12px;color:#0f172a;">${esc(so.signature_title || (APP.org && APP.org.signature_title) || 'Authorized Signatory')}</div>
+              ${so.signed_by ? `<div style="font-size:11px;color:#475569;margin-top:2px;"><b>${esc(so.signed_by)}</b></div>` : ''}
+              ${so.signed_at ? `<div style="font-size:10px;color:#94a3b8;margin-top:1px;">Digitally Signed on ${fd(so.signed_at)}</div>` : ''}
+            </div>
+          </div>
         </div>
       `,
       footer: `
         <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:10px;">
           <div>
             <button type="button" class="btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
+            <button type="button" class="btn" id="btn-so-sign"><i class="fa-solid fa-signature"></i> ${so.signature_data ? 'Signed ✓' : 'Sign'}</button>
             ${so.status !== 'void' ? `<button type="button" class="btn" id="btn-view-edit-so"><i class="fa-solid fa-pen"></i> Edit Order</button>` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -6960,6 +7070,15 @@ async function viewSalesOrderDetail(id) {
         </div>
       `
     });
+
+    const triggerSoSign = () => {
+      openSignatureModal(so, 'sales-orders', updated => {
+        Modal.close();
+        viewSalesOrderDetail(so.id);
+      });
+    };
+    $('#btn-so-sign')?.addEventListener('click', triggerSoSign);
+    $('#so-detail-sig-box')?.addEventListener('click', triggerSoSign);
 
     $('#btn-view-edit-so')?.addEventListener('click', () => {
       Modal.close();

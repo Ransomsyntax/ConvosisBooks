@@ -1250,6 +1250,37 @@ def display_status(doc, posted, today):
         return 'Overdue'
     return 'Partially Paid' if paid > 0 else ('Sent' if posted == 'sent' else 'Open')
 
+def sign_document_action(obj, request):
+    b = body(request)
+    sig_data = b.get('signature_data', '')
+    signed_by = b.get('signed_by', '')
+    title = b.get('signature_title', '') or getattr(obj, 'signature_title', '') or 'Authorized Signatory'
+    if not sig_data:
+        raise ApiError(400, 'Signature data is required.')
+    obj.signature_data = sig_data
+    obj.signed_by = signed_by or (request.user.get_full_name() or request.user.username)
+    obj.signature_title = title
+    obj.signed_at = timezone.now()
+    fields_to_update = ['signature_data', 'signed_by', 'signature_title', 'signed_at']
+    obj.save(update_fields=fields_to_update)
+    services.log_audit(request.user, 'update', obj.__class__.__name__, getattr(obj, 'number', str(obj.pk)), f'Digitally signed {obj.__class__.__name__} {getattr(obj, "number", obj.pk)}')
+    return j({
+        'status': 'signed',
+        'signed_by': obj.signed_by,
+        'signature_title': obj.signature_title,
+        'signed_at': obj.signed_at.isoformat(),
+        'signature_data': obj.signature_data
+    })
+
+def unsign_document_action(obj, request):
+    obj.signature_data = ''
+    obj.signed_by = ''
+    obj.signed_at = None
+    fields_to_update = ['signature_data', 'signed_by', 'signed_at']
+    obj.save(update_fields=fields_to_update)
+    services.log_audit(request.user, 'update', obj.__class__.__name__, getattr(obj, 'number', str(obj.pk)), f'Removed signature from {obj.__class__.__name__} {getattr(obj, "number", obj.pk)}')
+    return j({'status': 'unsigned'})
+
 class DocResource(Resource):
     Model = Line = Party = None
     party_attr = line_fk = prefix = posted = ''
@@ -1399,7 +1430,11 @@ class DocResource(Resource):
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
              'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
-             'balance': o.total - paid if o.status in (self.posted, 'partial', 'paid') else Z}
+             'balance': o.total - paid if o.status in (self.posted, 'partial', 'paid') else Z,
+             'signature_data': getattr(o, 'signature_data', '') or '',
+             'signed_by': getattr(o, 'signed_by', '') or '',
+             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+             'signature_title': getattr(o, 'signature_title', '') or ''}
         if isinstance(o, RetainerInvoice):
             applied = q2(getattr(o, 'applied_sum', getattr(o, 'applied_amount', 0)))
             r['applied_amount'] = applied
@@ -1516,6 +1551,12 @@ class DocResource(Resource):
         pos = c.text('place_of_supply', max_len=60) or (party.state if party and party.state else (org.state if org else ''))
         head = {self.party_attr: party, 'date': date_, 'due_date': due, 'place_of_supply': pos,
                 'notes': c.text('notes', max_len=2000)}
+        if 'signature_data' in data:
+            head['signature_data'] = str(data.get('signature_data') or '')
+        if 'signed_by' in data:
+            head['signed_by'] = str(data.get('signed_by') or '')
+        if 'signature_title' in data:
+            head['signature_title'] = str(data.get('signature_title') or '')
         head.update(self.extra_clean(c))
         c.done()
         return head, parse_lines(data.get('lines'), org=user_org)
@@ -1614,6 +1655,13 @@ class DocResource(Resource):
         Attachment.objects.filter(entity_type='invoice' if is_inv else 'bill', entity_id=obj.pk).delete()
         obj.delete()
 
+    def action(self, request, obj, name):
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        raise ApiError(404, 'Unknown action.')
+
 class InvoiceResource(DocResource):
     name = 'invoices'
     Model, Line, Party = Invoice, InvoiceLine, Customer
@@ -1651,7 +1699,7 @@ class InvoiceResource(DocResource):
                     raise ApiError(404, 'Retainer invoice not found.')
                 services.apply_retainer_to_invoices(ret, [{'invoice': obj, 'amount': amt, 'notes': it.get('notes', '')}], request.user, dt)
         else:
-            raise ApiError(404, 'Unknown action.')
+            return super().action(request, obj, name)
 
 class RetainerInvoiceResource(DocResource):
     name = 'retainer-invoices'
@@ -1699,7 +1747,7 @@ class RetainerInvoiceResource(DocResource):
                 raise ApiError(400, 'Expected non-empty allocations list.')
             services.apply_retainer_to_invoices(obj, raw_allocs, request.user, dt)
         else:
-            raise ApiError(404, 'Unknown action.')
+            return super().action(request, obj, name)
 
 class QuoteResource(DocResource):
     name = 'quotes'
@@ -1881,7 +1929,7 @@ class QuoteResource(DocResource):
             services.log_audit(request.user, 'create', 'sales_order', so.pk, f'Converted Quote {obj.number} to Sales Order {so.number}')
             return j({'order_id': so.pk, 'sales_order_id': so.pk, 'number': so.number})
         else:
-            raise ApiError(404, 'Unknown action.')
+            return super().action(request, obj, name)
 
 class BillResource(DocResource):
     name = 'bills'
@@ -1907,7 +1955,7 @@ class BillResource(DocResource):
         elif name == 'void':
             services.void_bill(obj, request.user)
         else:
-            raise ApiError(404, 'Unknown action.')
+            return super().action(request, obj, name)
 
 class PaymentResource(Resource):
     Model = Doc = Alloc = Party = None
@@ -3163,7 +3211,11 @@ class SalesOrderResource(Resource):
             'status': o.status, 'subtotal': o.subtotal, 'total': o.total,
             'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst,
             'order_number': o.order_number or '',
-            'lines_count': o.lines.count()
+            'lines_count': o.lines.count(),
+            'signature_data': getattr(o, 'signature_data', '') or '',
+            'signed_by': getattr(o, 'signed_by', '') or '',
+            'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+            'signature_title': getattr(o, 'signature_title', '') or ''
         }
 
     def detail(self, o):
@@ -3307,7 +3359,11 @@ class SalesOrderResource(Resource):
         return obj
 
     def action(self, request, obj, name):
-        if name == 'confirm':
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        elif name == 'confirm':
             obj.status = 'confirmed'
             obj.save(update_fields=['status'])
             services.log_audit(request.user, 'confirm', 'SalesOrder', obj.number, f"Confirmed sales order {obj.number}")
@@ -3449,7 +3505,11 @@ class PurchaseOrderResource(Resource):
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'delivery_date': o.delivery_date, 'status': o.status,
-            'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count()
+            'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
+            'signature_data': getattr(o, 'signature_data', '') or '',
+            'signed_by': getattr(o, 'signed_by', '') or '',
+            'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+            'signature_title': getattr(o, 'signature_title', '') or '',
         }
 
     def detail(self, o):
@@ -3534,6 +3594,13 @@ class PurchaseOrderResource(Resource):
             )
         services.log_audit(user, 'update', 'PurchaseOrder', obj.number, f"Updated purchase order {obj.number}")
         return obj
+
+    def action(self, request, obj, name):
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        raise ApiError(404, 'Unknown action.')
 
 class ExpenseResource(Resource):
     name = 'expenses'
@@ -3733,7 +3800,11 @@ class CreditNoteResource(Resource):
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'party': o.customer.name, 'date': o.date,
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
-            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status
+            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
+            'signature_data': getattr(o, 'signature_data', '') or '',
+            'signed_by': getattr(o, 'signed_by', '') or '',
+            'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+            'signature_title': getattr(o, 'signature_title', '') or '',
         }
 
     def detail(self, o):
@@ -3813,6 +3884,13 @@ class CreditNoteResource(Resource):
             )
         services.log_audit(user, 'update', 'CreditNote', obj.number, f"Updated credit note {obj.number}")
         return obj
+
+    def action(self, request, obj, name):
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        raise ApiError(404, 'Unknown action.')
 
 class VendorCreditResource(Resource):
     name = 'vendor-credits'
@@ -3897,7 +3975,11 @@ class VendorCreditResource(Resource):
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'bill_id': o.bill_id, 'bill_number': o.bill.number if o.bill else '',
-            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status
+            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
+            'signature_data': getattr(o, 'signature_data', '') or '',
+            'signed_by': getattr(o, 'signed_by', '') or '',
+            'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+            'signature_title': getattr(o, 'signature_title', '') or '',
         }
 
     def detail(self, o):
@@ -3977,6 +4059,13 @@ class VendorCreditResource(Resource):
             )
         services.log_audit(user, 'update', 'VendorCredit', obj.number, f"Updated vendor credit {obj.number}")
         return obj
+
+    def action(self, request, obj, name):
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        raise ApiError(404, 'Unknown action.')
 
 class RecurringInvoiceResource(Resource):
     name = 'recurring-invoices'
@@ -4148,7 +4237,11 @@ class DeliveryChallanResource(Resource):
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'date': o.date,
             'challan_type': o.challan_type, 'status': o.status,
-            'vehicle_number': o.vehicle_number, 'notes': o.notes
+            'vehicle_number': o.vehicle_number, 'notes': o.notes,
+            'signature_data': getattr(o, 'signature_data', '') or '',
+            'signed_by': getattr(o, 'signed_by', '') or '',
+            'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
+            'signature_title': getattr(o, 'signature_title', '') or '',
         }
 
     def detail(self, o):
@@ -4223,6 +4316,13 @@ class DeliveryChallanResource(Resource):
                 )
         services.log_audit(user, 'update', 'DeliveryChallan', obj.number, f"Updated delivery challan {obj.number}")
         return obj
+
+    def action(self, request, obj, name):
+        if name == 'sign':
+            return sign_document_action(obj, request)
+        elif name == 'unsign':
+            return unsign_document_action(obj, request)
+        raise ApiError(404, 'Unknown action.')
 
 class EWayBillResource(Resource):
     name = 'e-way-bills'
@@ -4641,6 +4741,7 @@ def org_json(o):
         'template_theme': o.template_theme or 'convosis',
         'template_color': o.template_color or '#1877f2',
         'signature_title': o.signature_title or 'Authorized Signature',
+        'signature_data': getattr(o, 'signature_data', '') or '',
         'notes_default': o.notes_default or 'Thanks for your business.',
         'terms_default': o.terms_default or 'Due on Receipt',
         'opening_cash': o.opening_cash,
@@ -4721,6 +4822,8 @@ def organization(request):
     d = body(request)
     if 'logo_data' in d:
         out['logo_data'] = d['logo_data']
+    if 'signature_data' in d:
+        out['signature_data'] = d['signature_data']
     for k, v in out.items():
         setattr(org, k, v)
     org.save()

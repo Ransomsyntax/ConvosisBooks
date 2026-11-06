@@ -85,3 +85,4 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(populate_data, reverse_code=migrations.RunPython.noop),
     ]
+

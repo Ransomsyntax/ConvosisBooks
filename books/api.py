@@ -5,6 +5,7 @@ from datetime import timedelta
 import io
 import json
 import re
+import uuid
 from decimal import Decimal
 from functools import wraps
 
@@ -27,13 +28,13 @@ from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
-    CreditNote, CreditNoteLine, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
+    CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
     DeliveryChallanLine, DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
-    ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTransaction,
+    ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
-    RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, SalesOrder,
-    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TenantSubscription, TimeLog, UserProfile, Vendor, VendorCredit,
+    RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
+    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TenantSubscription, TimeLog, UserInvitation, UserProfile, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
@@ -108,6 +109,64 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
     user = request.user
     if not user or not user.is_authenticated:
         raise ApiError(401, 'Authentication required.')
+
+    if user.is_superuser:
+        return True
+
+    profile = getattr(user, 'profile', None)
+    custom_role = getattr(profile, 'custom_role', None) if profile else None
+
+    # Check segmented access control if custom_role is assigned
+    if custom_role and custom_role.permissions:
+        perms = custom_role.permissions
+        if custom_role.name == 'Admin':
+            return True
+
+        method = request.method
+        action = action_name or ('delete' if method == 'DELETE' else ('edit' if method in ('PUT', 'PATCH') else ('create' if method == 'POST' else 'view')))
+
+        RES_MAP = {
+            'customers': ('contacts', 'customers'),
+            'vendors': ('contacts', 'vendors'),
+            'items': ('items', 'item'),
+            'adjustments': ('items', 'adjustments'),
+            'stock-adjustments': ('items', 'adjustments'),
+            'price-lists': ('items', 'price_lists'),
+            'banking': ('banking', 'banking'),
+            'bank-accounts': ('banking', 'banking'),
+            'invoices': ('sales', 'invoices'),
+            'payments-received': ('sales', 'customer_payments'),
+            'quotes': ('sales', 'quotes'),
+            'delivery-challans': ('sales', 'delivery_challans'),
+            'sales-orders': ('sales', 'sales_orders'),
+            'credit-notes': ('sales', 'credit_notes'),
+            'bills': ('purchases', 'bills'),
+            'payments-made': ('purchases', 'vendor_payments'),
+            'expenses': ('purchases', 'expenses'),
+            'purchase-orders': ('purchases', 'purchase_orders'),
+            'vendor-credits': ('purchases', 'vendor_credits'),
+            'accounts': ('accountant', 'chart_of_accounts'),
+            'journals': ('accountant', 'journals'),
+            'budgets': ('accountant', 'budgets'),
+            'projects': ('timesheets', 'projects'),
+            'timesheets': ('timesheets', 'timesheets'),
+            'time-entries': ('timesheets', 'time_entries'),
+            'settings': ('settings', 'update_profile'),
+            'roles': ('settings', 'users'),
+            'users': ('settings', 'users'),
+        }
+
+        if resource_name in RES_MAP:
+            mod_key, sub_key = RES_MAP[resource_name]
+            sub_perms = perms.get(mod_key, {}).get(sub_key, {})
+            if isinstance(sub_perms, dict):
+                has_full = bool(sub_perms.get('full'))
+                has_action = bool(sub_perms.get(action))
+                if not (has_full or has_action):
+                    raise ApiError(403, f'Permission denied: Role "{custom_role.name}" does not have {action.upper()} permission on {resource_name}.')
+            elif isinstance(sub_perms, bool):
+                if not sub_perms:
+                    raise ApiError(403, f'Permission denied: Role "{custom_role.name}" does not have access to {resource_name}.')
 
     role = get_user_role(user)
     if role == UserProfile.ADMIN or user.is_superuser:
@@ -5049,8 +5108,11 @@ def org_json(o):
     return {
         'name': o.name,
         'code': o.get_code(),
+        'legal_name': getattr(o, 'legal_name', '') or o.name,
+        'business_type': getattr(o, 'business_type', 'Private Limited Company'),
         'company_id': o.company_id,
         'gstin': o.gstin,
+        'pan': getattr(o, 'pan', '') or '',
         'state': o.state,
         'address': o.address,
         'city': o.city,
@@ -5059,7 +5121,27 @@ def org_json(o):
         'phone': o.phone,
         'email': o.email,
         'website': o.website,
+        'financial_year': getattr(o, 'financial_year', 'Apr - Mar'),
+        'base_currency': getattr(o, 'base_currency', 'INR'),
+        'time_zone': getattr(o, 'time_zone', '(GMT+5:30) India Standard Time (Asia/Kolkata)'),
+        'date_format': getattr(o, 'date_format', 'dd/MM/yyyy'),
         'logo_data': o.logo_data or '/static/books/img/convosis-logo.png',
+        'favicon_data': getattr(o, 'favicon_data', '') or '',
+        'primary_color': getattr(o, 'primary_color', '#1877f2') or '#1877f2',
+        'secondary_color': getattr(o, 'secondary_color', '#0ea5e9') or '#0ea5e9',
+        'app_name': getattr(o, 'app_name', 'ConvosisBooks') or 'ConvosisBooks',
+        'login_branding': getattr(o, 'login_branding', '') or '',
+        'ai_settings': getattr(o, 'ai_settings', {}) or {},
+        'general_settings': getattr(o, 'general_settings', {}) or {},
+        'portal_settings': getattr(o, 'portal_settings', {}) or {},
+        'reminder_settings': getattr(o, 'reminder_settings', {}) or {},
+        'email_settings': getattr(o, 'email_settings', {}) or {},
+        'sms_settings': getattr(o, 'sms_settings', {}) or {},
+        'pdf_templates': getattr(o, 'pdf_templates', {}) or {},
+        'number_series': getattr(o, 'number_series', {}) or {},
+        'digital_signature': getattr(o, 'digital_signature', {}) or {},
+        'tax_settings': getattr(o, 'tax_settings', {}) or {},
+        'direct_tax_settings': getattr(o, 'direct_tax_settings', {}) or {},
         'template_theme': o.template_theme or 'convosis',
         'template_color': o.template_color or '#1877f2',
         'signature_title': o.signature_title or 'Authorized Signature',
@@ -7042,5 +7124,792 @@ def super_admin_toggle_company_view(request, pk):
         'is_active': org.is_active,
         'message': f"Company {org.name} successfully {action_label.lower()}."
     })
+
+
+# =========================================================================
+# CONVOSISBOOKS SETTINGS MODULE API
+# =========================================================================
+
+def serialize_role(r):
+    user_count = r.assigned_profiles.count() if hasattr(r, 'assigned_profiles') else 0
+    return {
+        'id': r.pk,
+        'uuid': str(r.uuid) if r.uuid else None,
+        'name': r.name,
+        'description': r.description,
+        'is_system': r.is_system,
+        'api_only': r.api_only,
+        'is_accountant': r.is_accountant,
+        'user_count': user_count,
+        'permissions': r.permissions or {},
+        'report_permissions': r.report_permissions or {},
+        'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '',
+        'updated_at': r.updated_at.strftime('%Y-%m-%d %H:%M') if r.updated_at else ''
+    }
+
+def serialize_user_entry(u, org):
+    prof = getattr(u, 'profile', None)
+    c_role = getattr(prof, 'custom_role', None) if prof else None
+    role_name = c_role.name if c_role else (prof.role if prof else 'Staff')
+    status = getattr(prof, 'status', 'active') if prof else ('active' if u.is_active else 'inactive')
+    return {
+        'id': u.pk,
+        'username': u.username,
+        'name': u.get_full_name() or u.username,
+        'email': u.email,
+        'role': role_name,
+        'role_id': c_role.pk if c_role else None,
+        'status': status,
+        'is_active': u.is_active and status != 'inactive',
+        'is_staff': u.is_staff,
+        'is_superuser': u.is_superuser,
+        'phone': prof.phone if prof else '',
+        'last_login': u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else 'Never',
+        'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else ''
+    }
+
+@api_view
+def settings_all_view(request):
+    """Return aggregated settings dashboard data for the user's organization."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+    services.ensure_default_settings(org)
+
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    users = [serialize_user_entry(u, org) for u in User.objects.filter(Q(profile__organization=org) | Q(is_superuser=True)).distinct().order_by('id')]
+    roles = [serialize_role(r) for r in Role.objects.filter(organization=org).order_by('id')]
+    currencies = [{
+        'id': c.pk, 'code': c.code, 'name': c.name, 'symbol': c.symbol,
+        'exchange_rate': float(c.exchange_rate), 'is_base': c.is_base, 'is_active': c.is_active
+    } for c in CurrencySetting.objects.filter(organization=org).order_by('id')]
+
+    payment_terms = [{
+        'id': p.pk, 'name': p.name, 'days': p.days, 'is_default': p.is_default, 'is_active': p.is_active
+    } for p in PaymentTermSetting.objects.filter(organization=org).order_by('days')]
+
+    # Number series summary
+    number_series = []
+    for mod_key, label in [
+        ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
+        ('SO', 'Sales Order'), ('QTN', 'Quotation'), ('PO', 'Purchase Order'),
+        ('BILL', 'Bill'), ('PR', 'Payment Received'), ('PM', 'Payment Made'),
+        ('CN', 'Credit Note'), ('DN', 'Debit Note'), ('JRN', 'Journal'),
+        ('DC', 'Delivery Challan'), ('ITEM', 'Items'), ('ST', 'Stock Transfer'),
+        ('EXP', 'Expense'), ('ADJ', 'Stock Adjustment')
+    ]:
+        prev = services.preview_document_number(mod_key, org=org)
+        number_series.append({
+            'module': mod_key,
+            'label': label,
+            'prefix': prev.get('prefix', mod_key),
+            'next_sequence': prev.get('next_sequence', 1),
+            'financial_year': prev.get('financial_year', ''),
+            'sample_formatted': prev.get('formatted', '')
+        })
+
+    return j({
+        'organization': org_json(org),
+        'users': users,
+        'roles': roles,
+        'currencies': currencies,
+        'payment_terms': payment_terms,
+        'number_series': number_series,
+        'subscription': {
+            'plan': getattr(org, 'subscription_plan', 'Enterprise Plan') or 'Enterprise Plan',
+            'status': getattr(org, 'subscription_status', 'Active') or 'Active',
+            'renewal': getattr(org, 'subscription_renewal', '31 Dec 2027') or '31 Dec 2027',
+            'users_limit': getattr(org, 'subscription_users', 'Unlimited') or 'Unlimited',
+            'features': getattr(org, 'subscription_features', 'All Modules Unlocked') or 'All Modules Unlocked'
+        }
+    })
+
+@api_view
+def settings_roles_view(request, role_id=None):
+    """Manage roles: list, create, retrieve, update, delete."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+    services.ensure_default_settings(org)
+
+    if request.method == 'GET':
+        if role_id:
+            r = Role.objects.filter(organization=org, pk=role_id).first()
+            if not r:
+                raise ApiError(404, 'Role not found.')
+            return j(serialize_role(r))
+        roles = Role.objects.filter(organization=org).order_by('id')
+        return j({'roles': [serialize_role(r) for r in roles]})
+
+    data = body(request)
+
+    if request.method == 'POST':
+        name = (data.get('name') or '').strip()
+        if not name:
+            raise ApiError(400, 'Role Name is required.', {'name': 'Role Name is required.'})
+
+        if Role.objects.filter(organization=org, name__iexact=name).exists():
+            raise ApiError(400, f'A role with name "{name}" already exists.', {'name': 'Role name already in use.'})
+
+        desc = (data.get('description') or '').strip()
+        api_only = bool(data.get('api_only'))
+        is_acc = bool(data.get('is_accountant'))
+        perms = data.get('permissions') or services.get_default_permissions_for_role(name)
+        rpt_perms = data.get('report_permissions') or services.get_empty_report_permissions()
+
+        r = Role.objects.create(
+            organization=org,
+            name=name,
+            description=desc,
+            is_system=False,
+            api_only=api_only,
+            is_accountant=is_acc,
+            permissions=perms,
+            report_permissions=rpt_perms
+        )
+        services.log_audit(request.user, 'create', 'Role', r.pk, f"Created custom role '{r.name}'")
+        return j(serialize_role(r), 201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not role_id:
+            raise ApiError(400, 'Role ID required.')
+        r = Role.objects.filter(organization=org, pk=role_id).first()
+        if not r:
+            raise ApiError(404, 'Role not found.')
+
+        name = (data.get('name') or '').strip()
+        if name and name != r.name:
+            if r.is_system:
+                raise ApiError(400, 'System role names cannot be renamed.')
+            if Role.objects.filter(organization=org, name__iexact=name).exclude(pk=r.pk).exists():
+                raise ApiError(400, f'Role with name "{name}" already exists.')
+            r.name = name
+
+        if 'description' in data:
+            r.description = str(data['description']).strip()
+        if 'api_only' in data:
+            r.api_only = bool(data['api_only'])
+        if 'is_accountant' in data:
+            r.is_accountant = bool(data['is_accountant'])
+        if 'permissions' in data and isinstance(data['permissions'], dict):
+            r.permissions = data['permissions']
+        if 'report_permissions' in data and isinstance(data['report_permissions'], dict):
+            r.report_permissions = data['report_permissions']
+
+        r.save()
+        services.log_audit(request.user, 'update', 'Role', r.pk, f"Updated role '{r.name}' permissions and configuration")
+        return j(serialize_role(r))
+
+    if request.method == 'DELETE':
+        if not role_id:
+            raise ApiError(400, 'Role ID required.')
+        r = Role.objects.filter(organization=org, pk=role_id).first()
+        if not r:
+            raise ApiError(404, 'Role not found.')
+        if r.is_system:
+            raise ApiError(400, 'Default system roles cannot be deleted.')
+
+        # Reassign existing users to Staff
+        staff_role = Role.objects.filter(organization=org, name='Staff').first()
+        r.assigned_profiles.update(custom_role=staff_role, role='staff')
+
+        role_name = r.name
+        r.delete()
+        services.log_audit(request.user, 'delete', 'Role', role_id, f"Deleted role '{role_name}'")
+        return j({'status': 'ok', 'message': f"Role '{role_name}' deleted successfully."})
+
+    raise ApiError(405, 'Method not allowed.')
+
+@api_view
+def settings_role_duplicate_view(request, role_id):
+    """Duplicate an existing role into a new customizable role."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    src = Role.objects.filter(organization=org, pk=role_id).first()
+    if not src:
+        raise ApiError(404, 'Source role not found.')
+
+    base_name = f"{src.name} (Copy)"
+    new_name = base_name
+    counter = 1
+    while Role.objects.filter(organization=org, name=new_name).exists():
+        counter += 1
+        new_name = f"{src.name} (Copy {counter})"
+
+    dup = Role.objects.create(
+        organization=org,
+        name=new_name,
+        description=f"Duplicate of {src.name}. {src.description}".strip(),
+        is_system=False,
+        api_only=src.api_only,
+        is_accountant=src.is_accountant,
+        permissions=src.permissions,
+        report_permissions=src.report_permissions
+    )
+    services.log_audit(request.user, 'create', 'Role', dup.pk, f"Duplicated role '{src.name}' as '{dup.name}'")
+    return j(serialize_role(dup), 201)
+
+@api_view
+def settings_users_view(request, user_id=None):
+    """User management: list, add, edit, deactivate, delete."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    if request.method == 'GET':
+        if user_id:
+            u = User.objects.filter(pk=user_id).first()
+            if not u:
+                raise ApiError(404, 'User not found.')
+            return j(serialize_user_entry(u, org))
+
+        qs = User.objects.filter(Q(profile__organization=org) | Q(is_superuser=True)).distinct().order_by('id')
+        q = request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(Q(username__icontains=q) | Q(email__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q))
+
+        role_filter = request.GET.get('role', '').strip()
+        if role_filter:
+            qs = qs.filter(Q(profile__custom_role__name__iexact=role_filter) | Q(profile__role__iexact=role_filter))
+
+        status_filter = request.GET.get('status', '').strip()
+        if status_filter:
+            qs = qs.filter(profile__status__iexact=status_filter)
+
+        users = [serialize_user_entry(u, org) for u in qs]
+        return j({'users': users, 'total': len(users)})
+
+    data = body(request)
+
+    if request.method == 'POST':
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            raise ApiError(400, 'Email address is required.', {'email': 'Email is required.'})
+
+        username = (data.get('username') or email.split('@')[0]).strip()
+        if User.objects.filter(username=username).exists():
+            username = f"{username}_{uuid.uuid4().hex[:4]}"
+
+        name = (data.get('name') or '').strip()
+        parts = name.split(' ', 1)
+        first_name = parts[0]
+        last_name = parts[1] if len(parts) > 1 else ''
+
+        role_id = data.get('role_id')
+        r_obj = Role.objects.filter(organization=org, pk=role_id).first() if role_id else Role.objects.filter(organization=org, name='Staff').first()
+
+        password = data.get('password') or 'Convosis@123'
+        u = User.objects.create_user(
+            username=username,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            password=password
+        )
+
+        status_val = data.get('status', 'active')
+        UserProfile.objects.create(
+            user=u,
+            organization=org,
+            role=(r_obj.name.lower() if r_obj else 'staff'),
+            custom_role=r_obj,
+            status=status_val,
+            phone=str(data.get('phone', '')).strip()
+        )
+        services.log_audit(request.user, 'create', 'User', u.pk, f"Added user {u.email} with role {r_obj.name if r_obj else 'Staff'}")
+        return j(serialize_user_entry(u, org), 201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not user_id:
+            raise ApiError(400, 'User ID required.')
+        u = User.objects.filter(pk=user_id).first()
+        if not u:
+            raise ApiError(404, 'User not found.')
+
+        if 'name' in data:
+            name = str(data['name']).strip()
+            parts = name.split(' ', 1)
+            u.first_name = parts[0]
+            u.last_name = parts[1] if len(parts) > 1 else ''
+        if 'email' in data:
+            u.email = str(data['email']).strip().lower()
+        u.save()
+
+        prof = getattr(u, 'profile', None)
+        if not prof:
+            prof = UserProfile.objects.create(user=u, organization=org)
+
+        if 'role_id' in data:
+            r_obj = Role.objects.filter(organization=org, pk=data['role_id']).first()
+            if r_obj:
+                prof.custom_role = r_obj
+                prof.role = r_obj.name.lower()
+        if 'status' in data:
+            prof.status = data['status']
+            u.is_active = (data['status'] == 'active')
+            u.save(update_fields=['is_active'])
+        if 'phone' in data:
+            prof.phone = str(data['phone']).strip()
+
+        prof.save()
+        services.log_audit(request.user, 'update', 'User', u.pk, f"Updated user profile for {u.email}")
+        return j(serialize_user_entry(u, org))
+
+    if request.method == 'DELETE':
+        if not user_id:
+            raise ApiError(400, 'User ID required.')
+        if user_id == request.user.pk:
+            raise ApiError(400, 'You cannot delete or deactivate your own account.')
+
+        u = User.objects.filter(pk=user_id).first()
+        if not u:
+            raise ApiError(404, 'User not found.')
+
+        prof = getattr(u, 'profile', None)
+        if prof:
+            prof.status = 'inactive'
+            prof.save(update_fields=['status'])
+        u.is_active = False
+        u.save(update_fields=['is_active'])
+        services.log_audit(request.user, 'delete', 'User', u.pk, f"Deactivated user {u.email}")
+        return j({'status': 'ok', 'message': f"User {u.email} deactivated successfully."})
+
+    raise ApiError(405, 'Method not allowed.')
+
+@api_view
+def settings_invite_user_view(request):
+    """Invite a new user or accountant with role assignment."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    data = body(request)
+    email = (data.get('email') or '').strip().lower()
+    if not email:
+        raise ApiError(400, 'Email address is required.', {'email': 'Email is required.'})
+
+    name = (data.get('name') or '').strip()
+    is_acc = bool(data.get('is_accountant'))
+    role_id = data.get('role_id')
+
+    if is_acc:
+        r_obj = Role.objects.filter(organization=org, name='Accountant').first()
+    elif role_id:
+        r_obj = Role.objects.filter(organization=org, pk=role_id).first()
+    else:
+        r_obj = Role.objects.filter(organization=org, name='Staff').first()
+
+    token = uuid.uuid4().hex
+    inv = UserInvitation.objects.create(
+        organization=org,
+        email=email,
+        name=name,
+        role=r_obj,
+        role_name=r_obj.name if r_obj else 'Staff',
+        is_accountant=is_acc,
+        token=token,
+        status='invited',
+        invited_by=request.user,
+        expires_at=timezone.now() + timedelta(days=7)
+    )
+
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    # Check if a user account already exists; if not, create placeholder invited user
+    user = User.objects.filter(email__iexact=email).first()
+    if not user:
+        uname = email.split('@')[0]
+        if User.objects.filter(username=uname).exists():
+            uname = f"{uname}_{uuid.uuid4().hex[:4]}"
+        parts = name.split(' ', 1)
+        user = User.objects.create_user(
+            username=uname,
+            email=email,
+            first_name=parts[0] if parts else '',
+            last_name=parts[1] if len(parts) > 1 else '',
+            password=uuid.uuid4().hex
+        )
+        UserProfile.objects.create(
+            user=user,
+            organization=org,
+            role=r_obj.name.lower() if r_obj else 'staff',
+            custom_role=r_obj,
+            status='invited'
+        )
+
+    services.log_audit(request.user, 'create', 'UserInvitation', inv.pk, f"Sent invitation to {email} as {inv.role_name}")
+    return j({
+        'status': 'ok',
+        'message': f"Invitation sent to {email}.",
+        'invitation_id': inv.pk,
+        'token': token,
+        'invitation_link': f"/#/invitation/{token}"
+    }, 201)
+
+@api_view
+def settings_resend_invite_view(request, invite_id):
+    """Resend a user invitation."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    inv = UserInvitation.objects.filter(organization=org, pk=invite_id).first()
+    if not inv:
+        raise ApiError(404, 'Invitation not found.')
+
+    inv.token = uuid.uuid4().hex
+    inv.status = 'invited'
+    inv.expires_at = timezone.now() + timedelta(days=7)
+    inv.save()
+
+    services.log_audit(request.user, 'update', 'UserInvitation', inv.pk, f"Resent invitation to {inv.email}")
+    return j({
+        'status': 'ok',
+        'message': f"Invitation resent to {inv.email}.",
+        'token': inv.token,
+        'invitation_link': f"/#/invitation/{inv.token}"
+    })
+
+@api_view
+def settings_organization_view(request):
+    """Get and update complete organization profile and settings."""
+    org = get_user_org(request.user) or Organization.get()
+    if request.method == 'GET':
+        return j(org_json(org))
+
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    data = body(request)
+    c = Cleaner(data)
+
+    updatable_fields = [
+        ('name', lambda: c.text('name', True, 200)),
+        ('code', lambda: c.text('code', False, 20, upper=True)),
+        ('legal_name', lambda: c.text('legal_name', False, 200)),
+        ('business_type', lambda: c.text('business_type', False, 100)),
+        ('company_id', lambda: c.text('company_id', False, 100)),
+        ('gstin', lambda: c.text('gstin', False, 15, upper=True, pattern=GSTIN_RE, pattern_msg='Invalid GSTIN format')),
+        ('pan', lambda: c.text('pan', False, 10, upper=True, pattern=PAN_RE, pattern_msg='Invalid PAN format')),
+        ('address', lambda: c.text('address', False, 1000)),
+        ('city', lambda: c.text('city', False, 100)),
+        ('state', lambda: c.text('state', False, 60)),
+        ('pincode', lambda: c.text('pincode', False, 20)),
+        ('country', lambda: c.text('country', False, 100)),
+        ('phone', lambda: c.text('phone', False, 50)),
+        ('email', lambda: c.text('email', False, 254)),
+        ('website', lambda: c.text('website', False, 200)),
+        ('financial_year', lambda: c.text('financial_year', False, 50)),
+        ('base_currency', lambda: c.text('base_currency', False, 10)),
+        ('time_zone', lambda: c.text('time_zone', False, 80)),
+        ('date_format', lambda: c.text('date_format', False, 30)),
+        ('logo_data', lambda: c.text('logo_data', False, 2000000)),
+        ('favicon_data', lambda: c.text('favicon_data', False, 2000000)),
+        ('primary_color', lambda: c.text('primary_color', False, 30)),
+        ('secondary_color', lambda: c.text('secondary_color', False, 30)),
+        ('app_name', lambda: c.text('app_name', False, 100)),
+        ('login_branding', lambda: c.text('login_branding', False, 5000)),
+    ]
+
+    for f_name, f_getter in updatable_fields:
+        if f_name in data:
+            setattr(org, f_name, f_getter())
+
+    for json_field in ('ai_settings', 'general_settings', 'portal_settings', 'reminder_settings', 'email_settings', 'sms_settings', 'pdf_templates', 'number_series', 'digital_signature', 'tax_settings', 'direct_tax_settings'):
+        if json_field in data and isinstance(data[json_field], dict):
+            current = getattr(org, json_field, {}) or {}
+            current.update(data[json_field])
+            setattr(org, json_field, current)
+
+    c.done()
+    org.save()
+    services.log_audit(request.user, 'update', 'Organization', org.pk, f"Updated organization settings for {org.name}")
+    return j(org_json(org))
+
+@api_view
+def settings_currencies_view(request, currency_id=None):
+    """Manage currencies."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    if request.method == 'GET':
+        qs = CurrencySetting.objects.filter(organization=org).order_by('id')
+        return j({'currencies': [{
+            'id': c.pk, 'code': c.code, 'name': c.name, 'symbol': c.symbol,
+            'exchange_rate': float(c.exchange_rate), 'is_base': c.is_base, 'is_active': c.is_active
+        } for c in qs]})
+
+    data = body(request)
+
+    if request.method == 'POST':
+        code = str(data.get('code', '')).strip().upper()
+        name = str(data.get('name', '')).strip()
+        sym = str(data.get('symbol', '')).strip() or code
+        rate = Decimal(str(data.get('exchange_rate', '1.0000')))
+
+        if not code or not name:
+            raise ApiError(400, 'Currency Code and Name are required.')
+
+        c, _ = CurrencySetting.objects.update_or_create(
+            organization=org,
+            code=code,
+            defaults={'name': name, 'symbol': sym, 'exchange_rate': rate, 'is_base': False, 'is_active': True}
+        )
+        services.log_audit(request.user, 'create', 'CurrencySetting', c.pk, f"Added currency {c.code}")
+        return j({'id': c.pk, 'code': c.code, 'name': c.name, 'symbol': c.symbol, 'exchange_rate': float(c.exchange_rate)}, 201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not currency_id:
+            raise ApiError(400, 'Currency ID required.')
+        c = CurrencySetting.objects.filter(organization=org, pk=currency_id).first()
+        if not c:
+            raise ApiError(404, 'Currency not found.')
+        if 'exchange_rate' in data:
+            c.exchange_rate = Decimal(str(data['exchange_rate']))
+        if 'is_active' in data:
+            c.is_active = bool(data['is_active'])
+        if 'name' in data:
+            c.name = str(data['name']).strip()
+        c.save()
+        services.log_audit(request.user, 'update', 'CurrencySetting', c.pk, f"Updated currency {c.code}")
+        return j({'status': 'ok', 'id': c.pk, 'code': c.code, 'exchange_rate': float(c.exchange_rate)})
+
+    if request.method == 'DELETE':
+        if not currency_id:
+            raise ApiError(400, 'Currency ID required.')
+        c = CurrencySetting.objects.filter(organization=org, pk=currency_id).first()
+        if not c:
+            raise ApiError(404, 'Currency not found.')
+        if c.is_base:
+            raise ApiError(400, 'Base currency cannot be deleted.')
+        c.delete()
+        services.log_audit(request.user, 'delete', 'CurrencySetting', currency_id, f"Deleted currency {c.code}")
+        return j({'status': 'ok', 'message': 'Currency removed.'})
+
+    raise ApiError(405, 'Method not allowed.')
+
+@api_view
+def settings_payment_terms_view(request, term_id=None):
+    """Manage payment terms."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    if request.method == 'GET':
+        qs = PaymentTermSetting.objects.filter(organization=org).order_by('days')
+        return j({'payment_terms': [{'id': p.pk, 'name': p.name, 'days': p.days, 'is_default': p.is_default, 'is_active': p.is_active} for p in qs]})
+
+    data = body(request)
+
+    if request.method == 'POST':
+        name = str(data.get('name', '')).strip()
+        days = int(data.get('days', 0))
+        if not name:
+            raise ApiError(400, 'Term name is required.')
+        p = PaymentTermSetting.objects.create(organization=org, name=name, days=days, is_default=bool(data.get('is_default')), is_active=True)
+        services.log_audit(request.user, 'create', 'PaymentTermSetting', p.pk, f"Created payment term {p.name}")
+        return j({'id': p.pk, 'name': p.name, 'days': p.days}, 201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not term_id:
+            raise ApiError(400, 'Term ID required.')
+        p = PaymentTermSetting.objects.filter(organization=org, pk=term_id).first()
+        if not p:
+            raise ApiError(404, 'Payment term not found.')
+        if 'name' in data: p.name = str(data['name']).strip()
+        if 'days' in data: p.days = int(data['days'])
+        if 'is_default' in data:
+            if bool(data['is_default']):
+                PaymentTermSetting.objects.filter(organization=org).update(is_default=False)
+            p.is_default = bool(data['is_default'])
+        if 'is_active' in data: p.is_active = bool(data['is_active'])
+        p.save()
+        services.log_audit(request.user, 'update', 'PaymentTermSetting', p.pk, f"Updated payment term {p.name}")
+        return j({'status': 'ok', 'id': p.pk, 'name': p.name, 'days': p.days})
+
+    if request.method == 'DELETE':
+        if not term_id:
+            raise ApiError(400, 'Term ID required.')
+        p = PaymentTermSetting.objects.filter(organization=org, pk=term_id).first()
+        if not p:
+            raise ApiError(404, 'Payment term not found.')
+        p.delete()
+        services.log_audit(request.user, 'delete', 'PaymentTermSetting', term_id, f"Deleted payment term {p.name}")
+        return j({'status': 'ok', 'message': 'Payment term deleted.'})
+
+    raise ApiError(405, 'Method not allowed.')
+
+@api_view
+def settings_number_series_view(request):
+    """View and configure document numbering series for all modules."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    modules = [
+        ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
+        ('SO', 'Sales Order'), ('QTN', 'Quotation'), ('PO', 'Purchase Order'),
+        ('BILL', 'Bill'), ('PR', 'Payment Received'), ('PM', 'Payment Made'),
+        ('CN', 'Credit Note'), ('DN', 'Debit Note'), ('JRN', 'Journal'),
+        ('DC', 'Delivery Challan'), ('ITEM', 'Items'), ('ST', 'Stock Transfer'),
+        ('EXP', 'Expense'), ('ADJ', 'Stock Adjustment')
+    ]
+
+    if request.method == 'GET':
+        res = []
+        for mod_key, label in modules:
+            prev = services.preview_document_number(mod_key, org=org)
+            res.append({
+                'module': mod_key,
+                'label': label,
+                'prefix': prev.get('prefix', mod_key),
+                'next_sequence': prev.get('next_sequence', 1),
+                'financial_year': prev.get('financial_year', ''),
+                'formatted': prev.get('formatted', '')
+            })
+        return j({'series': res, 'org_code': org.get_code()})
+
+    data = body(request)
+    mod_key = str(data.get('module', '')).strip().upper()
+    cfg = services.get_document_module_config(mod_key)
+    if not cfg:
+        raise ApiError(400, f'Invalid module key "{mod_key}".')
+
+    prefix = str(data.get('prefix', '')).strip().upper() or cfg['pfx']
+    next_seq = int(data.get('next_sequence', 1))
+
+    # Update sequence in DB
+    fy = services.get_financial_year() if cfg['has_fy'] else None
+    org_code = org.get_code()
+    seq_key = f"{org.pk}:{org_code}:{prefix}:{fy}" if fy else f"{org.pk}:{org_code}:{prefix}"
+
+    seq_obj, _ = Sequence.objects.get_or_create(key=seq_key, defaults={'value': max(0, next_seq - 1)})
+    seq_obj.value = max(0, next_seq - 1)
+    seq_obj.save()
+
+    # Also record in org.number_series for display persistence
+    ns = org.number_series or {}
+    ns[mod_key] = {'prefix': prefix, 'next_sequence': next_seq}
+    org.number_series = ns
+    org.save(update_fields=['number_series'])
+
+    services.log_audit(request.user, 'update', 'Sequence', seq_key, f"Updated numbering series for {mod_key}: next sequence {next_seq}")
+    prev = services.preview_document_number(mod_key, org=org)
+    return j({'status': 'ok', 'module': mod_key, 'preview': prev})
+
+@api_view
+def settings_templates_view(request):
+    """View and update PDF and invoice templates."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    if request.method == 'GET':
+        return j({
+            'templates': org.pdf_templates or {
+                'invoice_template': 'convosis_modern',
+                'quote_template': 'convosis_clean',
+                'bill_template': 'convosis_standard',
+                'primary_color': org.primary_color or '#1877f2',
+                'font_family': 'Inter, system-ui, sans-serif',
+                'show_signature': True
+            }
+        })
+
+    data = body(request)
+    tpls = org.pdf_templates or {}
+    tpls.update(data)
+    org.pdf_templates = tpls
+    if 'primary_color' in data:
+        org.primary_color = data['primary_color']
+    org.save()
+    services.log_audit(request.user, 'update', 'Organization', org.pk, "Updated PDF template settings")
+    return j({'status': 'ok', 'templates': org.pdf_templates})
+
+@api_view
+def settings_digital_signature_view(request):
+    """View and upload digital signature."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+
+    if request.method == 'GET':
+        return j({
+            'signature_data': org.signature_data or '',
+            'signature_title': org.signature_title or 'Authorized Signature',
+            'digital_signature': org.digital_signature or {'enabled': bool(org.signature_data), 'placement': 'bottom_right'}
+        })
+
+    data = body(request)
+    if 'signature_data' in data:
+        org.signature_data = data['signature_data']
+    if 'signature_title' in data:
+        org.signature_title = str(data['signature_title']).strip()
+    if 'digital_signature' in data and isinstance(data['digital_signature'], dict):
+        ds = org.digital_signature or {}
+        ds.update(data['digital_signature'])
+        org.digital_signature = ds
+
+    org.save()
+    services.log_audit(request.user, 'update', 'Organization', org.pk, "Updated digital signature settings")
+    return j({
+        'status': 'ok',
+        'signature_data': org.signature_data,
+        'signature_title': org.signature_title,
+        'digital_signature': org.digital_signature
+    })
+
+@api_view
+def settings_taxes_view(request):
+    """View and update tax settings, tax groups, and direct tax (TDS/TCS) configurations."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN, UserProfile.ACCOUNTANT])
+    org = get_user_org(request.user) or Organization.get()
+
+    standard_taxes = [
+        {'name': 'GST0', 'type': 'Tax Group', 'rate': 0, 'active': True},
+        {'name': 'GST5', 'type': 'Tax Group', 'rate': 5, 'active': True},
+        {'name': 'GST12', 'type': 'Tax Group', 'rate': 12, 'active': True},
+        {'name': 'GST18', 'type': 'Tax Group', 'rate': 18, 'active': True},
+        {'name': 'GST28', 'type': 'Tax Group', 'rate': 28, 'active': True},
+        {'name': 'GST40', 'type': 'Tax Group', 'rate': 40, 'active': True},
+        {'name': 'IGST0', 'type': 'IGST', 'rate': 0, 'active': True},
+        {'name': 'IGST5', 'type': 'IGST', 'rate': 5, 'active': True},
+        {'name': 'IGST12', 'type': 'IGST', 'rate': 12, 'active': True},
+        {'name': 'IGST18', 'type': 'IGST', 'rate': 18, 'active': True},
+        {'name': 'IGST28', 'type': 'IGST', 'rate': 28, 'active': True},
+        {'name': 'IGST40', 'type': 'IGST', 'rate': 40, 'active': True},
+    ]
+
+    tds_sections = [
+        {'section': '194C', 'name': 'Payment to Contractors', 'rate': '1% / 2%', 'threshold': '₹30,000 / ₹1,00,000'},
+        {'section': '194J', 'name': 'Fees for Professional / Technical Services', 'rate': '2% / 10%', 'threshold': '₹30,000'},
+        {'section': '194I', 'name': 'Rent on Land, Building, or Furniture', 'rate': '10%', 'threshold': '₹2,40,000'},
+        {'section': '194H', 'name': 'Commission or Brokerage', 'rate': '5%', 'threshold': '₹15,000'},
+        {'section': '194Q', 'name': 'Purchase of Goods', 'rate': '0.1%', 'threshold': '₹50,00,000'},
+        {'section': '206C(1H)', 'name': 'TCS on Sale of Goods', 'rate': '0.1%', 'threshold': '₹50,00,000'},
+    ]
+
+    if request.method == 'GET':
+        return j({
+            'taxes': standard_taxes,
+            'tds_sections': tds_sections,
+            'tax_settings': org.tax_settings or {'default_tax_preference': 'taxable', 'gst_registered': True},
+            'direct_tax_settings': org.direct_tax_settings or {'tds_level': 'transaction', 'enable_tds_liabilities_report': True}
+        })
+
+    data = body(request)
+    if 'tax_settings' in data and isinstance(data['tax_settings'], dict):
+        ts = org.tax_settings or {}
+        ts.update(data['tax_settings'])
+        org.tax_settings = ts
+
+    if 'direct_tax_settings' in data and isinstance(data['direct_tax_settings'], dict):
+        dts = org.direct_tax_settings or {}
+        dts.update(data['direct_tax_settings'])
+        org.direct_tax_settings = dts
+
+    org.save(update_fields=['tax_settings', 'direct_tax_settings'])
+    services.log_audit(request.user, 'update', 'Organization', org.pk, "Updated tax and direct tax settings")
+    return j({
+        'status': 'ok',
+        'tax_settings': org.tax_settings,
+        'direct_tax_settings': org.direct_tax_settings
+    })
+
 
 

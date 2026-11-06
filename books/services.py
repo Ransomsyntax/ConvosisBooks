@@ -5813,3 +5813,354 @@ def get_stock_transfer_report_data(org, warehouse=None, start=None, end=None, it
         'count': len(rows)
     }
 
+# =========================================================================
+# SETTINGS, ROLES, AND SEGMENTED PERMISSION ENGINE
+# =========================================================================
+
+REPORT_GROUPS = [
+    'business_overview', 'sales', 'inventory', 'inventory_valuation',
+    'retail', 'receivables', 'payables', 'purchases', 'accountant',
+    'banking', 'taxes', 'gst_reports', 'activity_reports'
+]
+
+def get_full_report_permissions():
+    return {
+        'all_reports': True,
+        'groups': {grp: {'full': True, 'view': True, 'export': True, 'schedule': True, 'share': True} for grp in REPORT_GROUPS}
+    }
+
+def get_empty_report_permissions():
+    return {
+        'all_reports': False,
+        'groups': {grp: {'full': False, 'view': False, 'export': False, 'schedule': False, 'share': False} for grp in REPORT_GROUPS}
+    }
+
+def get_default_permissions_for_role(role_name):
+    """Generate complete default segmented permissions for built-in roles."""
+    rn = (role_name or '').lower().strip()
+    is_admin = 'admin' in rn and 'staff' not in rn
+    is_accountant = 'accountant' in rn
+    is_timesheet = 'timesheet' in rn
+    is_assigned = 'assigned' in rn
+
+    if is_timesheet:
+        return {
+            'contacts': {'customers': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'assign_owner': False, 'others': {}}, 'vendors': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'others': {}}},
+            'items': {'item': {'full': False, 'view': True, 'create': False, 'edit': False, 'delete': False}, 'adjustments': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'approve': False}, 'price_lists': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False}},
+            'banking': {'banking': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'others': {}}},
+            'sales': {k: {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'approve': False} for k in ['invoices', 'payments_received', 'quotes', 'delivery_challans', 'sales_orders', 'credit_notes']},
+            'purchases': {k: {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'approve': False} for k in ['bills', 'payments_made', 'expenses', 'purchase_orders', 'vendor_credits']},
+            'accountant': {k: {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False} for k in ['chart_of_accounts', 'journals', 'budgets']},
+            'income_tds': {'tds_payments': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False}},
+            'timesheets': {'projects': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'timesheets': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'time_entries': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'others': {'assigned_projects_only': True, 'restrict_expense_recording': True}},
+            'gst_filing': {'view_generate': False, 'push_transactions': False, 'reconcile': False, 'file_returns': False},
+            'settings': {k: False for k in ['update_profile', 'users', 'export_data', 'general_preferences', 'accountant_preferences', 'gst_filing', 'taxes', 'currencies', 'protected_data', 'payment_terms', 'templates', 'email_templates', 'manage_integrations', 'automation', 'incoming_webhooks', 'notifications']},
+            'dashboard': {'total_payables': False, 'total_receivables': False, 'cash_flow': False, 'income_expenses': False, 'top_expenses': False, 'projects': True, 'bank_credit_cards': False, 'account_watchlist': False},
+            'reporting_tags': {'view': False, 'manage': False, 'delete': False},
+            'bharat_connect': {'send_transactions': False, 'accept_transactions': False, 'manage_integration': False}
+        }
+
+    # Standard / Staff / Admin / Accountant base
+    can_ops = True
+    can_acc = is_admin or is_accountant
+    can_set = is_admin
+    can_del = is_admin or is_accountant
+
+    return {
+        'contacts': {
+            'customers': {
+                'full': is_admin,
+                'view': True,
+                'create': True,
+                'edit': True,
+                'delete': can_del,
+                'assign_owner': is_admin,
+                'others': {
+                    'assigned_only': is_assigned,
+                    'handle_assigned_only': is_assigned
+                }
+            },
+            'vendors': {
+                'full': is_admin,
+                'view': True,
+                'create': True,
+                'edit': True,
+                'delete': can_del,
+                'others': {
+                    'view_bank_account': can_acc,
+                    'manage_bank_account': can_acc
+                }
+            }
+        },
+        'items': {
+            'item': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'adjustments': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'price_lists': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del}
+        },
+        'banking': {
+            'banking': {
+                'full': can_acc,
+                'view': can_acc,
+                'create': can_acc,
+                'edit': can_acc,
+                'delete': is_admin,
+                'others': {'bank_accounts': can_acc, 'bank_transactions': can_acc, 'reconciliation': can_acc}
+            }
+        },
+        'sales': {
+            'invoices': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc, 'others': {'send_invoices': True, 'void_invoices': can_acc, 'record_payments': True, 'customer_statements': True}},
+            'customer_payments': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'quotes': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'delivery_challans': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'sales_orders': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'credit_notes': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc}
+        },
+        'purchases': {
+            'bills': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'vendor_payments': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'expenses': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'others': {'approve_expenses': can_acc}},
+            'purchase_orders': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'vendor_credits': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc}
+        },
+        'accountant': {
+            'chart_of_accounts': {'full': can_acc, 'view': can_acc, 'create': can_acc, 'edit': can_acc, 'delete': is_admin},
+            'journals': {'full': can_acc, 'view': can_acc, 'create': can_acc, 'edit': can_acc, 'delete': is_admin, 'approve': can_acc},
+            'budgets': {'full': can_acc, 'view': can_acc, 'create': can_acc, 'edit': can_acc, 'delete': is_admin}
+        },
+        'income_tds': {
+            'tds_payments': {'full': can_acc, 'view': can_acc, 'create': can_acc, 'edit': can_acc, 'delete': is_admin}
+        },
+        'timesheets': {
+            'projects': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'timesheets': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'time_entries': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'others': {'restrict_expense_recording': False, 'assigned_projects_only': False}
+        },
+        'gst_filing': {
+            'view_generate': can_acc,
+            'push_transactions': can_acc,
+            'reconcile': can_acc,
+            'file_returns': is_admin
+        },
+        'settings': {
+            'update_profile': is_admin,
+            'users': is_admin,
+            'export_data': is_admin or is_accountant,
+            'general_preferences': is_admin,
+            'accountant_preferences': can_acc,
+            'gst_filing': can_acc,
+            'taxes': can_acc,
+            'currencies': is_admin,
+            'protected_data': is_admin,
+            'payment_terms': is_admin,
+            'templates': is_admin,
+            'email_templates': is_admin,
+            'manage_integrations': is_admin,
+            'automation': is_admin,
+            'incoming_webhooks': is_admin,
+            'notifications': is_admin
+        },
+        'dashboard': {
+            'total_payables': can_ops,
+            'total_receivables': can_ops,
+            'cash_flow': can_acc,
+            'income_expenses': can_acc,
+            'top_expenses': can_acc,
+            'projects': True,
+            'bank_credit_cards': can_acc,
+            'account_watchlist': can_acc
+        },
+        'reporting_tags': {
+            'view': True,
+            'manage': is_admin,
+            'delete': is_admin
+        },
+        'bharat_connect': {
+            'send_transactions': can_acc,
+            'accept_transactions': can_acc,
+            'manage_integration': is_admin
+        }
+    }
+
+def ensure_default_roles(org=None):
+    """Seed the 5 standard system roles for the organization."""
+    if not org:
+        org = Organization.objects.first()
+    if not org:
+        return []
+
+    from .models import Role
+
+    role_specs = [
+        ('Admin', 'Unrestricted access to all modules.', True, False, True, get_full_report_permissions()),
+        ('Staff', 'Access to all modules except reports, settings and accountant.', True, False, False, get_empty_report_permissions()),
+        ('Staff (Assigned Customers Only)', 'Access to all modules, transactions and data of assigned customers and all vendors except banking, reports, settings and accountant.', True, False, False, get_empty_report_permissions()),
+        ('Accountant', 'Full accounting access, chart of accounts, journals, banking, taxes, and reports.', True, False, True, get_full_report_permissions()),
+        ('TimesheetStaff', 'TimesheetStaff Role - Access to projects, timesheets, and time entries only.', True, False, False, get_empty_report_permissions()),
+    ]
+
+    roles = []
+    for name, desc, is_sys, api_only, is_acc, rpt_perms in role_specs:
+        r, created = Role.objects.get_or_create(
+            organization=org,
+            name=name,
+            defaults={
+                'description': desc,
+                'is_system': is_sys,
+                'api_only': api_only,
+                'is_accountant': is_acc,
+                'permissions': get_default_permissions_for_role(name),
+                'report_permissions': rpt_perms
+            }
+        )
+        if not created and not r.permissions:
+            r.permissions = get_default_permissions_for_role(name)
+            r.report_permissions = rpt_perms
+            r.save(update_fields=['permissions', 'report_permissions'])
+        roles.append(r)
+
+    return roles
+
+def ensure_default_settings(org=None):
+    """Seed default currencies, payment terms, and settings for the organization."""
+    if not org:
+        org = Organization.objects.first()
+    if not org:
+        return
+
+    from .models import CurrencySetting, PaymentTermSetting
+
+    # 1. Default Currencies
+    curr_specs = [
+        ('INR', 'Indian Rupee', '₹', Decimal('1.0000'), True),
+        ('USD', 'US Dollar', '$', Decimal('86.5000'), False),
+        ('EUR', 'Euro', '€', Decimal('92.0000'), False),
+        ('GBP', 'British Pound', '£', Decimal('108.0000'), False),
+        ('AED', 'UAE Dirham', 'AED', Decimal('23.5500'), False),
+    ]
+    for code, name, sym, rate, is_base in curr_specs:
+        CurrencySetting.objects.get_or_create(
+            organization=org,
+            code=code,
+            defaults={'name': name, 'symbol': sym, 'exchange_rate': rate, 'is_base': is_base, 'is_active': True}
+        )
+
+    # 2. Default Payment Terms
+    term_specs = [
+        ('Due on Receipt', 0, True),
+        ('Net 15', 15, False),
+        ('Net 30', 30, False),
+        ('Net 45', 45, False),
+        ('Net 60', 60, False),
+    ]
+    for name, days, is_def in term_specs:
+        PaymentTermSetting.objects.get_or_create(
+            organization=org,
+            name=name,
+            defaults={'days': days, 'is_default': is_def, 'is_active': True}
+        )
+
+    # 3. Default AI, General & Reminder Settings on Organization
+    save_fields = []
+    if not org.ai_settings:
+        org.ai_settings = {
+            'ai_enabled': True,
+            'business_insights': True,
+            'invoice_extraction': True,
+            'auto_categorization': True,
+            'ai_suggestions': True,
+            'activity_controls': True
+        }
+        save_fields.append('ai_settings')
+
+    if not org.general_settings:
+        org.general_settings = {
+            'default_language': 'English',
+            'date_format': 'dd/MM/yyyy',
+            'time_zone': '(GMT+5:30) India Standard Time (Asia/Kolkata)',
+            'financial_year': 'Apr - Mar',
+            'number_format': '1,23,456.78',
+            'decimal_precision': 2
+        }
+        save_fields.append('general_settings')
+
+    if not org.reminder_settings:
+        org.reminder_settings = {
+            'invoice_reminders': True,
+            'payment_reminders': True,
+            'overdue_reminders': True,
+            'email_notifications': True,
+            'reminder_days_before': 3,
+            'reminder_days_after': 7
+        }
+        save_fields.append('reminder_settings')
+
+    if not org.portal_settings:
+        org.portal_settings = {
+            'enabled': True,
+            'customer_login': True,
+            'invoice_access': True,
+            'payment_access': True,
+            'statement_access': True,
+            'profile_management': True
+        }
+        save_fields.append('portal_settings')
+
+    if not org.pdf_templates:
+        org.pdf_templates = {
+            'invoice_template': 'convosis_modern',
+            'quote_template': 'convosis_clean',
+            'bill_template': 'convosis_standard',
+            'primary_color': '#1877f2',
+            'font_family': 'Inter, system-ui, sans-serif',
+            'show_signature': True
+        }
+        save_fields.append('pdf_templates')
+
+    if not org.email_settings:
+        org.email_settings = {
+            'invoice_email_subject': 'Invoice %number% from %company%',
+            'payment_email_subject': 'Payment Receipt %number% from %company%',
+            'overdue_email_subject': 'Payment Reminder: Invoice %number% is overdue',
+            'sender_name': org.name,
+            'sender_email': org.email or 'admin@convosis.com'
+        }
+        save_fields.append('email_settings')
+
+    if not org.sms_settings:
+        org.sms_settings = {
+            'enabled': False,
+            'payment_alerts': True,
+            'invoice_alerts': True,
+            'reminder_alerts': True
+        }
+        save_fields.append('sms_settings')
+
+    if not org.digital_signature:
+        org.digital_signature = {
+            'enabled': bool(org.signature_data),
+            'title': org.signature_title or 'Authorized Signature',
+            'placement': 'bottom_right'
+        }
+        save_fields.append('digital_signature')
+
+    if not org.direct_tax_settings:
+        org.direct_tax_settings = {
+            'tds_level': 'transaction', # 'line' or 'transaction'
+            'enable_tds_liabilities_report': True
+        }
+        save_fields.append('direct_tax_settings')
+
+    if not org.tax_settings:
+        org.tax_settings = {
+            'default_tax_preference': 'taxable',
+            'gst_registered': True
+        }
+        save_fields.append('tax_settings')
+
+    if save_fields:
+        org.save(update_fields=save_fields)
+
+    ensure_default_roles(org)
+
+

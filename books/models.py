@@ -13,6 +13,10 @@ class Organization(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     code = models.CharField(max_length=20, blank=True, default='', help_text='Organization short code for document numbering (e.g. ABC)')
     name = models.CharField(max_length=200, default='Convosis Technologies Pvt Ltd')
+    display_name = models.CharField(max_length=200, blank=True, default='')
+    org_type = models.CharField(max_length=10, choices=[('MAIN', 'Main Organization'), ('SUB', 'Sub-Organization')], default='MAIN')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_organizations')
+    status = models.CharField(max_length=20, choices=[('active', 'Active'), ('inactive', 'Inactive')], default='active')
     company_id = models.CharField(max_length=100, blank=True, default='U62090KL2026PTC103900', help_text='CIN / Registration number')
     gstin = models.CharField(max_length=15, blank=True, default='32AANCC9298C1ZE')
     state = models.CharField(max_length=60, default='Kerala', help_text='Home state; drives CGST/SGST vs IGST.')
@@ -23,7 +27,30 @@ class Organization(models.Model):
     phone = models.CharField(max_length=50, blank=True, default='91-9847017737')
     email = models.EmailField(blank=True, default='admin@convosis.com')
     website = models.CharField(max_length=200, blank=True, default='www.convosis.com')
+    legal_name = models.CharField(max_length=200, blank=True, default='')
+    business_type = models.CharField(max_length=100, blank=True, default='Private Limited Company')
+    pan = models.CharField(max_length=20, blank=True, default='')
+    financial_year = models.CharField(max_length=50, blank=True, default='Apr - Mar')
+    base_currency = models.CharField(max_length=10, blank=True, default='INR')
+    time_zone = models.CharField(max_length=80, blank=True, default='(GMT+5:30) India Standard Time (Asia/Kolkata)')
+    date_format = models.CharField(max_length=30, blank=True, default='dd/MM/yyyy')
     logo_data = models.TextField(blank=True, default='/static/books/img/convosis-logo.png')
+    favicon_data = models.TextField(blank=True, default='')
+    primary_color = models.CharField(max_length=30, blank=True, default='#1877f2')
+    secondary_color = models.CharField(max_length=30, blank=True, default='#0ea5e9')
+    app_name = models.CharField(max_length=100, blank=True, default='ConvosisBooks')
+    login_branding = models.TextField(blank=True, default='')
+    ai_settings = models.JSONField(default=dict, blank=True)
+    general_settings = models.JSONField(default=dict, blank=True)
+    portal_settings = models.JSONField(default=dict, blank=True)
+    reminder_settings = models.JSONField(default=dict, blank=True)
+    email_settings = models.JSONField(default=dict, blank=True)
+    sms_settings = models.JSONField(default=dict, blank=True)
+    pdf_templates = models.JSONField(default=dict, blank=True)
+    number_series = models.JSONField(default=dict, blank=True)
+    digital_signature = models.JSONField(default=dict, blank=True)
+    tax_settings = models.JSONField(default=dict, blank=True)
+    direct_tax_settings = models.JSONField(default=dict, blank=True)
     template_theme = models.CharField(max_length=50, blank=True, default='convosis')
     template_color = models.CharField(max_length=30, blank=True, default='#1877f2')
     signature_title = models.CharField(max_length=100, blank=True, default='Authorized Signature')
@@ -1042,6 +1069,26 @@ class GSTRReturn(models.Model):
     def __str__(self):
         return f'{self.return_type} ({self.tax_period}) - {self.status}'
 
+class Role(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='custom_roles')
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    is_system = models.BooleanField(default=False)
+    api_only = models.BooleanField(default=False)
+    is_accountant = models.BooleanField(default=False)
+    permissions = models.JSONField(default=dict, blank=True)
+    report_permissions = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = [('organization', 'name')]
+
+    def __str__(self):
+        return self.name
+
 class UserProfile(models.Model):
     ADMIN, ACCOUNTANT, AUDITOR, CASHIER, PORTAL = 'admin', 'accountant', 'auditor', 'cashier', 'portal'
     ROLES = [
@@ -1052,9 +1099,20 @@ class UserProfile(models.Model):
         (PORTAL, 'Customer/Vendor Portal User'),
     ]
 
+    STATUS_ACTIVE, STATUS_INVITED, STATUS_INACTIVE = 'active', 'invited', 'inactive'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_INVITED, 'Invited'),
+        (STATUS_INACTIVE, 'Inactive'),
+    ]
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='members')
-    role = models.CharField(max_length=30, choices=ROLES, default=ADMIN)
+    role = models.CharField(max_length=50, choices=ROLES, default=ADMIN)
+    custom_role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name='assigned_profiles')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    assigned_customers = models.ManyToManyField('Customer', blank=True, related_name='assigned_staff_users')
+    normalized_email = models.EmailField(blank=True, default='', db_index=True)
     phone = models.CharField(max_length=30, blank=True)
     mfa_enabled = models.BooleanField(default=True)
     mfa_secret = models.CharField(max_length=64, blank=True, default='')
@@ -1063,8 +1121,93 @@ class UserProfile(models.Model):
     is_locked = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['normalized_email'], condition=~models.Q(normalized_email=''), name='unique_user_normalized_email')
+        ]
+
+    def get_role_display(self):
+        if self.custom_role:
+            return self.custom_role.name
+        role_map = dict(self.ROLES)
+        return role_map.get(self.role, self.role.title() if self.role else 'Administrator')
+
     def __str__(self):
-        return f'{self.user.username} ({self.role})'
+        r_name = self.custom_role.name if self.custom_role else self.role
+        return f'{self.user.username} ({r_name})'
+
+class OrganizationMembership(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='user_memberships')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='memberships')
+    role = models.CharField(max_length=30, choices=UserProfile.ROLES, default='admin')
+    permissions = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=[('active', 'Active'), ('inactive', 'Inactive')], default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [('user', 'organization')]
+
+    def __str__(self):
+        return f'{self.user.username} @ {self.organization.name} ({self.role})'
+
+class UserInvitation(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='user_invitations')
+    email = models.EmailField()
+    name = models.CharField(max_length=120, blank=True)
+    role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name='invitations')
+    role_name = models.CharField(max_length=100, blank=True)
+    is_accountant = models.BooleanField(default=False)
+    token = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=20, default='invited', choices=[
+        ('invited', 'Invited'),
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('expired', 'Expired'),
+    ])
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='sent_invitations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.email} ({self.role_name or 'Invited'})"
+
+class CurrencySetting(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='currency_settings')
+    code = models.CharField(max_length=10)
+    name = models.CharField(max_length=100)
+    symbol = models.CharField(max_length=10)
+    exchange_rate = models.DecimalField(max_digits=12, decimal_places=4, default=Decimal('1.0000'))
+    is_base = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['code']
+        unique_together = [('organization', 'code')]
+
+    def __str__(self):
+        return f"{self.code} ({self.symbol})"
+
+class PaymentTermSetting(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='payment_term_settings')
+    name = models.CharField(max_length=100)
+    days = models.PositiveIntegerField(default=0)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['days', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.days} days)"
 
 class SecurityBackupRecord(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='security_backups')

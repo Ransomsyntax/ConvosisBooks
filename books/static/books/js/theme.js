@@ -80,15 +80,17 @@
     },
 
     load() {
-      try { localStorage.removeItem(WP_KEY); } catch (e) { }
+      try { localStorage.removeItem(WP_KEY); } catch (e) {  }
       let saved = null;
-      try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
+      try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {  }
       if (saved) {
         this.state = Object.assign({}, DEFAULTS, saved);
       } else {
+
         const legacy = window.convosisStore && window.convosisStore.state && window.convosisStore.state.themeMode;
         this.state = Object.assign({}, DEFAULTS, legacy === 'dark' ? { mode: 'dark' } : {});
       }
+
       this.state.wallpaper = 'mist';
     },
 
@@ -96,7 +98,7 @@
       this.state.wallpaper = 'mist';
       clearTimeout(this._saveTimer);
       this._saveTimer = setTimeout(() => {
-        try { localStorage.setItem(KEY, JSON.stringify(this.state)); } catch (e) { }
+        try { localStorage.setItem(KEY, JSON.stringify(this.state)); } catch (e) {  }
       }, 150);
     },
 
@@ -295,7 +297,7 @@
     },
 
     reset() {
-      try { localStorage.removeItem(WP_KEY); } catch (e) { }
+      try { localStorage.removeItem(WP_KEY); } catch (e) {  }
       const hidden = this.state.sidebarHidden;
       this.state = Object.assign({}, DEFAULTS, { sidebarHidden: hidden, wallpaper: 'mist' });
       this._wpKey = null;

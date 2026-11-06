@@ -125,6 +125,31 @@ const ROUTES = {
   'accountant/tenant-administration': r => tenantAdminPage(r),
   'accountant/security-compliance': r => securityCompliancePage(r),
 
+  'settings': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
+  'settings/dashboard': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
+  'settings/all': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
+  'settings/users': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'users', 'Users', renderSettingsUsersPage) : null,
+  'settings/roles': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'roles', 'Roles', renderSettingsRolesPage) : null,
+  'settings/roles/new': r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, 'new') : null,
+  'settings/profile': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
+  'settings/branding': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'branding', 'Company Branding', renderBrandingPage) : null,
+  'settings/ai': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'ai', 'AI Control Center', renderAiControlCenterPage) : null,
+  'settings/taxes': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'taxes', 'Taxes', renderTaxesPage) : null,
+  'settings/direct-taxes': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'direct-taxes', 'Direct Taxes', renderDirectTaxesPage) : null,
+  'settings/eway-bills': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'eway-bills', 'e-Way Bills', renderEwayBillsPage) : null,
+  'settings/einvoicing': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'einvoicing', 'e-Invoicing', renderEinvoicingPage) : null,
+  'settings/msme': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'msme', 'MSME Settings', renderMsmePage) : null,
+  'settings/general': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'general', 'General Preferences', renderGeneralSettingsPage) : null,
+  'settings/currencies': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'currencies', 'Currencies', renderCurrenciesPage) : null,
+  'settings/payment-terms': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'payment-terms', 'Payment Terms', renderPaymentTermsPage) : null,
+  'settings/opening-balances': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'opening-balances', 'Opening Balances', renderOpeningBalancesPage) : null,
+  'settings/reminders': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'reminders', 'Reminders', renderRemindersPage) : null,
+  'settings/customer-portal': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'customer-portal', 'Customer Portal', renderCustomerPortalPage) : null,
+  'settings/number-series': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'number-series', 'Transaction Number Series', renderNumberSeriesPage) : null,
+  'settings/pdf-templates': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'pdf-templates', 'PDF Templates', renderPdfTemplatesPage) : null,
+  'settings/email-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'email-notifications', 'Email Notifications', renderNotificationsPage) : null,
+  'settings/sms-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'sms-notifications', 'SMS Notifications', renderNotificationsPage) : null,
+  'settings/digital-signature': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'digital-signature', 'Digital Signature', renderDigitalSignaturePage) : null,
   'settings/subscription-billing': r => subscriptionBillingPage(r),
   'settings/tenant-admin': r => tenantAdminPage(r),
   'developer/platform': r => developerPlatformPage(r),
@@ -268,7 +293,11 @@ function route() {
   drawNav(h);
   document.body.classList.remove('mo');
   closePops();
-  const fn = ROUTES[h] || ROUTES[raw];
+  let fn = ROUTES[h] || ROUTES[raw];
+  if (!fn && (h.startsWith('settings/roles/') || raw.startsWith('settings/roles/'))) {
+    const roleId = (h.startsWith('settings/roles/') ? h : raw).split('settings/roles/')[1];
+    fn = r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, roleId) : null;
+  }
   if (fn) { Promise.resolve().then(() => fn(root)).catch(e => { root.innerHTML = errBox(e.message); console.error(e); }); }
   else { const g = NAV.find(n => h.startsWith(n[1] + '/')), nm = g && g[2].find(c => slug(c) === h.split('/')[1]); plannedPage(root, g && g[0], nm); }
   window.scrollTo(0, 0);

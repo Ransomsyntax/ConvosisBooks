@@ -1,4 +1,5 @@
 'use strict';
+
 const DASH = { period: pref.get('period', 'fy'), hidden: pref.get('hidden', []), custom: pref.get('custom', null), charts: {} };
 const WID = [['kpi', 'KPI cards'], ['recpay', 'Receivables & payables'], ['cash', 'Cash flow'], ['mix', 'Revenue by category'], ['revexp', 'Revenue vs expenses'], ['aging', 'Aging'], ['sales', 'Sales performance'], ['inv', 'Inventory overview'], ['top', 'Top customers'], ['act', 'Recent activity']];
 const PERIODS = [['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['lastm', 'Last Month'], ['quarter', 'This Quarter'], ['fy', 'This Financial Year'], ['pfy', 'Previous Financial Year'], ['custom', 'Custom Range']];
@@ -51,7 +52,7 @@ function mkChart(root, id, cfg, has) {
     return;
   }
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const textColor = isDark ? '#cbd5e1' : '#475569';
+  const textColor = isDark ? '#cbd5e1' : '#bdc4cdff';
   const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
   const ticks = v => '₹' + (Math.abs(v) >= 1e5 ? (v / 1e5).toFixed(1) + 'L' : Math.abs(v) >= 1e3 ? (v / 1e3) + 'K' : v);
   try {

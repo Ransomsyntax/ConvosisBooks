@@ -3558,25 +3558,10 @@ async function adjustForm(preItem, targetEl, onDone) {
           <input class="in" id="adj-ref-number" name="reference_number" value="${esc(curRef)}" placeholder="Auto-generated (e.g. ABC/ADJ/26-27/00001)" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
         </div>
 
-        <!-- Date* and Time -->
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:24px;margin-bottom:18px;">
-          <div style="display:flex;align-items:center;gap:24px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Date*</label>
-            <input class="in" type="date" id="adj-date" name="date" value="${curDate}" required style="width:240px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
-          </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <label style="font-weight:500;font-size:13px;color:#64748b;">Adjustment Time</label>
-            <input class="in" type="time" id="adj-time" name="time" value="${curTime}" style="width:120px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;">
-          </div>
-        </div>
-
-        <!-- Warehouse Code / Location* -->
+        <!-- Date* -->
         <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
-          <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Warehouse*</label>
-          <select class="in" id="adj-warehouse" name="warehouse" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
-            <option value="">Select Warehouse…</option>
-            ${warehouses.map(w => `<option value="${w.id}">${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
-          </select>
+          <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Date*</label>
+          <input class="in" type="date" id="adj-date" name="date" value="${curDate}" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
         </div>
 
         <!-- Account* -->
@@ -3604,9 +3589,29 @@ async function adjustForm(preItem, targetEl, onDone) {
         </div>
 
         <!-- Description -->
-        <div style="display:flex;align-items:flex-start;gap:24px;margin-bottom:28px;">
+        <div style="display:flex;align-items:flex-start;gap:24px;margin-bottom:18px;">
           <label style="width:160px;font-weight:500;font-size:13px;color:#334155;margin-top:6px;">Description</label>
           <textarea class="in" id="adj-description" name="description" placeholder="Max. 500 characters" maxlength="500" style="width:340px;height:70px;border-radius:6px;border:1px solid #cbd5e1;padding:8px 12px;font-size:13px;resize:vertical;"></textarea>
+        </div>
+
+        <!-- Warehouse & Time (Preserved Previous Fields) -->
+        <div style="margin-bottom:24px;">
+          <button type="button" id="btn-toggle-adj-more-fields" style="background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:6px;font-weight:500;">
+            <i class="fa-solid fa-chevron-right" id="icon-adj-more-fields" style="font-size:10px;transition:transform 0.2s;"></i> Warehouse & Adjustment Details
+          </button>
+          <div id="adj-more-fields-wrap" style="display:none;margin-top:14px;padding:14px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;max-width:540px;">
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">
+              <label style="width:140px;font-weight:500;font-size:12px;color:#475569;">Warehouse</label>
+              <select class="in" id="adj-warehouse" name="warehouse" style="flex:1;height:34px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:12px;background:#fff;">
+                <option value="">Default Warehouse (All Locations)</option>
+                ${warehouses.map((w, idx) => `<option value="${w.id}" ${idx === 0 ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;">
+              <label style="width:140px;font-weight:500;font-size:12px;color:#475569;">Adjustment Time</label>
+              <input class="in" type="time" id="adj-time" name="time" value="${curTime}" style="width:140px;height:34px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:12px;">
+            </div>
+          </div>
         </div>
 
         <!-- Item Table Section -->
@@ -3639,7 +3644,7 @@ async function adjustForm(preItem, targetEl, onDone) {
         <!-- Action buttons below table -->
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
           <button type="button" class="btn" id="btn-adj-add-row" style="background:#f8fafc;color:#2563eb;font-weight:600;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-            <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i> Add New Row ▾
+            <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i> Add New Row
           </button>
           <button type="button" class="btn" id="btn-adj-bulk-add" style="background:#f8fafc;color:#2563eb;font-weight:600;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i> Add Items in Bulk
@@ -3862,6 +3867,18 @@ async function adjustForm(preItem, targetEl, onDone) {
     }
   });
 
+  // Toggle Warehouse & Time extra fields
+  const btnMoreFields = $('#btn-toggle-adj-more-fields', target);
+  const wrapMoreFields = $('#adj-more-fields-wrap', target);
+  const iconMoreFields = $('#icon-adj-more-fields', target);
+  if (btnMoreFields && wrapMoreFields) {
+    btnMoreFields.addEventListener('click', () => {
+      const isHidden = wrapMoreFields.style.display === 'none' || !wrapMoreFields.style.display;
+      wrapMoreFields.style.display = isHidden ? 'block' : 'none';
+      if (iconMoreFields) iconMoreFields.style.transform = isHidden ? 'rotate(90deg)' : 'none';
+    });
+  }
+
   const closeForm = () => {
     if (onDone) onDone(null);
     else if (window.location.hash.includes('stock-adjustments')) {
@@ -3875,7 +3892,10 @@ async function adjustForm(preItem, targetEl, onDone) {
   const submitForm = async (status = 'adjusted') => {
     const form = $('#stock-adj-form-element', target);
     const dateVal = $('#adj-date', form).value;
-    const whVal = $('#adj-warehouse', form).value;
+    let whVal = $('#adj-warehouse', form)?.value;
+    if (!whVal && warehouses.length > 0) {
+      whVal = warehouses[0].id;
+    }
     const acctVal = $('#adj-account', form).value;
     const reasonVal = $('#adj-reason', form).value;
     const modeVal = $('input[name="mode_of_adjustment"]:checked', form)?.value || 'quantity';

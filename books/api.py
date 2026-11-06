@@ -1394,6 +1394,7 @@ class DocResource(Resource):
         etype = 'invoice' if isinstance(o, Invoice) else ('retainer_invoice' if isinstance(o, RetainerInvoice) else ('quote' if isinstance(o, Quote) else 'bill'))
         att_count = Attachment.objects.filter(entity_type=etype, entity_id=o.pk).count()
         r = {'id': o.pk, 'number': o.number, 'party_id': self.party(o).pk, 'party': self.party(o).name,
+             'customer_name': self.party(o).name if self.party(o) else '',
              'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
@@ -4859,6 +4860,12 @@ def lookup(request, name):
         data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
     elif name in ('next-so-number', 'next-sales-order-number'):
         pfx = 'SO'
+        seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
+        seq = Sequence.objects.filter(key=seq_key).first()
+        nxt = (seq.value + 1) if seq else 1
+        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
+    elif name in ('next-invoice-number', 'next-inv-number'):
+        pfx = 'INV'
         seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
         seq = Sequence.objects.filter(key=seq_key).first()
         nxt = (seq.value + 1) if seq else 1

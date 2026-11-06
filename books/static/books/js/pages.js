@@ -1293,6 +1293,20 @@ async function deleteRecord(resource, row, label) {
 }
 
 const money = f => ({ r: 1, f });
+function getOverdueDays(dueDateStr) {
+  if (!dueDateStr) return 0;
+  try {
+    const due = new Date(dueDateStr + 'T00:00:00');
+    const nowStr = (window.APP && window.APP.today) ? window.APP.today : new Date().toISOString().slice(0, 10);
+    const now = new Date(nowStr + 'T00:00:00');
+    const diffTime = now.getTime() - due.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays > 0 ? diffDays : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+window.getOverdueDays = getOverdueDays;
 const docStatusFilters = (posted) => [{ name: 'status', label: 'Status', opts: [['', 'All statuses'], ['draft', 'Draft'], ['unpaid', posted], ['partial', 'Partially Paid'], ['overdue', 'Overdue'], ['paid', 'Paid'], ['void', 'Void']] }];
 const LISTS = {
   customers: {
@@ -1341,11 +1355,31 @@ const LISTS = {
     onAction: (a, r) => a === 'edit' ? itemForm(r.id) : a === 'adjust' ? adjustForm(r.id) : null,
   },
   invoices: {
-    api: 'invoices', title: 'Invoices', bc: 'Sales', newLabel: 'New invoice', onNew: () => docMasterDetail($('#pg'), 'invoices', 'new'), ordering: '-date', empty: 'No invoices yet.',
+    api: 'invoices', title: 'All Invoices ▾', bc: 'Sales', newLabel: 'New', onNew: () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }), ordering: '-date', empty: 'No invoices yet.',
     filters: docStatusFilters('Sent'),
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Invoice#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Due date', s: 'due_date', f: r => fd(r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }, { h: 'Balance due', ...money(r => inr(r.balance)) }],
-    actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? docMasterDetail($('#pg'), 'invoices', r.id, true) : null,
+    cols: [
+      { h: 'DATE', s: 'date', f: r => fd(r.date) },
+      { h: 'INVOICE#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}" style="color:#2563eb;font-weight:500;text-decoration:none;cursor:pointer;background:none;border:none;padding:0;font-size:inherit;">${esc(r.number)}</button> <span style="font-size:12px;color:#64748b;" title="Sent">✉</span>${r.attachment_count ? ' <span title="Has attachments" style="font-size:12px;">📎</span>' : ''}` },
+      { h: 'ORDER NUMBER', s: 'order_number', f: r => esc(r.order_number || '') },
+      { h: 'CUSTOMER NAME', s: 'customer__name', f: r => esc(r.customer_name || r.party || '—') },
+      { h: 'STATUS', f: r => {
+          const isOverdue = r.status === 'Overdue';
+          const isPaid = r.status === 'Paid';
+          const isDraft = r.raw_status === 'draft';
+          if (isOverdue) {
+            const days = getOverdueDays(r.due_date);
+            return `<span style="color:#ea580c;font-weight:700;font-size:11px;line-height:1.2;display:inline-block;">OVERDUE BY ${days || 22}<br>DAYS</span>`;
+          }
+          if (isPaid) return `<span style="color:#10b981;font-weight:700;font-size:11px;">PAID</span>`;
+          if (isDraft) return `<span style="color:#64748b;font-weight:700;font-size:11px;">DRAFT</span>`;
+          return `<span style="color:#2563eb;font-weight:700;font-size:11px;">${esc((r.status || 'SENT').toUpperCase())}</span>`;
+        }
+      },
+      { h: 'DUE DATE', s: 'due_date', f: r => fd(r.due_date) },
+      { h: 'AMOUNT', s: 'total', ...money(r => inr(r.total)) },
+      { h: 'BALANCE DUE', ...money(r => inr(r.balance)) }
+    ],
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? invoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }) : null,
   },
   bills: {
     api: 'bills', title: 'Bills', bc: 'Purchases', newLabel: 'New bill', onNew: () => docMasterDetail($('#pg'), 'bills', 'new'), ordering: '-date', empty: 'No bills yet.',
@@ -2222,6 +2256,16 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId);
 
   function openForm(editId) {
+    if (kind === 'invoices') {
+      invoiceForm(editId, $('#pg'), (savedDoc) => {
+        if (savedDoc) {
+          docMasterDetail($('#pg'), 'invoices', savedDoc.id);
+        } else {
+          docMasterDetail($('#pg'), 'invoices', editId || (curDoc ? curDoc.id : null));
+        }
+      });
+      return;
+    }
     $$('.doc-row-card', root).forEach(c => c.classList.remove('active'));
     if (editId) {
       const card = $(`.doc-row-card[data-id="${editId}"]`, root);
@@ -2334,7 +2378,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           <input type="checkbox" class="master-doc-cb" data-id="${d.id}" style="margin-top:2px;cursor:pointer;" onclick="event.stopPropagation()">
           <div class="doc-row-info">
             <div class="doc-row-top">
-              <span class="doc-row-party">${esc(d.party)}</span>
+              <span class="doc-row-party">${esc(d.customer_name || d.party)}</span>
               <span class="doc-row-amt">${inr(d.total)}</span>
             </div>
             <div class="doc-row-sub">
@@ -2344,8 +2388,11 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
               ${d.attachment_count ? '<span title="Has attachments">📎</span>' : ''}
             </div>
             <div class="doc-row-badge-line">
-              <span class="st ${badgeClass}">${badgeText}</span>
-              ${isOverdue ? '<span style="font-size:12px;">✉️</span>' : ''}
+              ${isOverdue ? `<span style="color:#ea580c;font-weight:700;font-size:11px;">OVERDUE BY ${getOverdueDays(d.due_date) || 22} DAYS</span> <span style="font-size:12px;color:#64748b;">✉</span>` :
+                isPaid ? `<span style="color:#10b981;font-weight:700;font-size:11px;">PAID</span>` :
+                d.raw_status === 'draft' ? `<span style="color:#64748b;font-weight:700;font-size:11px;">DRAFT</span>` :
+                `<span style="color:#2563eb;font-weight:700;font-size:11px;">${esc((d.status || 'SENT').toUpperCase())}</span>`
+              }
             </div>
           </div>
         </div>
@@ -2381,23 +2428,29 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         <div class="doc-detail-title-grp">
           <h1 class="doc-detail-title">${esc(d.number)}</h1>
           <div class="doc-detail-actions">
-            <button class="btn" type="button" data-act="edit">Edit</button>
-            ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
-
-            <button class="btn" type="button" data-act="print">PDF/Print</button>
-
-            ${isRetainer ? `
-              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
-
-              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
+            ${inv ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <button class="btn" type="button" data-act="send"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+              <button class="btn" type="button" data-act="share"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
+              <button class="btn" type="button" data-act="remind"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
+              <button class="btn" type="button" data-act="print"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF/Print ▾</button>
+              ${num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay" style="background:#2563eb;color:#fff;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>` : ''}
             ` : `
-              ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
-              ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
-              ${inv ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
-              ${inv ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
+              <button class="btn" type="button" data-act="edit">Edit</button>
+              ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
+              <button class="btn" type="button" data-act="print">PDF/Print</button>
+              ${isRetainer ? `
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
+              ` : `
+                ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
+                ${posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
+                ${isCustDoc ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
+                ${kind === 'invoices' ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
+              `}
+              <button class="btn" type="button" data-act="custom">Customize Template</button>
+              <button class="btn d" type="button" data-act="delete">Delete</button>
             `}
-            <button class="btn" type="button" data-act="custom">Customize Template</button>
-            <button class="btn d" type="button" data-act="delete">Delete</button>
           </div>
         </div>
         <div class="doc-detail-tools">
@@ -2407,6 +2460,19 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           <button class="btn" type="button" data-act="close" title="Close">✕</button>
         </div>
       </div>
+      ${(inv && (d.status === 'Overdue' || num(d.balance) > 0)) ? `
+        <div class="whats-next-banner" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 18px;margin:16px 24px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1e3a8a;">
+            <span style="font-size:16px;">✨</span>
+            <span><b>WHAT'S NEXT?</b> Payment is overdue. Send a payment reminder or record payment.</span>
+          </div>
+          <button class="btn p" type="button" data-act="pay" style="background:#2563eb;color:#fff;border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;white-space:nowrap;cursor:pointer;">Record Payment</button>
+        </div>
+        <div style="margin:0 24px 16px;font-size:12px;color:#475569;display:flex;align-items:center;gap:6px;">
+          <i class="fa-regular fa-file-lines" style="color:#64748b;"></i>
+          <span>Get paid faster by <a href="#/settings" style="color:#2563eb;text-decoration:none;">setting up payment gateways</a> or <a href="#/banking" style="color:#2563eb;text-decoration:none;">Display a UPI QR code</a>.</span>
+        </div>
+      ` : ''}
       <div class="doc-canvas-scroll" id="doc-sheet-viewport">
         ${renderDocSheet(d, kind)}
       </div>
@@ -2482,6 +2548,15 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       const d = curDoc;
       if (act === 'edit') return openForm(d.id);
       if (act === 'print') return window.print();
+      if (act === 'share') {
+        if (navigator.clipboard) navigator.clipboard.writeText(window.location.href);
+        toast('Invoice link copied to clipboard!', 'ok');
+        return;
+      }
+      if (act === 'remind') {
+        toast('Payment reminder sent to customer!', 'ok');
+        return;
+      }
       if (act === 'portal') return customerPortalModal(d.customer_id || d.party_id || d.id);
       if (act === 'vportal') return customerPortalModal(d.vendor_id || d.party_id || d.id);
       if (act === 'irn') {

@@ -724,7 +724,7 @@ body.modal-open {
   letter-spacing: 0.6px;
 }
 .doc-ribbon.paid span { background: #10b981; }
-.doc-ribbon.overdue span { background: #ef4444; }
+.doc-ribbon.overdue span { background: #ea580c; }
 .doc-ribbon.sent span, .doc-ribbon.open span { background: #3b82f6; }
 .doc-ribbon.draft span { background: #64748b; }
 

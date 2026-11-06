@@ -31,3 +31,4 @@ class Migration(migrations.Migration):
             constraint=models.UniqueConstraint(fields=('organization', 'code'), name='unique_org_warehouse_code'),
         ),
     ]
+

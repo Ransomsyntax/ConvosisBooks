@@ -565,6 +565,33 @@ class Resource:
                     'message': msg
                 })
 
+        if request.method == 'DELETE':
+            data = body(request)
+            ids = data.get('ids', [])
+            if not isinstance(ids, list) or not ids:
+                raise ApiError(400, 'No record IDs provided for deletion.')
+            deleted_count = 0
+            errors = []
+            for item_id in ids:
+                try:
+                    obj = self.get_object(item_id, request)
+                    with transaction.atomic():
+                        self.destroy(obj)
+                    deleted_count += 1
+                except Exception as err:
+                    errors.append({'id': item_id, 'error': str(err)})
+
+            if not deleted_count and errors:
+                raise ApiError(400, errors[0]['error'] or 'Failed to delete selected records.')
+
+            return j({
+                'status': 'ok' if not errors else 'partial',
+                'deleted': deleted_count,
+                'failed': len(errors),
+                'errors': errors,
+                'message': f"Deleted {deleted_count} record(s)." + (f" {len(errors)} failed." if errors else '')
+            })
+
         raise ApiError(405, 'Method not allowed.')
 
     def handle_item(self, request, pk):

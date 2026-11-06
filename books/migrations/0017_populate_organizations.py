@@ -96,3 +96,4 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(populate_existing_orgs, migrations.RunPython.noop),
     ]
+

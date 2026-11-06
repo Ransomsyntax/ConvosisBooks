@@ -99,6 +99,7 @@ urlpatterns = [
     path('import/parse-file/', api.parse_import_file_view),
 
     path('quotes/sequence/', api.quote_sequence_view),
+    path('invoices/sequence/', api.invoice_sequence_view),
 
     # Super Admin Platform Dashboard Endpoints
     path('super-admin/overview/', api.super_admin_overview_view),

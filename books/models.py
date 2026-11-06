@@ -1,4 +1,6 @@
 from decimal import Decimal
+import re
+import uuid
 
 from django.conf import settings
 from django.db import models
@@ -8,6 +10,8 @@ QTY = {'max_digits': 14, 'decimal_places': 3}
 
 class Organization(models.Model):
     """Single-tenant company profile (always pk=1)."""
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    code = models.CharField(max_length=20, blank=True, default='', help_text='Organization short code for document numbering (e.g. ABC)')
     name = models.CharField(max_length=200, default='Convosis Technologies Pvt Ltd')
     company_id = models.CharField(max_length=100, blank=True, default='U62090KL2026PTC103900', help_text='CIN / Registration number')
     gstin = models.CharField(max_length=15, blank=True, default='32AANCC9298C1ZE')
@@ -35,6 +39,20 @@ class Organization(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
 
+    def get_code(self):
+        if self.code and self.code.strip():
+            return re.sub(r'[^A-Za-z0-9]', '', self.code.strip()).upper()
+        if self.pk == 1:
+            return 'ABC'
+        words = re.findall(r'[A-Za-z0-9]+', self.name or '')
+        if len(words) >= 2:
+            c = ''.join(w[0] for w in words[:4]).upper()
+        elif words:
+            c = words[0][:4].upper()
+        else:
+            c = f'ORG{self.pk}'
+        return c or 'ABC'
+
     @classmethod
     def get(cls, user=None):
         if user and getattr(user, 'is_authenticated', False):
@@ -50,11 +68,13 @@ class Organization(models.Model):
         return self.name
 
 class Sequence(models.Model):
-    key = models.CharField(max_length=20, primary_key=True)
+    key = models.CharField(max_length=100, primary_key=True)
     value = models.PositiveIntegerField(default=0)
 
 class Party(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    code = models.CharField(max_length=60, blank=True, default='', db_index=True)
     name = models.CharField(max_length=200)
     company = models.CharField(max_length=200, blank=True)
     contact_person = models.CharField(max_length=120, blank=True)
@@ -125,6 +145,7 @@ class Vendor(Party):
 class Item(models.Model):
     GOODS, SERVICE = 'goods', 'service'
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='items')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     name = models.CharField(max_length=200)
     sku = models.CharField(max_length=60, unique=True, blank=True)
     item_type = models.CharField(max_length=10, choices=[(GOODS, 'Goods'), (SERVICE, 'Service')], default=GOODS)
@@ -158,7 +179,8 @@ class Item(models.Model):
 class Document(models.Model):
     DRAFT, VOID = 'draft', 'void'
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
-    number = models.CharField(max_length=30, unique=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
     due_date = models.DateField()
     place_of_supply = models.CharField(max_length=60)
@@ -196,6 +218,7 @@ class Bill(Document):
         return self.number
 
 class Line(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     description = models.CharField(max_length=500)
     hsn_sac = models.CharField(max_length=10, blank=True)
@@ -223,7 +246,8 @@ MODES = [('cash', 'Cash'), ('bank_transfer', 'Bank transfer'), ('upi', 'UPI'),
 
 class Payment(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
-    number = models.CharField(max_length=30, unique=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
     mode = models.CharField(max_length=20, choices=MODES, default='bank_transfer')
     account = models.CharField(max_length=60, default='Bank Account')
@@ -243,6 +267,7 @@ class PaymentMade(Payment):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='payments')
 
 class ReceivedAllocation(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     payment = models.ForeignKey(PaymentReceived, on_delete=models.CASCADE, related_name='allocations')
     invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name='allocations')
     amount = models.DecimalField(**MONEY)
@@ -251,6 +276,7 @@ class ReceivedAllocation(models.Model):
         constraints = [models.UniqueConstraint(fields=['payment', 'invoice'], name='uniq_received_alloc')]
 
 class BillAllocation(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     payment = models.ForeignKey(PaymentMade, on_delete=models.CASCADE, related_name='allocations')
     bill = models.ForeignKey(Bill, on_delete=models.PROTECT, related_name='allocations')
     amount = models.DecimalField(**MONEY)
@@ -260,6 +286,7 @@ class BillAllocation(models.Model):
 
 class StockMovement(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_movements')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     KINDS = [('opening', 'Opening stock'), ('sale', 'Sale'), ('sale_void', 'Sale voided'),
              ('purchase', 'Purchase'), ('purchase_void', 'Purchase voided'), ('adjustment', 'Adjustment'),
              ('transfer', 'Warehouse Transfer')]
@@ -284,6 +311,7 @@ class StockMovement(models.Model):
 
 class Attachment(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='attachments')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     entity_type = models.CharField(max_length=40, db_index=True)   
     entity_id = models.PositiveIntegerField(db_index=True)
     file = models.FileField(upload_to='attachments/%Y/%m/', blank=True, null=True)
@@ -302,6 +330,7 @@ class Attachment(models.Model):
 
 class Account(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='accounts')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     ASSET, LIABILITY, EQUITY, INCOME, EXPENSE = 'asset', 'liability', 'equity', 'income', 'expense'
     TYPES = [
         (ASSET, 'Asset'),
@@ -329,7 +358,8 @@ class Account(models.Model):
 
 class Journal(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='journals')
-    number = models.CharField(max_length=40)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    number = models.CharField(max_length=60)
     date = models.DateField()
     entry_type = models.CharField(max_length=40, default='manual') 
     reference = models.CharField(max_length=80, blank=True)
@@ -345,6 +375,7 @@ class Journal(models.Model):
         return f'{self.number} ({self.date})'
 
 class JournalItem(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     journal = models.ForeignKey(Journal, on_delete=models.CASCADE, related_name='items')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='journal_items')
     debit = models.DecimalField(default=Decimal('0.00'), **MONEY)
@@ -424,6 +455,7 @@ class WebhookConfig(models.Model):
 
 class BankAccount(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_accounts')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     SAVINGS, CURRENT, CREDIT_CARD, CASH, CHECKING, OTHER = 'savings', 'current', 'credit_card', 'cash', 'checking', 'other'
     TYPES = [
         (CURRENT, 'Current Account'),
@@ -630,8 +662,9 @@ class RetainerInvoiceAllocation(models.Model):
 
 class DeliveryChallan(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='delivery_challans')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     CHALLAN_TYPES = [('supply_on_approval', 'Supply on Approval'), ('job_work', 'Job Work'), ('other', 'Other')]
-    number = models.CharField(max_length=40, unique=True)
+    number = models.CharField(max_length=60, unique=True)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='delivery_challans')
     date = models.DateField()
     challan_type = models.CharField(max_length=40, choices=CHALLAN_TYPES, default='other')
@@ -645,6 +678,7 @@ class DeliveryChallan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class DeliveryChallanLine(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     challan = models.ForeignKey(DeliveryChallan, on_delete=models.CASCADE, related_name='lines')
     item = models.ForeignKey(Item, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     description = models.CharField(max_length=500)
@@ -668,7 +702,8 @@ class PurchaseOrderLine(Line):
 
 class Expense(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='expenses')
-    number = models.CharField(max_length=40, unique=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
     expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses')
     vendor = models.ForeignKey(Vendor, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
@@ -797,6 +832,7 @@ class PriceList(models.Model):
 
 class Warehouse(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='warehouses')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=30)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_warehouses')
@@ -938,6 +974,7 @@ class BankReconciliation(models.Model):
 
 class BankDeposit(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_deposits')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=40, unique=True)
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='deposits')
     date = models.DateField()
@@ -960,6 +997,7 @@ class BankDeposit(models.Model):
 
 class BankTransfer(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_transfers')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=40, unique=True)
     from_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='outgoing_transfers')
     to_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='incoming_transfers')

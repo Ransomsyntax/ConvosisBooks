@@ -379,8 +379,8 @@ function openUniversalImportModal(resourceName, title) {
           </div>
 
           <div style="margin-top:16px;padding:12px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
-            <label style="font-weight:600;font-size:12.5px;display:block;margin-bottom:6px;color:var(--tx);">Duplicate Record Handling</label>
-            <div style="display:flex;gap:18px;font-size:12px;color:var(--tx);">
+            <label style="font-weight:600;font-size:12.5px;display:block;margin-bottom:6px;color:var(--tx);">Duplicate Record & SKU Handling</label>
+            <div style="display:flex;flex-wrap:wrap;gap:18px;font-size:12px;color:var(--tx);">
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
                 <input type="radio" name="uimp-dup-radio" value="skip" checked />
                 <span><b>Skip duplicates</b> (safest)</span>
@@ -390,8 +390,12 @@ function openUniversalImportModal(resourceName, title) {
                 <span><b>Update existing</b> records</span>
               </label>
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
-                <input type="radio" name="uimp-dup-radio" value="create" />
-                <span><b>Create new</b> always</span>
+                <input type="radio" name="uimp-dup-radio" value="auto_sku" />
+                <span><b>Auto-generate new SKU</b> (e.g. ABC/ITEM/000001)</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="uimp-dup-radio" value="error" />
+                <span><b>Reject duplicates</b> (strict reporting)</span>
               </label>
             </div>
           </div>
@@ -447,22 +451,30 @@ function openUniversalImportModal(resourceName, title) {
         <div id="uimp-step-4" class="uimp-pane" style="display:none;">
           <div id="uimp-results-banner" style="margin-bottom:16px;"></div>
 
-          <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;margin-bottom:16px;">
-            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
-              <div class="sub" style="font-size:11px;">Total Processed</div>
-              <div id="uimp-res-total" style="font-size:20px;font-weight:700;color:var(--tx);">0</div>
+          <div style="display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;margin-bottom:16px;">
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;">Total</div>
+              <div id="uimp-res-total" style="font-size:18px;font-weight:700;color:var(--tx);">0</div>
             </div>
-            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
-              <div class="sub" style="font-size:11px;color:#10b981;">Imported</div>
-              <div id="uimp-res-imported" style="font-size:20px;font-weight:700;color:#10b981;">0</div>
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;color:#10b981;">Imported</div>
+              <div id="uimp-res-imported" style="font-size:18px;font-weight:700;color:#10b981;">0</div>
             </div>
-            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
-              <div class="sub" style="font-size:11px;color:#3b82f6;">Updated</div>
-              <div id="uimp-res-updated" style="font-size:20px;font-weight:700;color:#3b82f6;">0</div>
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;color:#3b82f6;">Updated</div>
+              <div id="uimp-res-updated" style="font-size:18px;font-weight:700;color:#3b82f6;">0</div>
             </div>
-            <div style="padding:10px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
-              <div class="sub" style="font-size:11px;color:#ef4444;">Failed</div>
-              <div id="uimp-res-failed" style="font-size:20px;font-weight:700;color:#ef4444;">0</div>
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;color:#8b5cf6;">Skipped</div>
+              <div id="uimp-res-skipped" style="font-size:18px;font-weight:700;color:#8b5cf6;">0</div>
+            </div>
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;color:#f59e0b;">Duplicate SKUs</div>
+              <div id="uimp-res-dups" style="font-size:18px;font-weight:700;color:#f59e0b;">0</div>
+            </div>
+            <div style="padding:10px 6px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);text-align:center;">
+              <div class="sub" style="font-size:10.5px;color:#ef4444;">Failed</div>
+              <div id="uimp-res-failed" style="font-size:18px;font-weight:700;color:#ef4444;">0</div>
             </div>
           </div>
 
@@ -996,6 +1008,10 @@ function openUniversalImportModal(resourceName, title) {
     $('#uimp-res-total', modal.el).textContent = total;
     $('#uimp-res-imported', modal.el).textContent = imported;
     $('#uimp-res-updated', modal.el).textContent = updated;
+    const elSkipped = $('#uimp-res-skipped', modal.el);
+    if (elSkipped) elSkipped.textContent = skipped;
+    const elDups = $('#uimp-res-dups', modal.el);
+    if (elDups) elDups.textContent = res.duplicate_skus ?? 0;
     $('#uimp-res-failed', modal.el).textContent = failed;
 
     recordsImportedCount += (imported + updated);
@@ -1056,8 +1072,13 @@ function openUniversalImportModal(resourceName, title) {
   $('#uimp-download-errors-btn', modal.el)?.addEventListener('click', () => {
     if (!failedReportData.length) return;
     const csvRows = [
-      ['Row Number', 'Record Identifier', 'Error Message'],
-      ...failedReportData.map(e => [e.row, `"${String(e.identifier || '').replace(/"/g, '""')}"`, `"${String(e.error || '').replace(/"/g, '""')}"`])
+      ['Row Number', 'Item Name', 'SKU', 'Failure Reason'],
+      ...failedReportData.map(e => [
+        e.row,
+        `"${String(e.name || e.identifier || '').replace(/"/g, '""')}"`,
+        `"${String(e.sku || e.identifier || '').replace(/"/g, '""')}"`,
+        `"${String(e.error || '').replace(/"/g, '""')}"`
+      ])
     ];
     const csvContent = csvRows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

@@ -730,6 +730,15 @@ async function partyForm(kind, id) {
   const defaultPos = r.place_of_supply || (r.state ? `[32] ${r.state}` : '[32] Kerala');
   const defaultSos = r.source_of_supply || (r.state ? `[32] ${r.state}` : '[32] Kerala');
 
+  if (!id && !r.code) {
+    try {
+      const nextCode = await api(`lookup/next-${isCust ? 'customer' : 'vendor'}-code/`);
+      if (nextCode && nextCode.next_number) {
+        r.code = nextCode.next_number;
+      }
+    } catch (_) {}
+  }
+
   const formHtml = `
     <div class="party-form-wrap zb-form-wrap">
 
@@ -800,6 +809,14 @@ async function partyForm(kind, id) {
         <label class="zb-form-label" for="company">Company Name</label>
         <div class="zb-form-ctrl">
           <input class="in" id="company" name="company" placeholder="e.g. Convosis Technologies Pvt Ltd" value="${esc(r.company || '')}">
+        </div>
+      </div>
+
+      <div class="zb-form-row">
+        <label class="zb-form-label" for="party_code">${entityLabel} Code <span class="zb-info-tip" title="Unique organization-wise identifier (e.g. ABC/${isCust ? 'CUST' : 'VEND'}/26-27/000001)">ⓘ</span></label>
+        <div class="zb-form-ctrl">
+          <input class="in" id="party_code" name="code" placeholder="Auto-generated (e.g. ABC/${isCust ? 'CUST' : 'VEND'}/26-27/000001)" value="${esc(r.code || '')}" style="max-width:320px;text-transform:uppercase;">
+          <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">Unique sequential code. Leave blank to auto-generate sequentially.</div>
         </div>
       </div>
 
@@ -1803,7 +1820,7 @@ function formatReorderPoint(val) {
 }
 
 async function itemForm(id) {
-  const [r, vendors, warehouses] = await Promise.all([
+  const [r, vendors, warehouses, nextSku] = await Promise.all([
     id ? api(`items/${id}/`) : {
       type: 'goods',
       item_type: 'goods',
@@ -1829,8 +1846,13 @@ async function itemForm(id) {
       sku: ''
     },
     api('lookup/vendors/').catch(() => null),
-    api('lookup/warehouses/').catch(() => [])
+    api('lookup/warehouses/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-item-sku/').catch(() => null)
   ]);
+
+  if (!id && nextSku && nextSku.next_number && !r.sku) {
+    r.sku = nextSku.next_number;
+  }
 
   const isGoods = (r.type || r.item_type || 'goods') === 'goods';
   const img = r.image_data || '';
@@ -3431,17 +3453,19 @@ async function paymentForm(kind, pre = {}) {
 }
 
 async function adjustForm(preItem, targetEl, onDone) {
-  const [items, warehouses, accounts, projects] = await Promise.all([
+  const [items, warehouses, accounts, projects, nextAdj] = await Promise.all([
     api('lookup/items/').then(r => r.filter(i => i.track_inventory)).catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     api('lookup/accounts/').catch(() => []),
-    api('lookup/projects/').catch(() => [])
+    api('lookup/projects/').catch(() => []),
+    api('lookup/next-stock-adjustment-number/').catch(() => null)
   ]);
   if (!items.length) { toast('Create an inventory-tracked goods item first.', 'err'); return; }
 
   const target = targetEl || document.getElementById('pg') || document.body;
   const curDate = (window.APP && window.APP.today) ? window.APP.today : new Date().toISOString().slice(0, 10);
   const curTime = new Date().toTimeString().slice(0, 5);
+  const curRef = (nextAdj && nextAdj.next_number) ? nextAdj.next_number : '';
 
   const itemsById = {};
   items.forEach(it => { itemsById[String(it.id)] = it; });
@@ -3531,7 +3555,7 @@ async function adjustForm(preItem, targetEl, onDone) {
         <!-- Reference Number -->
         <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
           <label style="width:160px;font-weight:500;font-size:13px;color:#334155;">Reference Number</label>
-          <input class="in" id="adj-ref-number" name="reference_number" placeholder="" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
+          <input class="in" id="adj-ref-number" name="reference_number" value="${esc(curRef)}" placeholder="Auto-generated (e.g. ABC/ADJ/26-27/00001)" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
         </div>
 
         <!-- Date* and Time -->
@@ -3926,6 +3950,7 @@ function orgForm() {
     <div id="otab-general" class="otab-pane">
       <div class="fgrid">
         ${fld({ name: 'name', label: 'Company / Organization Name', req: 1, value: o.name, col: 'c2' })}
+        ${fld({ name: 'code', label: 'Organization Short Code / Prefix', value: o.code || '', ph: 'e.g. ABC', help: 'Prefix used for all unique document numbers (e.g. ABC/INV/26-27/00001)' })}
         ${fld({ name: 'company_id', label: 'Company ID / CIN', value: o.company_id || '', ph: 'e.g. U62090KL2026PTC103900' })}
         ${fld({ name: 'gstin', label: 'GSTIN', value: o.gstin || '', ph: '32AANCC9298C1ZE' })}
         ${fld({ name: 'state', label: 'Home State', type: 'select', req: 1, opts: STATES, value: o.state })}
@@ -7590,6 +7615,51 @@ async function invoiceForm(id, targetEl, onDone) {
         if (noneSpan) noneSpan.style.display = 'inline';
         if (descEl) descEl.textContent = 'No custom signature attached.';
         if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Invoice';
+      }
+    });
+  });
+
+  $('#btn-inv-num-pref', form)?.addEventListener('click', async () => {
+    let currentConfig = { prefix: 'INV', next_sequence: 1, formatted: invNum };
+    try {
+      currentConfig = await api('invoices/sequence/');
+    } catch (_) {}
+
+    Modal.open({
+      title: 'Configure Invoice Number Sequence',
+      dialog: true,
+      body: `
+        <div style="padding:10px 0;">
+          <p class="sub" style="margin-bottom:14px;font-size:13px;line-height:1.5;">Specify the prefix and next sequential counter for your invoices. Document numbers follow <code>ORG/PREFIX/FY/SEQUENCE</code>.</p>
+          <div class="fg">
+            <label style="font-weight:600;font-size:12px;">Prefix</label>
+            <input class="in" id="inv-prefix-input" value="${esc(currentConfig.prefix || 'INV')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. INV">
+          </div>
+          <div class="fg" style="margin-top:14px;">
+            <label style="font-weight:600;font-size:12px;">Next Sequence Number</label>
+            <input class="in" id="inv-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close>Cancel</button>
+        <button class="btn p" id="btn-save-inv-seq">Save Sequence</button>
+      `
+    });
+
+    $('#btn-save-inv-seq')?.addEventListener('click', async () => {
+      const pfx = ($('#inv-prefix-input').value || '').trim().toUpperCase() || 'INV';
+      const seq = Math.max(1, parseInt($('#inv-next-seq-input').value, 10) || 1);
+      try {
+        const res = await api('invoices/sequence/', {
+          method: 'POST',
+          body: { prefix: pfx, next_sequence: seq }
+        });
+        $('#inv-number', form).value = res.formatted;
+        Modal.close();
+        toast(`Invoice sequence updated to ${res.formatted}`, 'ok');
+      } catch (err) {
+        toast(err.message, 'err');
       }
     });
   });

@@ -72,15 +72,193 @@ def bill_qs(org=None):
         qs = qs.filter(organization=org)
     return qs
 
-def next_number(prefix, org=None):
-    """Call inside the same transaction that creates the record so a rollback frees the number."""
+def get_financial_year(date_=None):
+    """
+    Return Indian standard financial year in 'YY-YY' format (e.g. 2026-10-15 -> '26-27').
+    April 1st to March 31st.
+    """
+    import datetime
+    if not date_:
+        date_ = timezone.localdate()
+    elif isinstance(date_, datetime.datetime):
+        date_ = date_.date()
+    elif isinstance(date_, str):
+        try:
+            date_ = datetime.datetime.strptime(date_[:10], '%Y-%m-%d').date()
+        except Exception:
+            date_ = timezone.localdate()
+
+    yr = date_.year
+    if date_.month >= 4:
+        start_yy = yr % 100
+        end_yy = (yr + 1) % 100
+    else:
+        start_yy = (yr - 1) % 100
+        end_yy = yr % 100
+    return f"{start_yy:02d}-{end_yy:02d}"
+
+def get_document_module_config(module_or_pfx):
+    """
+    Map module name or prefix to canonical document numbering configuration:
+    - pfx: prefix string (e.g. 'INV', 'CUST')
+    - digits: sequence padding (5 or 6)
+    - has_fy: whether financial year is included (Items do NOT include FY)
+    - model: Django model class to check collisions against
+    - field: field name storing the document number/code/sku
+    """
+    from .models import (
+        Customer, Vendor, Item, Invoice, Bill, Quote, SalesOrder,
+        PurchaseOrder, PaymentReceived, PaymentMade, CreditNote,
+        VendorCredit, Journal, DeliveryChallan, Expense, StockMovement
+    )
+    raw = (module_or_pfx or '').upper().strip()
+    
+    if raw in ('INV', 'INVOICE', 'INVOICES'):
+        return {'pfx': 'INV', 'digits': 5, 'has_fy': True, 'model': Invoice, 'field': 'number'}
+    elif raw in ('CUST', 'CUSTOMER', 'CUSTOMERS'):
+        return {'pfx': 'CUST', 'digits': 6, 'has_fy': True, 'model': Customer, 'field': 'code'}
+    elif raw in ('VEND', 'VENDOR', 'VENDORS'):
+        return {'pfx': 'VEND', 'digits': 6, 'has_fy': True, 'model': Vendor, 'field': 'code'}
+    elif raw in ('SO', 'SALES_ORDER', 'SALES-ORDERS', 'SALESORDER'):
+        return {'pfx': 'SO', 'digits': 5, 'has_fy': True, 'model': SalesOrder, 'field': 'number'}
+    elif raw in ('QTN', 'QT', 'QUOTE', 'QUOTES', 'QUOTATION'):
+        return {'pfx': 'QTN', 'digits': 5, 'has_fy': True, 'model': Quote, 'field': 'number'}
+    elif raw in ('PO', 'PURCHASE_ORDER', 'PURCHASE-ORDERS', 'PURCHASEORDER'):
+        return {'pfx': 'PO', 'digits': 5, 'has_fy': True, 'model': PurchaseOrder, 'field': 'number'}
+    elif raw in ('BILL', 'BILLS'):
+        return {'pfx': 'BILL', 'digits': 5, 'has_fy': True, 'model': Bill, 'field': 'number'}
+    elif raw in ('PR', 'PAYMENT_RECEIVED', 'PAYMENTS-RECEIVED', 'RECEIPT'):
+        return {'pfx': 'PR', 'digits': 5, 'has_fy': True, 'model': PaymentReceived, 'field': 'number'}
+    elif raw in ('PM', 'PAYMENT_MADE', 'PAYMENTS-MADE', 'PAYMENT'):
+        return {'pfx': 'PM', 'digits': 5, 'has_fy': True, 'model': PaymentMade, 'field': 'number'}
+    elif raw in ('CN', 'CREDIT_NOTE', 'CREDIT-NOTES', 'CREDITNOTE'):
+        return {'pfx': 'CN', 'digits': 5, 'has_fy': True, 'model': CreditNote, 'field': 'number'}
+    elif raw in ('DN', 'VC', 'DEBIT_NOTE', 'DEBIT-NOTES', 'VENDOR_CREDIT', 'VENDOR-CREDITS', 'VENDORCREDIT'):
+        return {'pfx': 'DN', 'digits': 5, 'has_fy': True, 'model': VendorCredit, 'field': 'number'}
+    elif raw in ('JRN', 'JOURNAL', 'JOURNALS', 'MANUAL-JOURNALS'):
+        return {'pfx': 'JRN', 'digits': 5, 'has_fy': True, 'model': Journal, 'field': 'number'}
+    elif raw in ('DC', 'DELIVERY_CHALLAN', 'DELIVERY-CHALLANS', 'DELIVERYCHALLAN'):
+        return {'pfx': 'DC', 'digits': 5, 'has_fy': True, 'model': DeliveryChallan, 'field': 'number'}
+    elif raw in ('ITEM', 'ITEMS', 'SKU'):
+        return {'pfx': 'ITEM', 'digits': 6, 'has_fy': False, 'model': Item, 'field': 'sku'}
+    elif raw in ('ST', 'STOCK_TRANSFER', 'TRANSFER'):
+        return {'pfx': 'ST', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
+    elif raw in ('ADJ', 'STOCK_ADJUSTMENT', 'ADJUSTMENT'):
+        return {'pfx': 'ADJ', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
+    elif raw in ('EXP', 'EXPENSE', 'EXPENSES'):
+        return {'pfx': 'EXP', 'digits': 5, 'has_fy': True, 'model': Expense, 'field': 'number'}
+    else:
+        clean_pfx = re.sub(r'[^A-Z0-9]', '', raw)[:10] or 'DOC'
+        return {'pfx': clean_pfx, 'digits': 5, 'has_fy': True, 'model': None, 'field': 'number'}
+
+def next_document_number(module_or_pfx, org=None, date=None):
+    """
+    Generate an atomic, collision-free organization-wise document number.
+    Format:
+      {Organization Code}/{Module Prefix}/{Financial Year}/{Sequential Number}
+      or {Organization Code}/ITEM/{Sequential Number} (6 digits) for Items.
+    Guarantees uniqueness using select_for_update() row locks and DB collision verification.
+    """
+    from .models import Organization, Sequence
+    if not org:
+        org = Organization.get()
+    
+    org_code = org.get_code() if org else 'ABC'
+    org_id = org.pk if org else 1
+    fy = get_financial_year(date)
+    
+    cfg = get_document_module_config(module_or_pfx)
+    pfx = cfg['pfx']
+    digits = cfg['digits']
+    has_fy = cfg['has_fy']
+    model = cfg.get('model')
+    field = cfg.get('field', 'number')
+
+    if has_fy:
+        seq_key = f"{org_id}_{pfx}_{fy}"
+    else:
+        seq_key = f"{org_id}_{pfx}"
+
     with transaction.atomic():
-        key = f"{org.pk}_{prefix}" if (org and getattr(org, 'pk', None)) else prefix
-        key = key[:20]
-        seq, _ = Sequence.objects.select_for_update().get_or_create(key=key)
-        seq.value += 1
-        seq.save(update_fields=['value'])
-        return f'{prefix}-{seq.value:06d}'
+        seq, _ = Sequence.objects.select_for_update().get_or_create(key=seq_key)
+        
+        while True:
+            seq.value += 1
+            if has_fy:
+                candidate = f"{org_code}/{pfx}/{fy}/{seq.value:0{digits}d}"
+            else:
+                candidate = f"{org_code}/{pfx}/{seq.value:0{digits}d}"
+
+            collision = False
+            if model and field:
+                kwargs = {field: candidate}
+                qs = model.objects.filter(**kwargs)
+                if hasattr(model, 'organization') and org:
+                    qs = qs.filter(organization=org)
+                if qs.exists():
+                    collision = True
+            
+            if not collision:
+                seq.save(update_fields=['value'])
+                return candidate
+
+def preview_document_number(module_or_pfx, org=None, date=None):
+    """
+    Preview the next document number without incrementing the sequence counter.
+    """
+    from .models import Organization, Sequence
+    if not org:
+        org = Organization.get()
+    
+    org_code = org.get_code() if org else 'ABC'
+    org_id = org.pk if org else 1
+    fy = get_financial_year(date)
+    
+    cfg = get_document_module_config(module_or_pfx)
+    pfx = cfg['pfx']
+    digits = cfg['digits']
+    has_fy = cfg['has_fy']
+    model = cfg.get('model')
+    field = cfg.get('field', 'number')
+
+    if has_fy:
+        seq_key = f"{org_id}_{pfx}_{fy}"
+    else:
+        seq_key = f"{org_id}_{pfx}"
+
+    seq = Sequence.objects.filter(key=seq_key).first()
+    curr_val = seq.value if seq else 0
+
+    val = curr_val
+    while True:
+        val += 1
+        if has_fy:
+            candidate = f"{org_code}/{pfx}/{fy}/{val:0{digits}d}"
+        else:
+            candidate = f"{org_code}/{pfx}/{val:0{digits}d}"
+
+        collision = False
+        if model and field:
+            kwargs = {field: candidate}
+            qs = model.objects.filter(**kwargs)
+            if hasattr(model, 'organization') and org:
+                qs = qs.filter(organization=org)
+            if qs.exists():
+                collision = True
+        
+        if not collision:
+            return {
+                'next_number': candidate,
+                'prefix': pfx,
+                'next_sequence': val,
+                'formatted': candidate,
+                'financial_year': fy if has_fy else '',
+                'org_code': org_code
+            }
+
+def next_number(prefix, org=None, date=None):
+    """Call inside the same transaction that creates the record so a rollback frees the number."""
+    return next_document_number(prefix, org=org, date=date)
 
 def fmt_qty(d):
     return format(Decimal(d).normalize(), 'f')
@@ -613,13 +791,22 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
     """
     Post a double-entry journal voucher.
     items: list of (account_code_or_obj, debit, credit, description)
-    Enforces debit == credit and transaction locking.
+    Enforces debit == credit, transaction locking, and safe idempotency.
     """
     if not org and user:
-        from .api import get_user_org
-        org = get_user_org(user)
+        try:
+            from .api import get_user_org
+            org = get_user_org(user)
+        except Exception:
+            pass
     if not org:
         org = Organization.objects.first()
+
+    # Idempotency check for automated business transactions to prevent duplicate journal vouchers
+    if reference and entry_type not in ('manual',):
+        existing_jrn = Journal.objects.filter(organization=org, entry_type=entry_type, reference=reference).first()
+        if existing_jrn:
+            return existing_jrn
 
     check_transaction_lock(date, org=org)
     ensure_default_accounts(org=org)
@@ -655,19 +842,20 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
     if tot_debit != tot_credit:
         raise ApiError(400, f"Unbalanced Journal: Total Debits (₹{tot_debit}) must equal Total Credits (₹{tot_credit}).")
 
-    num = next_number('JRN', org=org)
-    jrn = Journal.objects.create(
-        organization=org,
-        number=num,
-        date=date,
-        entry_type=entry_type,
-        reference=reference,
-        notes=notes,
-        created_by=user if getattr(user, 'pk', None) else None
-    )
-    for acc, deb, cred, desc in clean_items:
-        JournalItem.objects.create(journal=jrn, account=acc, debit=deb, credit=cred, description=desc)
-    return jrn
+    with transaction.atomic():
+        num = next_document_number('JRN', org=org, date=date)
+        jrn = Journal.objects.create(
+            organization=org,
+            number=num,
+            date=date,
+            entry_type=entry_type,
+            reference=reference,
+            notes=notes,
+            created_by=user if getattr(user, 'pk', None) else None
+        )
+        for acc, deb, cred, desc in clean_items:
+            JournalItem.objects.create(journal=jrn, account=acc, debit=deb, credit=cred, description=desc)
+        return jrn
 
 def post_invoice_journal(inv, user):
     """Debit AR, Credit Sales Revenue, Credit Output Taxes."""
@@ -3389,19 +3577,13 @@ def record_bank_deposit(data, user=None):
     if offset_acc:
         bank_gl = acc.gl_account or Account.objects.filter(code='1010').first()
         if bank_gl:
-            j_num = next_number('JRN')
-            jnl = Journal.objects.create(
-                number=j_num,
-                date=dt,
-                reference=f"DEP {dep_num}",
-                entry_type='deposit',
-                notes=f"Bank Deposit {dep_num} to {acc.name} ({desc})",
-                total_debit=amount,
-                total_credit=amount,
-                created_by=user if getattr(user, 'pk', None) else None
+            deposit_org = getattr(acc, 'organization', None) or Organization.objects.first()
+            post_journal_entry(
+                dt, 'deposit', f"DEP {dep_num}", f"Bank Deposit {dep_num} to {acc.name} ({desc})",
+                [(bank_gl, amount, Decimal('0.00'), f"Deposit to {acc.name}"),
+                 (offset_acc, Decimal('0.00'), amount, f"Deposit offset {party_name}")],
+                user, org=deposit_org
             )
-            JournalItem.objects.create(journal=jnl, account=bank_gl, debit=amount, credit=Decimal('0.00'), description=f"Deposit to {acc.name}")
-            JournalItem.objects.create(journal=jnl, account=offset_acc, debit=Decimal('0.00'), credit=amount, description=f"Deposit offset {party_name}")
 
     log_audit(user, 'create', 'BankDeposit', deposit.pk, f"Recorded deposit {deposit.number} of ₹{deposit.amount} into {acc.name}")
     return {
@@ -3482,17 +3664,13 @@ def record_bank_transfer(data, user=None):
     from_gl = from_acc.gl_account or Account.objects.filter(code='1010').first()
     to_gl = to_acc.gl_account or Account.objects.filter(code='1010').first()
     if from_gl and to_gl:
-        j_num = next_number('JRN')
-        jnl = Journal.objects.create(
-            number=j_num,
-            date=dt,
-            reference=f"TXF {xfer_num}",
-            entry_type='transfer',
-            notes=f"Bank Transfer from {from_acc.name} to {to_acc.name}",
-            created_by=user if getattr(user, 'pk', None) else None
+        xfer_org = getattr(from_acc, 'organization', None) or getattr(to_acc, 'organization', None) or Organization.objects.first()
+        post_journal_entry(
+            dt, 'transfer', f"TXF {xfer_num}", f"Bank Transfer from {from_acc.name} to {to_acc.name}",
+            [(to_gl, amount, Decimal('0.00'), f"Transfer into {to_acc.name}"),
+             (from_gl, Decimal('0.00'), amount, f"Transfer out of {from_acc.name}")],
+            user, org=xfer_org
         )
-        JournalItem.objects.create(journal=jnl, account=to_gl, debit=amount, credit=Decimal('0.00'), description=f"Transfer into {to_acc.name}")
-        JournalItem.objects.create(journal=jnl, account=from_gl, debit=Decimal('0.00'), credit=amount, description=f"Transfer out of {from_acc.name}")
 
     log_audit(user, 'create', 'BankTransfer', transfer.pk, f"Recorded transfer {transfer.number} of ₹{transfer.amount} from {from_acc.name} to {to_acc.name}")
     return {

@@ -233,7 +233,7 @@ class Resource:
         if request and hasattr(self.model, 'organization'):
             user_org = get_user_org(request.user)
             if user_org:
-                qs = qs.filter(organization=user_org)
+                qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
             elif request.user.is_authenticated and not request.user.is_superuser:
                 qs = qs.none()
         obj = qs.filter(pk=pk).first()
@@ -258,7 +258,7 @@ class Resource:
         if hasattr(self.model, 'organization'):
             user_org = get_user_org(request.user)
             if user_org:
-                qs = qs.filter(organization=user_org)
+                qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
             elif request.user.is_authenticated and not request.user.is_superuser:
                 qs = qs.none()
         q = request.GET.get('q', '').strip()
@@ -492,46 +492,109 @@ class Resource:
 
             if records is not None:
                 if not records:
-                    return j({'status': 'failed', 'imported': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'total': 0, 'errors': [{'row': 0, 'identifier': 'File', 'error': 'No records found in the imported file.'}], 'message': 'No records found in the imported file.'})
+                    return j({'status': 'failed', 'imported': 0, 'updated': 0, 'skipped': 0, 'duplicate_skus': 0, 'failed': 0, 'total': 0, 'errors': [{'row': 0, 'identifier': 'File', 'error': 'No records found in the imported file.'}], 'error_report_csv': '', 'message': 'No records found in the imported file.'})
 
                 dup_mode = 'skip'
                 if isinstance(data, dict) and 'duplicate_mode' in data:
-                    dup_mode = data['duplicate_mode']
+                    dup_mode = str(data['duplicate_mode']).lower().strip()
+                elif isinstance(data, dict) and 'duplicate_handling' in data:
+                    dup_mode = str(data['duplicate_handling']).lower().strip()
                 elif request.POST.get('duplicate_mode'):
-                    dup_mode = request.POST.get('duplicate_mode')
+                    dup_mode = str(request.POST.get('duplicate_mode')).lower().strip()
+                elif request.POST.get('duplicate_handling'):
+                    dup_mode = str(request.POST.get('duplicate_handling')).lower().strip()
+                elif request.GET.get('duplicate_handling'):
+                    dup_mode = str(request.GET.get('duplicate_handling')).lower().strip()
+                elif request.GET.get('duplicate_mode'):
+                    dup_mode = str(request.GET.get('duplicate_mode')).lower().strip()
+                if dup_mode not in ('skip', 'update', 'auto_sku', 'error', 'create'):
+                    dup_mode = 'skip'
 
                 records = self.preprocess_import_records(records)
 
                 created_count = 0
                 updated_count = 0
                 skipped_count = 0
+                duplicate_skus_count = 0
                 errors = []
+                seen_identifiers_in_file = set()
+                seen_objs_in_file = {}
+                user_org = get_user_org(request.user)
 
                 for idx, raw_item in enumerate(records):
                     try:
                         clean_item = self.normalize_record(raw_item)
-                        existing = self.find_existing(clean_item, user=request.user)
+                        sku_val = (str(clean_item.get('sku') or '')).strip().upper()
+                        code_val = (str(clean_item.get('code') or '')).strip().upper()
+                        name_val = (str(clean_item.get('name') or '')).strip().lower()
 
-                        if existing and dup_mode == 'skip':
-                            skipped_count += 1
-                            continue
-                        elif existing and dup_mode == 'update':
-                            with transaction.atomic():
-                                self.update(existing, clean_item, request.user)
-                            updated_count += 1
-                        else:
-                            with transaction.atomic():
-                                created_obj = self.create(clean_item, request.user)
-                                if hasattr(created_obj, 'organization') and not getattr(created_obj, 'organization_id', None):
-                                    try:
-                                        with transaction.atomic():
-                                            user_org = get_user_org(request.user)
-                                            if user_org:
-                                                created_obj.organization = user_org
-                                                created_obj.save(update_fields=['organization'])
-                                    except Exception:
-                                        pass
-                            created_count += 1
+                        identifier_key = sku_val or code_val or name_val
+
+                        # 1. Check existing record in DB
+                        existing = self.find_existing(clean_item, user=request.user)
+                        
+                        # 2. Check if repeated in this CSV file
+                        is_repeated_in_file = False
+                        if identifier_key and identifier_key in seen_identifiers_in_file:
+                            is_repeated_in_file = True
+
+                        is_duplicate = bool(existing or is_repeated_in_file)
+                        if is_duplicate:
+                            duplicate_skus_count += 1
+
+                        if is_duplicate:
+                            if dup_mode == 'skip':
+                                skipped_count += 1
+                                if identifier_key:
+                                    seen_identifiers_in_file.add(identifier_key)
+                                errors.append({
+                                    'row': idx + 1,
+                                    'name': str(raw_item.get('name') or raw_item.get('Name') or ''),
+                                    'sku': str(sku_val or ''),
+                                    'identifier': str(identifier_key or f'Row {idx + 1}'),
+                                    'error': f"Skipped: Duplicate SKU '{sku_val}' already exists." if (sku_val and existing) else (f"Skipped: Duplicate SKU '{sku_val}' repeated in CSV." if (sku_val and is_repeated_in_file) else "Skipped duplicate record.")
+                                })
+                                continue
+                            elif dup_mode == 'error':
+                                reason = (
+                                    f"Duplicate SKU '{sku_val}' already exists in organization." if (sku_val and existing) else (
+                                        f"Duplicate SKU '{sku_val}' repeated in CSV file." if (sku_val and is_repeated_in_file) else
+                                        f"Record '{clean_item.get('name') or identifier_key}' already exists."
+                                    )
+                                )
+                                raise ApiError(400, reason)
+                            elif dup_mode == 'update':
+                                target_obj = existing or seen_objs_in_file.get(identifier_key)
+                                if target_obj:
+                                    with transaction.atomic():
+                                        self.update(target_obj, clean_item, request.user)
+                                    updated_count += 1
+                                    if identifier_key:
+                                        seen_identifiers_in_file.add(identifier_key)
+                                    continue
+                            elif dup_mode == 'auto_sku':
+                                new_sku = services.next_document_number('ITEM', org=user_org)
+                                clean_item['sku'] = new_sku
+
+                        # Create new record
+                        with transaction.atomic():
+                            created_obj = self.create(clean_item, request.user)
+                            if hasattr(created_obj, 'organization') and not getattr(created_obj, 'organization_id', None):
+                                try:
+                                    if user_org:
+                                        created_obj.organization = user_org
+                                        created_obj.save(update_fields=['organization'])
+                                except Exception:
+                                    pass
+
+                        created_count += 1
+                        if identifier_key:
+                            seen_identifiers_in_file.add(identifier_key)
+                            seen_objs_in_file[identifier_key] = created_obj
+                        new_created_sku = getattr(created_obj, 'sku', None)
+                        if new_created_sku:
+                            seen_identifiers_in_file.add(new_created_sku.strip().upper())
+
                     except Exception as e:
                         row_identifier = raw_item.get('name') or raw_item.get('Name') or raw_item.get('sku') or raw_item.get('SKU') or raw_item.get('code') or raw_item.get('Code') or raw_item.get('number') or raw_item.get('item') or f'Row {idx + 1}'
                         err_msg = str(e)
@@ -539,7 +602,21 @@ class Resource:
                             err_msg = '; '.join(f"{k}: {v}" for k, v in e.errors.items())
                         elif hasattr(e, 'message') and e.message:
                             err_msg = e.message
-                        errors.append({'row': idx + 1, 'identifier': str(row_identifier), 'error': err_msg})
+                        errors.append({
+                            'row': idx + 1,
+                            'name': str(raw_item.get('name') or raw_item.get('Name') or ''),
+                            'sku': str(raw_item.get('sku') or raw_item.get('SKU') or ''),
+                            'identifier': str(row_identifier),
+                            'error': err_msg
+                        })
+
+                # Build error report CSV string
+                error_csv_buf = io.StringIO()
+                err_writer = csv.writer(error_csv_buf)
+                err_writer.writerow(['Row Number', 'Item Name', 'SKU', 'Failure Reason'])
+                for err in errors:
+                    err_writer.writerow([err.get('row', ''), err.get('name', ''), err.get('sku', '') or err.get('identifier', ''), err.get('error', '')])
+                error_report_csv_str = error_csv_buf.getvalue()
 
                 status_label = 'ok' if not errors else ('partial' if (created_count > 0 or updated_count > 0) else 'failed')
                 parts = []
@@ -549,6 +626,8 @@ class Resource:
                     parts.append(f"{updated_count} updated")
                 if skipped_count:
                     parts.append(f"{skipped_count} skipped")
+                if duplicate_skus_count:
+                    parts.append(f"{duplicate_skus_count} duplicates detected")
                 summary_action = ', '.join(parts) or "0 records processed"
 
                 msg = f"Import completed: {summary_action}."
@@ -559,9 +638,11 @@ class Resource:
                     'imported': created_count,
                     'updated': updated_count,
                     'skipped': skipped_count,
+                    'duplicate_skus': duplicate_skus_count,
                     'failed': len(errors),
                     'total': len(records),
                     'errors': errors,
+                    'error_report_csv': error_report_csv_str,
                     'message': msg
                 })
 
@@ -664,6 +745,7 @@ class PartyResource(Resource):
     def clean(self, data):
         c = Cleaner(data)
         out = {
+            'code': c.text('code', max_len=60, upper=True),
             'name': c.text('name', True, 200, pattern=re.compile(r'^[^@#$%^*+=~`<>{}[\]\\]+$'), pattern_msg='Display Name cannot contain special characters like @, #, $, %, ^, *.'),
             'company': c.text('company', max_len=200),
             'contact_person': c.text('contact_person', max_len=120, pattern=re.compile(r"^[a-zA-Z\s\.\'\-]*$"), pattern_msg='Primary contact name can only contain letters, spaces, hyphens, and dots.'),
@@ -863,6 +945,7 @@ class PartyResource(Resource):
 
     def create(self, data, user):
         clean_data = self.clean(data)
+        org = None
         if user and hasattr(self.model, 'organization'):
             try:
                 org = get_user_org(user)
@@ -870,8 +953,20 @@ class PartyResource(Resource):
                     clean_data['organization'] = org
             except Exception:
                 pass
+        pfx = 'CUST' if self.kind == 'customer' else 'VEND'
+        code_val = (clean_data.get('code') or '').strip()
+        if not code_val:
+            clean_data['code'] = services.next_document_number(pfx, org=org)
+        else:
+            dup = self.model.objects.filter(code__iexact=code_val)
+            if org:
+                dup = dup.filter(organization=org)
+            if dup.exists():
+                clean_data['code'] = services.next_document_number(pfx, org=org)
+            else:
+                clean_data['code'] = code_val
         obj = self.model.objects.create(**clean_data)
-        services.log_audit(user, 'create', self.kind, obj.pk, f"Created {self.kind} {obj.name}")
+        services.log_audit(user, 'create', self.kind, obj.pk, f"Created {self.kind} {obj.name} ({obj.code})")
         return obj
 
     def update(self, obj, data, user):
@@ -889,7 +984,7 @@ class PartyResource(Resource):
 
     def row(self, o, s):
         r = {
-            'id': o.pk, 'name': o.name, 'display_name': o.name, 'company': o.company, 'company_name': o.company,
+            'id': o.pk, 'code': getattr(o, 'code', '') or '', 'name': o.name, 'display_name': o.name, 'company': o.company, 'company_name': o.company,
             'contact_person': o.contact_person, 'primary_contact': o.contact_person, 'email': o.email,
             'phone': o.phone, 'mobile': getattr(o, 'mobile', ''),
             'billing_address': o.billing_address, 'billing_attention': getattr(o, 'billing_attention', ''),
@@ -1037,7 +1132,7 @@ class ItemResource(Resource):
         rec.setdefault('unit', 'nos')
 
         if not rec.get('sku'):
-            rec['sku'] = next_number('SKU')
+            rec['sku'] = ''
 
         wh_val = rec.get('warehouse') or rec.get('warehouse_code')
         if wh_val:
@@ -1176,14 +1271,14 @@ class ItemResource(Resource):
         if wid is None:
             wid = c.integer('warehouse', required=False)
         user_org = get_user_org(user) if user else (getattr(instance, 'organization', None) if instance else None)
-        wh = Warehouse.objects.filter(pk=wid, organization=user_org).first() if (wid and user_org) else (Warehouse.objects.filter(pk=wid).first() if wid else None)
+        wh = Warehouse.objects.filter(Q(pk=wid), Q(organization=user_org) | Q(organization__isnull=True)).first() if wid else None
         out['warehouse_id'] = wh.pk if wh else None
         out['warehouse_code'] = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
 
         vid = c.integer('preferred_vendor_id', required=False)
         if vid is None:
             vid = c.integer('preferred_vendor', required=False)
-        v_exists = Vendor.objects.filter(pk=vid, organization=user_org).exists() if (vid and user_org) else (Vendor.objects.filter(pk=vid).exists() if vid else False)
+        v_exists = Vendor.objects.filter(Q(pk=vid), Q(organization=user_org) | Q(organization__isnull=True)).exists() if vid else False
         out['preferred_vendor_id'] = vid if v_exists else None
 
         if out['hsn_sac']:
@@ -1252,7 +1347,7 @@ def parse_lines(raw, org=None):
         if iid:
             iqs = Item.objects.filter(pk=iid)
             if org:
-                iqs = iqs.filter(organization=org)
+                iqs = iqs.filter(Q(organization=org) | Q(organization__isnull=True))
             item = iqs.first()
             if item is None:
                 c.err('item', 'Item not found.')
@@ -1576,7 +1671,7 @@ class DocResource(Resource):
         if pid:
             pqs = self.Party.objects.filter(pk=pid)
             if user_org:
-                pqs = pqs.filter(organization=user_org)
+                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
             party = pqs.first()
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
@@ -1626,17 +1721,18 @@ class DocResource(Resource):
         head, lines = self.parse(data, user=user)
         user_org = get_user_org(user)
         services.check_transaction_lock(head['date'], org=user_org)
-        num = data.get('number')
+        num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
-        num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
+        num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (self.Model.objects.filter(number=num).exists() if num else False)
         if not num or num_exists:
-            num = next_number(pfx, org=user_org)
+            num = services.next_document_number(pfx, org=user_org, date=head['date'])
         else:
             import re
-            m = re.match(rf'^{re.escape(pfx)}-(\d+)$', num)
+            m = re.search(r'(\d+)$', num)
             if m:
                 val = int(m.group(1))
-                seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
+                fy = services.get_financial_year(head['date'])
+                seq_key = f"{user_org.pk}_{pfx}_{fy}" if user_org else f"{pfx}_{fy}"
                 seq, _ = Sequence.objects.get_or_create(key=seq_key)
                 if seq.value < val:
                     seq.value = val
@@ -2114,7 +2210,7 @@ class PaymentResource(Resource):
         if pid:
             pqs = self.Party.objects.filter(pk=pid)
             if user_org:
-                pqs = pqs.filter(organization=user_org)
+                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
             party = pqs.first()
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
@@ -2127,7 +2223,11 @@ class PaymentResource(Resource):
         extra = {}
         if hasattr(self.Model, 'organization'):
             extra['organization'] = user_org
-        pay = self.Model.objects.create(number=next_number(self.prefix, org=user_org), created_by=user, **{self.party_attr: party}, **extra, **out)
+        pay_num = (data.get('number') or '').strip()
+        num_exists = self.Model.objects.filter(number=pay_num, organization=user_org).exists() if (pay_num and user_org) else False
+        if not pay_num or num_exists:
+            pay_num = services.next_document_number(self.prefix, org=user_org, date=out['date'])
+        pay = self.Model.objects.create(number=pay_num, created_by=user, **{self.party_attr: party}, **extra, **out)
         self.allocate(pay, data.get('allocations'))
         if isinstance(pay, PaymentReceived):
             services.post_payment_received_journal(pay, user)
@@ -2508,11 +2608,11 @@ def stock_move_action_view(request):
 
     user_org = get_user_org(request.user)
     if user_org:
-        if not Item.objects.filter(pk=iid, organization=user_org).exists():
+        if not Item.objects.filter(Q(pk=iid), Q(organization=user_org) | Q(organization__isnull=True)).exists():
             raise ApiError(404, 'Item not found in your organization.')
-        if not Warehouse.objects.filter(pk=from_wh_id, organization=user_org).exists():
+        if not Warehouse.objects.filter(Q(pk=from_wh_id), Q(organization=user_org) | Q(organization__isnull=True)).exists():
             raise ApiError(404, 'Source warehouse not found in your organization.')
-        if not Warehouse.objects.filter(pk=to_wh_id, organization=user_org).exists():
+        if not Warehouse.objects.filter(Q(pk=to_wh_id), Q(organization=user_org) | Q(organization__isnull=True)).exists():
             raise ApiError(404, 'Destination warehouse not found in your organization.')
 
     adjusted_at = None
@@ -2658,7 +2758,8 @@ class JournalResource(Resource):
                 raise ApiError(400, 'Each line item must specify an account.')
             items.append((acc_id, ln.get('debit', 0), ln.get('credit', 0), ln.get('description', '')))
 
-        jrn = services.post_journal_entry(dt, 'manual', ref, notes, items, user)
+        user_org = get_user_org(user)
+        jrn = services.post_journal_entry(dt, 'manual', ref, notes, items, user, org=user_org)
         tot_deb = sum((it.debit for it in jrn.items.all()), Z)
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
         return jrn
@@ -3734,21 +3835,26 @@ class PurchaseOrderResource(Resource):
         deliv = c.date('delivery_date')
         c.done()
 
+        user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
-        if not num or PurchaseOrder.objects.filter(number=num).exists():
-            num = next_number('PO')
+        num_exists = PurchaseOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (PurchaseOrder.objects.filter(number=num).exists() if num else False)
+        if not num or num_exists:
+            num = services.next_document_number('PO', org=user_org, date=dt)
         else:
             import re
-            m = re.match(r'^PO-(\d+)$', num)
+            m = re.search(r'(\d+)$', num)
             if m:
                 val = int(m.group(1))
-                seq, _ = Sequence.objects.get_or_create(key='PO')
+                fy = services.get_financial_year(dt)
+                seq_key = f"{user_org.pk}_PO_{fy}" if user_org else f"PO_{fy}"
+                seq, _ = Sequence.objects.get_or_create(key=seq_key)
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
         po = PurchaseOrder.objects.create(
+            organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
-            place_of_supply=ven.state or Organization.get().state,
+            place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             delivery_date=deliv, status='draft'
         )
         lines = parse_lines(data.get('lines', []))
@@ -3868,8 +3974,13 @@ class ExpenseResource(Resource):
         notes = c.text('notes', max_len=1000)
         c.done()
 
-        num = next_number('EXP')
+        user_org = get_user_org(user) if user else None
+        num = (data.get('number') or '').strip()
+        num_exists = Expense.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else False
+        if not num or num_exists:
+            num = services.next_document_number('EXP', org=user_org, date=dt)
         exp = Expense.objects.create(
+            organization=user_org,
             number=num, date=dt, expense_account=acc, vendor=ven,
             amount=amt, gst_rate=gst_r, tax_amount=tax_amt, total=tot,
             paid_through=paid_via, reference=ref, notes=notes,
@@ -4032,12 +4143,15 @@ class CreditNoteResource(Resource):
         reason = c.text('reason', max_len=150)
         c.done()
 
-        num = data.get('number')
-        if not num or CreditNote.objects.filter(number=num).exists():
-            num = next_number('CN')
+        user_org = get_user_org(user) if user else None
+        num = (data.get('number') or '').strip()
+        num_exists = CreditNote.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (CreditNote.objects.filter(number=num).exists() if num else False)
+        if not num or num_exists:
+            num = services.next_document_number('CN', org=user_org, date=dt)
         cn = CreditNote.objects.create(
+            organization=user_org,
             number=num, customer=cust, date=dt, due_date=dt,
-            place_of_supply=cust.state or Organization.get().state,
+            place_of_supply=cust.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open'
         )
         lines = parse_lines(data.get('lines', []))
@@ -4207,12 +4321,15 @@ class VendorCreditResource(Resource):
         reason = c.text('reason', max_len=150)
         c.done()
 
-        num = data.get('number')
-        if not num or VendorCredit.objects.filter(number=num).exists():
-            num = next_number('VC')
+        user_org = get_user_org(user) if user else None
+        num = (data.get('number') or '').strip()
+        num_exists = VendorCredit.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (VendorCredit.objects.filter(number=num).exists() if num else False)
+        if not num or num_exists:
+            num = services.next_document_number('DN', org=user_org, date=dt)
         vc = VendorCredit.objects.create(
+            organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
-            place_of_supply=ven.state or Organization.get().state,
+            place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open'
         )
         lines = parse_lines(data.get('lines', []))
@@ -4466,10 +4583,13 @@ class DeliveryChallanResource(Resource):
         notes = c.text('notes', max_len=1000)
         c.done()
 
-        num = data.get('number')
-        if not num or DeliveryChallan.objects.filter(number=num).exists():
-            num = next_number('DC')
+        user_org = get_user_org(user) if user else None
+        num = (data.get('number') or '').strip()
+        num_exists = DeliveryChallan.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (DeliveryChallan.objects.filter(number=num).exists() if num else False)
+        if not num or num_exists:
+            num = services.next_document_number('DC', org=user_org, date=dt)
         dc = DeliveryChallan.objects.create(
+            organization=user_org,
             number=num, customer=cust, date=dt, challan_type=ctype,
             vehicle_number=vnum, notes=notes, status='open'
         )
@@ -4928,6 +5048,7 @@ def action(request, name, pk, act):
 def org_json(o):
     return {
         'name': o.name,
+        'code': o.get_code(),
         'company_id': o.company_id,
         'gstin': o.gstin,
         'state': o.state,
@@ -5021,6 +5142,10 @@ def organization(request):
     }
     c.done()
     d = body(request)
+    if 'code' in d:
+        new_code = re.sub(r'[^A-Za-z0-9]', '', str(d['code'])).upper()[:20]
+        if new_code:
+            org.code = new_code
     if 'logo_data' in d:
         out['logo_data'] = d['logo_data']
     if 'signature_data' in d:
@@ -5155,25 +5280,55 @@ def lookup(request, name):
         User = get_user_model()
         sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
         data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in sp_qs.order_by('username')]
-    elif name == 'next-quote-number':
+    elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
-        pfx = org.quote_prefix or 'QT' if org else 'QT'
-        seq_key = f"{org.pk}_{pfx}"[:20] if org else pfx
-        seq = Sequence.objects.filter(key=seq_key).first()
-        nxt = (seq.value + 1) if seq else 1
-        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
+        pfx = org.quote_prefix or 'QTN' if org else 'QTN'
+        data = services.preview_document_number(pfx, org=org)
     elif name in ('next-so-number', 'next-sales-order-number'):
-        pfx = 'SO'
-        seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
-        seq = Sequence.objects.filter(key=seq_key).first()
-        nxt = (seq.value + 1) if seq else 1
-        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
+        org = user_org or Organization.get()
+        data = services.preview_document_number('SO', org=org)
     elif name in ('next-invoice-number', 'next-inv-number'):
-        pfx = 'INV'
-        seq_key = f"{user_org.pk}_{pfx}"[:20] if user_org else pfx
-        seq = Sequence.objects.filter(key=seq_key).first()
-        nxt = (seq.value + 1) if seq else 1
-        data = {'next_number': f'{pfx}-{nxt:06d}', 'prefix': pfx, 'next_sequence': nxt, 'formatted': f'{pfx}-{nxt:06d}'}
+        org = user_org or Organization.get()
+        data = services.preview_document_number('INV', org=org)
+    elif name in ('next-bill-number',):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('BILL', org=org)
+    elif name in ('next-customer-code', 'next-cust-code', 'next-cust-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('CUST', org=org)
+    elif name in ('next-vendor-code', 'next-vend-code', 'next-vend-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('VEND', org=org)
+    elif name in ('next-item-sku', 'next-sku'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('ITEM', org=org)
+    elif name in ('next-journal-number', 'next-jrn-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('JRN', org=org)
+    elif name in ('next-expense-number', 'next-exp-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('EXP', org=org)
+    elif name in ('next-payment-received-number', 'next-pr-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('PR', org=org)
+    elif name in ('next-payment-made-number', 'next-pm-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('PM', org=org)
+    elif name in ('next-credit-note-number', 'next-cn-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('CN', org=org)
+    elif name in ('next-debit-note-number', 'next-dn-number', 'next-vc-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('DN', org=org)
+    elif name in ('next-delivery-challan-number', 'next-dc-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('DC', org=org)
+    elif name in ('next-stock-transfer-number', 'next-st-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('ST', org=org)
+    elif name in ('next-stock-adjustment-number', 'next-adj-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('ADJ', org=org)
     else:
         raise ApiError(404, 'Unknown lookup.')
     return j(data)
@@ -5182,26 +5337,20 @@ def lookup(request, name):
 def quote_sequence_view(request):
     user_org = get_user_org(request.user)
     org = user_org or Organization.get()
-    pfx = org.quote_prefix or 'QT' if org else 'QT'
-    seq_key = f"{org.pk}_{pfx}"[:20] if org else pfx
+    pfx = org.quote_prefix or 'QTN' if org else 'QTN'
     if request.method == 'GET':
-        seq = Sequence.objects.filter(key=seq_key).first()
-        nxt = (seq.value + 1) if seq else 1
-        return j({
-            'prefix': pfx,
-            'next_sequence': nxt,
-            'formatted': f'{pfx}-{nxt:06d}'
-        })
+        prev = services.preview_document_number(pfx, org=org)
+        return j(prev)
     elif request.method == 'POST':
         import json, re
         try:
-            body = json.loads(request.body.decode('utf-8')) if request.body else {}
+            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
         except Exception:
             raise ApiError(400, 'Invalid JSON body.')
-        new_pfx = (body.get('prefix') or '').strip().upper()
+        new_pfx = (body_data.get('prefix') or '').strip().upper()
         if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
             raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
-        next_seq = body.get('next_sequence') or body.get('next_number') or 1
+        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
         try:
             next_seq = int(next_seq)
             if next_seq < 1:
@@ -5213,16 +5362,48 @@ def quote_sequence_view(request):
             org.quote_prefix = new_pfx
             org.save(update_fields=['quote_prefix'])
 
-        new_key = f"{org.pk}_{new_pfx}"[:20] if org else new_pfx
+        fy = services.get_financial_year()
+        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
         seq, _ = Sequence.objects.get_or_create(key=new_key)
         seq.value = max(0, next_seq - 1)
         seq.save(update_fields=['value'])
 
-        return j({
-            'prefix': new_pfx,
-            'next_sequence': next_seq,
-            'formatted': f'{new_pfx}-{next_seq:06d}'
-        })
+        prev = services.preview_document_number(new_pfx, org=org)
+        return j(prev)
+
+@api_view
+def invoice_sequence_view(request):
+    user_org = get_user_org(request.user)
+    org = user_org or Organization.get()
+    pfx = 'INV'
+    if request.method == 'GET':
+        prev = services.preview_document_number(pfx, org=org)
+        return j(prev)
+    elif request.method == 'POST':
+        import json, re
+        try:
+            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
+        except Exception:
+            raise ApiError(400, 'Invalid JSON body.')
+        new_pfx = (body_data.get('prefix') or 'INV').strip().upper()
+        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
+            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
+        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
+        try:
+            next_seq = int(next_seq)
+            if next_seq < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Next sequence number must be a positive integer.')
+
+        fy = services.get_financial_year()
+        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
+        seq, _ = Sequence.objects.get_or_create(key=new_key)
+        seq.value = max(0, next_seq - 1)
+        seq.save(update_fields=['value'])
+
+        prev = services.preview_document_number(new_pfx, org=org)
+        return j(prev)
 
 def dashboard_view(request):
     start, end = parse_range(request)
@@ -5363,7 +5544,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:
@@ -5426,7 +5607,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:
@@ -5460,7 +5641,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
+        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:

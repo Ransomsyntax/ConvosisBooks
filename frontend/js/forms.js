@@ -3430,53 +3430,490 @@ async function paymentForm(kind, pre = {}) {
   });
 }
 
-async function adjustForm(preItem) {
-  const [items, warehouses] = await Promise.all([
-    api('lookup/items/').then(r => r.filter(i => i.track_inventory)),
-    api('lookup/warehouses/').catch(() => [])
+async function adjustForm(preItem, targetEl, onDone) {
+  const [items, warehouses, accounts, projects] = await Promise.all([
+    api('lookup/items/').then(r => r.filter(i => i.track_inventory)).catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
+    api('lookup/accounts/').catch(() => []),
+    api('lookup/projects/').catch(() => [])
   ]);
   if (!items.length) { toast('Create an inventory-tracked goods item first.', 'err'); return; }
-  const REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other'];
+
+  const target = targetEl || document.getElementById('pg') || document.body;
+  const curDate = (window.APP && window.APP.today) ? window.APP.today : new Date().toISOString().slice(0, 10);
   const curTime = new Date().toTimeString().slice(0, 5);
-  formModal({
-    title: 'New Stock Adjustment',
-    body: `<div class="zb-form-wrap">${[
-      fld({ name: 'date', label: 'Adjustment Date', type: 'date', req: 1, value: APP.today }),
-      fld({ name: 'time', label: 'Adjustment Time', type: 'time', req: 1, value: curTime }),
-      fld({ name: 'warehouse', label: 'Warehouse Code / Location', type: 'select', req: 1, opts: [['', 'Select Warehouse…'], ...warehouses.map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }),
-      fld({ name: 'item', label: 'Item', type: 'select', req: 1, opts: [['', 'Select…'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])], value: preItem || '' }),
-      fld({ name: 'new_quantity', label: 'New quantity on hand', type: 'number', req: 1, attrs: 'min="0" step="0.001"' }),
-      fld({ name: 'reason', label: 'Reason', type: 'select', req: 1, opts: [['', 'Select a reason'], ...REASONS] }),
-      fld({ name: 'notes', label: 'Notes', type: 'textarea', col: 'c2', max: 1000 }),
-    ].join('')}</div><div class="note" id="prev" style="margin-top:12px">Select an item, warehouse, and enter the new quantity to preview the change.</div>`,
-    submit: 'Review & apply',
-    onReady: form => {
-      const upd = () => {
-        const it = items.find(i => String(i.id) === form.elements.item.value), nq = form.elements.new_quantity.value;
-        const wh = warehouses.find(w => String(w.id) === form.elements.warehouse.value);
-        const whText = wh ? ` [${wh.code}]` : '';
-        $('#prev', form).textContent = it && nq !== '' ? `${it.name}${whText}: ${qty(it.stock)} → ${qty(nq)} ${it.unit} (difference ${num(nq) - num(it.stock) >= 0 ? '+' : ''}${qty(num(nq) - num(it.stock))}, value ${inr((num(nq) - num(it.stock)) * num(it.purchase_price))})` : 'Select an item, warehouse, and enter the new quantity to preview the change.';
-      };
-      form.elements.item.addEventListener('change', () => {
-        const it = items.find(i => String(i.id) === form.elements.item.value);
-        if (it && it.warehouse_id && !form.elements.warehouse.value) {
-          form.elements.warehouse.value = it.warehouse_id;
-        }
-      });
-      form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
-    },
-    onSubmit: async d => {
-      const it = items.find(i => String(i.id) === d.item);
-      const wh = warehouses.find(w => String(w.id) === d.warehouse);
-      if (it && d.new_quantity !== '') {
-        const ok = await confirmBox({ title: 'Apply stock adjustment?', message: `${it.name}${wh ? ` (${wh.code})` : ''}: ${qty(it.stock)} → ${qty(d.new_quantity)}. This changes inventory immediately and can only be reversed by another adjustment.`, okText: 'Apply adjustment' });
-        if (!ok) throw { cancel: true };
-      }
-      await api('stock-adjustments/', { method: 'POST', body: d });
-      toast('Stock adjusted'); refresh();
-    },
+
+  const itemsById = {};
+  items.forEach(it => { itemsById[String(it.id)] = it; });
+
+  const defaultAccounts = ['Cost of Goods Sold', 'Inventory Adjustment', 'Stock Revaluation Expense', 'Cost of Sales'];
+  let accountOptionsHtml = '';
+  if (accounts && accounts.length) {
+    accountOptionsHtml = accounts.map(a => `<option value="${esc(a.name)}" ${a.name === 'Cost of Goods Sold' ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  } else {
+    accountOptionsHtml = defaultAccounts.map((a, idx) => `<option value="${a}" ${idx === 0 ? 'selected' : ''}>${a}</option>`).join('');
+  }
+
+  const pendingFiles = [];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-adj" style="border-bottom:1px solid #e2e8f0;">
+      <td style="width:40px;text-align:center;padding:12px 6px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;padding-top:8px;">
+          <input type="checkbox" class="adj-row-chk" style="cursor:pointer;accent-color:#2563eb;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:12px;color:#94a3b8;"></i>
+        </div>
+      </td>
+      <td style="min-width:320px;padding:10px 12px;vertical-align:top;">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <div style="width:36px;height:36px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#94a3b8;flex-shrink:0;margin-top:1px;">
+            <i class="fa-regular fa-image" style="font-size:16px;"></i>
+          </div>
+          <div style="flex:1;">
+            <select class="in adj-row-item" style="width:100%;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;background:#fff;">
+              <option value="">Type or click to select an item.</option>
+              ${items.map(it => `<option value="${it.id}" ${String(l.item || l.id || preItem) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+            </select>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+              <select class="in adj-row-project" style="font-size:12px;height:28px;padding:2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;max-width:180px;">
+                <option value="">💼 Select a project ▾</option>
+                ${projects.map(p => `<option value="${p.id}" ${String(l.project) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <input class="in adj-row-tags" placeholder="🏷 Reporting Tags ▾" value="${esc(l.reporting_tags || '')}" style="font-size:12px;height:28px;padding:2px 8px;width:160px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;">
+            </div>
+          </div>
+        </div>
+      </td>
+      <td style="width:160px;padding:12px 12px;text-align:right;vertical-align:top;">
+        <span class="adj-row-avail" style="font-weight:600;font-size:13px;color:#334155;display:inline-block;padding-top:8px;">0.00</span>
+      </td>
+      <td style="width:180px;padding:10px 12px;text-align:right;vertical-align:top;">
+        <input type="number" step="0.001" min="0" class="in adj-row-new-qty" value="${l.new_quantity != null ? l.new_quantity : ''}" placeholder="0.00" style="text-align:right;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;width:100%;">
+      </td>
+      <td style="width:180px;padding:10px 12px;text-align:right;vertical-align:top;">
+        <input type="text" class="in adj-row-qty-adj" value="${l.quantity_adjusted != null ? (num(l.quantity_adjusted) > 0 ? '+' : '') + l.quantity_adjusted : ''}" placeholder="Eg. +10, -10" style="text-align:right;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;width:100%;">
+      </td>
+      <td style="width:40px;padding:12px 8px;text-align:center;vertical-align:top;">
+        <button type="button" class="btn ic adj-row-del" style="border:none;background:none;color:#94a3b8;font-size:18px;cursor:pointer;padding-top:4px;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  target.innerHTML = `
+    <div class="stock-adj-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:1px solid #e2e8f0;background:#fff;position:sticky;top:0;z-index:20;">
+        <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">New Adjustment</h1>
+        <button type="button" class="btn ic" id="btn-adj-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Main Form -->
+      <form id="stock-adj-form-element" style="padding:28px 32px;max-width:1150px;width:100%;box-sizing:border-box;flex:1;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <!-- Mode of adjustment -->
+        <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#334155;">Mode of adjustment</label>
+          <div style="display:flex;align-items:center;gap:20px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;font-weight:500;color:#0f172a;">
+              <input type="radio" name="mode_of_adjustment" value="quantity" checked style="accent-color:#2563eb;width:16px;height:16px;">
+              Quantity Adjustment
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;font-weight:500;color:#0f172a;">
+              <input type="radio" name="mode_of_adjustment" value="value" style="accent-color:#2563eb;width:16px;height:16px;">
+              Value Adjustment
+            </label>
+          </div>
+        </div>
+
+        <!-- Reference Number -->
+        <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#334155;">Reference Number</label>
+          <input class="in" id="adj-ref-number" name="reference_number" placeholder="" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
+        </div>
+
+        <!-- Date* and Time -->
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:24px;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:24px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Date*</label>
+            <input class="in" type="date" id="adj-date" name="date" value="${curDate}" required style="width:240px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <label style="font-weight:500;font-size:13px;color:#64748b;">Adjustment Time</label>
+            <input class="in" type="time" id="adj-time" name="time" value="${curTime}" style="width:120px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;">
+          </div>
+        </div>
+
+        <!-- Warehouse Code / Location* -->
+        <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Warehouse*</label>
+          <select class="in" id="adj-warehouse" name="warehouse" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
+            <option value="">Select Warehouse…</option>
+            ${warehouses.map(w => `<option value="${w.id}">${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
+          </select>
+        </div>
+
+        <!-- Account* -->
+        <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Account*</label>
+          <select class="in" id="adj-account" name="account" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
+            ${accountOptionsHtml}
+          </select>
+        </div>
+
+        <!-- Reason* -->
+        <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Reason*</label>
+          <select class="in" id="adj-reason" name="reason" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
+            <option value="">Select a reason</option>
+            <option value="Stock recount">Stock recount</option>
+            <option value="Damaged goods">Damaged goods</option>
+            <option value="Theft / loss">Theft / loss</option>
+            <option value="Returned to supplier">Returned to supplier</option>
+            <option value="Found stock">Found stock</option>
+            <option value="Stock write-off">Stock write-off</option>
+            <option value="Inventory revaluation">Inventory revaluation</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <!-- Description -->
+        <div style="display:flex;align-items:flex-start;gap:24px;margin-bottom:28px;">
+          <label style="width:160px;font-weight:500;font-size:13px;color:#334155;margin-top:6px;">Description</label>
+          <textarea class="in" id="adj-description" name="description" placeholder="Max. 500 characters" maxlength="500" style="width:340px;height:70px;border-radius:6px;border:1px solid #cbd5e1;padding:8px 12px;font-size:13px;resize:vertical;"></textarea>
+        </div>
+
+        <!-- Item Table Section -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:28px;margin-bottom:12px;padding-top:18px;border-top:1px solid #e2e8f0;">
+          <h3 style="font-size:15px;font-weight:700;color:#0f172a;margin:0;">Item Table</h3>
+          <button type="button" class="btn" id="btn-adj-bulk-actions" style="font-size:12px;font-weight:500;color:#2563eb;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <i class="fa-regular fa-circle-check" style="font-size:14px;"></i> Bulk Actions
+          </button>
+        </div>
+
+        <div style="border:1px solid #e2e8f0;border-radius:8px;background:#fff;margin-bottom:16px;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+              <tr>
+                <th style="width:40px;padding:10px 6px;text-align:center;">
+                  <input type="checkbox" id="chk-all-adj-lines" style="cursor:pointer;accent-color:#2563eb;">
+                </th>
+                <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#475569;letter-spacing:0.5px;">ITEM DETAILS</th>
+                <th id="th-adj-avail" style="width:160px;padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#475569;letter-spacing:0.5px;">QUANTITY AVAILABLE</th>
+                <th id="th-adj-new" style="width:180px;padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#475569;letter-spacing:0.5px;">NEW QUANTITY ON HAND</th>
+                <th id="th-adj-adj" style="width:180px;padding:10px 12px;text-align:right;font-size:11px;font-weight:700;color:#475569;letter-spacing:0.5px;">QUANTITY ADJUSTED</th>
+                <th style="width:40px;padding:10px 8px;text-align:center;"></th>
+              </tr>
+            </thead>
+            <tbody id="adj-item-rows">
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Action buttons below table -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+          <button type="button" class="btn" id="btn-adj-add-row" style="background:#f8fafc;color:#2563eb;font-weight:600;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i> Add New Row ▾
+          </button>
+          <button type="button" class="btn" id="btn-adj-bulk-add" style="background:#f8fafc;color:#2563eb;font-weight:600;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i> Add Items in Bulk
+          </button>
+        </div>
+
+        <!-- Attachments Section -->
+        <div style="margin-bottom:36px;">
+          <label style="display:block;font-size:13px;font-weight:500;color:#334155;margin-bottom:8px;">Attach File(s) to inventory adjustment</label>
+          <input type="file" id="adj-file-input" multiple style="display:none;">
+          <button type="button" class="btn" id="btn-adj-upload" style="background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:7px 14px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;color:#334155;">
+            <i class="fa-solid fa-upload"></i> Upload File ▾
+          </button>
+          <div style="font-size:11.5px;color:#64748b;margin-top:6px;">You can upload a maximum of 5 files, 10MB each</div>
+          <div id="adj-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;"></div>
+        </div>
+      </form>
+
+      <!-- Sticky Footer Bar -->
+      <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:14px 32px;display:flex;align-items:center;gap:12px;box-shadow:0 -2px 10px rgba(0,0,0,0.04);z-index:30;">
+        <button type="button" class="btn p" id="btn-adj-save-draft" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save as Draft</button>
+        <button type="button" class="btn" id="btn-adj-convert-adjusted" style="background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Convert to Adjusted</button>
+        <button type="button" class="btn" id="btn-adj-cancel" style="background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  const tbody = $('#adj-item-rows', target);
+
+  function updateRow(tr) {
+    const sel = $('.adj-row-item', tr);
+    const it = itemsById[sel.value];
+    const availSpan = $('.adj-row-avail', tr);
+    const newQtyInput = $('.adj-row-new-qty', tr);
+    const adjQtyInput = $('.adj-row-qty-adj', tr);
+
+    const mode = $('input[name="mode_of_adjustment"]:checked', target)?.value || 'quantity';
+    const avail = it ? (parseFloat(mode === 'value' ? (it.stock * (it.purchase_price || 0)) : it.stock) || 0) : 0;
+    availSpan.textContent = avail.toFixed(2);
+
+    if (it && it.warehouse_id && !$('#adj-warehouse', target).value) {
+      $('#adj-warehouse', target).value = it.warehouse_id;
+    }
+  }
+
+  // Populate initial row
+  if (preItem) {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ item: preItem }));
+    const firstTr = tbody.firstElementChild;
+    if (firstTr) updateRow(firstTr);
+  } else {
+    tbody.insertAdjacentHTML('beforeend', rowHtml());
+  }
+
+  tbody.addEventListener('change', e => {
+    if (e.target.classList.contains('adj-row-item')) {
+      const tr = e.target.closest('tr');
+      if (tr) updateRow(tr);
+    }
   });
+
+  tbody.addEventListener('input', e => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const sel = $('.adj-row-item', tr);
+    const it = itemsById[sel.value];
+    const mode = $('input[name="mode_of_adjustment"]:checked', target)?.value || 'quantity';
+    const avail = it ? (parseFloat(mode === 'value' ? (it.stock * (it.purchase_price || 0)) : it.stock) || 0) : 0;
+    const newQtyInput = $('.adj-row-new-qty', tr);
+    const adjQtyInput = $('.adj-row-qty-adj', tr);
+
+    if (e.target === newQtyInput) {
+      if (newQtyInput.value !== '') {
+        const nq = parseFloat(newQtyInput.value) || 0;
+        const diff = nq - avail;
+        adjQtyInput.value = (diff > 0 ? '+' : '') + diff.toFixed(2);
+      } else {
+        adjQtyInput.value = '';
+      }
+    } else if (e.target === adjQtyInput) {
+      if (adjQtyInput.value !== '') {
+        const diff = parseFloat(adjQtyInput.value.replace('+', '')) || 0;
+        newQtyInput.value = (avail + diff).toFixed(2);
+      } else {
+        newQtyInput.value = '';
+      }
+    }
+  });
+
+  // Mode radio toggle
+  $$('input[name="mode_of_adjustment"]', target).forEach(r => {
+    r.addEventListener('change', () => {
+      const isVal = r.value === 'value';
+      const thAvail = $('#th-adj-avail', target);
+      const thNew = $('#th-adj-new', target);
+      const thAdj = $('#th-adj-adj', target);
+      if (thAvail) thAvail.textContent = isVal ? 'CURRENT VALUE' : 'QUANTITY AVAILABLE';
+      if (thNew) thNew.textContent = isVal ? 'NEW VALUE ON HAND' : 'NEW QUANTITY ON HAND';
+      if (thAdj) thAdj.textContent = isVal ? 'VALUE ADJUSTED' : 'QUANTITY ADJUSTED';
+      $$('.ln-adj', tbody).forEach(tr => updateRow(tr));
+    });
+  });
+
+  // Row removal
+  tbody.addEventListener('click', e => {
+    const del = e.target.closest('.adj-row-del');
+    if (del) {
+      const tr = del.closest('tr');
+      if ($$('.ln-adj', tbody).length > 1) {
+        tr.remove();
+      } else {
+        tr.querySelector('.adj-row-item').value = '';
+        tr.querySelector('.adj-row-avail').textContent = '0.00';
+        tr.querySelector('.adj-row-new-qty').value = '';
+        tr.querySelector('.adj-row-qty-adj').value = '';
+      }
+    }
+  });
+
+  // Add row
+  $('#btn-adj-add-row', target).addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml());
+  });
+
+  // Bulk add
+  $('#btn-adj-bulk-add', target).addEventListener('click', () => {
+    if (typeof bulkItemPickerModal === 'function') {
+      bulkItemPickerModal(items, selectedItems => {
+        selectedItems.forEach(it => {
+          tbody.insertAdjacentHTML('beforeend', rowHtml({ item: it.id, new_quantity: it.stock }));
+          const lastTr = tbody.lastElementChild;
+          if (lastTr) updateRow(lastTr);
+        });
+      });
+    } else {
+      tbody.insertAdjacentHTML('beforeend', rowHtml());
+    }
+  });
+
+  // Bulk actions
+  $('#btn-adj-bulk-actions', target).addEventListener('click', () => {
+    const chks = $$('.adj-row-chk:checked', tbody);
+    if (!chks.length) {
+      toast('Please select at least one row checkbox to perform bulk actions.', 'err');
+      return;
+    }
+    confirmBox({
+      title: 'Bulk Actions',
+      message: `Delete ${chks.length} selected row(s)?`,
+      okText: 'Delete Selected'
+    }).then(ok => {
+      if (ok) {
+        chks.forEach(chk => {
+          const tr = chk.closest('tr');
+          if (tr) tr.remove();
+        });
+        if (!$$('.ln-adj', tbody).length) {
+          tbody.insertAdjacentHTML('beforeend', rowHtml());
+        }
+      }
+    });
+  });
+
+  $('#chk-all-adj-lines', target).addEventListener('change', e => {
+    $$('.adj-row-chk', tbody).forEach(chk => { chk.checked = e.target.checked; });
+  });
+
+  // File Upload
+  const fileInput = $('#adj-file-input', target);
+  const uploadBtn = $('#btn-adj-upload', target);
+  if (uploadBtn && fileInput) {
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      Array.from(fileInput.files).forEach(f => {
+        if (pendingFiles.length >= 5) {
+          toast('Maximum 5 files can be attached.', 'err');
+          return;
+        }
+        if (f.size > 10 * 1024 * 1024) {
+          toast(`File ${f.name} exceeds 10MB limit.`, 'err');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = ev => {
+          pendingFiles.push({
+            filename: f.name,
+            file_size: f.size,
+            mime_type: f.type,
+            file_data: ev.target.result
+          });
+          renderBadges();
+        };
+        reader.readAsDataURL(f);
+      });
+      fileInput.value = '';
+    });
+  }
+
+  function renderBadges() {
+    const container = $('#adj-attach-badges', target);
+    if (!container) return;
+    container.innerHTML = pendingFiles.map((f, idx) => `
+      <span class="badge" style="display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:4px 10px;font-size:12px;color:#1e293b;">
+        <i class="fa-solid fa-paperclip" style="color:#64748b;"></i>
+        <span>${esc(f.filename)}</span>
+        <span style="color:#64748b;font-size:10px;">(${(f.file_size / 1024).toFixed(1)} KB)</span>
+        <button type="button" data-rm-att="${idx}" style="border:none;background:none;color:#ef4444;font-size:14px;cursor:pointer;padding:0 2px;">×</button>
+      </span>
+    `).join('');
+  }
+
+  $('#adj-attach-badges', target)?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-rm-att]');
+    if (btn) {
+      const idx = parseInt(btn.getAttribute('data-rm-att'), 10);
+      if (!isNaN(idx)) {
+        pendingFiles.splice(idx, 1);
+        renderBadges();
+      }
+    }
+  });
+
+  const closeForm = () => {
+    if (onDone) onDone(null);
+    else if (window.location.hash.includes('stock-adjustments')) {
+      route();
+    } else {
+      location.hash = '#/inventory/stock-adjustments';
+      route();
+    }
+  };
+
+  const submitForm = async (status = 'adjusted') => {
+    const form = $('#stock-adj-form-element', target);
+    const dateVal = $('#adj-date', form).value;
+    const whVal = $('#adj-warehouse', form).value;
+    const acctVal = $('#adj-account', form).value;
+    const reasonVal = $('#adj-reason', form).value;
+    const modeVal = $('input[name="mode_of_adjustment"]:checked', form)?.value || 'quantity';
+
+    if (!dateVal) { toast('Please enter adjustment date.', 'err'); return; }
+    if (!whVal) { toast('Please select warehouse.', 'err'); return; }
+    if (!acctVal) { toast('Please select account.', 'err'); return; }
+    if (!reasonVal) { toast('Please select a reason.', 'err'); return; }
+
+    const rows = $$('.ln-adj', tbody);
+    const rowsData = [];
+    for (const tr of rows) {
+      const iid = $('.adj-row-item', tr).value;
+      if (!iid) continue;
+      const nq = $('.adj-row-new-qty', tr).value;
+      const aq = $('.adj-row-qty-adj', tr).value;
+      const proj = $('.adj-row-project', tr).value;
+      const tags = $('.adj-row-tags', tr).value.trim();
+      rowsData.push({
+        item: iid,
+        new_quantity: nq !== '' ? parseFloat(nq) : null,
+        quantity_adjusted: aq !== '' ? parseFloat(aq.replace('+', '')) : null,
+        project: proj,
+        reporting_tags: tags
+      });
+    }
+
+    if (!rowsData.length) {
+      toast('Please select at least one item to adjust.', 'err');
+      return;
+    }
+
+    const payload = {
+      mode_of_adjustment: modeVal,
+      reference_number: $('#adj-ref-number', form).value.trim(),
+      date: dateVal,
+      time: $('#adj-time', form).value,
+      warehouse: whVal,
+      account: acctVal,
+      reason: reasonVal,
+      description: $('#adj-description', form).value.trim(),
+      notes: $('#adj-description', form).value.trim(),
+      status: status,
+      items: rowsData,
+      attachments: pendingFiles
+    };
+
+    try {
+      await api('stock-adjustments/', { method: 'POST', body: payload });
+      toast(status === 'draft' ? 'Stock adjustment saved as draft' : 'Stock adjusted successfully');
+      closeForm();
+    } catch (err) {
+      toast(err.message || 'Failed to adjust stock', 'err');
+    }
+  };
+
+  $('#btn-adj-close-x', target)?.addEventListener('click', closeForm);
+  $('#btn-adj-cancel', target)?.addEventListener('click', closeForm);
+  $('#btn-adj-save-draft', target)?.addEventListener('click', () => submitForm('draft'));
+  $('#btn-adj-convert-adjusted', target)?.addEventListener('click', () => submitForm('adjusted'));
 }
+window.adjustForm = adjustForm;
 
 function orgForm() {
   const o = APP.org;

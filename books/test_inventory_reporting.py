@@ -256,3 +256,111 @@ class InventoryReportingTestCase(TestCase):
         resp_rep = self.client.get('/api/reports/inventory-summary/')
         self.assertEqual(resp_rep.status_code, 200)
         self.assertEqual(resp_rep.json()['total_opening_stock'], 0.0)
+
+    def test_stock_adjustment_multi_item_and_all_fields(self):
+        self.client.force_login(self.user1)
+        # Create second tracked item
+        item2 = Item.objects.create(
+            name='Office Desk',
+            sku='SKU-DSK-01',
+            item_type='goods',
+            track_inventory=True,
+            stock=Decimal('20.000'),
+            purchase_price=Decimal('200.00'),
+            selling_price=Decimal('300.00'),
+            warehouse=self.wh_main,
+            warehouse_code=self.wh_main.code,
+            organization=self.org1
+        )
+
+        payload = {
+            'mode_of_adjustment': 'quantity',
+            'reference_number': 'ADJ-REF-999',
+            'date': timezone.localdate().isoformat(),
+            'time': '14:30',
+            'warehouse': self.wh_main.pk,
+            'warehouse_code': self.wh_main.code,
+            'account': 'Cost of Goods Sold',
+            'reason': 'Stock recount',
+            'description': 'Year end physical inventory audit',
+            'status': 'adjusted',
+            'items': [
+                {
+                    'item': self.item.pk,
+                    'quantity_available': 10.0,
+                    'new_quantity': 14.0,
+                    'quantity_adjusted': 4.0,
+                    'project': 'HQ Setup',
+                    'reporting_tags': 'Audit-2026'
+                },
+                {
+                    'item': item2.pk,
+                    'quantity_available': 20.0,
+                    'new_quantity': 18.0,
+                    'quantity_adjusted': -2.0,
+                    'project': 'HQ Setup',
+                    'reporting_tags': 'Audit-2026'
+                }
+            ],
+            'attachments': [
+                {
+                    'filename': 'audit_count_sheet.pdf',
+                    'file_size': 1024,
+                    'mime_type': 'application/pdf',
+                    'file_data': 'data:application/pdf;base64,JVBERi0xLjQK...'
+                }
+            ]
+        }
+
+        resp = self.client.post('/api/stock-adjustments/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 201)
+
+        # Verify stock changes
+        self.item.refresh_from_db()
+        item2.refresh_from_db()
+        self.assertEqual(self.item.stock, Decimal('14.000'))
+        self.assertEqual(item2.stock, Decimal('18.000'))
+
+        # Verify movements
+        mvs = StockMovement.objects.filter(reference='ADJ-REF-999')
+        self.assertEqual(mvs.count(), 2)
+
+        # Verify attachment was linked
+        from books.models import Attachment
+        att = Attachment.objects.filter(entity_type='stock_adjustment', entity_id=mvs.first().pk).first()
+        self.assertIsNotNone(att)
+        self.assertEqual(att.filename, 'audit_count_sheet.pdf')
+
+    def test_stock_adjustment_draft_preserves_stock(self):
+        self.client.force_login(self.user1)
+        initial_stock = self.item.stock
+        payload = {
+            'mode_of_adjustment': 'quantity',
+            'reference_number': 'ADJ-DRAFT-001',
+            'date': timezone.localdate().isoformat(),
+            'time': '10:00',
+            'warehouse': self.wh_main.pk,
+            'account': 'Inventory Adjustment',
+            'reason': 'Theft / loss',
+            'description': 'Pending investigation',
+            'status': 'draft',
+            'items': [
+                {
+                    'item': self.item.pk,
+                    'new_quantity': 5.0,
+                    'quantity_adjusted': -5.0
+                }
+            ]
+        }
+        resp = self.client.post('/api/stock-adjustments/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 201)
+
+        # Stock should NOT have changed
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.stock, initial_stock)
+
+        # Movement record recorded as draft
+        mv = StockMovement.objects.filter(reference='ADJ-DRAFT-001').first()
+        self.assertIsNotNone(mv)
+        self.assertIn('[Draft]', mv.notes)
+

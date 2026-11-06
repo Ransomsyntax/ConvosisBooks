@@ -41,7 +41,7 @@ from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
 Z = Decimal('0.00')
 MODE_KEYS = [m[0] for m in MODES]
 MODE_LABEL = dict(MODES)
-REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Other']
+REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Stock write-off', 'Inventory revaluation', 'Other']
 
 def format_qty(val):
     if val is None:
@@ -2278,27 +2278,20 @@ class StockAdjustmentResource(StockMovementResource):
         return StockMovement.objects.select_related('item', 'warehouse').filter(kind='adjustment')
 
     def create(self, data, user):
-        c = Cleaner(data)
-        iid = c.integer('item', lo=1, required=True)
-        new = c.number('new_quantity', True, lo=Decimal('0'), hi=Decimal('99999999'), places=3)
-        on = c.date('date', required=True)
-        adj_time = c.text('time', max_len=10)
-        wid = c.integer('warehouse_id', required=False)
-        if wid is None:
-            wid = c.integer('warehouse', required=False)
         user_org = get_user_org(user)
-        wh = Warehouse.objects.filter(pk=wid, organization=user_org).first() if (wid and user_org) else (Warehouse.objects.filter(pk=wid).first() if wid else None)
-        wh_code = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
-        reason = c.choice('reason', REASONS, required=True)
-        notes = c.text('notes', max_len=1000)
-        item = Item.objects.select_for_update().filter(pk=iid, organization=user_org, item_type='goods', track_inventory=True).first() if (iid and user_org) else (Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True).first() if iid else None)
-        if iid and item is None:
-            c.err('item', 'Select an inventory-tracked goods item.')
-        c.done()
-        change = new - item.stock
-        if change == 0:
-            raise ApiError(400, 'The new quantity equals the current stock; nothing to adjust.', {'new_quantity': 'No change.'})
-        
+        items_data = data.get('items')
+
+        # Date & Time resolution
+        on_str = data.get('date')
+        if not on_str:
+            on = timezone.localdate()
+        else:
+            try:
+                on = datetime.date.fromisoformat(str(on_str)[:10])
+            except Exception:
+                on = timezone.localdate()
+
+        adj_time = (str(data.get('time') or '')).strip()
         adjusted_at = None
         if on:
             if adj_time:
@@ -2311,10 +2304,177 @@ class StockAdjustmentResource(StockMovementResource):
             else:
                 adjusted_at = timezone.now()
 
-        ref = next_number('ADJ', org=user_org)
-        services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes,
-                            warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
-        return StockMovement.objects.filter(reference=ref, organization=user_org).first() if user_org else StockMovement.objects.filter(reference=ref).first()
+        # Warehouse resolution
+        wid = data.get('warehouse_id')
+        if wid is None:
+            wid = data.get('warehouse')
+        wh = None
+        if wid:
+            try:
+                wid_int = int(wid)
+                wh_qs = Warehouse.objects.filter(pk=wid_int)
+                if user_org:
+                    wh = wh_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+                else:
+                    wh = wh_qs.first()
+            except (ValueError, TypeError):
+                wh = None
+        wh_code = wh.code if wh else (str(data.get('warehouse_code') or '').strip()[:30])
+
+        # Header fields
+        mode = (str(data.get('mode_of_adjustment') or data.get('mode') or 'quantity')).strip()
+        ref = (str(data.get('reference_number') or data.get('reference') or '')).strip()
+        if not ref:
+            ref = next_number('ADJ', org=user_org)
+
+        account = (str(data.get('account') or 'Cost of Goods Sold')).strip()
+        reason = (str(data.get('reason') or 'Stock recount')).strip()
+        if not reason:
+            reason = 'Stock recount'
+
+        desc = (str(data.get('description') or data.get('notes') or '')).strip()
+        status = (str(data.get('status') or 'adjusted')).strip().lower()
+
+        created_movements = []
+
+        if isinstance(items_data, list) and len(items_data) > 0:
+            for row in items_data:
+                iid = row.get('item') or row.get('item_id')
+                if not iid:
+                    continue
+                try:
+                    iid_int = int(iid)
+                except (ValueError, TypeError):
+                    continue
+
+                item_qs = Item.objects.select_for_update().filter(pk=iid_int, item_type='goods', track_inventory=True)
+                if user_org:
+                    item = item_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+                else:
+                    item = item_qs.first()
+
+                if not item:
+                    continue
+
+                new_val = row.get('new_quantity')
+                adj_val = row.get('quantity_adjusted')
+
+                if new_val is not None and str(new_val).strip() != '':
+                    new_qty = Decimal(str(new_val))
+                    change = new_qty - item.stock
+                elif adj_val is not None and str(adj_val).strip() != '':
+                    adj_str = str(adj_val).replace('+', '').strip()
+                    change = Decimal(adj_str)
+                else:
+                    change = Decimal('0')
+
+                row_notes_parts = []
+                if desc:
+                    row_notes_parts.append(desc)
+                if account and account != 'Cost of Goods Sold':
+                    row_notes_parts.append(f"Account: {account}")
+                if mode and mode != 'quantity':
+                    row_notes_parts.append(f"Mode: {mode}")
+                if row.get('project'):
+                    row_notes_parts.append(f"Project: {row['project']}")
+                if row.get('reporting_tags'):
+                    row_notes_parts.append(f"Tags: {row['reporting_tags']}")
+                row_notes = ' | '.join(row_notes_parts)[:1000]
+
+                if status == 'draft':
+                    mv = StockMovement.objects.create(
+                        organization=user_org,
+                        item=item, date=on, adjusted_at=adjusted_at,
+                        warehouse=wh, warehouse_code=wh_code,
+                        kind='adjustment', reference=ref,
+                        change=change, balance_after=item.stock,
+                        reason=reason, notes=f"[Draft] {row_notes}"[:1000],
+                        created_by=user
+                    )
+                    created_movements.append(mv)
+                else:
+                    if change != 0:
+                        mv = services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, row_notes,
+                                                 warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
+                    else:
+                        mv = StockMovement.objects.create(
+                            organization=user_org,
+                            item=item, date=on, adjusted_at=adjusted_at,
+                            warehouse=wh, warehouse_code=wh_code,
+                            kind='adjustment', reference=ref,
+                            change=Decimal('0'), balance_after=item.stock,
+                            reason=reason, notes=row_notes,
+                            created_by=user
+                        )
+                    created_movements.append(mv)
+
+            if not created_movements:
+                raise ApiError(400, 'Please select at least one valid tracked goods item.')
+
+            primary_mv = created_movements[0]
+        else:
+            # Single-item backward-compatible payload
+            c = Cleaner(data)
+            iid = c.integer('item', lo=1, required=True)
+            new = c.number('new_quantity', True, lo=Decimal('0'), hi=Decimal('99999999'), places=3)
+            item_qs = Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True)
+            if user_org:
+                item = item_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+            else:
+                item = item_qs.first()
+
+            if iid and item is None:
+                c.err('item', 'Select an inventory-tracked goods item.')
+            c.done()
+
+            change = new - item.stock
+            if change == 0 and status != 'draft':
+                raise ApiError(400, 'The new quantity equals the current stock; nothing to adjust.', {'new_quantity': 'No change.'})
+
+            notes_parts = []
+            if desc:
+                notes_parts.append(desc)
+            if account and account != 'Cost of Goods Sold':
+                notes_parts.append(f"Account: {account}")
+            notes_str = ' | '.join(notes_parts)[:1000]
+
+            if status == 'draft':
+                primary_mv = StockMovement.objects.create(
+                    organization=user_org,
+                    item=item, date=on, adjusted_at=adjusted_at,
+                    warehouse=wh, warehouse_code=wh_code,
+                    kind='adjustment', reference=ref,
+                    change=change, balance_after=item.stock,
+                    reason=reason, notes=f"[Draft] {notes_str}"[:1000],
+                    created_by=user
+                )
+            else:
+                primary_mv = services.move_stock(item.pk, change, 'adjustment', ref, on, user, reason, notes_str,
+                                                 warehouse=wh, warehouse_code=wh_code, adjusted_at=adjusted_at)
+
+        # Handle attachments if provided
+        attachments_data = data.get('attachments')
+        if isinstance(attachments_data, list):
+            target_ids = [m.pk for m in created_movements] if created_movements else [primary_mv.pk]
+            for att in attachments_data:
+                fname = att.get('filename') or att.get('name')
+                fdata = att.get('file_data') or att.get('data') or ''
+                fsize = att.get('file_size') or att.get('size') or 0
+                mtype = att.get('mime_type') or att.get('type') or ''
+                if fname:
+                    for tid in target_ids:
+                        Attachment.objects.create(
+                            organization=user_org,
+                            entity_type='stock_adjustment',
+                            entity_id=tid,
+                            filename=fname,
+                            file_data=fdata,
+                            file_size=fsize,
+                            mime_type=mtype,
+                            created_by=user
+                        )
+
+        return primary_mv
 
 @api_view
 def stock_move_action_view(request):

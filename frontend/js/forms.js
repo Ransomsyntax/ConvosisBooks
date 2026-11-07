@@ -150,11 +150,180 @@ function fld(o) {
   const id = 'i' + (++uid), v = o.value == null ? '' : o.value, req = o.req ? ' required aria-required="true"' : '', at = o.attrs || '';
   let ctl;
   if (o.type === 'checkbox') return `<div class="zb-form-row fg ${o.col || ''}"><div class="zb-form-label"></div><div class="zb-form-ctrl"><label class="ck"><input type="checkbox" name="${o.name}" ${v ? 'checked' : ''} ${at}> ${esc(o.label)}</label><div class="er" data-err="${o.name}" role="alert"></div></div></div>`;
-  if (o.type === 'select') ctl = `<select class="in" id="${id}" name="${o.name}"${req} ${at}>${opts(o.opts, v)}</select>`;
+  if (o.type === 'select') {
+    let optionsList = Array.isArray(o.opts) ? [...o.opts] : [];
+    const n = (o.name || '').toLowerCase();
+    const l = (o.label || '').toLowerCase();
+    if (n === 'customer' || n === 'customer_id' || l.includes('customer')) {
+      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_customer__')) {
+        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
+        optionsList.splice(insertIdx, 0, ['__new_customer__', '+ Add New Customer…']);
+      }
+    } else if (n === 'vendor' || n === 'vendor_id' || l.includes('vendor')) {
+      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_vendor__')) {
+        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
+        optionsList.splice(insertIdx, 0, ['__new_vendor__', '+ Add New Vendor…']);
+      }
+    } else if (n === 'item' || n === 'item_id' || l.includes('item')) {
+      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_item__')) {
+        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
+        optionsList.splice(insertIdx, 0, ['__new_item__', '+ Add New Item…']);
+      }
+    }
+    ctl = `<select class="in" id="${id}" name="${o.name}"${req} ${at}>${opts(optionsList, v)}</select>`;
+  }
   else if (o.type === 'textarea') ctl = `<textarea class="in" id="${id}" name="${o.name}" rows="${o.rows || 2}" maxlength="${o.max || 2000}" ${at}>${esc(v)}</textarea>`;
   else ctl = `<input class="in" id="${id}" name="${o.name}" type="${o.type || 'text'}" value="${esc(v)}"${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${req} ${at}>`;
   return `<div class="zb-form-row fg ${o.type === 'textarea' ? 'align-top' : ''} ${o.col || ''}"><label class="zb-form-label" for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label><div class="zb-form-ctrl">${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">${esc(o.help)}</div>` : ''}</div></div>`;
+}
 
+async function handleQuickCreateSelect(selectEl, customCallback) {
+  if (!selectEl) return false;
+  const val = selectEl.value;
+  if (val !== '__new_customer__' && val !== '__new_vendor__' && val !== '__new_item__') {
+    return false;
+  }
+
+  const prevVal = selectEl.dataset.prevVal || '';
+  selectEl.value = prevVal;
+
+  if (val === '__new_customer__') {
+    partyForm('customers', null, (newCust) => {
+      if (newCust && newCust.id) {
+        const container = selectEl.closest('form') || selectEl.closest('.invoice-form-page') || selectEl.closest('.zb-form-wrap') || document;
+        const custSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('select[name="customer"], select[name="customer_id"], #inv-customer, #q-customer, #so-customer') : [selectEl]);
+        if (!custSelects.includes(selectEl)) custSelects.push(selectEl);
+
+        custSelects.forEach(sel => {
+          let opt = sel.querySelector(`option[value="${newCust.id}"]`);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = newCust.id;
+            opt.textContent = newCust.name;
+            sel.appendChild(opt);
+          }
+        });
+
+        selectEl.value = newCust.id;
+        selectEl.dataset.prevVal = newCust.id;
+
+        const posEl = container.querySelector ? (container.querySelector('#inv-place-of-supply') || container.querySelector('#so-pos') || container.querySelector('select[name="place_of_supply"]') || container.querySelector('input[name="place_of_supply"]')) : null;
+        if (posEl && (newCust.state || newCust.place_of_supply)) {
+          const st = (newCust.state || newCust.place_of_supply).replace(/^\[\d+\]\s*/, '').trim();
+          posEl.value = st;
+        }
+
+        if (customCallback) customCallback(newCust);
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    return true;
+  }
+
+  if (val === '__new_vendor__') {
+    partyForm('vendors', null, (newVendor) => {
+      if (newVendor && newVendor.id) {
+        const container = selectEl.closest('form') || selectEl.closest('.doc-canvas-scroll') || selectEl.closest('.zb-form-wrap') || document;
+        const vendorSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('select[name="vendor"], select[name="vendor_id"]') : [selectEl]);
+        if (!vendorSelects.includes(selectEl)) vendorSelects.push(selectEl);
+
+        vendorSelects.forEach(sel => {
+          let opt = sel.querySelector(`option[value="${newVendor.id}"]`);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = newVendor.id;
+            opt.textContent = newVendor.name;
+            sel.appendChild(opt);
+          }
+        });
+
+        selectEl.value = newVendor.id;
+        selectEl.dataset.prevVal = newVendor.id;
+
+        const posEl = container.querySelector ? (container.querySelector('select[name="place_of_supply"]') || container.querySelector('input[name="place_of_supply"]')) : null;
+        if (posEl && (newVendor.state || newVendor.source_of_supply)) {
+          const st = (newVendor.state || newVendor.source_of_supply).replace(/^\[\d+\]\s*/, '').trim();
+          posEl.value = st;
+        }
+
+        if (customCallback) customCallback(newVendor);
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    return true;
+  }
+
+  if (val === '__new_item__') {
+    itemForm(null, (newItem) => {
+      if (newItem && newItem.id) {
+        const container = selectEl.closest('tbody') || selectEl.closest('table') || selectEl.closest('form') || document;
+        const itemSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('.l-item, .adj-row-item, select[name="item"], select[name="item_id"]') : [selectEl]);
+        if (!itemSelects.includes(selectEl)) itemSelects.push(selectEl);
+
+        const labelText = newItem.name + (newItem.sku ? ` (${newItem.sku})` : '');
+        itemSelects.forEach(sel => {
+          let opt = sel.querySelector(`option[value="${newItem.id}"]`);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = newItem.id;
+            opt.textContent = labelText;
+            sel.appendChild(opt);
+          }
+        });
+
+        selectEl.value = newItem.id;
+        selectEl.dataset.prevVal = newItem.id;
+
+        const tr = selectEl.closest('tr');
+        if (tr) {
+          const descEl = tr.querySelector('.l-desc, input[name="description"]');
+          if (descEl) descEl.value = newItem.name;
+
+          const hsnEl = tr.querySelector('.l-hsn, input[name="hsn_sac"]');
+          if (hsnEl) hsnEl.value = newItem.hsn_sac || '';
+
+          const rateEl = tr.querySelector('.l-rate, input[name="rate"]');
+          if (rateEl) {
+            rateEl.value = newItem.selling_price || newItem.purchase_price || '0.00';
+          }
+
+          const gstEl = tr.querySelector('.l-gst, select[name="gst_rate"]');
+          if (gstEl && newItem.gst_rate != null) {
+            gstEl.value = String(num(newItem.gst_rate) || 0);
+          }
+        }
+
+        if (customCallback) customCallback(newItem);
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    return true;
+  }
+
+  return false;
+}
+window.handleQuickCreateSelect = handleQuickCreateSelect;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('focusin', e => {
+    if (e.target && e.target.tagName === 'SELECT') {
+      if (!e.target.dataset.prevVal || (!['__new_customer__', '__new_vendor__', '__new_item__'].includes(e.target.value))) {
+        e.target.dataset.prevVal = e.target.value;
+      }
+    }
+  });
+  document.addEventListener('change', e => {
+    if (e.target && e.target.tagName === 'SELECT') {
+      if (['__new_customer__', '__new_vendor__', '__new_item__'].includes(e.target.value)) {
+        handleQuickCreateSelect(e.target);
+      } else {
+        e.target.dataset.prevVal = e.target.value;
+      }
+    }
+  });
 }
 function readForm(form) {
   const d = {};
@@ -701,7 +870,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
 
 window.openSignatureModal = openSignatureModal;
 
-async function partyForm(kind, id) {
+async function partyForm(kind, id, onDone) {
   const isCust = kind === 'customers';
   const entityLabel = isCust ? 'Customer' : 'Vendor';
   const r = id ? await api(`${kind}/${id}/`) : {
@@ -1181,6 +1350,7 @@ async function partyForm(kind, id) {
   formModal({
     title: (id ? 'Edit ' : 'New ') + entityLabel,
     wide: true,
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: formHtml,
     onReady: (form, modal) => {
       modalInstance = modal;
@@ -1799,9 +1969,13 @@ async function partyForm(kind, id) {
       }
 
       if (!id) d.active = true;
-      await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
+      const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
       toast(`${entityLabel} ${id ? 'updated' : 'created'} successfully!`, 'ok');
-      refresh();
+      if (onDone) {
+        onDone(saved || d);
+      } else {
+        refresh();
+      }
     }
   });
 }
@@ -1819,7 +1993,7 @@ function formatReorderPoint(val) {
   return String(n);
 }
 
-async function itemForm(id) {
+async function itemForm(id, onDone) {
   const [r, vendors, warehouses, nextSku] = await Promise.all([
     id ? api(`items/${id}/`) : {
       type: 'goods',
@@ -2023,6 +2197,7 @@ async function itemForm(id) {
   formModal({
     title: id ? 'Edit Item' : 'New Item',
     wide: true,
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `
     <div class="convosis-item-modal convo-item-modal zb-form-wrap">
 
@@ -2814,9 +2989,13 @@ async function itemForm(id) {
 
       if (!id) d.active = true;
       if (!d.purchase_price) d.purchase_price = '0.00';
-      await api(id ? `items/${id}/` : 'items/', { method: id ? 'PUT' : 'POST', body: d });
+      const saved = await api(id ? `items/${id}/` : 'items/', { method: id ? 'PUT' : 'POST', body: d });
       toast('Item ' + (id ? 'updated' : 'created'));
-      refresh();
+      if (onDone) {
+        onDone(saved || d);
+      } else {
+        refresh();
+      }
     },
   });
 }
@@ -2851,12 +3030,15 @@ async function docForm(kind, id, targetEl, onDone) {
   }
 
   const [parties, items, rec] = await Promise.all([
-    api(`lookup/${inv ? 'customers' : 'vendors'}/`),
-    api('lookup/items/'),
-    id ? api(`${kind}/${id}/`) : null
+    api(`lookup/${inv ? 'customers' : 'vendors'}/`).catch(() => []),
+    api('lookup/items/').catch(() => []),
+    id ? api(`${kind}/${id}/`).catch(() => null) : null
   ]);
-  if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
-  const itemOpts = [['', '— Custom line —'], ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])];
+  const itemOpts = [
+    ['', '— Custom line —'],
+    ['__new_item__', '+ Add New Item…'],
+    ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])
+  ];
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
@@ -3006,6 +3188,14 @@ async function docForm(kind, id, targetEl, onDone) {
 
     form.addEventListener('change', e => {
       if (e.target.classList.contains('l-item')) {
+        if (e.target.value === '__new_item__') {
+          handleQuickCreateSelect(e.target, newItem => {
+            items.push(newItem);
+            byId[String(newItem.id)] = newItem;
+            calc();
+          });
+          return;
+        }
         const it = byId[e.target.value], tr = e.target.closest('tr');
         if (it) {
           $('.l-desc', tr).value = it.name;
@@ -3015,6 +3205,15 @@ async function docForm(kind, id, targetEl, onDone) {
         }
       }
       if (e.target.name === pk) {
+        if (e.target.value === '__new_customer__' || e.target.value === '__new_vendor__') {
+          handleQuickCreateSelect(e.target, newParty => {
+            parties.push(newParty);
+            if (newParty.state) form.elements.place_of_supply.value = newParty.state;
+            setDue();
+            calc();
+          });
+          return;
+        }
         const p = parties.find(x => String(x.id) === e.target.value);
         if (p && p.state) form.elements.place_of_supply.value = p.state;
         setDue();
@@ -3274,10 +3473,27 @@ async function docForm(kind, id, targetEl, onDone) {
       form.addEventListener('input', e => { if (e.target.name === 'due_date') dueTouched = true; if (e.target.name === 'date') setDue(); calc(); });
       form.addEventListener('change', e => {
         if (e.target.classList.contains('l-item')) {
+          if (e.target.value === '__new_item__') {
+            handleQuickCreateSelect(e.target, newItem => {
+              items.push(newItem);
+              byId[String(newItem.id)] = newItem;
+              calc();
+            });
+            return;
+          }
           const it = byId[e.target.value], tr = e.target.closest('tr');
           if (it) { $('.l-desc', tr).value = it.name; $('.l-hsn', tr).value = it.hsn_sac || ''; $('.l-rate', tr).value = inv ? it.selling_price : it.purchase_price; $('.l-gst', tr).value = String(num(it.gst_rate)); }
         }
         if (e.target.name === pk) {
+          if (e.target.value === '__new_customer__' || e.target.value === '__new_vendor__') {
+            handleQuickCreateSelect(e.target, newParty => {
+              parties.push(newParty);
+              if (newParty.state) form.elements.place_of_supply.value = newParty.state;
+              setDue();
+              calc();
+            });
+            return;
+          }
           const p = parties.find(x => String(x.id) === e.target.value);
           if (p && p.state) form.elements.place_of_supply.value = p.state;
           setDue();
@@ -3390,10 +3606,9 @@ async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
   const [parties, existing] = await Promise.all([
-    api(`lookup/${rec ? 'customers' : 'vendors'}/`),
+    api(`lookup/${rec ? 'customers' : 'vendors'}/`).catch(() => []),
     payId ? api(`${kind}/${payId}/`).catch(() => null) : Promise.resolve(null)
   ]);
-  if (!parties.length) { toast(`Create a ${pk} first.`, 'err'); return; }
   const dataObj = existing || (typeof pre === 'object' ? pre : {});
   const partyVal = dataObj.party_id || dataObj.customer_id || dataObj.vendor_id || dataObj.party || dataObj[pk] || '';
   formModal({
@@ -3460,7 +3675,6 @@ async function adjustForm(preItem, targetEl, onDone) {
     api('lookup/projects/').catch(() => []),
     api('lookup/next-stock-adjustment-number/').catch(() => null)
   ]);
-  if (!items.length) { toast('Create an inventory-tracked goods item first.', 'err'); return; }
 
   const target = targetEl || document.getElementById('pg') || document.body;
   const curDate = (window.APP && window.APP.today) ? window.APP.today : new Date().toISOString().slice(0, 10);
@@ -3496,6 +3710,7 @@ async function adjustForm(preItem, targetEl, onDone) {
           <div style="flex:1;">
             <select class="in adj-row-item" style="width:100%;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;background:#fff;">
               <option value="">Type or click to select an item.</option>
+              <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
               ${items.map(it => `<option value="${it.id}" ${String(l.item || l.id || preItem) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
             </select>
             <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
@@ -3701,6 +3916,15 @@ async function adjustForm(preItem, targetEl, onDone) {
 
   tbody.addEventListener('change', e => {
     if (e.target.classList.contains('adj-row-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          itemsById[String(newItem.id)] = newItem;
+          const tr = e.target.closest('tr');
+          if (tr) updateRow(tr);
+        });
+        return;
+      }
       const tr = e.target.closest('tr');
       if (tr) updateRow(tr);
     }
@@ -6142,16 +6366,6 @@ async function quoteForm(id, onDone) {
     id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
 
-  if (!parties.length) {
-    toast('No customers found. Please add a customer first.', 'err');
-    partyForm('customers', null, (newCust) => {
-      if (newCust && newCust.id) {
-        quoteForm(id, onDone);
-      }
-    });
-    return;
-  }
-
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qDate = rec ? rec.date : APP.today;
@@ -6182,6 +6396,7 @@ async function quoteForm(id, onDone) {
           <div style="flex:1;">
             <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
               <option value="">Type or click to select an item.</option>
+              <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
               ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
             </select>
             <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
@@ -6236,6 +6451,7 @@ async function quoteForm(id, onDone) {
             <div style="display:flex;gap:6px;flex:1;max-width:440px;">
               <select class="in" id="q-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
               <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;background:#2563eb;color:#fff;border-radius:6px;border:none;">
@@ -6560,12 +6776,27 @@ async function quoteForm(id, onDone) {
     });
   });
 
-  $('#q-customer', form).addEventListener('change', () => {
+  $('#q-customer', form).addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        updateProjectFilter();
+      });
+      return;
+    }
     updateProjectFilter();
   });
 
   tbody.addEventListener('change', e => {
     if (e.target.classList.contains('l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcQuote();
+        });
+        return;
+      }
       const it = byId[e.target.value];
       const tr = e.target.closest('tr');
       if (it && tr) {
@@ -6779,11 +7010,6 @@ async function salesOrderForm(id, onDone) {
     id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
 
-  if (!parties.length) {
-    toast('Please create at least one customer first before creating a sales order.', 'err');
-    return;
-  }
-
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : '';
   const soDate = rec ? rec.date : APP.today;
@@ -6808,6 +7034,7 @@ async function salesOrderForm(id, onDone) {
           <div style="flex:1;">
             <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
               <option value="">Select or type item</option>
+              <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
               ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
             </select>
             <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
@@ -6855,8 +7082,12 @@ async function salesOrderForm(id, onDone) {
             <div style="display:flex;gap:6px;flex:1;max-width:440px;">
               <select class="in" id="so-customer" name="customer" required style="flex:1;">
                 <option value="">Select a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
+              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;background:#2563eb;color:#fff;border-radius:6px;border:none;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
             </div>
           </div>
 
@@ -7027,6 +7258,23 @@ async function salesOrderForm(id, onDone) {
     if (grandEl) grandEl.textContent = inr(grand);
   }
 
+  $('#btn-so-cust-lookup', form)?.addEventListener('click', () => {
+    partyForm('customers', null, newCust => {
+      if (newCust && newCust.id) {
+        parties.push(newCust);
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        $('#so-customer', form).appendChild(opt);
+        if (newCust.state) {
+          $('#so-pos', form).value = newCust.state;
+          calcSo();
+        }
+      }
+    });
+  });
+
   tbody.addEventListener('input', e => {
     if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcSo();
   });
@@ -7034,6 +7282,14 @@ async function salesOrderForm(id, onDone) {
     if (e.target.matches('.l-gst')) {
       calcSo();
     } else if (e.target.matches('.l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcSo();
+        });
+        return;
+      }
       const tr = e.target.closest('tr');
       const it = byId[e.target.value];
       if (it && tr) {
@@ -7065,6 +7321,16 @@ async function salesOrderForm(id, onDone) {
   });
 
   $('#so-customer', form).addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        if (newCust && newCust.state) {
+          $('#so-pos', form).value = newCust.state;
+          calcSo();
+        }
+      });
+      return;
+    }
     const cust = parties.find(p => String(p.id) === String(e.target.value));
     if (cust && cust.state) {
       $('#so-pos', form).value = cust.state;
@@ -7168,11 +7434,6 @@ async function invoiceForm(id, targetEl, onDone) {
     id ? api(`invoices/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
 
-  if (!parties.length) {
-    toast('Please create at least one customer first before making an invoice.', 'err');
-    return;
-  }
-
   const invNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'INV-000001');
   const invCustomer = rec ? (rec.customer_id || rec.party_id) : '';
   const invDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -7201,6 +7462,7 @@ async function invoiceForm(id, targetEl, onDone) {
       <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
         <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
           <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
           ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
@@ -7262,6 +7524,7 @@ async function invoiceForm(id, targetEl, onDone) {
             <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
               <select class="in" id="inv-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
               <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;background:#2563eb;color:#fff;border-radius:4px;border:none;cursor:pointer;">
@@ -7597,7 +7860,21 @@ async function invoiceForm(id, targetEl, onDone) {
     });
   });
 
-  $('#inv-customer', form).addEventListener('change', () => {
+  $('#inv-customer', form).addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        if (newCust.state) $('#inv-place-of-supply', form).value = newCust.state;
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) {
+            $('#inv-terms', form).value = termsMap[newCust.payment_terms];
+            updateDueDate();
+          }
+        }
+      });
+      return;
+    }
     const custId = $('#inv-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
     if (cust) {
@@ -7691,6 +7968,14 @@ async function invoiceForm(id, targetEl, onDone) {
 
   tbody.addEventListener('change', e => {
     if (e.target.classList.contains('l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcInvoice();
+        });
+        return;
+      }
       const it = byId[e.target.value];
       const tr = e.target.closest('tr');
       if (it && tr) {

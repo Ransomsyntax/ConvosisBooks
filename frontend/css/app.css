@@ -1444,3 +1444,250 @@ th.l, td.l, table th.l, table td.l {
   box-shadow: 0 -3px 12px rgba(0, 0, 0, 0.05);
   z-index: 30;
 }
+
+/* =========================================================================
+   SETTINGS MODULE ADDITIONS — permission flat sections, PDF template tabs
+   ========================================================================= */
+
+/* Permission group title — table variant (existing .permission-group-title) */
+.permission-group-title {
+  padding: 12px 18px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: #1e293b;
+}
+
+/* Permission group title — flat checkbox variant */
+.permission-group-title-flat {
+  padding: 12px 18px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Simple grid for flat permission checkboxes */
+.permission-simple-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+/* Flat section master checkbox styling */
+.flat-section-master {
+  margin-right: 6px;
+}
+
+/* More permissions drawer — inline sub-checkboxes */
+.sub-checkboxes-inline {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Permission table: assign owner column */
+.cb-assign-owner {
+  accent-color: #2563eb;
+}
+
+/* Lock icon in dashboard permissions */
+.dash-perm-lock {
+  opacity: 0.4;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+/* PDF Templates — tab bar */
+.pdf-tpl-tabs-wrap {
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.pdf-tpl-tab {
+  padding: 12px 22px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 13px;
+  font-weight: 400;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s, font-weight .15s;
+  outline: none;
+}
+
+.pdf-tpl-tab.active,
+.pdf-tpl-tab:hover {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  font-weight: 600;
+}
+
+/* PDF template doc panel */
+.pdf-tpl-doc-panel {
+  padding: 0;
+}
+
+/* Color swatch radio styling */
+.pdf-tpl-color-swatch {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.pdf-tpl-color-swatch label {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* Report permissions table: Full Access header in blue */
+#reportPermissionsTable thead th:nth-child(2) {
+  color: #2563eb;
+}
+
+/* Report row: collapsible expand arrow */
+.report-perm-row td:first-child b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.report-group-expand-arrow {
+  font-size: 11px;
+  color: #9ca3af;
+  transition: transform .15s;
+}
+
+/* Info alert card variants */
+.info-alert-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #1e40af;
+  margin: 12px 0;
+}
+
+.info-alert-card svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Warning alert card (orange/amber) */
+.warn-alert-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #795548;
+  margin: 12px 18px;
+}
+
+/* Taxes page sub-nav */
+.taxes-subnav {
+  min-width: 220px;
+  border-right: 1px solid #e2e8f0;
+  padding: 16px 0;
+  background: #fff;
+}
+
+.taxes-subnav-section {
+  padding: 4px 16px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-top: 10px;
+}
+
+.taxes-subnav-item {
+  display: block;
+  padding: 9px 20px;
+  font-size: 13px;
+  color: #374151;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.taxes-subnav-item:hover {
+  background: #f1f5f9;
+  color: #1d4ed8;
+}
+
+.taxes-subnav-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  border-left: 3px solid #2563eb;
+  padding-left: 17px;
+}
+
+/* Three-panel layout for Taxes page */
+.taxes-three-panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.taxes-content-panel {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/* Attention/required alert (orange border) */
+.attention-alert-card {
+  background: #fff8f0;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 13px;
+  color: #9a3412;
+  margin-bottom: 16px;
+}
+
+.attention-alert-card .alert-title {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.attention-alert-card a {
+  color: #2563eb;
+  text-decoration: none;
+}
+

@@ -768,20 +768,22 @@ async function renderRoleEditorPage(container, roleId) {
             { key: 'view_bank_account', label: 'View Vendor Bank Account' },
             { key: 'manage_bank_account', label: 'Manage Vendor Bank Account' }
           ]}
-        ], p.contacts || {})}
+        ], p.contacts || {}, { hasAssignOwner: true, hasApprove: false })}
 
         ${renderModulePermissionTable('Items', 'items', [
           { key: 'item', label: 'Item' },
-          { key: 'adjustments', label: 'Inventory Adjustments', hasApprove: true },
+          { key: 'adjustments', label: 'Inventory Adjustments', hasApprove: true, moreOptions: [
+            { key: 'approve_adjustments', label: 'Approve Inventory Adjustments' }
+          ]},
           { key: 'price_lists', label: 'Price List' }
-        ], p.items || {})}
+        ], p.items || {}, { hasApprove: true, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Banking', 'banking', [
           { key: 'banking', label: 'Banking', moreOptions: [
-            { key: 'bank_accounts', label: 'Manage Bank Accounts' },
+            { key: 'manage_bank_accounts', label: 'Manage Bank Accounts' },
             { key: 'reconciliation', label: 'Perform Bank Reconciliation' }
           ]}
-        ], p.banking || {})}
+        ], p.banking || {}, { hasApprove: false, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Sales', 'sales', [
           { key: 'invoices', label: 'Invoices', hasApprove: true, moreOptions: [
@@ -790,62 +792,153 @@ async function renderRoleEditorPage(container, roleId) {
             { key: 'record_payments', label: 'Record Payments' },
             { key: 'customer_statements', label: 'Customer Statements' }
           ]},
-          { key: 'customer_payments', label: 'Customer Payments' },
-          { key: 'quotes', label: 'Quotes', hasApprove: true },
+          { key: 'customer_payments', label: 'Customer Payments', hasApprove: true, moreOptions: [
+            { key: 'refunds', label: 'Refunds' }
+          ]},
+          { key: 'quotes', label: 'Quotes', hasApprove: true, moreOptions: [
+            { key: 'send_quotes', label: 'Send Quotes' }
+          ]},
           { key: 'delivery_challans', label: 'Delivery Challan', hasApprove: true },
-          { key: 'sales_orders', label: 'Sales Orders', hasApprove: true },
+          { key: 'sales_orders', label: 'Sales Orders', hasApprove: true, moreOptions: [
+            { key: 'convert_to_invoice', label: 'Convert to Invoice' }
+          ]},
           { key: 'credit_notes', label: 'Credit Notes', hasApprove: true }
-        ], p.sales || {})}
+        ], p.sales || {}, { hasApprove: true, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Purchases', 'purchases', [
           { key: 'bills', label: 'Bills', hasApprove: true, moreOptions: [
             { key: 'approve_bills', label: 'Approve Bills' }
           ]},
-          { key: 'vendor_payments', label: 'Vendor Payments', hasApprove: true },
-          { key: 'expenses', label: 'Expenses', moreOptions: [
+          { key: 'vendor_payments', label: 'Vendor Payments', hasApprove: true, moreOptions: [
+            { key: 'refunds', label: 'Refunds' }
+          ]},
+          { key: 'expenses', label: 'Expenses', hasApprove: true, moreOptions: [
             { key: 'approve_expenses', label: 'Approve Expenses' }
           ]},
-          { key: 'purchase_orders', label: 'Purchase Orders', hasApprove: true },
+          { key: 'purchase_orders', label: 'Purchase Orders', hasApprove: true, moreOptions: [
+            { key: 'convert_to_bill', label: 'Convert to Bill' }
+          ]},
           { key: 'vendor_credits', label: 'Vendor Credits', hasApprove: true }
-        ], p.purchases || {})}
+        ], p.purchases || {}, { hasApprove: true, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Accountant', 'accountant', [
-          { key: 'chart_of_accounts', label: 'Chart of Accounts' },
-          { key: 'journals', label: 'Journals', hasApprove: true },
-          { key: 'budgets', label: 'Budget' }
-        ], p.accountant || {})}
+          { key: 'chart_of_accounts', label: 'Chart of Accounts', hasApprove: true, moreOptions: [
+            { key: 'import_accounts', label: 'Import Chart of Accounts' }
+          ]},
+          { key: 'journals', label: 'Journals', hasApprove: true, moreOptions: [
+            { key: 'approve_journals', label: 'Approve Journals' }
+          ]},
+          { key: 'budgets', label: 'Budget', hasApprove: false }
+        ], p.accountant || {}, { hasApprove: true, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Income TDS', 'income_tds', [
           { key: 'tds_payments', label: 'Income TDS Payment' }
-        ], p.income_tds || {})}
+        ], p.income_tds || {}, { hasApprove: false, hasAssignOwner: false })}
 
         ${renderModulePermissionTable('Timesheets', 'timesheets', [
-          { key: 'projects', label: 'Projects' },
+          { key: 'projects', label: 'Projects', moreOptions: [
+            { key: 'no_expense_record', label: "Don't allow timesheet staffs to record expenses for the associated project(s)" }
+          ]},
           { key: 'timesheets', label: 'Timesheets' },
           { key: 'time_entries', label: 'Time Entries' }
-        ], p.timesheets || {})}
+        ], p.timesheets || {}, { hasApprove: false, hasAssignOwner: false })}
 
-        <!-- Settings Preferences Checkboxes -->
-        <div class="permission-group-card">
-          <div class="permission-group-title">Settings Access</div>
-          <div class="permission-simple-grid">
+        <!-- GST Filing – flat checkbox section -->
+        <div class="permission-group-card" data-module="gst_filing">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permGstFiling" ${(p.gst_filing && p.gst_filing.enabled) ? 'checked' : ''}>
+              <span>GST Filing</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
             ${[
-              ['update_profile', 'Update Organization Profile'],
-              ['users', 'Users & Roles Management'],
-              ['export_data', 'Export Organization Data'],
-              ['general_preferences', 'General Preferences'],
-              ['accountant_preferences', 'Accountant Preferences'],
-              ['taxes', 'Taxes & Compliance'],
-              ['currencies', 'Currencies & Exchange Rates'],
-              ['payment_terms', 'Payment Terms'],
-              ['templates', 'PDF Templates'],
-              ['email_templates', 'Email Templates'],
-              ['manage_integrations', 'Manage Integrations & API'],
-              ['automation', 'Workflow Automation'],
-              ['notifications', 'Notifications Configuration'],
+              ['view_generate', 'View and Generate Return'],
+              ['push_transactions', 'Push Transactions'],
+              ['reconcile_transactions', 'Reconcile Transactions'],
+              ['file_returns', 'File Returns'],
             ].map(([k, lbl]) => `
               <label class="custom-checkbox-label">
-                <input type="checkbox" class="setting-perm-cb" data-key="${k}" ${((p.settings && p.settings[k]) || p.settings === true) ? 'checked' : ''}>
+                <input type="checkbox" class="flat-perm-cb" data-opt-key="${k}" ${(p.gst_filing && p.gst_filing[k]) ? 'checked' : ''}>
+                <span>${esc(lbl)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Documents – flat checkbox section -->
+        <div class="permission-group-card" data-module="documents">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permDocuments" ${(p.documents && p.documents.enabled) ? 'checked' : ''}>
+              <span>Documents</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
+            ${[
+              ['view_documents', 'View Documents'],
+              ['upload_documents', 'Upload Documents'],
+              ['delete_documents', 'Delete Documents'],
+              ['manage_folder', 'Manage Folder'],
+            ].map(([k, lbl]) => `
+              <label class="custom-checkbox-label">
+                <input type="checkbox" class="flat-perm-cb" data-opt-key="${k}" ${(p.documents && p.documents[k]) ? 'checked' : ''}>
+                <span>${esc(lbl)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- e-Way Bill – flat checkbox section -->
+        <div class="permission-group-card" data-module="eway_bill">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permEwayBill" ${(p.eway_bill && p.eway_bill.enabled) ? 'checked' : ''}>
+              <span>e-Way Bill</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
+            ${[
+              ['generate_eway', 'Generate e-Way Bill'],
+              ['cancel_eway', 'Cancel e-Way Bill'],
+            ].map(([k, lbl]) => `
+              <label class="custom-checkbox-label">
+                <input type="checkbox" class="flat-perm-cb" data-opt-key="${k}" ${(p.eway_bill && p.eway_bill[k]) ? 'checked' : ''}>
+                <span>${esc(lbl)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Settings Access – flat checkbox section -->
+        <div class="permission-group-card" data-module="settings_access">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permSettingsAccess" ${(p.settings_access && p.settings_access.enabled) ? 'checked' : ''}>
+              <span>Settings</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
+            ${[
+              ['update_profile', 'Update organization profile'],
+              ['users', 'Users'],
+              ['export_data', 'Export data'],
+              ['general_preferences', 'General preferences'],
+              ['accountant_preferences', 'Accountant preferences'],
+              ['gst_filing', 'GST Filing'],
+              ['taxes', 'Taxes'],
+              ['currencies', 'Currencies'],
+              ['protected_data', 'Provide access to protected data'],
+              ['payment_terms', 'Payment Terms'],
+              ['templates', 'Templates'],
+              ['email_template', 'Email Template'],
+              ['manage_integration', 'Manage Integration'],
+              ['automation', 'Automation'],
+              ['incoming_webhook', 'Incoming Webhook'],
+              ['signal', 'Signal'],
+            ].map(([k, lbl]) => `
+              <label class="custom-checkbox-label">
+                <input type="checkbox" class="setting-perm-cb" data-key="${k}" ${(p.settings_access && p.settings_access[k]) ? 'checked' : ''}>
                 <span>${esc(lbl)}</span>
               </label>
             `).join('')}
@@ -853,36 +946,88 @@ async function renderRoleEditorPage(container, roleId) {
         </div>
 
         <!-- Dashboard Widgets -->
-        <div class="permission-group-card">
-          <div class="permission-group-title">Dashboard Widgets Access</div>
-          <div class="permission-simple-grid">
+        <div class="permission-group-card" data-module="dashboard">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permDashboard" ${(p.dashboard && p.dashboard.enabled) ? 'checked' : ''}>
+              <span>Dashboard</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
             ${[
-              ['total_payables', 'Total Payables'],
-              ['total_receivables', 'Total Receivables'],
-              ['cash_flow', 'Cash Flow'],
-              ['income_expenses', 'Income and Expenses'],
-              ['top_expenses', 'Your Top Expense'],
-              ['projects', 'Projects & Timesheets'],
+              ['total_payables', 'Total Payables', true],
+              ['total_receivables', 'Total Receivables', true],
+              ['cash_flow', 'Cash Flow', true],
+              ['income_expenses', 'Income and Expenses', true],
+              ['top_expenses', 'Your Top Expense', true],
+              ['projects', 'Projects'],
               ['bank_credit_cards', 'Bank and Credit Cards'],
-              ['account_watchlist', 'Account Watchlist'],
+              ['account_watchlist', 'Account Watchlist', true],
+            ].map(([k, lbl, locked]) => `
+              <label class="custom-checkbox-label">
+                <input type="checkbox" class="dash-perm-cb" data-key="${k}" ${(p.dashboard && p.dashboard[k]) ? 'checked' : ''}>
+                <span>${esc(lbl)}${locked ? ' <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="opacity:0.4; vertical-align:middle;"><path d="M18 11H6a2 2 0 00-2 2v7a2 2 0 002 2h12a2 2 0 002-2v-7a2 2 0 00-2-2zM12 17a1 1 0 110-2 1 1 0 010 2zm4-6V8a4 4 0 10-8 0v3h8z"/></svg>' : ''}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Reporting Tags – flat checkbox section -->
+        <div class="permission-group-card" data-module="reporting_tags">
+          <div class="permission-group-title-flat">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" class="flat-section-master" id="permReportingTags" ${(p.reporting_tags && p.reporting_tags.enabled) ? 'checked' : ''}>
+              <span>Reporting Tags</span>
+            </label>
+          </div>
+          <div class="permission-simple-grid" style="padding:14px 18px;">
+            ${[
+              ['view_tags', 'View Reporting Tags'],
+              ['manage_tags', 'Manage Reporting Tags'],
+              ['delete_tags', 'Delete Reporting Tags'],
             ].map(([k, lbl]) => `
               <label class="custom-checkbox-label">
-                <input type="checkbox" class="dash-perm-cb" data-key="${k}" ${((p.dashboard && p.dashboard[k]) || p.dashboard === true || roleData.name === 'Admin') ? 'checked' : ''}>
+                <input type="checkbox" class="flat-perm-cb" data-opt-key="${k}" ${(p.reporting_tags && p.reporting_tags[k]) ? 'checked' : ''}>
                 <span>${esc(lbl)}</span>
               </label>
             `).join('')}
           </div>
         </div>
 
-        <!-- Report Permissions Section (Screenshot 2026-11-06 165512) -->
-        <div class="permission-group-card" style="margin-top:20px;">
-          <div style="padding:14px 18px; border-bottom:1px solid var(--bd);">
+        <!-- Bharat Connect – flat checkbox section -->
+        <div class="permission-group-card" data-module="bharat_connect">
+          <div class="permission-group-title-flat">
             <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
-              <input type="checkbox" id="permAllReports" ${rp.all_reports ? 'checked' : ''} onchange="toggleAllReports(this)">
-              <span>Enable full access for all reports</span>
+              <input type="checkbox" class="flat-section-master" id="permBharatConnect" ${(p.bharat_connect && p.bharat_connect.enabled) ? 'checked' : ''}>
+              <span>Bharat Connect</span>
             </label>
           </div>
-          <div class="info-alert-card" style="margin:12px 18px;">
+          <div class="permission-simple-grid" style="padding:14px 18px;">
+            ${[
+              ['send_transactions', 'Send Transactions via Bharat Connect'],
+              ['accept_transactions', 'Accept Transactions from Bharat Connect'],
+              ['manage_integration', 'Manage Bharat Connect Integration'],
+            ].map(([k, lbl]) => `
+              <label class="custom-checkbox-label">
+                <input type="checkbox" class="flat-perm-cb" data-opt-key="${k}" ${(p.bharat_connect && p.bharat_connect[k]) ? 'checked' : ''}>
+                <span>${esc(lbl)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Report Permissions Section -->
+        <div class="permission-group-card" style="margin-top:20px;">
+          <div style="padding:14px 18px; border-bottom:1px solid var(--bd); background:#f8f9fa;">
+            <label class="custom-checkbox-label" style="font-weight:700; font-size:14px;">
+              <input type="checkbox" id="permAllReports" ${rp.all_reports ? 'checked' : ''} onchange="toggleAllReports(this)">
+              <span>Enable full access for all reports
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="opacity:0.5; vertical-align:middle; margin-left:4px;"><circle cx="12" cy="12" r="10"/><path fill="white" d="M12 7h.01M11 11h1v5h1"/></svg>
+              </span>
+            </label>
+          </div>
+          <div style="margin:12px 18px; background:#fff8e1; border:1px solid #ffe082; border-radius:6px; padding:10px 14px; display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#795548;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="#f59e0b" style="flex-shrink:0; margin-top:1px;"><path d="M12 2L1 21h22L12 2zm0 15h.01M11 11h2v4h-2z"/></svg>
             <span>When new reports are introduced, you will have to edit the role and provide access to them.</span>
           </div>
 
@@ -890,7 +1035,7 @@ async function renderRoleEditorPage(container, roleId) {
             <thead>
               <tr>
                 <th style="width:40%;">Report Groups</th>
-                <th style="width:12%; text-align:center;">Full Access</th>
+                <th style="width:12%; text-align:center; color:#2563eb;">Full Access</th>
                 <th style="width:12%; text-align:center;">View</th>
                 <th style="width:12%; text-align:center;">Export</th>
                 <th style="width:12%; text-align:center;">Schedule</th>
@@ -906,18 +1051,21 @@ async function renderRoleEditorPage(container, roleId) {
                 ['retail', 'Retail'],
                 ['receivables', 'Receivables'],
                 ['payables', 'Payables'],
-                ['purchases', 'Purchases and Expenses'],
-                ['accountant', 'Accountant'],
-                ['banking', 'Banking'],
+                ['purchases_expenses', 'Purchases and Expenses'],
                 ['taxes', 'Taxes'],
-                ['gst_reports', 'GST Reports'],
-                ['activity_reports', 'Activity']
+                ['banking', 'Banking'],
+                ['projects_timesheet', 'Projects and Timesheet'],
+                ['accountant', 'Accountant'],
+                ['budgets', 'Budgets'],
+                ['currency', 'Currency'],
+                ['activity', 'Activity'],
+                ['automation', 'Automation'],
               ].map(([k, lbl]) => {
                 const grp = (rp.groups && rp.groups[k]) || {};
                 const isFull = rp.all_reports || grp.full;
                 return `
                   <tr class="report-perm-row" data-group="${k}">
-                    <td><b>${esc(lbl)}</b></td>
+                    <td><b>${esc(lbl)}</b>${['inventory_valuation', 'budgets'].includes(k) ? ` <span style="font-size:11px; color:#9ca3af; float:right;">Click to configure access</span>` : ''}</td>
                     <td align="center"><input type="checkbox" class="rp-cb rp-full" data-action="full" ${isFull ? 'checked' : ''} onchange="toggleReportRow(this)"></td>
                     <td align="center"><input type="checkbox" class="rp-cb rp-sub" data-action="view" ${(isFull || grp.view) ? 'checked' : ''} onchange="updateReportRowFull(this)"></td>
                     <td align="center"><input type="checkbox" class="rp-cb rp-sub" data-action="export" ${(isFull || grp.export) ? 'checked' : ''} onchange="updateReportRowFull(this)"></td>
@@ -982,55 +1130,99 @@ async function renderRoleEditorPage(container, roleId) {
   });
 }
 
-function renderModulePermissionTable(moduleTitle, moduleKey, items, currentModulePerms) {
+/**
+ * Renders a module permission table.
+ * @param {string} moduleTitle - Display title
+ * @param {string} moduleKey - Data key for collecting perms
+ * @param {Array} items - Row definitions
+ * @param {Object} currentModulePerms - Existing permissions
+ * @param {Object} opts - { hasApprove, hasAssignOwner } column options at table level
+ */
+function renderModulePermissionTable(moduleTitle, moduleKey, items, currentModulePerms, opts = {}) {
+  // Determine which columns to show (table-level defaults, can be overridden per item)
+  // hasApprove: Items, Sales, Purchases, Accountant
+  // hasAssignOwner: Contacts only
+  // Banking, Income TDS, Timesheets: no Approve, no Assign Owner
+  const tableHasApprove = opts.hasApprove !== undefined ? opts.hasApprove :
+    items.some(it => it.hasApprove);
+  const tableHasAssignOwner = opts.hasAssignOwner !== undefined ? opts.hasAssignOwner :
+    items.some(it => it.hasAssignOwner);
+
+  // Build column headers
+  let headerCols = `
+    <th style="width:28%;">Particulars</th>
+    <th style="width:9%; text-align:center;">Full</th>
+    <th style="width:9%; text-align:center;">View</th>
+    <th style="width:9%; text-align:center;">Create</th>
+    <th style="width:9%; text-align:center;">Edit</th>
+    <th style="width:9%; text-align:center;">Delete</th>
+  `;
+  if (tableHasApprove) {
+    headerCols += `<th style="width:9%; text-align:center;">Approve</th>`;
+  }
+  if (tableHasAssignOwner) {
+    headerCols += `<th style="width:12%; text-align:center;">Assign owner</th>`;
+  }
+  headerCols += `<th style="width:${tableHasApprove || tableHasAssignOwner ? '14' : '17'}%;">Others</th>`;
+
   return `
     <div class="permission-group-card" data-module="${moduleKey}">
       <div class="permission-group-title">${esc(moduleTitle)}</div>
       <table class="permission-table">
         <thead>
-          <tr>
-            <th style="width:25%;">Particulars</th>
-            <th style="width:10%; text-align:center;">Full</th>
-            <th style="width:10%; text-align:center;">View</th>
-            <th style="width:10%; text-align:center;">Create</th>
-            <th style="width:10%; text-align:center;">Edit</th>
-            <th style="width:10%; text-align:center;">Delete</th>
-            <th style="width:10%; text-align:center;">Approve</th>
-            <th style="width:15%;">Others</th>
-          </tr>
+          <tr>${headerCols}</tr>
         </thead>
         <tbody>
           ${items.map(it => {
             const rowPerm = currentModulePerms[it.key] || {};
             const isFull = Boolean(rowPerm.full);
             const moreOpts = it.moreOptions || [];
-            return `
-              <tr class="perm-row" data-submodule="${it.key}">
-                <td><b>${esc(it.label)}</b></td>
-                <td align="center"><input type="checkbox" class="cb-perm-full" ${isFull ? 'checked' : ''}></td>
-                <td align="center"><input type="checkbox" class="cb-perm cb-view" ${rowPerm.view || isFull ? 'checked' : ''}></td>
-                <td align="center"><input type="checkbox" class="cb-perm cb-create" ${rowPerm.create || isFull ? 'checked' : ''}></td>
-                <td align="center"><input type="checkbox" class="cb-perm cb-edit" ${rowPerm.edit || isFull ? 'checked' : ''}></td>
-                <td align="center"><input type="checkbox" class="cb-perm cb-delete" ${rowPerm.delete || isFull ? 'checked' : ''}></td>
-                <td align="center">${it.hasApprove ? `<input type="checkbox" class="cb-perm cb-approve" ${rowPerm.approve || isFull ? 'checked' : ''}>` : '—'}</td>
-                <td>
-                  ${moreOpts.length ? `
-                    <a href="javascript:void(0)" class="link-more-perm" onclick="toggleMorePerms(this)">More Permissions</a>
-                    <div class="more-perms-drawer" style="display:none; margin-top:6px;">
-                      ${moreOpts.map(mo => {
-                        const isMoChecked = Boolean(rowPerm.others && rowPerm.others[mo.key]);
-                        return `
-                          <label class="custom-checkbox-label" style="display:flex; margin-bottom:4px; font-size:12px;">
-                            <input type="checkbox" class="cb-more-opt" data-opt-key="${mo.key}" ${isMoChecked ? 'checked' : ''}>
-                            <span>${esc(mo.label)}</span>
-                          </label>
-                        `;
-                      }).join('')}
-                    </div>
-                  ` : '—'}
-                </td>
-              </tr>
+            const subCheckboxes = it.subCheckboxes || [];
+            let rowCols = `
+              <td>
+                <b>${esc(it.label)}</b>
+                ${subCheckboxes.length ? `
+                  <div class="more-perms-drawer sub-checkboxes-inline" style="margin-top:6px;">
+                    ${subCheckboxes.map(sc => `
+                      <label class="custom-checkbox-label" style="display:flex; margin-bottom:4px; font-size:12px;">
+                        <input type="checkbox" class="cb-more-opt" data-opt-key="${sc.key}" ${(rowPerm.others && rowPerm.others[sc.key]) ? 'checked' : ''}>
+                        <span>${esc(sc.label)}</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </td>
+              <td align="center"><input type="checkbox" class="cb-perm-full" ${isFull ? 'checked' : ''}></td>
+              <td align="center"><input type="checkbox" class="cb-perm cb-view" ${rowPerm.view || isFull ? 'checked' : ''}></td>
+              <td align="center"><input type="checkbox" class="cb-perm cb-create" ${rowPerm.create || isFull ? 'checked' : ''}></td>
+              <td align="center"><input type="checkbox" class="cb-perm cb-edit" ${rowPerm.edit || isFull ? 'checked' : ''}></td>
+              <td align="center"><input type="checkbox" class="cb-perm cb-delete" ${rowPerm.delete || isFull ? 'checked' : ''}></td>
             `;
+            if (tableHasApprove) {
+              rowCols += `<td align="center">${it.hasApprove ? `<input type="checkbox" class="cb-perm cb-approve" ${rowPerm.approve || isFull ? 'checked' : ''}>` : ''}</td>`;
+            }
+            if (tableHasAssignOwner) {
+              rowCols += `<td align="center">${it.hasAssignOwner ? `<input type="checkbox" class="cb-perm cb-assign-owner" ${(rowPerm.assign_owner || isFull) ? 'checked' : ''}>` : ''}</td>`;
+            }
+            rowCols += `
+              <td>
+                ${moreOpts.length ? `
+                  <a href="javascript:void(0)" class="link-more-perm" onclick="toggleMorePerms(this)">More Permissions</a>
+                  <div class="more-perms-drawer" style="display:none; margin-top:6px;">
+                    ${moreOpts.map(mo => {
+                      const isMoChecked = Boolean(rowPerm.others && rowPerm.others[mo.key]);
+                      return `
+                        <label class="custom-checkbox-label" style="display:flex; margin-bottom:4px; font-size:12px;">
+                          <input type="checkbox" class="cb-more-opt" data-opt-key="${mo.key}" ${isMoChecked ? 'checked' : ''}>
+                          <span>${esc(mo.label)}</span>
+                        </label>
+                      `;
+                    }).join('')}
+                  </div>
+                ` : ''}
+              </td>
+            `;
+            return `<tr class="perm-row" data-submodule="${it.key}">${rowCols}</tr>`;
           }).join('')}
         </tbody>
       </table>
@@ -1099,8 +1291,13 @@ function updateReportRowFull(subCb) {
 
 function collectSegmentedPermissions(container) {
   const perms = {};
+
+  // Table-based modules
   container.querySelectorAll('.permission-group-card[data-module]').forEach(modCard => {
     const modKey = modCard.dataset.module;
+    // Skip flat-section modules handled below
+    if (['gst_filing', 'documents', 'eway_bill', 'settings_access', 'dashboard', 'reporting_tags', 'bharat_connect'].includes(modKey)) return;
+
     perms[modKey] = {};
     modCard.querySelectorAll('.perm-row').forEach(row => {
       const subKey = row.dataset.submodule;
@@ -1110,6 +1307,7 @@ function collectSegmentedPermissions(container) {
       const edit = Boolean(row.querySelector('.cb-edit')?.checked);
       const del = Boolean(row.querySelector('.cb-delete')?.checked);
       const approve = Boolean(row.querySelector('.cb-approve')?.checked);
+      const assign_owner = Boolean(row.querySelector('.cb-assign-owner')?.checked);
 
       const others = {};
       row.querySelectorAll('.cb-more-opt').forEach(mo => {
@@ -1123,22 +1321,74 @@ function collectSegmentedPermissions(container) {
         edit,
         delete: del,
         approve,
+        assign_owner,
         others
       };
     });
   });
 
-  // Settings perms
-  perms['settings'] = {};
-  container.querySelectorAll('.setting-perm-cb').forEach(cb => {
-    perms['settings'][cb.dataset.key] = cb.checked;
-  });
+  // Flat section: GST Filing
+  const gstCard = container.querySelector('.permission-group-card[data-module="gst_filing"]');
+  if (gstCard) {
+    perms['gst_filing'] = { enabled: Boolean(gstCard.querySelector('#permGstFiling')?.checked) };
+    gstCard.querySelectorAll('.flat-perm-cb').forEach(cb => {
+      perms['gst_filing'][cb.dataset.optKey] = cb.checked;
+    });
+  }
 
-  // Dashboard perms
-  perms['dashboard'] = {};
-  container.querySelectorAll('.dash-perm-cb').forEach(cb => {
-    perms['dashboard'][cb.dataset.key] = cb.checked;
-  });
+  // Flat section: Documents
+  const docsCard = container.querySelector('.permission-group-card[data-module="documents"]');
+  if (docsCard) {
+    perms['documents'] = { enabled: Boolean(docsCard.querySelector('#permDocuments')?.checked) };
+    docsCard.querySelectorAll('.flat-perm-cb').forEach(cb => {
+      perms['documents'][cb.dataset.optKey] = cb.checked;
+    });
+  }
+
+  // Flat section: e-Way Bill
+  const ewayCard = container.querySelector('.permission-group-card[data-module="eway_bill"]');
+  if (ewayCard) {
+    perms['eway_bill'] = { enabled: Boolean(ewayCard.querySelector('#permEwayBill')?.checked) };
+    ewayCard.querySelectorAll('.flat-perm-cb').forEach(cb => {
+      perms['eway_bill'][cb.dataset.optKey] = cb.checked;
+    });
+  }
+
+  // Flat section: Settings Access
+  const settingsCard = container.querySelector('.permission-group-card[data-module="settings_access"]');
+  if (settingsCard) {
+    perms['settings_access'] = { enabled: Boolean(settingsCard.querySelector('#permSettingsAccess')?.checked) };
+    settingsCard.querySelectorAll('.setting-perm-cb').forEach(cb => {
+      perms['settings_access'][cb.dataset.key] = cb.checked;
+    });
+  }
+
+  // Flat section: Dashboard
+  const dashCard = container.querySelector('.permission-group-card[data-module="dashboard"]');
+  if (dashCard) {
+    perms['dashboard'] = { enabled: Boolean(dashCard.querySelector('#permDashboard')?.checked) };
+    dashCard.querySelectorAll('.dash-perm-cb').forEach(cb => {
+      perms['dashboard'][cb.dataset.key] = cb.checked;
+    });
+  }
+
+  // Flat section: Reporting Tags
+  const tagsCard = container.querySelector('.permission-group-card[data-module="reporting_tags"]');
+  if (tagsCard) {
+    perms['reporting_tags'] = { enabled: Boolean(tagsCard.querySelector('#permReportingTags')?.checked) };
+    tagsCard.querySelectorAll('.flat-perm-cb').forEach(cb => {
+      perms['reporting_tags'][cb.dataset.optKey] = cb.checked;
+    });
+  }
+
+  // Flat section: Bharat Connect
+  const bharatCard = container.querySelector('.permission-group-card[data-module="bharat_connect"]');
+  if (bharatCard) {
+    perms['bharat_connect'] = { enabled: Boolean(bharatCard.querySelector('#permBharatConnect')?.checked) };
+    bharatCard.querySelectorAll('.flat-perm-cb').forEach(cb => {
+      perms['bharat_connect'][cb.dataset.optKey] = cb.checked;
+    });
+  }
 
   return perms;
 }
@@ -1503,101 +1753,196 @@ async function renderAiControlCenterPage(container) {
 // =========================================================================
 
 async function renderTaxesPage(container) {
-  const data = await api('/settings/taxes/');
-  const taxes = data.taxes || [];
+  let taxes = [];
+  let page = 1;
+  let total = 0;
+  let activeFilter = 'active';
+
+  async function loadTaxes() {
+    try {
+      const data = await api('/settings/taxes/');
+      taxes = data.taxes || [];
+      total = taxes.length;
+    } catch(e) { taxes = []; }
+  }
+
+  await loadTaxes();
+
+  function taxesSubNavHtml(activeItem) {
+    const items = [
+      { key: 'tax-rates',      label: 'Tax Rates' },
+      { key: 'tax-exemptions', label: 'Tax Exemptions' },
+      { key: 'default-pref',   label: 'Default Tax Preference' },
+      { key: 'gst-settings',   label: 'GST Settings' },
+      { key: 'gst-tds',        label: 'GST TDS Settings' },
+      { key: 'online-filing',  label: 'Online Filing Settings' },
+    ];
+    return `
+      <nav class="taxes-subnav">
+        ${items.map(it => `
+          <button type="button" class="taxes-subnav-item${it.key === activeItem ? ' active' : ''}"
+            data-subnav="${it.key}"
+            onclick="document.querySelectorAll('.taxes-subnav-item').forEach(b=>b.classList.remove('active')); this.classList.add('active');">
+            ${esc(it.label)}
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+
+  const filteredTaxes = taxes.filter(t => activeFilter === 'all' || t.status !== 'inactive');
 
   container.innerHTML = `
-    <div class="settings-page-header">
-      <div class="settings-page-header-left">
-        <h1>Taxes</h1>
-      </div>
-    </div>
+    <div style="display:flex; height:100%; min-height:0; flex:1;">
+      ${taxesSubNavHtml('tax-rates')}
+      <div class="taxes-content-panel">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <h2 style="font-size:18px; font-weight:700; margin:0;">Active taxes</h2>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button type="button" class="btn-primary" style="display:flex; align-items:center; gap:6px;" onclick="alert('Add tax coming soon')">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              New Tax
+            </button>
+            <button type="button" class="btn-outline" style="padding:8px 10px;" title="More options">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button type="button" class="btn-outline" style="padding:8px 14px; display:flex; align-items:center; gap:6px;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Find Accountants
+            </button>
+          </div>
+        </div>
 
-    <div class="settings-table-card">
-      <table class="settings-data-table">
-        <thead>
-          <tr>
-            <th>TAX NAME</th>
-            <th>TAX TYPE</th>
-            <th>RATE (%)</th>
-            <th>STATUS</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${taxes.map(t => `
-            <tr>
-              <td><b>${esc(t.name)}</b></td>
-              <td>${esc(t.type)}</td>
-              <td>${t.rate}%</td>
-              <td><span class="pastel-chip chip-emerald">Active</span></td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+        <div class="settings-table-card">
+          <table class="settings-data-table">
+            <thead>
+              <tr>
+                <th style="width:36px;"><input type="checkbox"></th>
+                <th>TAX NAME</th>
+                <th>TAX TYPE</th>
+                <th>COUNTRY/REGION</th>
+                <th style="text-align:right;">RATE (%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredTaxes.length ? filteredTaxes.map(t => `
+                <tr>
+                  <td><input type="checkbox"></td>
+                  <td><a href="javascript:void(0)" style="color:#2563eb; font-weight:500;">${esc(t.name)}</a>${t.tax_group ? ` <span style="font-size:11px; color:#9ca3af;">(Tax Group)</span>` : ''}</td>
+                  <td>${esc(t.type || '')}</td>
+                  <td>${esc(t.country || '')}</td>
+                  <td style="text-align:right; font-weight:500;">${t.rate || 0}</td>
+                </tr>
+              `).join('') : `
+                <tr><td colspan="5" style="text-align:center; padding:40px; color:#9ca3af;">No taxes configured yet.</td></tr>
+              `}
+            </tbody>
+          </table>
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-top:1px solid var(--bd);">
+            <div style="font-size:13px; color:#6b7280;">Total Count: <a href="javascript:void(0)" style="color:#2563eb;">View</a></div>
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn-outline" style="padding:4px 10px;">‹</button>
+              <span style="font-size:13px; padding:4px 8px;">1 - ${Math.min(12, total || 1)}</span>
+              <button type="button" class="btn-outline" style="padding:4px 10px;">›</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
 
 async function renderDirectTaxesPage(container) {
-  const data = await api('/settings/taxes/');
+  let data = {};
+  try { data = await api('/settings/taxes/'); } catch(e) {}
   const sections = data.tds_sections || [];
   const directTaxes = data.direct_tax_settings || {};
 
+  function taxesSubNavHtml(activeItem) {
+    const groups = [
+      { group: 'TDS', items: [
+        { key: 'tds-settings', label: 'Income TDS Settings' },
+        { key: 'tds-rates',    label: 'Income TDS Rates' },
+      ]},
+      { group: 'TCS', items: [
+        { key: 'tcs-rates',    label: 'Income TCS Rates' },
+      ]},
+    ];
+    let html = '';
+    groups.forEach(grp => {
+      html += `<div class="taxes-subnav-section">${esc(grp.group)}</div>`;
+      grp.items.forEach(it => {
+        html += `<button type="button" class="taxes-subnav-item${it.key === activeItem ? ' active' : ''}"
+          data-subnav="${it.key}"
+          onclick="document.querySelectorAll('.taxes-subnav-item').forEach(b=>b.classList.remove('active')); this.classList.add('active');">
+          ${esc(it.label)}
+        </button>`;
+      });
+    });
+    // Attention box
+    html += `
+      <div class="attention-alert-card" style="margin:12px 10px;">
+        <div class="alert-title">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="#f59e0b"><path d="M12 2L1 21h22L12 2zm0 15h.01M11 11h2v4h-2z"/></svg>
+          Attention Required
+        </div>
+        <div style="font-size:12px; line-height:1.5; color:#9a3412;">
+          The Income Tax Act, 2025 is now in effect from April 1, 2026, with changes to TDS and TCS sections and rates. Update them to stay compliant.
+          <br><a href="javascript:void(0)" style="color:#2563eb; font-weight:600;">View Details →</a>
+        </div>
+      </div>
+    `;
+    return `<nav class="taxes-subnav">${html}</nav>`;
+  }
+
   container.innerHTML = `
-    <div class="settings-page-header">
-      <div class="settings-page-header-left">
-        <h1>Direct Taxes (Income TDS / TCS)</h1>
-      </div>
-      <div class="settings-page-header-right">
-        <button type="button" class="btn-primary" id="btnSaveDirectTaxes">Save TDS Settings</button>
-      </div>
-    </div>
+    <div style="display:flex; height:100%; min-height:0; flex:1;">
+      ${taxesSubNavHtml('tds-settings')}
+      <div class="taxes-content-panel">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0;">Income TDS Settings</h2>
+          <button type="button" class="btn-outline" style="padding:8px 14px; display:flex; align-items:center; gap:6px;">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Find Accountants
+          </button>
+        </div>
 
-    <div class="settings-form-card" style="margin-bottom:20px;">
-      <h3 style="font-size:15px; margin-bottom:8px;">Income TDS Application Level</h3>
-      <div style="display:flex; gap:24px; margin-top:8px;">
-        <label class="custom-radio-label">
-          <input type="radio" name="tdsLevel" value="transaction" ${directTaxes.tds_level === 'transaction' ? 'checked' : ''}>
-          <span>At Transaction Level</span>
-        </label>
-        <label class="custom-radio-label">
-          <input type="radio" name="tdsLevel" value="line" ${directTaxes.tds_level === 'line' ? 'checked' : ''}>
-          <span>At Line Item Level</span>
-        </label>
-      </div>
+        <p style="font-size:13px; color:#6b7280; margin-bottom:20px; line-height:1.6;">
+          Tax Deducted at Source (TDS) is deducted from transactions or payments and remitted to the government. Configure how TDS is calculated. You can apply TDS to the entire transaction or individual line items, as required.
+        </p>
 
-      <div style="margin-top:16px;">
-        <label class="custom-checkbox-label">
-          <input type="checkbox" id="cbTdsReport" ${directTaxes.enable_tds_liabilities_report ? 'checked' : ''}>
-          <span>Enable TDS Liabilities Report</span>
-        </label>
-      </div>
-    </div>
+        <div class="settings-form-card" style="margin-bottom:20px;">
+          <h3 style="font-size:14px; font-weight:600; margin-bottom:12px;">Apply TDS:</h3>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <label class="custom-radio-label">
+              <input type="radio" name="tdsLevel" value="line" ${directTaxes.tds_level === 'line' ? 'checked' : ''}>
+              <span>At Line Item Level</span>
+            </label>
+            <label class="custom-radio-label">
+              <input type="radio" name="tdsLevel" value="transaction" ${directTaxes.tds_level !== 'line' ? 'checked' : ''}>
+              <span>At Transaction Level</span>
+            </label>
+          </div>
+        </div>
 
-    <div class="settings-table-card">
-      <div style="padding:14px 18px; border-bottom:1px solid var(--bd);">
-        <h3 style="font-size:14px; margin:0;">Standard Income Tax TDS / TCS Sections Reference</h3>
+        <div class="settings-form-card">
+          <h3 style="font-size:14px; font-weight:600; margin-bottom:4px;">TDS Liabilities Report</h3>
+          <p style="font-size:13px; color:#6b7280; margin-bottom:14px; line-height:1.6;">
+            Track TDS liabilities payable to the government and maintain records of related challans. Once the TDS liabilities report is enabled in ConvosisBooks, it cannot be disabled.
+          </p>
+          <label class="custom-checkbox-label">
+            <input type="checkbox" id="cbTdsReport" ${directTaxes.enable_tds_liabilities_report ? 'checked' : ''}>
+            <span>Enable TDS Liabilities Report</span>
+          </label>
+        </div>
+
+        <div style="margin-top:20px;">
+          <button type="button" class="btn-primary" id="btnSaveDirectTaxes">Save</button>
+        </div>
       </div>
-      <table class="settings-data-table">
-        <thead>
-          <tr>
-            <th>SECTION</th>
-            <th>NATURE OF PAYMENT</th>
-            <th>RATE</th>
-            <th>THRESHOLD LIMIT</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${sections.map(s => `
-            <tr>
-              <td><b>${esc(s.section)}</b></td>
-              <td>${esc(s.name)}</td>
-              <td>${esc(s.rate)}</td>
-              <td>${esc(s.threshold)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
     </div>
   `;
 
@@ -2219,52 +2564,229 @@ async function renderDigitalSignaturePage(container) {
 }
 
 async function renderPdfTemplatesPage(container) {
-  const data = await api('/settings/templates/');
+  let data = {};
+  try { data = await api('/settings/templates/'); } catch(e) { data = {}; }
   const tpls = data.templates || {};
+
+  const DOC_TYPES = [
+    { key: 'quotes',              label: 'Quotes' },
+    { key: 'sales_orders',        label: 'Sales Order' },
+    { key: 'invoices',            label: 'Invoices' },
+    { key: 'recurring_invoices',  label: 'Recurring Invoices' },
+    { key: 'purchase_orders',     label: 'Purchase Order' },
+    { key: 'bills',               label: 'Bills' },
+  ];
+
+  const THEMES = [
+    { value: 'convosis_modern',   label: 'Convosis Modern (Recommended)' },
+    { value: 'convosis_clean',    label: 'Convosis Clean Minimal' },
+    { value: 'convosis_standard', label: 'Convosis Classic Standard' },
+    { value: 'convosis_compact',  label: 'Convosis Compact' },
+  ];
+
+  const FONTS = [
+    { value: 'Inter, system-ui, sans-serif', label: 'Inter (Modern Sans)' },
+    { value: 'Roboto, sans-serif',           label: 'Roboto' },
+    { value: 'Helvetica Neue, Arial, sans-serif', label: 'Helvetica Neue' },
+    { value: 'Georgia, serif',               label: 'Georgia (Serif)' },
+  ];
+
+  const PAPER_SIZES = ['A4', 'A3', 'Letter', 'Legal'];
+
+  const ORIENTATIONS = [
+    { value: 'portrait',  label: 'Portrait' },
+    { value: 'landscape', label: 'Landscape' },
+  ];
+
+  const COLOR_PALETTES = [
+    { value: '#1a56db', label: 'Convosis Blue' },
+    { value: '#16a34a', label: 'Forest Green' },
+    { value: '#dc2626', label: 'Professional Red' },
+    { value: '#7c3aed', label: 'Violet' },
+    { value: '#ea580c', label: 'Orange' },
+    { value: '#374151', label: 'Charcoal' },
+  ];
+
+  function buildDocTypePanel(dt) {
+    const cfg = tpls[dt.key] || {};
+    const themeVal = cfg.theme || 'convosis_modern';
+    const fontVal = cfg.font || 'Inter, system-ui, sans-serif';
+    const paperVal = cfg.paper_size || 'A4';
+    const oriVal = cfg.orientation || 'portrait';
+    const colorVal = cfg.primary_color || '#1a56db';
+
+    return `
+      <div class="pdf-tpl-doc-panel" id="pdfPanel_${dt.key}">
+        <div class="settings-form-card" style="margin-bottom:0;">
+
+          <!-- Row 1: Template Theme & Font -->
+          <div class="form-grid-2" style="margin-bottom:16px;">
+            <div class="form-group">
+              <label class="form-label">Template Theme</label>
+              <select class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="theme">
+                ${THEMES.map(t => `<option value="${t.value}" ${themeVal === t.value ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Font Family</label>
+              <select class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="font">
+                ${FONTS.map(f => `<option value="${f.value}" ${fontVal === f.value ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 2: Paper Size & Orientation -->
+          <div class="form-grid-2" style="margin-bottom:16px;">
+            <div class="form-group">
+              <label class="form-label">Paper Size</label>
+              <select class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="paper_size">
+                ${PAPER_SIZES.map(p => `<option value="${p}" ${paperVal === p ? 'selected' : ''}>${p}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Page Orientation</label>
+              <select class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="orientation">
+                ${ORIENTATIONS.map(o => `<option value="${o.value}" ${oriVal === o.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 3: Primary Color -->
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label">Primary Color</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+              ${COLOR_PALETTES.map(c => `
+                <label style="cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; color:#6b7280;">
+                  <input type="radio" class="pdf-tpl-color-radio" name="color_${dt.key}" data-doc="${dt.key}" data-field="primary_color" value="${c.value}" ${colorVal === c.value ? 'checked' : ''} style="display:none;">
+                  <span style="display:block; width:28px; height:28px; border-radius:50%; background:${c.value}; border: 3px solid ${colorVal === c.value ? '#374151' : 'transparent'}; box-shadow:0 1px 4px rgba(0,0,0,.2);"></span>
+                  ${esc(c.label)}
+                </label>
+              `).join('')}
+              <label style="cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; color:#6b7280;">
+                <input type="color" class="pdf-tpl-color-custom" data-doc="${dt.key}" data-field="primary_color_custom" value="${colorVal}" style="width:28px; height:28px; border:none; border-radius:50%; cursor:pointer; padding:0;">
+                Custom
+              </label>
+            </div>
+          </div>
+
+          <!-- Row 4: Header & Footer text -->
+          <div class="form-grid-2" style="margin-bottom:16px;">
+            <div class="form-group">
+              <label class="form-label">Custom Header Text</label>
+              <input type="text" class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="header_text" value="${esc(cfg.header_text || '')}" placeholder="Optional header note">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Custom Footer Text</label>
+              <input type="text" class="form-control pdf-tpl-field" data-doc="${dt.key}" data-field="footer_text" value="${esc(cfg.footer_text || '')}" placeholder="e.g. Thank you for your business!">
+            </div>
+          </div>
+
+          <!-- Row 5: Show/Hide Fields -->
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="margin-bottom:8px;">Include in PDF</label>
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+              ${[
+                ['show_logo',         'Company Logo'],
+                ['show_signature',    'Digital Signature'],
+                ['show_watermark',    'Watermark'],
+                ['show_payment_stub', 'Payment Stub'],
+                ['show_terms',        'Terms & Conditions'],
+                ['show_notes',        'Notes / Remarks'],
+                ['show_tax_summary',  'Tax Summary Table'],
+              ].map(([k, lbl]) => `
+                <label class="custom-checkbox-label" style="min-width:160px;">
+                  <input type="checkbox" class="pdf-tpl-toggle" data-doc="${dt.key}" data-field="${k}" ${cfg[k] !== false ? 'checked' : ''}>
+                  <span style="font-size:13px;">${esc(lbl)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Save button -->
+          <div style="display:flex; justify-content:flex-end; gap:12px; padding-top:12px; border-top:1px solid var(--bd);">
+            <button type="button" class="btn-secondary" onclick="this.closest('.pdf-tpl-doc-panel').querySelectorAll('select, input').forEach(el => { if(el.defaultValue !== undefined) el.value = el.defaultValue; })">Reset</button>
+            <button type="button" class="btn-primary pdf-tpl-save-btn" data-doc="${dt.key}">Save ${esc(dt.label)} Template</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   container.innerHTML = `
     <div class="settings-page-header">
       <div class="settings-page-header-left">
         <h1>PDF Templates</h1>
-      </div>
-      <div class="settings-page-header-right">
-        <button type="button" class="btn-primary" id="btnSaveTemplates">Save Template Settings</button>
+        <p style="margin:4px 0 0; font-size:13px; color:var(--tx-dim);">Customize PDF layout and appearance for each document type.</p>
       </div>
     </div>
 
-    <div class="settings-form-card">
-      <div class="form-grid-2">
-        <div class="form-group">
-          <label>Invoice Template Theme</label>
-          <select id="tplInvoiceTheme" class="form-control">
-            <option value="convosis_modern" ${tpls.invoice_template === 'convosis_modern' ? 'selected' : ''}>Convosis Modern (Recommended)</option>
-            <option value="convosis_clean" ${tpls.invoice_template === 'convosis_clean' ? 'selected' : ''}>Convosis Clean Minimal</option>
-            <option value="convosis_standard" ${tpls.invoice_template === 'convosis_standard' ? 'selected' : ''}>Convosis Classic Standard</option>
-          </select>
+    <!-- Document type tabs -->
+    <div class="pdf-tpl-tabs-wrap" style="border-bottom:1px solid var(--bd); margin-bottom:0; display:flex; gap:0; overflow-x:auto;">
+      ${DOC_TYPES.map((dt, i) => `
+        <button type="button"
+          class="pdf-tpl-tab${i === 0 ? ' active' : ''}"
+          data-target="pdfPanel_${dt.key}"
+          style="padding:12px 20px; background:none; border:none; border-bottom: 3px solid ${i === 0 ? '#2563eb' : 'transparent'}; font-size:13px; font-weight:${i === 0 ? '600' : '400'}; color:${i === 0 ? '#2563eb' : '#6b7280'}; cursor:pointer; white-space:nowrap; transition:all .15s;"
+          onclick="(function(btn){
+            document.querySelectorAll('.pdf-tpl-tab').forEach(b => {
+              b.style.borderBottomColor='transparent'; b.style.color='#6b7280'; b.style.fontWeight='400';
+            });
+            btn.style.borderBottomColor='#2563eb'; btn.style.color='#2563eb'; btn.style.fontWeight='600';
+            document.querySelectorAll('.pdf-tpl-doc-panel').forEach(p => p.style.display='none');
+            document.getElementById(btn.dataset.target).style.display='block';
+          })(this)"
+        >${esc(dt.label)}</button>
+      `).join('')}
+    </div>
+
+    <div style="padding:20px 0;">
+      ${DOC_TYPES.map((dt, i) => `
+        <div style="display:${i === 0 ? 'block' : 'none'};">
+          ${buildDocTypePanel(dt)}
         </div>
-        <div class="form-group">
-          <label>Font Family</label>
-          <select id="tplFont" class="form-control">
-            <option value="Inter, system-ui, sans-serif" selected>Inter (Modern Sans)</option>
-            <option value="Roboto, sans-serif">Roboto</option>
-            <option value="Helvetica Neue, Arial, sans-serif">Helvetica Neue</option>
-          </select>
-        </div>
-      </div>
+      `).join('')}
     </div>
   `;
 
-  container.querySelector('#btnSaveTemplates').addEventListener('click', async () => {
-    const payload = {
-      invoice_template: container.querySelector('#tplInvoiceTheme').value,
-      font_family: container.querySelector('#tplFont').value
-    };
-    try {
-      await api('/settings/templates/', { method: 'POST', body: JSON.stringify(payload) });
-      toast('Template preferences saved.', 'success');
-    } catch (err) {
-      toast(err.message || 'Failed to save template preferences.', 'error');
-    }
+  // Fix panel visibility toggling via IDs
+  container.querySelectorAll('.pdf-tpl-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      container.querySelectorAll('.pdf-tpl-doc-panel').forEach(p => p.closest('div').style.display = 'none');
+      const target = container.querySelector(`#${tab.dataset.target}`);
+      if (target) target.closest('div').style.display = 'block';
+    });
+  });
+
+  // Save button handlers
+  container.querySelectorAll('.pdf-tpl-save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const docKey = btn.dataset.doc;
+      const panel = container.querySelector(`#pdfPanel_${docKey}`);
+      if (!panel) return;
+
+      const payload = {};
+      panel.querySelectorAll('.pdf-tpl-field').forEach(el => {
+        payload[el.dataset.field] = el.value;
+      });
+      panel.querySelectorAll('.pdf-tpl-toggle').forEach(el => {
+        payload[el.dataset.field] = el.checked;
+      });
+      // Color radio
+      const colorRadio = panel.querySelector('.pdf-tpl-color-radio:checked');
+      if (colorRadio) payload['primary_color'] = colorRadio.value;
+      const colorCustom = panel.querySelector('.pdf-tpl-color-custom');
+      if (colorCustom && !colorRadio) payload['primary_color'] = colorCustom.value;
+
+      try {
+        await api('/settings/templates/', {
+          method: 'POST',
+          body: JSON.stringify({ doc_type: docKey, ...payload })
+        });
+        toast(`${docKey.replace(/_/g, ' ')} template saved.`, 'success');
+      } catch (err) {
+        toast(err.message || 'Failed to save template.', 'error');
+      }
+    });
   });
 }
 

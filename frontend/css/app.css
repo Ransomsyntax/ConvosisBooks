@@ -698,35 +698,30 @@ body.modal-open {
 }
 
 .doc-ribbon {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 110px;
-  height: 110px;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 5;
+  display: none !important;
 }
-.doc-ribbon span {
+
+.doc-watermark-stamp {
   position: absolute;
-  display: block;
-  width: 160px;
-  padding: 6px 0;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.18);
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
+  top: 48%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-28deg);
+  border: 4px solid currentColor;
+  border-radius: 12px;
+  padding: 10px 32px;
+  font-size: 40px;
+  font-weight: 800;
   text-transform: uppercase;
-  text-align: center;
-  left: -40px;
-  top: 24px;
-  transform: rotate(-45deg);
-  letter-spacing: 0.6px;
+  letter-spacing: 4px;
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 1;
+  user-select: none;
 }
-.doc-ribbon.paid span { background: #10b981; }
-.doc-ribbon.overdue span { background: #ea580c; }
-.doc-ribbon.sent span, .doc-ribbon.open span { background: #3b82f6; }
-.doc-ribbon.draft span { background: #64748b; }
+.doc-watermark-stamp.paid { color: #10b981; }
+.doc-watermark-stamp.overdue { color: #ea580c; }
+.doc-watermark-stamp.sent, .doc-watermark-stamp.open { color: #3b82f6; }
+.doc-watermark-stamp.draft { color: #64748b; }
 
 .doc-sheet-header {
   display: flex;
@@ -1691,3 +1686,14 @@ th.l, td.l, table th.l, table td.l {
   text-decoration: none;
 }
 
+
+@media (max-width: 1280px) {
+  .doc-canvas-scroll, .invoice-form-page, .tw {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .doc-form-card {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+}

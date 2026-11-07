@@ -127,6 +127,19 @@ const Modal = (() => {
     }
   });
 
+  window.addEventListener('popstate', () => {
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      top.close();
+    }
+  });
+  window.addEventListener('hashchange', () => {
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      top.close();
+    }
+  });
+
   return { open, get top() { return stack[stack.length - 1]; }, count: () => stack.length, stack };
 })();
 
@@ -306,6 +319,137 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
   return false;
 }
 window.handleQuickCreateSelect = handleQuickCreateSelect;
+
+function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', onNew = null } = {}) {
+  if (!selectEl || selectEl._searchableInit) return;
+  selectEl._searchableInit = true;
+
+  selectEl.style.display = 'none';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'searchable-select-wrap';
+  wrapper.style.cssText = 'position:relative;flex:1;display:flex;align-items:center;width:100%;';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'in searchable-select-input';
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.style.cssText = 'width:100%;height:36px;padding-right:28px;cursor:pointer;';
+
+  const arrow = document.createElement('span');
+  arrow.innerHTML = '▾';
+  arrow.style.cssText = 'position:absolute;right:10px;pointer-events:none;color:var(--tx-muted);font-size:12px;';
+
+  const menu = document.createElement('div');
+  menu.className = 'searchable-select-menu';
+  menu.style.cssText = 'display:none;position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--surface-glass-solid, #fff);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,0.15);border-radius:6px;z-index:999;margin-top:4px;';
+
+  wrapper.appendChild(input);
+  wrapper.appendChild(arrow);
+  wrapper.appendChild(menu);
+  selectEl.parentNode.insertBefore(wrapper, selectEl.nextSibling);
+
+  function syncFromSelect() {
+    const selOpt = selectEl.options[selectEl.selectedIndex];
+    input.value = (selOpt && selOpt.value && !selOpt.value.startsWith('__new_')) ? selOpt.text : '';
+  }
+  syncFromSelect();
+
+  function renderOptions(filterText = '') {
+    menu.innerHTML = '';
+    const q = (filterText || '').toLowerCase().trim();
+    const optsList = Array.from(selectEl.options);
+    let count = 0;
+
+    optsList.forEach(opt => {
+      if (!opt.value && !opt.text.trim()) return;
+      if (opt.value.startsWith('__new_')) return;
+      if (q && !opt.text.toLowerCase().includes(q)) return;
+
+      count++;
+      const item = document.createElement('div');
+      item.className = 'searchable-opt-item';
+      item.style.cssText = 'padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--bd-glass-subtle, rgba(0,0,0,0.04));';
+      if (String(selectEl.value) === String(opt.value)) {
+        item.style.background = 'var(--surface-glass-active, rgba(59,130,246,0.1))';
+        item.style.fontWeight = '600';
+        item.style.color = 'var(--accent, #2563eb)';
+      }
+      item.textContent = opt.text;
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        selectEl.value = opt.value;
+        input.value = opt.text;
+        closeMenu();
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      item.addEventListener('mouseenter', () => {
+        item.style.background = 'var(--surface-glass-hover, #f1f5f9)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = String(selectEl.value) === String(opt.value) ? 'var(--surface-glass-active, rgba(59,130,246,0.1))' : '';
+      });
+      menu.appendChild(item);
+    });
+
+    if (count === 0 && q) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:8px 12px;font-size:12px;color:var(--tx-muted);';
+      empty.textContent = `No matches found for "${filterText}"`;
+      menu.appendChild(empty);
+    }
+
+    const newOpt = optsList.find(o => o.value.startsWith('__new_'));
+    const addAction = document.createElement('div');
+    addAction.style.cssText = 'padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--accent, #2563eb);cursor:pointer;background:var(--surface-glass-subtle, #f8fafc);border-top:1px solid var(--bd);display:flex;align-items:center;gap:6px;';
+    addAction.innerHTML = `<i class="fa-solid fa-plus" style="font-size:11px;"></i> ${newOpt ? esc(newOpt.text) : '+ Add New…'}`;
+    addAction.addEventListener('mousedown', e => {
+      e.preventDefault();
+      closeMenu();
+      if (onNew) onNew();
+      else if (newOpt) {
+        selectEl.value = newOpt.value;
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    menu.appendChild(addAction);
+  }
+
+  function openMenu() {
+    renderOptions(input.value);
+    menu.style.display = 'block';
+  }
+
+  function closeMenu() {
+    menu.style.display = 'none';
+    syncFromSelect();
+  }
+
+  input.addEventListener('focus', () => {
+    openMenu();
+    input.select();
+  });
+  input.addEventListener('input', e => {
+    openMenu();
+    renderOptions(e.target.value);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeMenu();
+    else if (e.key === 'Enter') {
+      const firstItem = menu.querySelector('.searchable-opt-item');
+      if (firstItem) firstItem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    }
+  });
+
+  document.addEventListener('click', e => {
+    if (!wrapper.contains(e.target)) closeMenu();
+  });
+
+  selectEl.addEventListener('change', () => syncFromSelect());
+}
+window.setupSearchableSelect = setupSearchableSelect;
 
 if (typeof document !== 'undefined') {
   document.addEventListener('focusin', e => {
@@ -3042,7 +3186,7 @@ async function docForm(kind, id, targetEl, onDone) {
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
-  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
+  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td style="width:130px;min-width:110px;"><select class="in l-gst" aria-label="GST rate" style="width:100%;min-width:90px;">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
   const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
   const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
@@ -3093,7 +3237,7 @@ async function docForm(kind, id, targetEl, onDone) {
                   <th>Qty</th>
                   <th>Rate (₹)</th>
                   <th>Disc %</th>
-                  <th>GST</th>
+                  <th style="width:130px;min-width:110px;">GST</th>
                   <th class="r">Amount</th>
                   <th></th>
                 </tr>
@@ -3416,7 +3560,7 @@ async function docForm(kind, id, targetEl, onDone) {
       inv ? '' : fld({ name: 'vendor_ref', label: 'Vendor reference', value: r.vendor_ref }),
     ].join('')}</div>
     <h3 style="margin:16px 0 6px;font-size:14px">Line items</h3>
-    <div class="tw"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th>GST</th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
+    <div class="tw" style="overflow-x:auto;"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th style="width:130px;min-width:110px;">GST</th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
     <div class="er" data-err="lines" role="alert"></div>
     <button type="button" class="btn" data-add style="margin-top:8px">+ Add line</button>
     <div class="tot" aria-live="polite"><div><span>Taxable value</span><b data-t="sub">₹0.00</b></div><div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div><div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div><div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div><div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div></div>
@@ -5595,21 +5739,34 @@ async function stockMoveModal() {
 
 async function challanModal(id) {
   const [custs, rec] = await Promise.all([
-    api('lookup/customers/'),
+    api('lookup/customers/').catch(() => []),
     id ? api(`delivery-challans/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
   const o = rec || { customer_id: '', date: APP.today, challan_type: 'other', vehicle_number: '', notes: '' };
   formModal({
     title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
     body: `<div class="g">
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: custs.map(c => [c.id, c.name]), value: o.customer_id, col: 's6' })}
+      ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: [['', 'Select Customer…'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || '', col: 's6' })}
       ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
       ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', opts: [['job_work', 'Job Work'], ['supply_on_approval', 'Supply on Approval'], ['other', 'Other Delivery']], value: o.challan_type, col: 's6' })}
       ${fld({ name: 'vehicle_number', label: 'Vehicle Number', value: o.vehicle_number || '', col: 's6', ph: 'KL-05-AB-1234' })}
       ${fld({ name: 'notes', label: 'Notes / Transportation Memo', type: 'textarea', value: o.notes || '', col: 's12' })}
     </div>`,
     onSubmit: async d => {
+      if (!d.customer || d.customer === '__new_customer__') {
+        throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
+      }
       d.customer = Number(d.customer);
+
+      const vNum = (d.vehicle_number || '').trim().toUpperCase();
+      if (vNum) {
+        const vClean = vNum.replace(/[\s-]/g, '');
+        if (!/^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/.test(vClean)) {
+          throw new ApiErr(400, { vehicle_number: 'Enter a valid vehicle registration number format (e.g. KL-05-AB-1234).' }, 'Invalid vehicle registration number format.');
+        }
+        d.vehicle_number = vNum;
+      }
+
       if (id) await api(`delivery-challans/${id}/`, { method: 'PUT', body: d });
       else await api('delivery-challans/', { method: 'POST', body: d });
       toast(id ? 'Delivery Challan updated' : 'Delivery Challan created');
@@ -5644,13 +5801,13 @@ async function ewayBillModal() {
 }
 
 async function recurringInvoiceModal(id) {
-  const custs = await api('lookup/customers/');
-  const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: custs[0]?.id, frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00', status: 'active' };
+  const custs = await api('lookup/customers/').catch(() => []);
+  const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: '', frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00', status: 'active' };
   formModal({
     title: id ? 'Edit Recurring Invoice Profile' : 'New Recurring Invoice Profile',
     body: `<div class="g form-grid-aligned">
       ${fld({ name: 'profile_name', label: 'Profile Name', req: true, value: o.profile_name, col: 's6', ph: 'e.g. Monthly Retainer Support' })}
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: custs.map(c => [c.id, c.name]), value: o.customer_id || o.customer, req: true, col: 's6' })}
+      ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Select Customer…'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', req: true, col: 's6' })}
       ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']], value: o.frequency, col: 's6' })}
       ${fld({ name: 'total', label: 'Recurring Amount (₹)', type: 'number', req: true, value: o.total, col: 's6', ph: '15000.00' })}
       ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date, col: 's6' })}
@@ -5658,7 +5815,23 @@ async function recurringInvoiceModal(id) {
       ${fld({ name: 'status', label: 'Status', type: 'select', opts: [['active', 'Active'], ['paused', 'Paused'], ['expired', 'Expired']], value: o.status || 'active', col: 's6' })}
     </div>`,
     onSubmit: async d => {
+      const pName = (d.profile_name || '').trim();
+      if (!pName) {
+        throw new ApiErr(400, { profile_name: 'Profile Name is required.' }, 'Profile Name is required.');
+      }
+      if (/[#@!$%^*+=~`<>?[\]\\{}]/.test(pName)) {
+        throw new ApiErr(400, { profile_name: 'Profile Name contains invalid characters. Special characters like @, #, $, %, ^, * are not allowed.' }, 'Profile Name contains invalid special characters.');
+      }
+
+      if (!d.customer || d.customer === '__new_customer__') {
+        throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
+      }
       d.customer = Number(d.customer);
+
+      if (d.start_date && d.next_date && new Date(d.next_date) < new Date(d.start_date)) {
+        throw new ApiErr(400, { next_date: 'Next Invoice Date cannot be earlier than Start Date.' }, 'Next Invoice Date cannot be earlier than Start Date.');
+      }
+
       d.total = num(d.total);
       if (id) await api(`recurring-invoices/${id}/`, { method: 'PUT', body: d });
       else await api('recurring-invoices/', { method: 'POST', body: d });
@@ -6461,7 +6634,7 @@ async function quoteForm(id, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote#<span style="color:#ef4444;">*</span></label>
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote Number<span style="color:#ef4444;">*</span></label>
             <div style="display:flex;gap:6px;flex:1;max-width:440px;">
               <input type="text" class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;">
               <button type="button" class="btn ic" id="btn-quote-gear" title="Configure Quote Number Sequence" style="color:#3b82f6;border-radius:6px;">
@@ -6471,18 +6644,23 @@ async function quoteForm(id, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference#</label>
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference Number</label>
             <div style="flex:1;max-width:440px;">
-              <input type="text" class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="">
+              <input type="text" class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="" style="width:100%;">
             </div>
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
             <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote Date<span style="color:#ef4444;">*</span></label>
-            <div style="display:flex;align-items:center;gap:16px;flex:1;max-width:650px;">
-              <input type="date" class="in" id="q-date" name="date" value="${esc(qDate)}" required style="width:180px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);margin-left:12px;">Expiry Date</label>
-              <input type="date" class="in" id="q-expiry" name="expiry_date" value="${esc(qExpiry)}" style="width:180px;">
+            <div style="flex:1;max-width:440px;">
+              <input type="date" class="in" id="q-date" name="date" value="${esc(qDate)}" required style="width:100%;">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Expiry Date<span style="color:#ef4444;">*</span></label>
+            <div style="flex:1;max-width:440px;">
+              <input type="date" class="in" id="q-expiry" name="expiry_date" value="${esc(qExpiry)}" required style="width:100%;">
             </div>
           </div>
 
@@ -6726,6 +6904,8 @@ async function quoteForm(id, onDone) {
         opt.textContent = newCust.name;
         opt.selected = true;
         $('#q-customer', form).appendChild(opt);
+        $('#q-customer', form).value = newCust.id;
+        $('#q-customer', form).dispatchEvent(new Event('change', { bubbles: true }));
         updateProjectFilter();
       }
     });
@@ -6910,6 +7090,17 @@ async function quoteForm(id, onDone) {
       $('#q-date', form).focus();
       return;
     }
+    const expiryVal = $('#q-expiry', form).value;
+    if (!expiryVal) {
+      toast('Please enter an expiry date.', 'err');
+      $('#q-expiry', form).focus();
+      return;
+    }
+    if (new Date(expiryVal) < new Date(dateVal)) {
+      toast('Expiry Date cannot be earlier than Quote Date.', 'err');
+      $('#q-expiry', form).focus();
+      return;
+    }
 
     const lines = $$('.ln-quote', tbody).map((tr, idx) => ({
       item: $('.l-item', tr).value || null,
@@ -6998,6 +7189,7 @@ async function quoteForm(id, onDone) {
 
   updateProjectFilter();
   renderAttach();
+  setupSearchableSelect($('#q-customer', form), { placeholder: 'Type or click to select customer…' });
   calcQuote();
 }
 
@@ -7107,10 +7299,15 @@ async function salesOrderForm(id, onDone) {
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
             <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order Date<span style="color:#ef4444;">*</span></label>
-            <div style="display:flex;align-items:center;gap:16px;flex:1;max-width:650px;">
-              <input type="date" class="in" id="so-date" name="date" value="${esc(soDate)}" required style="width:180px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);margin-left:12px;">Expected Shipment</label>
-              <input type="date" class="in" id="so-ship-date" name="expected_shipment_date" value="${esc(soShipDate)}" style="width:180px;">
+            <div style="flex:1;max-width:440px;">
+              <input type="date" class="in" id="so-date" name="date" value="${esc(soDate)}" required style="width:100%;">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Expected Shipment Date</label>
+            <div style="flex:1;max-width:440px;">
+              <input type="date" class="in" id="so-ship-date" name="expected_shipment_date" value="${esc(soShipDate)}" style="width:100%;">
             </div>
           </div>
 
@@ -7597,7 +7794,7 @@ async function invoiceForm(id, targetEl, onDone) {
             </div>
           </div>
 
-          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow:hidden;">
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>

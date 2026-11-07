@@ -4530,6 +4530,8 @@ class RecurringInvoiceResource(Resource):
     def create(self, data, user):
         c = Cleaner(data)
         pname = c.text('profile_name', required=True, max_len=150)
+        if pname and re.search(r'[#@!$%^*+=~`<>{}[\]\\]', pname):
+            c.err('profile_name', 'Profile name contains invalid characters.')
         cid = c.integer('customer', required=True, lo=1)
         cust = Customer.objects.filter(pk=cid).first()
         if not cust:
@@ -4538,6 +4540,8 @@ class RecurringInvoiceResource(Resource):
         sdate = c.date('start_date', required=True)
         edate = c.date('end_date')
         next_d = c.date('next_date', default=sdate)
+        if sdate and next_d and next_d < sdate:
+            c.err('next_date', 'Next invoice date cannot be earlier than start date.')
         tot = c.number('total', required=True, lo=Decimal('0.01'))
         c.done()
         return RecurringInvoice.objects.create(
@@ -4549,7 +4553,10 @@ class RecurringInvoiceResource(Resource):
     def update(self, obj, data, user):
         c = Cleaner(data)
         if 'profile_name' in data:
-            obj.profile_name = c.text('profile_name', required=True, max_len=150)
+            pname = c.text('profile_name', required=True, max_len=150)
+            if pname and re.search(r'[#@!$%^*+=~`<>{}[\]\\]', pname):
+                c.err('profile_name', 'Profile name contains invalid characters.')
+            obj.profile_name = pname
         if 'customer' in data:
             cid = c.integer('customer', required=True, lo=1)
             cust = Customer.objects.filter(pk=cid).first()
@@ -4564,6 +4571,8 @@ class RecurringInvoiceResource(Resource):
             obj.end_date = c.date('end_date')
         if 'next_date' in data:
             obj.next_date = c.date('next_date', default=obj.start_date)
+        if obj.start_date and obj.next_date and obj.next_date < obj.start_date:
+            c.err('next_date', 'Next invoice date cannot be earlier than start date.')
         if 'status' in data:
             obj.status = c.choice('status', ['active', 'paused', 'expired'], default=obj.status)
         if 'total' in data:
@@ -4675,6 +4684,10 @@ class DeliveryChallanResource(Resource):
         dt = c.date('date', required=True)
         ctype = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default='other')
         vnum = c.text('vehicle_number', max_len=50)
+        if vnum:
+            v_clean = re.sub(r'[\s\-]', '', vnum).upper()
+            if not re.match(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$', v_clean):
+                c.err('vehicle_number', 'Invalid vehicle number format (e.g. KL-07-AB-1234).')
         notes = c.text('notes', max_len=1000)
         c.done()
 
@@ -4711,7 +4724,12 @@ class DeliveryChallanResource(Resource):
         if 'challan_type' in data:
             obj.challan_type = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default=obj.challan_type)
         if 'vehicle_number' in data:
-            obj.vehicle_number = c.text('vehicle_number', max_len=50)
+            vnum = c.text('vehicle_number', max_len=50)
+            if vnum:
+                v_clean = re.sub(r'[\s\-]', '', vnum).upper()
+                if not re.match(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$', v_clean):
+                    c.err('vehicle_number', 'Invalid vehicle number format (e.g. KL-07-AB-1234).')
+            obj.vehicle_number = vnum
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=1000)
         if 'status' in data:

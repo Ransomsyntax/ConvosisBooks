@@ -1186,7 +1186,24 @@ function listPage(root, cfg) {
       const sortMark = c => c.s ? (st.ordering === c.s ? ' ▲' : st.ordering === '-' + c.s ? ' ▼' : '') : '';
       const empty = !p.count ? (st.q || Object.values(st.f).some(Boolean) ? 'No matching records.' : esc(cfg.empty || 'No records yet.')) : '';
       const totalCols = cfg.cols.length + (cfg.actions ? 1 : 0) + 1;
-      $('#lt', root).innerHTML = `<table><thead><tr><th style="width:36px;text-align:center;"><input type="checkbox" id="cb-all" aria-label="Select all" style="cursor:pointer;vertical-align:middle;"></th>${cfg.cols.map(c => `<th ${c.s ? `data-s="${c.s}" tabindex="0" aria-sort="${st.ordering === c.s ? 'ascending' : st.ordering === '-' + c.s ? 'descending' : 'none'}"` : ''} class="${c.r ? 'r' : ''}">${esc(c.h)}${sortMark(c)}</th>`).join('')}${cfg.actions ? '<th></th>' : ''}</tr></thead><tbody>${p.results.map(r => `<tr><td style="width:36px;text-align:center;"><input type="checkbox" class="cb-row" data-id="${r.id}" aria-label="Select item" style="cursor:pointer;vertical-align:middle;"></td>${cfg.cols.map(c => `<td class="${c.r ? 'r' : ''}">${c.f(r)}</td>`).join('')}${cfg.actions ? `<td class="rowa">${cfg.actions(r).map(([a, l, k]) => `<button type="button" class="${k || ''}" data-act="${a}" data-id="${r.id}">${esc(l)}</button>`).join('')}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${totalCols}"><div class="empty">${empty}${!p.count && !st.q && cfg.onNew ? `<br><button class="btn p" data-x="new" type="button" style="margin-top:8px">+ ${esc(cfg.newLabel)}</button>` : ''}</div></td></tr>`}</tbody></table>`;
+      const renderRowActions = (acts, rowId) => {
+        if (!acts || !acts.length) return '';
+        if (acts.length <= 3) {
+          return acts.map(([a, l, k]) => `<button type="button" class="${k || ''}" data-act="${a}" data-id="${rowId}">${esc(l)}</button>`).join('');
+        }
+        const pri = acts.slice(0, 2);
+        const sec = acts.slice(2);
+        return `<div class="rowa-wrap" style="display:inline-flex;align-items:center;gap:4px;">` +
+          pri.map(([a, l, k]) => `<button type="button" class="${k || ''}" data-act="${a}" data-id="${rowId}">${esc(l)}</button>`).join('') +
+          `<div class="rowa-more-wrap" style="position:relative;display:inline-block;">` +
+            `<button type="button" class="btn-rowa-more" data-rowa-more style="padding:2px 8px;font-size:12px;border-radius:4px;border:1px solid var(--bd-glass,#cbd5e1);background:var(--bg-card,#fff);cursor:pointer;white-space:nowrap;">More ▾</button>` +
+            `<div class="rowa-menu-pop" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;min-width:145px;background:var(--bg-card,#ffffff);border:1px solid var(--bd-glass,#cbd5e1);border-radius:6px;box-shadow:0 8px 20px rgba(0,0,0,0.14);z-index:100;padding:4px 0;text-align:left;">` +
+              sec.map(([a, l, k]) => `<button type="button" class="rowa-menu-item ${k || ''}" data-act="${a}" data-id="${rowId}" style="display:block;width:100%;text-align:left;padding:6px 12px;font-size:12px;border:none;background:none;cursor:pointer;color:var(--tx,#1e293b);">${esc(l)}</button>`).join('') +
+            `</div>` +
+          `</div>` +
+        `</div>`;
+      };
+      $('#lt', root).innerHTML = `<table><thead><tr><th style="width:36px;text-align:center;"><input type="checkbox" id="cb-all" aria-label="Select all" style="cursor:pointer;vertical-align:middle;"></th>${cfg.cols.map(c => `<th ${c.s ? `data-s="${c.s}" tabindex="0" aria-sort="${st.ordering === c.s ? 'ascending' : st.ordering === '-' + c.s ? 'descending' : 'none'}"` : ''} class="${c.r ? 'r' : ''}">${esc(c.h)}${sortMark(c)}</th>`).join('')}${cfg.actions ? '<th></th>' : ''}</tr></thead><tbody>${p.results.map(r => `<tr><td style="width:36px;text-align:center;"><input type="checkbox" class="cb-row" data-id="${r.id}" aria-label="Select item" style="cursor:pointer;vertical-align:middle;"></td>${cfg.cols.map(c => `<td class="${c.r ? 'r' : ''}">${c.f(r)}</td>`).join('')}${cfg.actions ? `<td class="rowa">${renderRowActions(cfg.actions(r), r.id)}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${totalCols}"><div class="empty">${empty}${!p.count && !st.q && cfg.onNew ? `<br><button class="btn p" data-x="new" type="button" style="margin-top:8px">+ ${esc(cfg.newLabel)}</button>` : ''}</div></td></tr>`}</tbody></table>`;
       st.total = p.count;
       $('#cnt', root).textContent = p.count + (p.count === 1 ? ' record' : ' records');
       $('#pgr', root).innerHTML = `<span class="sub">Page ${p.page} of ${p.pages}</span><span class="act"><select class="btn" data-size aria-label="Rows per page">${opts([10, 25, 50, 100].map(n => [n, n + ' / page']), st.size)}</select><button class="btn" data-x="pv" type="button" ${p.page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn" data-x="nx" type="button" ${p.page >= p.pages ? 'disabled' : ''}>Next</button></span>`;
@@ -1256,6 +1273,17 @@ function listPage(root, cfg) {
     }
     const th = e.target.closest('th[data-s]'); if (th) return sortBy(th);
     if (e.target.closest('[data-retry]')) return load();
+    const moreBtn = e.target.closest('[data-rowa-more]');
+    if (moreBtn) {
+      e.stopPropagation();
+      const pop = moreBtn.nextElementSibling;
+      const isOpen = pop && pop.style.display === 'block';
+      root.querySelectorAll('.rowa-menu-pop').forEach(p => { p.style.display = 'none'; });
+      if (pop && !isOpen) pop.style.display = 'block';
+      return;
+    }
+    root.querySelectorAll('.rowa-menu-pop').forEach(p => { p.style.display = 'none'; });
+
     if (!e.target.closest('.export-dropdown-wrap')) {
       const pop = $('.export-menu-pop', root);
       if (pop) pop.style.display = 'none';
@@ -1498,9 +1526,9 @@ const LISTS = {
     ],
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
-      { h: 'Quote#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}"><b>${esc(r.number)}</b></button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
+      { h: 'Quote Number', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}"><b>${esc(r.number)}</b></button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
       { h: 'Customer Name', f: r => esc(r.party || r.customer_name) },
-      { h: 'Reference#', f: r => esc(r.reference_number || '—') },
+      { h: 'Reference Number', f: r => esc(r.reference_number || '—') },
       { h: 'Status', f: r => {
         const map = {
           draft: ['chip-lavender', 'DRAFT'],
@@ -1568,11 +1596,7 @@ const LISTS = {
     api: 'sales-orders', title: 'Sales Orders', bc: 'Sales', newLabel: 'New sales order',
     onNew: () => salesOrderForm(), ordering: '-date', empty: 'No sales orders yet. Click + New sales order to create one.',
     filters: [
-      ['all', 'All'],
-      ['draft', 'Draft'],
-      ['confirmed', 'Confirmed'],
-      ['closed', 'Closed'],
-      ['void', 'Void']
+      { name: 'status', label: 'Status', opts: [['', 'Status: All'], ['draft', 'Draft'], ['confirmed', 'Confirmed'], ['closed', 'Closed'], ['void', 'Void']] }
     ],
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
@@ -1635,8 +1659,11 @@ const LISTS = {
   'recurring-invoices': {
     api: 'recurring-invoices', title: 'Recurring Invoices', bc: 'Sales', newLabel: 'New recurring profile', onNew: () => recurringInvoiceModal(), ordering: '-created_at', empty: 'No recurring profiles yet.',
     cols: [{ h: 'Profile Name', s: 'profile_name', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.profile_name)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Frequency', f: r => badge(r.frequency) }, { h: 'Next Date', f: r => fd(r.next_date) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Status', f: r => badge(r.status) }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? recurringInvoiceModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => {
+      if (a === 'edit') recurringInvoiceModal(r.id);
+      else if (a === 'delete') deleteRecord('recurring-invoices', r, 'recurring profile');
+    },
   },
   'retainer-invoices': {
     api: 'retainer-invoices', title: 'Retainer Invoices', bc: 'Sales', newLabel: 'New retainer invoice',
@@ -1657,8 +1684,12 @@ const LISTS = {
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Challan#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Type', f: r => esc(r.challan_type) }, { h: 'Vehicle#', f: r => esc(r.vehicle_number || '—') }, { h: 'Status', f: r => badge(r.status) }],
-    actions: r => [['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
-    onAction: (a, r) => a === 'edit' ? challanModal(r.id) : (a === 'sign' ? openSignatureModal(r, 'delivery-challans', () => refresh()) : null),
+    actions: r => [['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign'], ['delete', 'Delete', 'd']],
+    onAction: (a, r) => {
+      if (a === 'edit') challanModal(r.id);
+      else if (a === 'sign') openSignatureModal(r, 'delivery-challans', () => refresh());
+      else if (a === 'delete') deleteRecord('delivery-challans', r, 'delivery challan');
+    },
   },
   'credit-notes': {
     api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',
@@ -1905,8 +1936,8 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const isDarkHead = theme === 'modern' || (!inv && theme !== 'convosis');
 
   return `
-    <div class="doc-sheet theme-${theme}" style="--theme-color:${color};">
-      <div class="doc-ribbon ${ribClass}"><span>${ribText}</span></div>
+    <div class="doc-sheet theme-${theme}" style="--theme-color:${color};position:relative;">
+      <div class="doc-watermark-stamp ${ribClass}"><span>${ribText}</span></div>
 
       <div class="doc-sheet-header">
         <div class="doc-company-box">

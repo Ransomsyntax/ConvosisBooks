@@ -4,7 +4,7 @@ const IC = { home: 'M3 11l9-8 9 8v10h-6v-6H9v6H3z', items: 'M3 7l9-4 9 4v10l-9 4
 const NAV = [
   ['Home', 'home', ['Dashboard', 'Getting Started', 'Recent Updates']],
   ['Items', 'items', ['Items', 'Item Categories', 'Price Lists']],
-  ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Warehouses']],
+  ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Transfers', 'Warehouses']],
   ['Sales', 'sales', ['Customers', 'Quotes', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
   ['Time Tracking', 'time', ['Projects', 'Timesheets']],
@@ -62,6 +62,7 @@ const ROUTES = {
   'inventory': r => listPage(r, LISTS.inventory),
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
+  'inventory/stock-transfers': r => listPage(r, LISTS['stock-transfers']),
   'inventory/stock-movement': r => { location.hash = '#/reports/stock-movement'; },
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
@@ -207,6 +208,7 @@ const NAV_NEW_ACTIONS = {
   'items/item-categories': () => categoryModal(),
   'items/price-lists': () => priceListModal(),
   'inventory/stock-adjustments': () => adjustForm(),
+  'inventory/stock-transfers': () => stockTransferModal(),
   'reports/stock-movement': () => stockMoveModal(),
   'reports/stock-transfer-report': () => stockMoveModal(),
   'inventory/warehouses': () => warehouseModal(),
@@ -382,13 +384,24 @@ const QC = [
   ['Payment received', () => paymentForm('payments-received')],
   ['Payment made', () => paymentForm('payments-made')],
   ['Item', () => itemForm()],
-  ['Stock adjustment', () => adjustForm()]
+  ['Stock adjustment', () => adjustForm()],
+  ['Stock transfer', () => stockTransferModal()]
 ];
 const qcmEl = $('#qcm');
 if (qcmEl) qcmEl.innerHTML = QC.map((q, i) => `<button class="mi" type="button" data-q="${i}">New ${esc(q[0].toLowerCase())}</button>`).join('');
 
 function openRecord(t, id) {
-  const M = { customer: ['sales/customers', () => partyDetail('customers', id)], vendor: ['purchases/vendors', () => partyDetail('vendors', id)], invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)], bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)], item: ['items/items-services', () => itemForm(id)], sales_order: ['sales/sales-orders', () => viewSalesOrderDetail(id)], 'sales-order': ['sales/sales-orders', () => viewSalesOrderDetail(id)] };
+  const M = {
+    customer: ['sales/customers', () => partyDetail('customers', id)],
+    vendor: ['purchases/vendors', () => partyDetail('vendors', id)],
+    invoice: ['sales/invoices', () => docMasterDetail($('#pg'), 'invoices', id)],
+    bill: ['purchases/bills', () => docMasterDetail($('#pg'), 'bills', id)],
+    item: ['items/items-services', () => itemForm(id)],
+    sales_order: ['sales/sales-orders', () => viewSalesOrderDetail(id)],
+    'sales-order': ['sales/sales-orders', () => viewSalesOrderDetail(id)],
+    stock_transfer: ['inventory/stock-transfers', () => viewStockTransferDetail(id)],
+    'stock-transfer': ['inventory/stock-transfers', () => viewStockTransferDetail(id)]
+  };
   const [r, fn] = M[t];
   if (location.hash !== '#/' + r) location.hash = '#/' + r;
   try {

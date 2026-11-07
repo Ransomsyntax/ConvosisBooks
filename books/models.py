@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import ProtectedError
 
 MONEY = {'max_digits': 14, 'decimal_places': 2}
 QTY = {'max_digits': 14, 'decimal_places': 3}
@@ -435,8 +436,13 @@ class AuditLog(models.Model):
     action = models.CharField(max_length=50)  
     entity_type = models.CharField(max_length=60)
     entity_id = models.CharField(max_length=60, blank=True)
+    module = models.CharField(max_length=60, blank=True, default='')
+    submodule = models.CharField(max_length=60, blank=True, default='')
     summary = models.TextField()
     details = models.JSONField(default=dict, blank=True)
+    previous_values = models.JSONField(default=dict, blank=True)
+    new_values = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=30, blank=True, default='success')
     ip_address = models.CharField(max_length=50, blank=True)
     record_hash = models.CharField(max_length=64, blank=True, default='')
     prev_hash = models.CharField(max_length=64, blank=True, default='')
@@ -446,6 +452,9 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f'[{self.timestamp:%Y-%m-%d %H:%M}] {self.action} {self.entity_type} #{self.entity_id}'
+
+    def delete(self, *args, **kwargs):
+        raise ProtectedError("Audit log records are immutable and cannot be deleted.", [self])
 
 class CustomField(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='custom_fields')
@@ -878,6 +887,67 @@ class Warehouse(models.Model):
         if self.parent:
             return f'{self.name} ({self.code}) [Sub-warehouse of {self.parent.code}]'
         return f'{self.name} ({self.code})'
+
+class StockTransfer(models.Model):
+    """Transfer of stock between warehouses within the same organization."""
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_transfers')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    number = models.CharField(max_length=50, db_index=True)
+    date = models.DateField()
+    source_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='stock_transfers_out')
+    source_warehouse_code = models.CharField(max_length=30, blank=True, default='')
+    destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='stock_transfers_in')
+    destination_warehouse_code = models.CharField(max_length=30, blank=True, default='')
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('confirmed', 'Confirmed'),
+        ('reversed', 'Reversed'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', db_index=True)
+    notes = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    reversal_reason = models.TextField(blank=True, default='')
+    reversal_transfer = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='reversed_from')
+    is_reversal = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-date', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'number'], name='unique_org_stock_transfer_number')
+        ]
+
+    def __str__(self):
+        return f'{self.number} ({self.get_status_display()})'
+
+    def delete(self, *args, **kwargs):
+        raise ProtectedError("Stock transfer records cannot be deleted. Use Reverse Entry instead.", [self])
+
+
+class StockTransferLine(models.Model):
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name='lines')
+    item = models.ForeignKey('Item', on_delete=models.PROTECT, related_name='stock_transfer_lines')
+    item_name = models.CharField(max_length=150, blank=True, default='')
+    item_sku = models.CharField(max_length=60, blank=True, default='')
+    quantity = models.DecimalField(**QTY)
+    unit = models.CharField(max_length=20, blank=True, default='nos')
+    batch_number = models.CharField(max_length=60, blank=True, default='')
+    serial_number = models.CharField(max_length=100, blank=True, default='')
+    description = models.CharField(max_length=500, blank=True, default='')
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return f'{self.transfer.number} - {self.item_name} ({self.quantity})'
+
 
 class PaymentTransaction(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='payment_transactions')

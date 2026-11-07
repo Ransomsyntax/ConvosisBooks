@@ -1137,7 +1137,11 @@ function listPage(root, cfg) {
     const curCount = selectedIds.size;
 
     if (bulkBar) {
-      bulkBar.style.display = curCount > 0 ? 'inline-flex' : 'none';
+      if (cfg.noDelete || cfg.api === 'stock-transfers') {
+        bulkBar.style.display = 'none';
+      } else {
+        bulkBar.style.display = curCount > 0 ? 'inline-flex' : 'none';
+      }
     }
     if (bulkCnt) {
       bulkCnt.textContent = curCount;
@@ -1158,8 +1162,9 @@ function listPage(root, cfg) {
     }
   }
 
-  root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act"><button class="btn" data-x="import" type="button" title="Import ${esc(cfg.title)}"><i class="fa-solid fa-file-import"></i> Import</button><div class="export-dropdown-wrap" style="position:relative;display:inline-block;"><button class="btn" data-x="export-toggle" type="button" title="Export ${esc(cfg.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button><div class="pop right export-menu-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);"><button type="button" class="btn" data-x="csv" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button><button type="button" class="btn" data-x="json" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button></div></div>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
-<div class="card" style="margin-top:14px"><div class="tb" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts || [], '')}</select>`).join('')}<span class="sub" id="cnt"></span><div id="bulk-bar" style="display:none;margin-left:auto;align-items:center;gap:8px;"><span class="sub" style="font-weight:600;color:var(--text-primary,#111827);"><span id="bulk-cnt">0</span> selected</span><button class="btn dn" type="button" id="btn-bulk-delete" style="display:inline-flex;align-items:center;gap:6px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;font-weight:600;cursor:pointer;"><i class="fa-solid fa-trash-can"></i> Delete</button></div></div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
+  const hideBulkDel = Boolean(cfg.noDelete || cfg.api === 'stock-transfers');
+  root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act">${cfg.noImport ? '' : `<button class="btn" data-x="import" type="button" title="Import ${esc(cfg.title)}"><i class="fa-solid fa-file-import"></i> Import</button>`}<div class="export-dropdown-wrap" style="position:relative;display:inline-block;"><button class="btn" data-x="export-toggle" type="button" title="Export ${esc(cfg.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button><div class="pop right export-menu-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);"><button type="button" class="btn" data-x="csv" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button><button type="button" class="btn" data-x="json" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button></div></div>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
+<div class="card" style="margin-top:14px"><div class="tb" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts || [], '')}</select>`).join('')}<span class="sub" id="cnt"></span>${hideBulkDel ? '' : `<div id="bulk-bar" style="display:none;margin-left:auto;align-items:center;gap:8px;"><span class="sub" style="font-weight:600;color:var(--text-primary,#111827);"><span id="bulk-cnt">0</span> selected</span><button class="btn dn" type="button" id="btn-bulk-delete" style="display:inline-flex;align-items:center;gap:6px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;font-weight:600;cursor:pointer;"><i class="fa-solid fa-trash-can"></i> Delete</button></div>`}</div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
   if (cfg.filters) {
     for (const f of cfg.filters) {
       if (f.loadOpts) {
@@ -1239,6 +1244,7 @@ function listPage(root, cfg) {
   root.addEventListener('click', async e => {
     const bulkDel = e.target.closest('#btn-bulk-delete');
     if (bulkDel) {
+      if (cfg.noDelete || cfg.api === 'stock-transfers') return;
       const count = selectedIds.size;
       if (!count) return;
       const label = count === 1 ? 'record' : 'records';
@@ -1517,6 +1523,68 @@ const LISTS = {
       { h: 'Change', r: 1, f: r => `<span class="${num(r.change) < 0 ? 'dn' : 'up'}">${num(r.change) > 0 ? '+' : ''}${qty(r.change)}</span>` },
       { h: 'Balance after', r: 1, f: r => qty(r.balance_after) }
     ]
+  },
+  'stock-transfers': {
+    api: 'stock-transfers', title: 'Stock Transfers', bc: 'Inventory', newLabel: 'New Stock Transfer',
+    onNew: () => stockTransferModal(), ordering: '-transfer_date', empty: 'No stock transfers yet. Click + New Stock Transfer to transfer stock between warehouses.',
+    noDelete: true,
+    noImport: true,
+    filters: [
+      { name: 'status', label: 'Status', opts: [['', 'All Transfers'], ['draft', 'Draft'], ['confirmed', 'Confirmed'], ['reversed', 'Reversed']] },
+      { name: 'source_warehouse', label: 'Source Warehouse', loadOpts: async () => [['', 'All Source Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] },
+      { name: 'destination_warehouse', label: 'Destination Warehouse', loadOpts: async () => [['', 'All Destination Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
+    ],
+    cols: [
+      { h: 'Transfer Date', s: 'transfer_date', f: r => fd(r.transfer_date) },
+      { h: 'Transfer #', s: 'transfer_number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}"><b>${esc(r.transfer_number)}</b></button>${r.is_reversal ? ' <span class="pastel-chip chip-rose" style="font-size:10px;padding:1px 5px;font-weight:700;">Reversal</span>' : ''}` },
+      { h: 'Source (From)', f: r => `<span class="pastel-chip chip-amber" style="font-weight:600;font-size:11px;">${esc(r.source_warehouse_code || r.source_warehouse_name || '—')}</span>` },
+      { h: 'Destination (To)', f: r => `<span class="pastel-chip chip-sky" style="font-weight:600;font-size:11px;">${esc(r.destination_warehouse_code || r.destination_warehouse_name || '—')}</span>` },
+      { h: 'Items', f: r => {
+        const lines = r.lines || [];
+        if (!lines.length) return '—';
+        if (lines.length === 1) return esc(lines[0].item_name || 'Item');
+        return `${esc(lines[0].item_name || 'Item')} <span class="pastel-chip chip-lavender" style="font-size:10px;padding:1px 4px;">+${lines.length - 1} more</span>`;
+      }},
+      { h: 'Total Qty', r: 1, f: r => {
+        const total = (r.lines || []).reduce((acc, l) => acc + (parseFloat(l.transfer_qty) || 0), 0);
+        return `<b>${qty(total)}</b>`;
+      }},
+      { h: 'Status', f: r => {
+        const map = {
+          draft: ['chip-lavender', 'DRAFT'],
+          confirmed: ['chip-mint', 'CONFIRMED'],
+          reversed: ['chip-rose', 'REVERSED']
+        };
+        const [cls, label] = map[r.status] || ['chip-lavender', (r.status || 'DRAFT').toUpperCase()];
+        return `<span class="pastel-chip ${cls}">${label}</span>`;
+      }},
+      { h: 'Created By', f: r => esc(r.created_by_name || '—') }
+    ],
+    actions: r => {
+      // STRICT REQUIREMENT: No delete action anywhere
+      if (r.status === 'draft') {
+        return [
+          ['view', 'View'],
+          ['edit', 'Edit'],
+          ['confirm', 'Confirm Transfer', 'btn-primary']
+        ];
+      } else if (r.status === 'confirmed') {
+        return [
+          ['view', 'View'],
+          ['reverse', 'Reverse Entry', 'dn']
+        ];
+      } else {
+        return [
+          ['view', 'View']
+        ];
+      }
+    },
+    onAction: async (a, r) => {
+      if (a === 'view') viewStockTransferDetail(r.id);
+      else if (a === 'edit') stockTransferModal(r.id);
+      else if (a === 'confirm') confirmStockTransferAction(r.id, () => refresh());
+      else if (a === 'reverse') reverseStockTransferAction(r.id, () => refresh());
+    }
   },
   quotes: {
     api: 'quotes', title: 'Quotes', bc: 'Sales', newLabel: 'New Quote',

@@ -22,6 +22,7 @@ from django.utils import timezone
 from .calc import q2
 from .cleaning import ApiError
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
+                     StockTransfer, StockTransferLine,
                      BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
                      Bill, BillAllocation, BillLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
                      EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, GSTRReturn, Invoice,
@@ -141,8 +142,8 @@ def get_document_module_config(module_or_pfx):
         return {'pfx': 'DC', 'digits': 5, 'has_fy': True, 'model': DeliveryChallan, 'field': 'number'}
     elif raw in ('ITEM', 'ITEMS', 'SKU'):
         return {'pfx': 'ITEM', 'digits': 6, 'has_fy': False, 'model': Item, 'field': 'sku'}
-    elif raw in ('ST', 'STOCK_TRANSFER', 'TRANSFER'):
-        return {'pfx': 'ST', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
+    elif raw in ('ST', 'STOCK_TRANSFER', 'TRANSFER', 'STOCK-TRANSFERS', 'STOCK_TRANSFERS'):
+        return {'pfx': 'ST', 'digits': 5, 'has_fy': True, 'model': StockTransfer, 'field': 'number'}
     elif raw in ('ADJ', 'STOCK_ADJUSTMENT', 'ADJUSTMENT'):
         return {'pfx': 'ADJ', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
     elif raw in ('EXP', 'EXPENSE', 'EXPENSES'):
@@ -263,7 +264,7 @@ def next_number(prefix, org=None, date=None):
 def fmt_qty(d):
     return format(Decimal(d).normalize(), 'f')
 
-def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_address=''):
+def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_address='', org=None, module='', submodule='', previous_values=None, new_values=None, status='success'):
     try:
         with transaction.atomic():
             username = ''
@@ -274,6 +275,12 @@ def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_ad
             else:
                 username = 'system'
 
+            user_org = org
+            if not user_org and user and hasattr(user, 'profile') and user.profile:
+                user_org = getattr(user.profile, 'organization', None)
+            if not user_org:
+                user_org = Organization.get()
+
             last_log = AuditLog.objects.order_by('-id').first()
             prev_hash = last_log.record_hash if (last_log and last_log.record_hash) else 'GENESIS-BLOCK-00000000000000000000000000000000000000000000000000000000'
             
@@ -281,14 +288,20 @@ def log_audit(user, action, entity_type, entity_id, summary, details=None, ip_ad
             raw_to_hash = f"{prev_hash}|{now_ts}|{username}|{action}|{entity_type}|{entity_id}|{summary}"
             record_hash = hashlib.sha256(raw_to_hash.encode('utf-8')).hexdigest()
 
-            AuditLog.objects.create(
+            return AuditLog.objects.create(
+                organization=user_org,
                 user=user if user and getattr(user, 'pk', None) else None,
                 username=username,
                 action=action,
                 entity_type=entity_type,
                 entity_id=str(entity_id) if entity_id else '',
+                module=module or '',
+                submodule=submodule or '',
                 summary=summary,
                 details=details or {},
+                previous_values=previous_values or {},
+                new_values=new_values or {},
+                status=status or 'success',
                 ip_address=ip_address or '',
                 prev_hash=prev_hash,
                 record_hash=record_hash
@@ -5550,8 +5563,10 @@ def get_stock_movement_summary(item_or_items, org=None, warehouse=None, start=No
 
         if entry['opening_stock'] == 0 and entry['stock_in'] == 0 and entry['stock_out'] == 0 and entry['transfer_in'] == 0 and entry['transfer_out'] == 0:
             if it.stock != 0:
-                entry['opening_stock'] = it.stock
-                avail = it.stock
+                item_wh = it.warehouse_code or (it.warehouse.code if it.warehouse else '')
+                if not warehouse or warehouse == item_wh or (not item_wh and warehouse in ('WH-MAIN', 'DEFAULT')):
+                    entry['opening_stock'] = it.stock
+                    avail = it.stock
 
         if not entry['opening_date']:
             entry['opening_date'] = it.created_at.date() if it.created_at else timezone.localdate()
@@ -6164,3 +6179,478 @@ def ensure_default_settings(org=None):
     ensure_default_roles(org)
 
 
+
+
+def get_item_warehouse_stock(item_or_id, warehouse_code_or_id, org=None):
+    """
+    Returns the real-time available stock of an item in a specific warehouse.
+    """
+    from .models import Item, Warehouse
+    if isinstance(item_or_id, Item):
+        item = item_or_id
+    else:
+        item = Item.objects.filter(pk=item_or_id).first()
+    if not item or not item.track_inventory or item.item_type != Item.GOODS:
+        return Decimal('0.000')
+
+    user_org = org or getattr(item, 'organization', None) or Organization.get()
+
+    wh_code = ''
+    if isinstance(warehouse_code_or_id, Warehouse):
+        wh_code = warehouse_code_or_id.code
+    elif isinstance(warehouse_code_or_id, int) or (isinstance(warehouse_code_or_id, str) and str(warehouse_code_or_id).isdigit()):
+        wh = Warehouse.objects.filter(pk=int(warehouse_code_or_id)).first()
+        wh_code = wh.code if wh else ''
+    else:
+        wh_code = str(warehouse_code_or_id or '').strip()
+
+    if not wh_code:
+        return Decimal('0.000')
+
+    summary_map = get_stock_movement_summary([item], org=user_org, warehouse=wh_code)
+    summary = summary_map.get(item.pk, {})
+    return summary.get('available_stock', Decimal('0.000'))
+
+
+def create_stock_transfer(data, user):
+    """
+    Creates a new draft Stock Transfer record with line items.
+    """
+    from .models import Warehouse, Item, StockTransfer, StockTransferLine
+    from datetime import date
+    user_org = (user.profile.organization if user and hasattr(user, 'profile') and user.profile else None) or Organization.get()
+
+    raw_date = data.get('date') or timezone.localdate()
+    if isinstance(raw_date, str):
+        try:
+            transfer_date = date.fromisoformat(raw_date)
+        except Exception:
+            transfer_date = timezone.localdate()
+    else:
+        transfer_date = raw_date
+
+    check_transaction_lock(transfer_date, org=user_org)
+
+    src_id = data.get('source_warehouse') or data.get('source_warehouse_id') or data.get('from_warehouse') or data.get('from_warehouse_id')
+    dst_id = data.get('destination_warehouse') or data.get('destination_warehouse_id') or data.get('to_warehouse') or data.get('to_warehouse_id')
+
+    if not src_id or not dst_id:
+        raise ApiError(400, 'Both source warehouse and destination warehouse are required.')
+
+    if str(src_id) == str(dst_id):
+        raise ApiError(400, 'Source and destination warehouses must be different.')
+
+    src_wh = Warehouse.objects.filter(Q(pk=src_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+    dst_wh = Warehouse.objects.filter(Q(pk=dst_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+
+    if not src_wh:
+        raise ApiError(400, 'Source warehouse is invalid or inactive.')
+    if not dst_wh:
+        raise ApiError(400, 'Destination warehouse is invalid or inactive.')
+
+    num = (data.get('number') or '').strip()
+    if not num:
+        num = next_document_number('ST', org=user_org, date=transfer_date)
+    elif StockTransfer.objects.filter(number=num, organization=user_org).exists():
+        raise ApiError(400, f'Stock transfer number {num} already exists.')
+
+    lines_data = data.get('lines', [])
+    if not lines_data or not isinstance(lines_data, list):
+        raise ApiError(400, 'Add at least one line item to the stock transfer.')
+
+    transfer = StockTransfer.objects.create(
+        organization=user_org,
+        number=num,
+        date=transfer_date,
+        source_warehouse=src_wh,
+        source_warehouse_code=src_wh.code,
+        destination_warehouse=dst_wh,
+        destination_warehouse_code=dst_wh.code,
+        status='draft',
+        notes=data.get('notes', '') or '',
+        created_by=user
+    )
+
+    created_lines = []
+    for idx, l in enumerate(lines_data, 1):
+        item_id = l.get('item') or l.get('item_id')
+        if not item_id:
+            raise ApiError(400, f'Line {idx}: Item is required.')
+        item = Item.objects.filter(Q(pk=item_id), Q(organization=user_org) | Q(organization__isnull=True)).first()
+        if not item:
+            raise ApiError(400, f'Line {idx}: Item not found.')
+        if item.item_type != Item.GOODS or not item.track_inventory:
+            raise ApiError(400, f'Line {idx}: Item "{item.name}" does not have inventory tracking enabled.')
+
+        qty = Decimal(str(l.get('quantity') or 0))
+        if qty <= Decimal('0'):
+            raise ApiError(400, f'Line {idx}: Transfer quantity must be greater than zero.')
+
+        line_obj = StockTransferLine.objects.create(
+            transfer=transfer,
+            item=item,
+            item_name=item.name,
+            item_sku=item.sku or '',
+            quantity=qty,
+            unit=l.get('unit') or item.unit or 'nos',
+            batch_number=str(l.get('batch_number') or '')[:60],
+            serial_number=str(l.get('serial_number') or '')[:100],
+            description=str(l.get('description') or '')[:500]
+        )
+        created_lines.append(line_obj)
+
+    log_audit(
+        user, 'create', 'StockTransfer', transfer.pk,
+        f"Created draft Stock Transfer {transfer.number} ({src_wh.code} → {dst_wh.code})",
+        details={
+            'transfer_number': transfer.number,
+            'source_warehouse': src_wh.code,
+            'destination_warehouse': dst_wh.code,
+            'lines_count': len(created_lines)
+        },
+        org=user_org,
+        module='inventory',
+        submodule='stock_transfers',
+        new_values={'status': 'draft', 'number': transfer.number, 'date': transfer.date.isoformat()}
+    )
+    return transfer
+
+
+def update_stock_transfer(transfer, data, user):
+    """
+    Updates an existing draft Stock Transfer. Confirmed and reversed transfers cannot be edited.
+    """
+    from .models import Warehouse, Item, StockTransferLine
+    from datetime import date
+    user_org = transfer.organization or Organization.get()
+
+    if transfer.status != 'draft':
+        raise ApiError(400, f'Only draft stock transfers can be edited. This transfer is {transfer.get_status_display()}.')
+
+    if 'date' in data and data['date']:
+        raw_date = data['date']
+        if isinstance(raw_date, str):
+            transfer_date = date.fromisoformat(raw_date)
+        else:
+            transfer_date = raw_date
+        check_transaction_lock(transfer_date, org=user_org)
+        transfer.date = transfer_date
+
+    if 'source_warehouse' in data or 'destination_warehouse' in data or 'source_warehouse_id' in data or 'destination_warehouse_id' in data:
+        src_id = data.get('source_warehouse') or data.get('source_warehouse_id') or transfer.source_warehouse_id
+        dst_id = data.get('destination_warehouse') or data.get('destination_warehouse_id') or transfer.destination_warehouse_id
+
+        if str(src_id) == str(dst_id):
+            raise ApiError(400, 'Source and destination warehouses must be different.')
+
+        src_wh = Warehouse.objects.filter(Q(pk=src_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+        dst_wh = Warehouse.objects.filter(Q(pk=dst_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+        if not src_wh:
+            raise ApiError(400, 'Source warehouse is invalid or inactive.')
+        if not dst_wh:
+            raise ApiError(400, 'Destination warehouse is invalid or inactive.')
+
+        transfer.source_warehouse = src_wh
+        transfer.source_warehouse_code = src_wh.code
+        transfer.destination_warehouse = dst_wh
+        transfer.destination_warehouse_code = dst_wh.code
+
+    if 'notes' in data:
+        transfer.notes = data['notes'] or ''
+
+    transfer.save()
+
+    if 'lines' in data:
+        lines_data = data['lines']
+        if not lines_data or not isinstance(lines_data, list):
+            raise ApiError(400, 'Add at least one line item to the stock transfer.')
+
+        transfer.lines.all().delete()
+        for idx, l in enumerate(lines_data, 1):
+            item_id = l.get('item') or l.get('item_id')
+            if not item_id:
+                raise ApiError(400, f'Line {idx}: Item is required.')
+            item = Item.objects.filter(Q(pk=item_id), Q(organization=user_org) | Q(organization__isnull=True)).first()
+            if not item:
+                raise ApiError(400, f'Line {idx}: Item not found.')
+            if item.item_type != Item.GOODS or not item.track_inventory:
+                raise ApiError(400, f'Line {idx}: Item "{item.name}" does not have inventory tracking enabled.')
+
+            qty = Decimal(str(l.get('quantity') or 0))
+            if qty <= Decimal('0'):
+                raise ApiError(400, f'Line {idx}: Transfer quantity must be greater than zero.')
+
+            StockTransferLine.objects.create(
+                transfer=transfer,
+                item=item,
+                item_name=item.name,
+                item_sku=item.sku or '',
+                quantity=qty,
+                unit=l.get('unit') or item.unit or 'nos',
+                batch_number=str(l.get('batch_number') or '')[:60],
+                serial_number=str(l.get('serial_number') or '')[:100],
+                description=str(l.get('description') or '')[:500]
+            )
+
+    log_audit(
+        user, 'update', 'StockTransfer', transfer.pk,
+        f"Updated draft Stock Transfer {transfer.number}",
+        details={'transfer_number': transfer.number, 'source_warehouse': transfer.source_warehouse_code, 'destination_warehouse': transfer.destination_warehouse_code},
+        org=user_org,
+        module='inventory',
+        submodule='stock_transfers',
+        new_values={'date': transfer.date.isoformat(), 'notes': transfer.notes}
+    )
+    return transfer
+
+
+@transaction.atomic
+def confirm_stock_transfer(transfer_id_or_obj, user):
+    """
+    Confirms a stock transfer, validating warehouse stock and generating stock movements atomically.
+    """
+    from .models import Item, StockTransfer, StockMovement
+    if isinstance(transfer_id_or_obj, StockTransfer):
+        transfer_id = transfer_id_or_obj.pk
+    else:
+        transfer_id = transfer_id_or_obj
+
+    transfer = StockTransfer.objects.select_for_update().get(pk=transfer_id)
+    user_org = transfer.organization or Organization.get()
+
+    if transfer.status == 'confirmed':
+        raise ApiError(400, f'Stock Transfer {transfer.number} has already been confirmed.')
+    if transfer.status == 'reversed':
+        raise ApiError(400, f'Stock Transfer {transfer.number} has been reversed and cannot be confirmed.')
+
+    check_transaction_lock(transfer.date, org=user_org)
+
+    src_wh = transfer.source_warehouse
+    dst_wh = transfer.destination_warehouse
+
+    if not src_wh.active:
+        raise ApiError(400, f'Source warehouse "{src_wh.name}" is inactive.')
+    if not dst_wh.active:
+        raise ApiError(400, f'Destination warehouse "{dst_wh.name}" is inactive.')
+    if src_wh.pk == dst_wh.pk:
+        raise ApiError(400, 'Source and destination warehouses cannot be the same.')
+
+    lines = list(transfer.lines.select_related('item').all())
+    if not lines:
+        raise ApiError(400, 'Stock transfer contains no line items.')
+
+    # Lock items for concurrency
+    item_ids = [l.item_id for l in lines]
+    items_locked = {it.pk: it for it in Item.objects.select_for_update().filter(pk__in=item_ids)}
+
+    # Validate stock availability in source warehouse
+    for idx, line in enumerate(lines, 1):
+        item = items_locked.get(line.item_id)
+        if not item:
+            raise ApiError(400, f'Line {idx}: Item not found.')
+        avail = get_item_warehouse_stock(item, src_wh.code, org=user_org)
+        if avail < line.quantity:
+            raise ApiError(400, f'Insufficient stock for "{item.name}" in source warehouse "{src_wh.name}" ({src_wh.code}): available {fmt_qty(avail)} {line.unit}, requested {fmt_qty(line.quantity)} {line.unit}.')
+
+    # Execute stock movements
+    items_details = []
+    for line in lines:
+        item = items_locked[line.item_id]
+        prev_src_stock = get_item_warehouse_stock(item, src_wh.code, org=user_org)
+        prev_dst_stock = get_item_warehouse_stock(item, dst_wh.code, org=user_org)
+
+        StockMovement.objects.create(
+            organization=user_org,
+            item=item,
+            date=transfer.date,
+            warehouse=src_wh,
+            warehouse_code=src_wh.code,
+            to_warehouse=dst_wh,
+            to_warehouse_code=dst_wh.code,
+            kind='transfer',
+            reference=transfer.number,
+            change=line.quantity,
+            balance_after=item.stock,
+            reason=f'Stock Transfer {transfer.number}',
+            notes=line.description or transfer.notes,
+            created_by=user
+        )
+        items_details.append({
+            'item_id': item.pk,
+            'name': item.name,
+            'sku': item.sku,
+            'quantity': float(line.quantity),
+            'unit': line.unit,
+            'previous_source_stock': float(prev_src_stock),
+            'updated_source_stock': float(prev_src_stock - line.quantity),
+            'previous_destination_stock': float(prev_dst_stock),
+            'updated_destination_stock': float(prev_dst_stock + line.quantity),
+        })
+
+    transfer.status = 'confirmed'
+    transfer.confirmed_at = timezone.now()
+    transfer.confirmed_by = user
+    transfer.save(update_fields=['status', 'confirmed_at', 'confirmed_by'])
+
+    log_audit(
+        user, 'confirm', 'StockTransfer', transfer.pk,
+        f"Confirmed Stock Transfer {transfer.number}: transferred {len(lines)} items from {src_wh.code} to {dst_wh.code}",
+        details={
+            'transfer_number': transfer.number,
+            'source_warehouse': src_wh.code,
+            'destination_warehouse': dst_wh.code,
+            'items': items_details
+        },
+        org=user_org,
+        module='inventory',
+        submodule='stock_transfers',
+        previous_values={'status': 'draft'},
+        new_values={'status': 'confirmed', 'confirmed_at': transfer.confirmed_at.isoformat()}
+    )
+    return transfer
+
+
+@transaction.atomic
+def reverse_stock_transfer(transfer_id_or_obj, user, reason=''):
+    """
+    Executes a reverse entry for an existing confirmed stock transfer.
+    Never deletes the original record. Re-validates destination stock availability,
+    returns stock to source warehouse, and marks the original transfer as reversed.
+    """
+    from .models import Item, StockTransfer, StockTransferLine, StockMovement
+    if isinstance(transfer_id_or_obj, StockTransfer):
+        transfer_id = transfer_id_or_obj.pk
+    else:
+        transfer_id = transfer_id_or_obj
+
+    transfer = StockTransfer.objects.select_for_update().get(pk=transfer_id)
+    user_org = transfer.organization or Organization.get()
+
+    if transfer.status != 'confirmed':
+        raise ApiError(400, f'Only confirmed stock transfers can be reversed. Current status is {transfer.get_status_display()}.')
+
+    if transfer.reversal_transfer_id:
+        raise ApiError(400, f'Stock Transfer {transfer.number} has already been reversed.')
+
+    clean_reason = (reason or '').strip()
+    if not clean_reason:
+        clean_reason = 'Accidental/incorrect transfer reversal'
+
+    check_transaction_lock(timezone.localdate(), org=user_org)
+
+    src_wh = transfer.source_warehouse
+    dst_wh = transfer.destination_warehouse
+
+    lines = list(transfer.lines.select_related('item').all())
+    if not lines:
+        raise ApiError(400, 'Original stock transfer has no lines to reverse.')
+
+    item_ids = [l.item_id for l in lines]
+    items_locked = {it.pk: it for it in Item.objects.select_for_update().filter(pk__in=item_ids)}
+
+    # Validate destination warehouse currently has enough stock to return!
+    for idx, line in enumerate(lines, 1):
+        item = items_locked.get(line.item_id)
+        if not item:
+            raise ApiError(400, f'Line {idx}: Item not found.')
+        avail_in_dst = get_item_warehouse_stock(item, dst_wh.code, org=user_org)
+        if avail_in_dst < line.quantity:
+            raise ApiError(400, f'Cannot reverse transfer {transfer.number}: destination warehouse "{dst_wh.name}" ({dst_wh.code}) only has {fmt_qty(avail_in_dst)} {line.unit} of "{item.name}" available, but {fmt_qty(line.quantity)} {line.unit} is required for reversal.')
+
+    # Create reversal StockTransfer record
+    rev_num = f"{transfer.number}-REV"
+    if StockTransfer.objects.filter(number=rev_num, organization=user_org).exists():
+        rev_num = next_document_number('ST', org=user_org, date=timezone.localdate())
+
+    rev_transfer = StockTransfer.objects.create(
+        organization=user_org,
+        number=rev_num,
+        date=timezone.localdate(),
+        source_warehouse=dst_wh,
+        source_warehouse_code=dst_wh.code,
+        destination_warehouse=src_wh,
+        destination_warehouse_code=src_wh.code,
+        status='reversed',
+        notes=f"Reverse entry for {transfer.number}. Reason: {clean_reason}",
+        created_by=user,
+        confirmed_at=timezone.now(),
+        confirmed_by=user,
+        reversed_at=timezone.now(),
+        reversed_by=user,
+        reversal_reason=clean_reason,
+        reversal_transfer=transfer,
+        is_reversal=True
+    )
+
+    items_details = []
+    for line in lines:
+        item = items_locked[line.item_id]
+        prev_dst_stock = get_item_warehouse_stock(item, dst_wh.code, org=user_org)
+        prev_src_stock = get_item_warehouse_stock(item, src_wh.code, org=user_org)
+
+        StockMovement.objects.create(
+            organization=user_org,
+            item=item,
+            date=timezone.localdate(),
+            warehouse=dst_wh,
+            warehouse_code=dst_wh.code,
+            to_warehouse=src_wh,
+            to_warehouse_code=src_wh.code,
+            kind='transfer',
+            reference=rev_num,
+            change=line.quantity,
+            balance_after=item.stock,
+            reason=f"Reversal of {transfer.number}: {clean_reason}",
+            notes=f"Reversed transfer {transfer.number}. Returned to {src_wh.code}.",
+            created_by=user
+        )
+
+        StockTransferLine.objects.create(
+            transfer=rev_transfer,
+            item=item,
+            item_name=line.item_name,
+            item_sku=line.item_sku,
+            quantity=line.quantity,
+            unit=line.unit,
+            batch_number=line.batch_number,
+            serial_number=line.serial_number,
+            description=f"Reversal of line {line.pk}: {line.description}"
+        )
+
+        items_details.append({
+            'item_id': item.pk,
+            'name': item.name,
+            'sku': item.sku,
+            'returned_quantity': float(line.quantity),
+            'unit': line.unit,
+            'destination_stock_before': float(prev_dst_stock),
+            'destination_stock_after': float(prev_dst_stock - line.quantity),
+            'source_stock_before': float(prev_src_stock),
+            'source_stock_after': float(prev_src_stock + line.quantity),
+        })
+
+    transfer.status = 'reversed'
+    transfer.reversed_at = timezone.now()
+    transfer.reversed_by = user
+    transfer.reversal_reason = clean_reason
+    transfer.reversal_transfer = rev_transfer
+    transfer.save(update_fields=['status', 'reversed_at', 'reversed_by', 'reversal_reason', 'reversal_transfer'])
+
+    log_audit(
+        user, 'reverse', 'StockTransfer', transfer.pk,
+        f"Reversed Stock Transfer {transfer.number} (reversal record {rev_num}): returned {len(lines)} items to {src_wh.code}",
+        details={
+            'transfer_number': transfer.number,
+            'reversal_transfer_number': rev_num,
+            'reason': clean_reason,
+            'source_warehouse': src_wh.code,
+            'destination_warehouse': dst_wh.code,
+            'items': items_details
+        },
+        org=user_org,
+        module='inventory',
+        submodule='stock_transfers',
+        previous_values={'status': 'confirmed'},
+        new_values={'status': 'reversed', 'reversed_at': transfer.reversed_at.isoformat(), 'reversal_reason': clean_reason}
+    )
+    return transfer

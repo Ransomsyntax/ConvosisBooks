@@ -3186,7 +3186,7 @@ async function docForm(kind, id, targetEl, onDone) {
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
-  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td style="width:130px;min-width:110px;"><select class="in l-gst" aria-label="GST rate" style="width:100%;min-width:90px;">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
+  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
   const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
   const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
@@ -3237,7 +3237,7 @@ async function docForm(kind, id, targetEl, onDone) {
                   <th>Qty</th>
                   <th>Rate (₹)</th>
                   <th>Disc %</th>
-                  <th style="width:130px;min-width:110px;">GST</th>
+                  <th>GST</th>
                   <th class="r">Amount</th>
                   <th></th>
                 </tr>
@@ -3560,7 +3560,7 @@ async function docForm(kind, id, targetEl, onDone) {
       inv ? '' : fld({ name: 'vendor_ref', label: 'Vendor reference', value: r.vendor_ref }),
     ].join('')}</div>
     <h3 style="margin:16px 0 6px;font-size:14px">Line items</h3>
-    <div class="tw" style="overflow-x:auto;"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th style="width:130px;min-width:110px;">GST</th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
+    <div class="tw"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th>GST</th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
     <div class="er" data-err="lines" role="alert"></div>
     <button type="button" class="btn" data-add style="margin-top:8px">+ Add line</button>
     <div class="tot" aria-live="polite"><div><span>Taxable value</span><b data-t="sub">₹0.00</b></div><div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div><div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div><div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div><div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div></div>
@@ -8384,3 +8384,628 @@ async function invoiceForm(id, targetEl, onDone) {
 }
 window.invoiceForm = invoiceForm;
 
+
+
+/* --- Stock Transfer Module --- */
+
+async function confirmStockTransferAction(id, number) {
+  const ok = await confirmBox({
+    title: `Confirm Stock Transfer ${number || ''}?`,
+    message: 'Are you sure you want to confirm this stock transfer? The selected quantities will be deducted from the source warehouse and added to the destination warehouse. This action will update inventory records and cannot be deleted.',
+    okText: 'Confirm Transfer',
+    danger: false
+  });
+  if (!ok) return;
+
+  try {
+    const res = await api(`stock-transfers/${id}/confirm/`, { method: 'POST', body: {} });
+    toast(`Stock Transfer ${res.number || number} confirmed successfully! Inventory updated.`, 'ok');
+    if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+    else location.reload();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function reverseStockTransferAction(id, number) {
+  return new Promise(resolve => {
+    const m = Modal.open({
+      title: `Reverse Stock Transfer ${number || ''}`,
+      dialog: true,
+      wide: false,
+      body: `
+        <div style="font-size:13.5px; line-height:1.5; color:var(--tx); margin-bottom:14px;">
+          Are you sure you want to reverse this stock transfer? The original transaction will remain in the audit log. The transferred quantities will be returned to their original warehouse, subject to stock availability and validation.
+        </div>
+        <div class="fe" id="rev-err-msg" style="display:none; color:#ef4444; font-size:12.5px; margin-bottom:10px; padding:8px 12px; background:#fee2e2; border-radius:6px;"></div>
+        <div>
+          <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px;">Reversal Reason <span style="color:#ef4444;">*</span></label>
+          <textarea id="st-rev-reason" class="in" rows="2" placeholder="e.g. Accidental transfer, wrong destination warehouse selected" style="width:100%; box-sizing:border-box;"></textarea>
+        </div>
+      `,
+      footer: `
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn d" id="btn-do-reverse">Reverse Transfer</button>
+      `
+    });
+
+    const doBtn = $('#btn-do-reverse', m.el);
+    const reasonEl = $('#st-rev-reason', m.el);
+    const errBox = $('#rev-err-msg', m.el);
+
+    doBtn.addEventListener('click', async () => {
+      const reason = reasonEl.value.trim();
+      if (!reason) {
+        errBox.textContent = 'Please enter a reason for the reversal.';
+        errBox.style.display = 'block';
+        reasonEl.focus();
+        return;
+      }
+      doBtn.disabled = true;
+      doBtn.textContent = 'Reversing…';
+      try {
+        const res = await api(`stock-transfers/${id}/reverse/`, { method: 'POST', body: { reason } });
+        m.close();
+        toast(`Stock Transfer ${number} reversed successfully. Reversal record ${res.number || ''} linked.`, 'ok');
+        if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+        else location.reload();
+        resolve(res);
+      } catch (err) {
+        doBtn.disabled = false;
+        doBtn.textContent = 'Reverse Transfer';
+        errBox.textContent = err.message || 'Failed to reverse stock transfer.';
+        errBox.style.display = 'block';
+      }
+    });
+  });
+}
+
+async function viewStockTransferDetail(id) {
+  try {
+    const t = await api(`stock-transfers/${id}/`);
+    const statusMap = {
+      draft: ['chip-lavender', 'DRAFT'],
+      confirmed: ['chip-mint', 'CONFIRMED'],
+      reversed: ['chip-rose', 'REVERSED']
+    };
+    const [statusCls, statusLabel] = statusMap[t.status] || ['chip-lavender', (t.status || '').toUpperCase()];
+
+    const m = Modal.open({
+      title: `Stock Transfer ${t.number}`,
+      dialog: true,
+      wide: true,
+      body: `
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Top bar with status and metadata -->
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:14px 18px; background:var(--surface-glass-subtle); border:1px solid var(--bd); border-radius:10px;">
+            <div>
+              <div style="font-size:18px; font-weight:800; color:var(--tx);">${esc(t.number)}${t.is_reversal ? ' <span class="pastel-chip chip-rose" style="font-size:11px;">Reversal Entry</span>' : ''}</div>
+              <div style="font-size:12px; color:var(--tx-muted); margin-top:2px;">Date: <b>${fd(t.date)}</b> · Created by: <b>${esc(t.created_by || 'System')}</b></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="pastel-chip ${statusCls}" style="font-size:12px; font-weight:700; padding:4px 12px;">${statusLabel}</span>
+            </div>
+          </div>
+
+          <!-- Warehouse Route -->
+          <div style="display:flex; align-items:center; justify-content:center; gap:20px; padding:16px; background:var(--surface-glass-subtle); border:1px solid var(--bd); border-radius:10px;">
+            <div style="text-align:center; min-width:140px;">
+              <span style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--tx-muted);">Source Warehouse</span>
+              <div style="font-size:15px; font-weight:700; color:var(--tx); margin-top:4px;">${esc(t.source_warehouse_name)}</div>
+              <span class="pastel-chip chip-lavender" style="font-size:11px; font-weight:600;">${esc(t.source_warehouse_code)}</span>
+            </div>
+            <div style="display:flex; align-items:center; color:var(--accent); font-size:24px; font-weight:900;">
+              ➔
+            </div>
+            <div style="text-align:center; min-width:140px;">
+              <span style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--tx-muted);">Destination Warehouse</span>
+              <div style="font-size:15px; font-weight:700; color:var(--tx); margin-top:4px;">${esc(t.destination_warehouse_name)}</div>
+              <span class="pastel-chip chip-sky" style="font-size:11px; font-weight:600;">${esc(t.destination_warehouse_code)}</span>
+            </div>
+          </div>
+
+          <!-- Lines table -->
+          <div>
+            <h3 style="font-size:14px; font-weight:700; margin-bottom:8px; color:var(--tx);">Transferred Items (${t.lines ? t.lines.length : 0})</h3>
+            <div class="tw" style="overflow-x:auto; border:1px solid var(--bd); border-radius:8px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item / Product</th>
+                    <th>SKU</th>
+                    <th class="r">Quantity</th>
+                    <th>Unit</th>
+                    <th>Batch #</th>
+                    <th>Serial #</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(t.lines || []).map(l => `
+                    <tr>
+                      <td style="font-weight:600;">${esc(l.item_name)}</td>
+                      <td style="color:var(--tx-muted);">${esc(l.item_sku || '—')}</td>
+                      <td class="r" style="font-weight:700;">${qty(l.quantity)}</td>
+                      <td>${esc(l.unit || 'nos')}</td>
+                      <td>${esc(l.batch_number || '—')}</td>
+                      <td>${esc(l.serial_number || '—')}</td>
+                      <td style="color:var(--tx-muted);">${esc(l.description || '—')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Notes -->
+          ${t.notes ? `
+            <div style="font-size:12.5px; padding:10px 14px; background:var(--surface-glass-subtle); border-radius:8px; border:1px solid var(--bd);">
+              <span style="font-weight:600; color:var(--tx);">Notes:</span> ${esc(t.notes)}
+            </div>
+          ` : ''}
+
+          <!-- Reversal or Confirmation Info -->
+          ${t.status === 'confirmed' ? `
+            <div style="padding:10px 14px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; font-size:12.5px; color:#059669;">
+              ✓ <b>Confirmed:</b> ${fd(t.confirmed_at)} by <b>${esc(t.confirmed_by || 'System')}</b>. Stock successfully updated across warehouses.
+            </div>
+          ` : ''}
+
+          ${t.status === 'reversed' ? `
+            <div style="padding:10px 14px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; font-size:12.5px; color:#dc2626;">
+              ⚠️ <b>Reversed:</b> ${fd(t.reversed_at)} by <b>${esc(t.reversed_by || 'System')}</b>.
+              <div style="margin-top:4px;"><b>Reason:</b> ${esc(t.reversal_reason || 'Reversed')}</div>
+            </div>
+          ` : ''}
+
+          <!-- Audit Trail section -->
+          ${t.audit_trail && t.audit_trail.length ? `
+            <div style="margin-top:6px;">
+              <h3 style="font-size:13px; font-weight:700; margin-bottom:8px; color:var(--tx);">Audit Trail</h3>
+              <div style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
+                ${t.audit_trail.map(a => `
+                  <div style="padding:6px 10px; background:var(--surface-glass-subtle); border-radius:6px; font-size:11.5px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                      <span class="pastel-chip chip-lavender" style="font-size:9.5px; font-weight:700;">${esc(a.action.toUpperCase())}</span>
+                      <span style="font-weight:600; margin-left:6px;">${esc(a.summary)}</span>
+                    </div>
+                    <span style="color:var(--tx-muted);">${fd(a.timestamp)} · ${esc(a.username)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `,
+      footer: `
+        ${t.status === 'draft' ? `<button type="button" class="btn" id="btn-st-edit">Edit</button><button type="button" class="btn p" id="btn-st-confirm">Confirm Transfer</button>` : ''}
+        ${t.status === 'confirmed' ? `<button type="button" class="btn d" id="btn-st-reverse">Reverse Entry</button>` : ''}
+        <button type="button" class="btn" data-close>Close</button>
+      `
+    });
+
+    $('#btn-st-edit', m.el)?.addEventListener('click', () => { m.close(); stockTransferModal(id); });
+    $('#btn-st-confirm', m.el)?.addEventListener('click', () => { m.close(); confirmStockTransferAction(id, t.number); });
+    $('#btn-st-reverse', m.el)?.addEventListener('click', () => { m.close(); reverseStockTransferAction(id, t.number); });
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function stockTransferModal(id = null, onDone = null) {
+  const [warehouses, items, rec] = await Promise.all([
+    api('lookup/warehouses/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    id ? api(`stock-transfers/${id}/`).catch(() => null) : null
+  ]);
+
+  if (id && rec && rec.status !== 'draft') {
+    toast(`Only draft stock transfers can be edited. This transfer is ${rec.status_display}.`, 'err');
+    viewStockTransferDetail(id);
+    return;
+  }
+
+  const whList = warehouses.filter(w => w.active !== false);
+  if (whList.length < 2) {
+    toast('At least two active warehouses are required to perform a stock transfer.', 'err');
+    return;
+  }
+
+  const goodsItems = items.filter(i => i.type === 'goods' || i.track_inventory);
+  if (!goodsItems.length) {
+    toast('No goods items with inventory tracking available to transfer.', 'err');
+    return;
+  }
+
+  const itemsById = Object.fromEntries(goodsItems.map(i => [String(i.id), i]));
+
+  const o = rec || {
+    number: '',
+    date: (window.APP && window.APP.today) ? window.APP.today : new Date().toISOString().slice(0, 10),
+    source_warehouse_id: whList[0]?.id || '',
+    destination_warehouse_id: whList[1]?.id || '',
+    notes: '',
+    lines: [{ item_id: '', quantity: 1, unit: 'nos', batch_number: '', serial_number: '', description: '' }]
+  };
+
+  const buildLineRow = (l, idx) => `
+    <tr class="st-line-row" data-idx="${idx}">
+      <td style="min-width:210px; padding:6px 8px;">
+        <select class="in st-item" aria-label="Item" style="width:100%;">
+          <option value="">— Select Item —</option>
+          ${goodsItems.map(it => `<option value="${it.id}" ${String(l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+      </td>
+      <td style="width:130px; text-align:center; padding:6px 8px;">
+        <span class="st-avail-badge pastel-chip chip-lavender" style="font-size:11px; font-weight:600; padding:2px 8px;">Stock: —</span>
+      </td>
+      <td style="width:110px; padding:6px 8px;">
+        <input class="in st-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || 1)}" style="width:100%; text-align:right;">
+      </td>
+      <td style="width:75px; padding:6px 8px;">
+        <input class="in st-unit" value="${esc(l.unit || 'nos')}" readonly style="width:100%; text-align:center; background:rgba(0,0,0,0.03);" tabindex="-1">
+      </td>
+      <td style="width:105px; padding:6px 8px;">
+        <input class="in st-batch" placeholder="Batch #" value="${esc(l.batch_number || '')}" style="width:100%;">
+      </td>
+      <td style="width:115px; padding:6px 8px;">
+        <input class="in st-serial" placeholder="Serial #" value="${esc(l.serial_number || '')}" style="width:100%;">
+      </td>
+      <td style="min-width:130px; padding:6px 8px;">
+        <input class="in st-desc" placeholder="Notes / line memo" value="${esc(l.description || '')}" style="width:100%;">
+      </td>
+      <td style="width:36px; text-align:center; padding:6px 8px;">
+        <button type="button" class="btn ic st-rm" title="Remove line" style="color:#ef4444; font-size:16px;">×</button>
+      </td>
+    </tr>
+  `;
+
+  const m = Modal.open({
+    title: id ? `Edit Stock Transfer ${o.number}` : 'New Stock Transfer Between Warehouses',
+    dialog: true,
+    wide: true,
+    body: `
+      <form id="st-form-el" style="padding:2px 0;" novalidate>
+        <div class="fe" id="st-err-box" style="display:none; color:#ef4444; font-size:12.5px; margin-bottom:12px; padding:8px 12px; background:#fee2e2; border-radius:6px;" role="alert"></div>
+
+        <div style="display:flex; flex-direction:column; gap:14px; background:var(--surface-glass-subtle); padding:18px; border-radius:10px; border:1px solid var(--bd); margin-bottom:18px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+            <div>
+              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Transfer Number</label>
+              <input class="in" id="st-number" value="${esc(o.number || '')}" placeholder="Auto-generated (e.g. ST-00001)" ${id ? 'readonly' : ''} style="width:100%;">
+            </div>
+            <div>
+              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Transfer Date <span style="color:#ef4444;">*</span></label>
+              <input class="in" type="date" id="st-date" value="${esc(o.date)}" required style="width:100%;">
+            </div>
+            <div>
+              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Source Warehouse (From) <span style="color:#ef4444;">*</span></label>
+              <select class="in" id="st-src-wh" required style="width:100%;">
+                ${whList.map(w => `<option value="${w.id}" ${String(w.id) === String(o.source_warehouse_id) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Destination Warehouse (To) <span style="color:#ef4444;">*</span></label>
+              <select class="in" id="st-dst-wh" required style="width:100%;">
+                ${whList.map(w => `<option value="${w.id}" ${String(w.id) === String(o.destination_warehouse_id) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h3 style="font-size:14px; font-weight:700; color:var(--tx); margin:0;">Transfer Line Items</h3>
+            <button type="button" class="btn" id="st-add-line" style="font-weight:600; font-size:12px;">+ Add Item</button>
+          </div>
+
+          <div class="tw" style="overflow-x:auto; border:1px solid var(--bd); border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+              <thead>
+                <tr>
+                  <th style="min-width:210px;">Item / Product</th>
+                  <th style="width:130px; text-align:center;">Available Stock</th>
+                  <th style="width:110px; text-align:right;">Transfer Qty</th>
+                  <th style="width:75px; text-align:center;">Unit</th>
+                  <th style="width:105px;">Batch #</th>
+                  <th style="width:115px;">Serial #</th>
+                  <th style="min-width:130px;">Notes / Memo</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="st-lines-body">
+                ${(o.lines && o.lines.length ? o.lines : [{ item_id: '', quantity: 1 }]).map(buildLineRow).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Notes / Reason for Transfer</label>
+          <textarea class="in" id="st-notes" rows="2" placeholder="e.g. Stock replenishment for retail store, seasonal rebalancing" style="width:100%; box-sizing:border-box;">${esc(o.notes || '')}</textarea>
+        </div>
+      </form>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn" id="btn-st-save-draft">Save as Draft</button>
+      <button type="button" class="btn p" id="btn-st-save-confirm">Confirm Transfer</button>
+    `
+  });
+
+  const formEl = $('#st-form-el', m.el);
+  const srcWhEl = $('#st-src-wh', m.el);
+  const dstWhEl = $('#st-dst-wh', m.el);
+  const dateEl = $('#st-date', m.el);
+  const numEl = $('#st-number', m.el);
+  const notesEl = $('#st-notes', m.el);
+  const tbody = $('#st-lines-body', m.el);
+  const addLineBtn = $('#st-add-line', m.el);
+  const errBox = $('#st-err-box', m.el);
+  const saveDraftBtn = $('#btn-st-save-draft', m.el);
+  const saveConfirmBtn = $('#btn-st-save-confirm', m.el);
+
+  let rowIdx = (o.lines && o.lines.length) ? o.lines.length : 1;
+
+  // Stock cache to minimize repetitive lookups
+  const stockCache = {};
+
+  async function updateStockBadge(tr) {
+    const itemSel = tr.querySelector('.st-item');
+    const badge = tr.querySelector('.st-avail-badge');
+    const unitIn = tr.querySelector('.st-unit');
+    const qtyIn = tr.querySelector('.st-qty');
+
+    const itemId = itemSel.value;
+    const srcWhId = srcWhEl.value;
+
+    if (!itemId) {
+      badge.textContent = 'Stock: —';
+      badge.className = 'st-avail-badge pastel-chip chip-lavender';
+      badge.dataset.avail = '0';
+      return;
+    }
+
+    const itemObj = itemsById[itemId];
+    if (itemObj && unitIn) unitIn.value = itemObj.unit || 'nos';
+
+    badge.textContent = 'Checking…';
+    const cacheKey = `${itemId}_${srcWhId}`;
+
+    try {
+      let availStock = stockCache[cacheKey];
+      if (availStock === undefined) {
+        const res = await api(`lookup/warehouse-stock/?item_id=${itemId}&warehouse_id=${srcWhId}`);
+        availStock = Number(res.available_stock || 0);
+        stockCache[cacheKey] = availStock;
+      }
+
+      badge.dataset.avail = String(availStock);
+      const reqQty = Number(qtyIn.value || 0);
+
+      if (availStock >= reqQty && availStock > 0) {
+        badge.textContent = `Avail: ${qty(availStock)} ${itemObj?.unit || 'nos'}`;
+        badge.className = 'st-avail-badge pastel-chip chip-mint';
+        qtyIn.style.borderColor = '';
+      } else if (availStock <= 0) {
+        badge.textContent = `Out of stock (0)`;
+        badge.className = 'st-avail-badge pastel-chip chip-rose';
+        qtyIn.style.borderColor = '#ef4444';
+      } else {
+        badge.textContent = `Short: ${qty(availStock)} / ${qty(reqQty)}`;
+        badge.className = 'st-avail-badge pastel-chip chip-rose';
+        qtyIn.style.borderColor = '#ef4444';
+      }
+    } catch {
+      badge.textContent = 'Stock: —';
+      badge.className = 'st-avail-badge pastel-chip chip-lavender';
+    }
+  }
+
+  function refreshAllRowStocks() {
+    tbody.querySelectorAll('.st-line-row').forEach(tr => updateStockBadge(tr));
+  }
+
+  // Initial stock checks
+  refreshAllRowStocks();
+
+  srcWhEl.addEventListener('change', () => {
+    // Clear cache on warehouse switch
+    for (const k in stockCache) delete stockCache[k];
+    if (srcWhEl.value === dstWhEl.value) {
+      errBox.textContent = 'Source and destination warehouses must be different.';
+      errBox.style.display = 'block';
+    } else {
+      errBox.style.display = 'none';
+    }
+    refreshAllRowStocks();
+  });
+
+  dstWhEl.addEventListener('change', () => {
+    if (srcWhEl.value === dstWhEl.value) {
+      errBox.textContent = 'Source and destination warehouses must be different.';
+      errBox.style.display = 'block';
+    } else {
+      errBox.style.display = 'none';
+    }
+  });
+
+  addLineBtn.addEventListener('click', () => {
+    rowIdx++;
+    const tempTr = document.createElement('tbody');
+    tempTr.innerHTML = buildLineRow({ quantity: 1 }, rowIdx);
+    const newTr = tempTr.firstElementChild;
+    tbody.appendChild(newTr);
+    updateStockBadge(newTr);
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('.st-rm');
+    if (rm) {
+      const rows = tbody.querySelectorAll('.st-line-row');
+      if (rows.length <= 1) {
+        toast('Stock transfer must contain at least one item.', 'err');
+        return;
+      }
+      rm.closest('.st-line-row').remove();
+    }
+  });
+
+  tbody.addEventListener('change', e => {
+    const tr = e.target.closest('.st-line-row');
+    if (tr && e.target.matches('.st-item')) {
+      updateStockBadge(tr);
+    }
+  });
+
+  tbody.addEventListener('input', e => {
+    const tr = e.target.closest('.st-line-row');
+    if (tr && e.target.matches('.st-qty')) {
+      const badge = tr.querySelector('.st-avail-badge');
+      const qtyIn = tr.querySelector('.st-qty');
+      const avail = Number(badge.dataset.avail || 0);
+      const req = Number(qtyIn.value || 0);
+      if (req > avail) {
+        badge.className = 'st-avail-badge pastel-chip chip-rose';
+        qtyIn.style.borderColor = '#ef4444';
+      } else if (avail > 0) {
+        badge.className = 'st-avail-badge pastel-chip chip-mint';
+        qtyIn.style.borderColor = '';
+      }
+    }
+  });
+
+  async function collectFormData() {
+    errBox.style.display = 'none';
+    const srcId = srcWhEl.value;
+    const dstId = dstWhEl.value;
+    const transferDate = dateEl.value;
+
+    if (!srcId || !dstId) {
+      throw new Error('Please select both source and destination warehouses.');
+    }
+    if (srcId === dstId) {
+      throw new Error('Source and destination warehouses must be different.');
+    }
+    if (!transferDate) {
+      throw new Error('Transfer date is required.');
+    }
+
+    const rows = tbody.querySelectorAll('.st-line-row');
+    if (!rows.length) {
+      throw new Error('Please add at least one item to transfer.');
+    }
+
+    const lines = [];
+    for (let i = 0; i < rows.length; i++) {
+      const tr = rows[i];
+      const itemVal = tr.querySelector('.st-item').value;
+      const qtyVal = Number(tr.querySelector('.st-qty').value || 0);
+      const unitVal = tr.querySelector('.st-unit').value || 'nos';
+      const batchVal = tr.querySelector('.st-batch').value.trim();
+      const serialVal = tr.querySelector('.st-serial').value.trim();
+      const descVal = tr.querySelector('.st-desc').value.trim();
+
+      if (!itemVal) {
+        throw new Error(`Row ${i + 1}: Please select an item.`);
+      }
+      if (qtyVal <= 0 || isNaN(qtyVal)) {
+        throw new Error(`Row ${i + 1}: Quantity must be greater than zero.`);
+      }
+
+      lines.push({
+        item: Number(itemVal),
+        quantity: qtyVal,
+        unit: unitVal,
+        batch_number: batchVal,
+        serial_number: serialVal,
+        description: descVal
+      });
+    }
+
+    return {
+      number: numEl.value.trim(),
+      date: transferDate,
+      source_warehouse: Number(srcId),
+      destination_warehouse: Number(dstId),
+      notes: notesEl.value.trim(),
+      lines
+    };
+  }
+
+  saveDraftBtn.addEventListener('click', async () => {
+    try {
+      const payload = await collectFormData();
+      saveDraftBtn.disabled = true;
+      saveDraftBtn.textContent = 'Saving…';
+      const res = await api(id ? `stock-transfers/${id}/` : 'stock-transfers/', {
+        method: id ? 'PUT' : 'POST',
+        body: payload
+      });
+      m.close();
+      toast(`Stock Transfer ${res.number} saved as draft!`, 'ok');
+      if (onDone) onDone(res);
+      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+      else location.reload();
+    } catch (err) {
+      saveDraftBtn.disabled = false;
+      saveDraftBtn.textContent = 'Save as Draft';
+      errBox.textContent = err.message || 'Failed to save stock transfer.';
+      errBox.style.display = 'block';
+    }
+  });
+
+  saveConfirmBtn.addEventListener('click', async () => {
+    try {
+      const payload = await collectFormData();
+
+      // Check client-side stock availability warnings
+      const rows = tbody.querySelectorAll('.st-line-row');
+      for (const tr of rows) {
+        const badge = tr.querySelector('.st-avail-badge');
+        const qtyIn = tr.querySelector('.st-qty');
+        const avail = Number(badge.dataset.avail || 0);
+        const req = Number(qtyIn.value || 0);
+        if (req > avail) {
+          const itemText = tr.querySelector('.st-item option:checked')?.textContent || 'item';
+          throw new Error(`Insufficient stock for ${itemText}. Available: ${avail}, Required: ${req}.`);
+        }
+      }
+
+      // Display prompt requirement
+      const ok = await confirmBox({
+        title: 'Confirm Stock Transfer?',
+        message: 'Are you sure you want to confirm this stock transfer? The selected quantities will be deducted from the source warehouse and added to the destination warehouse. This action will update inventory records and cannot be deleted.',
+        okText: 'Confirm Transfer',
+        danger: false
+      });
+      if (!ok) return;
+
+      saveConfirmBtn.disabled = true;
+      saveConfirmBtn.textContent = 'Confirming…';
+
+      // 1. Save or update draft
+      const draftRes = await api(id ? `stock-transfers/${id}/` : 'stock-transfers/', {
+        method: id ? 'PUT' : 'POST',
+        body: payload
+      });
+
+      // 2. Confirm transfer
+      const confirmedRes = await api(`stock-transfers/${draftRes.id}/confirm/`, {
+        method: 'POST',
+        body: {}
+      });
+
+      m.close();
+      toast(`Stock Transfer ${confirmedRes.number} confirmed successfully! Inventory updated.`, 'ok');
+      if (onDone) onDone(confirmedRes);
+      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+      else location.reload();
+    } catch (err) {
+      saveConfirmBtn.disabled = false;
+      saveConfirmBtn.textContent = 'Confirm Transfer';
+      errBox.textContent = err.message || 'Failed to confirm stock transfer.';
+      errBox.style.display = 'block';
+    }
+  });
+}

@@ -26,6 +26,7 @@ from .calc import GST_SLABS, compute, is_intra_state, q2
 from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
+    StockTransfer, StockTransferLine,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
     CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
@@ -105,6 +106,14 @@ def get_user_role(user):
         )
     return profile.role
 
+def get_client_ip(request):
+    if not request:
+        return ''
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
 def check_permission(request, allowed_roles=None, resource_name=None, action_name=None):
     user = request.user
     if not user or not user.is_authenticated:
@@ -131,6 +140,7 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
             'items': ('items', 'item'),
             'adjustments': ('items', 'adjustments'),
             'stock-adjustments': ('items', 'adjustments'),
+            'stock-transfers': ('items', 'transfers'),
             'price-lists': ('items', 'price_lists'),
             'banking': ('banking', 'banking'),
             'bank-accounts': ('banking', 'banking'),
@@ -155,6 +165,9 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
             'roles': ('settings', 'users'),
             'users': ('settings', 'users'),
         }
+
+        if resource_name == 'stock-transfers' and action == 'delete':
+            raise ApiError(405, 'Stock transfers cannot be deleted. Use Reverse Entry instead.')
 
         if resource_name in RES_MAP:
             mod_key, sub_key = RES_MAP[resource_name]
@@ -334,10 +347,21 @@ class Resource:
             qs = qs.order_by(*self.default_ordering)
         return qs
 
-    def export(self, qs):
+    def export(self, qs, request=None):
         rows = list(qs)
         if not rows:
             return JsonResponse({'error': 'No data available to export.'}, status=400)
+        try:
+            user_org = get_user_org(request.user) if request else None
+            services.log_audit(
+                request.user if request else None, 'export', self.model.__name__ if self.model else self.name, '',
+                f"Exported {self.name} as CSV",
+                ip_address=get_client_ip(request) if request else '',
+                org=user_org,
+                module=self.name
+            )
+        except Exception:
+            pass
         resp = HttpResponse(content_type='text/csv; charset=utf-8')
         resp['Content-Disposition'] = f'attachment; filename="{self.name}.csv"'
         w = csv.writer(resp)
@@ -506,8 +530,18 @@ class Resource:
         if request.method == 'GET':
             qs = self.queryset(request)
             if request.GET.get('export') == 'csv':
-                return self.export(qs)
+                return self.export(qs, request=request)
             if request.GET.get('export') == 'json':
+                try:
+                    services.log_audit(
+                        request.user, 'export', self.model.__name__ if self.model else self.name, '',
+                        f"Exported {self.name} as JSON",
+                        ip_address=get_client_ip(request),
+                        org=get_user_org(request.user),
+                        module=self.name
+                    )
+                except Exception:
+                    pass
                 return j(self.rows(list(qs)))
             if request.GET.get('export') == 'template':
                 return self.export_template()
@@ -545,6 +579,23 @@ class Resource:
                                     if user_org:
                                         obj.organization = user_org
                                         obj.save(update_fields=['organization'])
+                            except Exception:
+                                pass
+                        # Global audit log for create
+                        if self.name != 'stock-transfers':
+                            try:
+                                user_org = get_user_org(request.user)
+                                ent_name = getattr(obj, 'number', getattr(obj, 'name', getattr(obj, 'code', f'#{obj.pk}')))
+                                safe_data = {k: str(v) for k, v in data.items() if k not in ('password', 'token', 'secret', 'file_data', 'image_data')} if isinstance(data, dict) else {}
+                                services.log_audit(
+                                    request.user, 'create', self.model.__name__ if self.model else self.name, obj.pk,
+                                    f"Created {self.model.__name__ if self.model else self.name} {ent_name}",
+                                    details={'resource': self.name, 'data': safe_data},
+                                    ip_address=get_client_ip(request),
+                                    org=user_org,
+                                    module=self.name,
+                                    new_values=safe_data
+                                )
                             except Exception:
                                 pass
                     return j(self.detail(self.get_object(obj.pk, request)), 201)
@@ -713,6 +764,8 @@ class Resource:
                 })
 
         if request.method == 'DELETE':
+            if self.name == 'stock-transfers':
+                raise ApiError(405, 'Stock transfers cannot be deleted. Use Reverse Entry instead.')
             data = body(request)
             ids = data.get('ids', [])
             if not isinstance(ids, list) or not ids:
@@ -750,13 +803,58 @@ class Resource:
         if request.method == 'GET':
             return j(self.detail(obj))
         if request.method in ('PUT', 'PATCH'):
+            prev_row = {}
+            try:
+                prev_row = self.row(obj)
+            except Exception:
+                pass
             with transaction.atomic():
                 self.update(obj, body(request), request.user)
-            return j(self.detail(self.get_object(pk, request)))
+            new_obj = self.get_object(pk, request)
+            new_row = {}
+            try:
+                new_row = self.row(new_obj)
+            except Exception:
+                pass
+            if self.name != 'stock-transfers':
+                try:
+                    user_org = get_user_org(request.user)
+                    ent_label = getattr(new_obj, 'number', getattr(new_obj, 'name', getattr(new_obj, 'code', f'#{new_obj.pk}')))
+                    services.log_audit(
+                        request.user, 'update', self.model.__name__ if self.model else self.name, new_obj.pk,
+                        f"Updated {self.model.__name__ if self.model else self.name} {ent_label}",
+                        details={'resource': self.name},
+                        ip_address=get_client_ip(request),
+                        org=user_org,
+                        module=self.name,
+                        previous_values=prev_row,
+                        new_values=new_row
+                    )
+                except Exception:
+                    pass
+            return j(self.detail(new_obj))
         if request.method == 'DELETE':
+            if self.name == 'stock-transfers':
+                raise ApiError(405, 'Stock transfers cannot be deleted. Use Reverse Entry instead.')
+            ent_label = getattr(obj, 'number', getattr(obj, 'name', getattr(obj, 'code', f'#{pk}')))
+            prev_row = {}
+            try:
+                prev_row = self.row(obj)
+            except Exception:
+                pass
+            user_org = get_user_org(request.user)
             try:
                 with transaction.atomic():
                     self.destroy(obj)
+                services.log_audit(
+                    request.user, 'delete', self.model.__name__ if self.model else self.name, pk,
+                    f"Deleted {self.model.__name__ if self.model else self.name} {ent_label}",
+                    details={'resource': self.name, 'previous_data': prev_row},
+                    ip_address=get_client_ip(request),
+                    org=user_org,
+                    module=self.name,
+                    previous_values=prev_row
+                )
             except ProtectedError:
                 obj_name = getattr(obj, 'name', getattr(obj, 'number', f'Record #{pk}'))
                 raise ApiError(400, f"Cannot delete '{obj_name}' because it is referenced by existing transactions.")
@@ -770,6 +868,20 @@ class Resource:
         obj = self.get_object(pk, request)
         with transaction.atomic():
             res = self.action(request, obj, name)
+        if self.name != 'stock-transfers':
+            try:
+                user_org = get_user_org(request.user)
+                ent_label = getattr(obj, 'number', getattr(obj, 'name', getattr(obj, 'code', f'#{pk}')))
+                services.log_audit(
+                    request.user, name, self.model.__name__ if self.model else self.name, pk,
+                    f"Executed action '{name}' on {self.model.__name__ if self.model else self.name} {ent_label}",
+                    details={'resource': self.name, 'action': name},
+                    ip_address=get_client_ip(request),
+                    org=user_org,
+                    module=self.name
+                )
+            except Exception:
+                pass
         if res is not None:
             return res
         return j(self.detail(self.get_object(pk)))
@@ -2923,15 +3035,54 @@ class JournalResource(Resource):
 class AuditLogResource(Resource):
     name = 'audit-logs'
     model = AuditLog
-    search_fields = ('username', 'action', 'entity_type', 'entity_id', 'summary')
+    search_fields = ('username', 'action', 'entity_type', 'entity_id', 'summary', 'module', 'submodule')
     default_ordering = ('-timestamp',)
+    csv_cols = [
+        ('Timestamp', 'timestamp'), ('User', 'username'), ('Action', 'action'),
+        ('Entity Type', 'entity_type'), ('Entity ID', 'entity_id'), ('Module', 'module'),
+        ('Summary', 'summary'), ('IP Address', 'ip_address')
+    ]
+
+    def filter_qs(self, qs, request):
+        user_org = get_user_org(request.user)
+        if user_org:
+            qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+        elif request.user.is_authenticated and not request.user.is_superuser:
+            qs = qs.none()
+        act = request.GET.get('action')
+        if act:
+            qs = qs.filter(action__iexact=act)
+        etype = request.GET.get('entity_type')
+        if etype:
+            qs = qs.filter(entity_type__iexact=etype)
+        mod = request.GET.get('module')
+        if mod:
+            qs = qs.filter(Q(module__iexact=mod) | Q(entity_type__iexact=mod))
+        return qs
 
     def row(self, o):
         return {
-            'id': o.pk, 'timestamp': o.timestamp, 'username': o.username,
-            'action': o.action, 'entity_type': o.entity_type, 'entity_id': o.entity_id,
-            'summary': o.summary, 'details': o.details, 'ip_address': o.ip_address
+            'id': o.pk,
+            'timestamp': o.timestamp.isoformat() if hasattr(o.timestamp, 'isoformat') else str(o.timestamp),
+            'username': o.username,
+            'action': o.action,
+            'entity_type': o.entity_type,
+            'entity_id': o.entity_id,
+            'module': getattr(o, 'module', '') or '',
+            'submodule': getattr(o, 'submodule', '') or '',
+            'summary': o.summary,
+            'details': o.details or {},
+            'previous_values': getattr(o, 'previous_values', {}) or {},
+            'new_values': getattr(o, 'new_values', {}) or {},
+            'status': getattr(o, 'status', 'success') or 'success',
+            'ip_address': o.ip_address or ''
         }
+
+    def destroy(self, obj):
+        raise ApiError(405, 'Audit log records are immutable and cannot be deleted.')
+
+    def update(self, obj, data, user):
+        raise ApiError(405, 'Audit log records are immutable and cannot be modified.')
 
 class CustomFieldResource(Resource):
     name = 'custom-fields'
@@ -5123,6 +5274,170 @@ class FinancialAnomalyResource(Resource):
             'status': o.status, 'detected_at': o.detected_at
         }
 
+class StockTransferResource(Resource):
+    name = 'stock-transfers'
+    model = StockTransfer
+    search_fields = ('number', 'source_warehouse__name', 'source_warehouse_code', 'destination_warehouse__name', 'destination_warehouse_code', 'notes')
+    orderings = {'number': 'number', 'date': 'date', 'status': 'status', 'created': 'created_at'}
+    default_ordering = ('-date', '-id')
+    csv_cols = [
+        ('Transfer Number', 'number'),
+        ('Date', 'date'),
+        ('Source Warehouse', 'source_warehouse_code'),
+        ('Destination Warehouse', 'destination_warehouse_code'),
+        ('Status', 'status'),
+        ('Total Items', 'lines_count'),
+        ('Total Quantity', 'total_qty'),
+        ('Notes', 'notes')
+    ]
+
+    def handle_collection(self, request):
+        if request.method == 'GET' and request.GET.get('action') == 'available_stock':
+            item_id = request.GET.get('item_id')
+            wh_id = request.GET.get('warehouse_id')
+            user_org = get_user_org(request.user)
+            if not item_id or not wh_id:
+                raise ApiError(400, 'item_id and warehouse_id are required.')
+            avail = services.get_item_warehouse_stock(item_id, wh_id, org=user_org)
+            item = Item.objects.filter(pk=item_id).first()
+            unit = item.unit if item else 'nos'
+            return j({'available_stock': float(avail), 'unit': unit})
+        if request.method == 'DELETE':
+            raise ApiError(405, 'Stock transfers cannot be deleted. Use Reverse Entry instead.')
+        return super().handle_collection(request)
+
+    def filter_qs(self, qs, request):
+        status = request.GET.get('status')
+        if status:
+            qs = qs.filter(status=status)
+        src = request.GET.get('source_warehouse')
+        if src:
+            if src.isdigit():
+                qs = qs.filter(source_warehouse_id=int(src))
+            else:
+                qs = qs.filter(Q(source_warehouse_code__iexact=src) | Q(source_warehouse__name__icontains=src))
+        dst = request.GET.get('destination_warehouse')
+        if dst:
+            if dst.isdigit():
+                qs = qs.filter(destination_warehouse_id=int(dst))
+            else:
+                qs = qs.filter(Q(destination_warehouse_code__iexact=dst) | Q(destination_warehouse__name__icontains=dst))
+        wh = request.GET.get('warehouse')
+        if wh:
+            if wh.isdigit():
+                qs = qs.filter(Q(source_warehouse_id=int(wh)) | Q(destination_warehouse_id=int(wh)))
+            else:
+                qs = qs.filter(Q(source_warehouse_code__iexact=wh) | Q(destination_warehouse_code__iexact=wh))
+        item_id = request.GET.get('item')
+        if item_id and item_id.isdigit():
+            qs = qs.filter(lines__item_id=int(item_id))
+        start = request.GET.get('start')
+        if start:
+            qs = qs.filter(date__gte=start)
+        end = request.GET.get('end')
+        if end:
+            qs = qs.filter(date__lte=end)
+        created_by = request.GET.get('created_by')
+        if created_by:
+            if created_by.isdigit():
+                qs = qs.filter(created_by_id=int(created_by))
+            else:
+                qs = qs.filter(created_by__username__icontains=created_by)
+        return qs.select_related('source_warehouse', 'destination_warehouse', 'created_by', 'confirmed_by', 'reversed_by').prefetch_related('lines__item')
+
+    def row(self, o):
+        lines = list(o.lines.all())
+        total_qty = sum(l.quantity for l in lines)
+        items_summary = ', '.join(f"{l.item_name} ({services.fmt_qty(l.quantity)} {l.unit})" for l in lines[:3])
+        if len(lines) > 3:
+            items_summary += f" +{len(lines) - 3} more"
+
+        created_by_name = o.created_by.get_full_name() or o.created_by.username if o.created_by else 'System'
+        confirmed_by_name = o.confirmed_by.get_full_name() or o.confirmed_by.username if o.confirmed_by else ''
+        reversed_by_name = o.reversed_by.get_full_name() or o.reversed_by.username if o.reversed_by else ''
+
+        return {
+            'id': o.pk,
+            'number': o.number,
+            'date': o.date.isoformat() if o.date else '',
+            'source_warehouse_id': o.source_warehouse_id,
+            'source_warehouse_code': o.source_warehouse_code or (o.source_warehouse.code if o.source_warehouse else ''),
+            'source_warehouse_name': o.source_warehouse.name if o.source_warehouse else '',
+            'destination_warehouse_id': o.destination_warehouse_id,
+            'destination_warehouse_code': o.destination_warehouse_code or (o.destination_warehouse.code if o.destination_warehouse else ''),
+            'destination_warehouse_name': o.destination_warehouse.name if o.destination_warehouse else '',
+            'status': o.status,
+            'status_display': o.get_status_display(),
+            'notes': o.notes,
+            'lines_count': len(lines),
+            'total_qty': float(total_qty),
+            'items_summary': items_summary or 'No items',
+            'created_at': o.created_at.isoformat() if o.created_at else '',
+            'created_by': created_by_name,
+            'confirmed_at': o.confirmed_at.isoformat() if o.confirmed_at else '',
+            'confirmed_by': confirmed_by_name,
+            'reversed_at': o.reversed_at.isoformat() if o.reversed_at else '',
+            'reversed_by': reversed_by_name,
+            'reversal_reason': o.reversal_reason,
+            'is_reversal': o.is_reversal,
+            'reversal_transfer_id': o.reversal_transfer_id,
+        }
+
+    def detail(self, o):
+        data = self.row(o)
+        data['lines'] = [
+            {
+                'id': l.pk,
+                'item_id': l.item_id,
+                'item_name': l.item_name or l.item.name,
+                'item_sku': l.item_sku or l.item.sku or '',
+                'quantity': float(l.quantity),
+                'unit': l.unit or l.item.unit or 'nos',
+                'batch_number': l.batch_number,
+                'serial_number': l.serial_number,
+                'description': l.description,
+            }
+            for l in o.lines.select_related('item').all()
+        ]
+        user_org = o.organization or Organization.get()
+        audit_qs = AuditLog.objects.filter(
+            organization=user_org,
+            entity_type='StockTransfer',
+            entity_id=str(o.pk)
+        ).order_by('-timestamp')
+        data['audit_trail'] = [
+            {
+                'timestamp': a.timestamp.isoformat(),
+                'username': a.username,
+                'action': a.action,
+                'summary': a.summary,
+                'details': a.details,
+                'ip_address': a.ip_address
+            }
+            for a in audit_qs
+        ]
+        return data
+
+    def create(self, data, user):
+        return services.create_stock_transfer(data, user)
+
+    def update(self, obj, data, user):
+        return services.update_stock_transfer(obj, data, user)
+
+    def destroy(self, obj):
+        raise ApiError(405, 'Stock transfers cannot be deleted. Use Reverse Entry instead.')
+
+    def action(self, request, obj, name):
+        if name == 'confirm':
+            res = services.confirm_stock_transfer(obj, request.user)
+            return j(self.detail(res))
+        if name == 'reverse':
+            d = body(request)
+            reason = d.get('reason') or d.get('reversal_reason') or ''
+            res = services.reverse_stock_transfer(obj, request.user, reason=reason)
+            return j(self.detail(res))
+        raise ApiError(404, f'Unknown action "{name}".')
+
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), QuoteResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
@@ -5132,7 +5447,8 @@ RESOURCES = {r.name: r for r in (
     ManagedDocumentResource(), SalesOrderResource(), PurchaseOrderResource(), ExpenseResource(),
     CreditNoteResource(), VendorCreditResource(), RecurringInvoiceResource(), DeliveryChallanResource(),
     EWayBillResource(), ProjectResource(), TimeLogResource(), ItemCategoryResource(), PriceListResource(),
-    WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource()
+    WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource(),
+    StockTransferResource()
 )}
 RESOURCES['timelogs'] = RESOURCES.get('timesheets')
 RESOURCES['inventory-summary'] = RESOURCES.get('items')
@@ -5401,6 +5717,14 @@ def lookup(request, name):
     elif name == 'projects':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id}
                 for o in org_filter(Project.objects.filter(status='active')).order_by('name')]
+    elif name == 'warehouse-stock':
+        item_id = request.GET.get('item_id')
+        wh_id = request.GET.get('warehouse_id')
+        if not item_id or not wh_id:
+            raise ApiError(400, 'item_id and warehouse_id are required.')
+        avail = services.get_item_warehouse_stock(item_id, wh_id, org=user_org)
+        item = Item.objects.filter(pk=item_id).first()
+        data = {'available_stock': float(avail), 'unit': item.unit if item else 'nos'}
     elif name == 'warehouses':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'is_primary': o.is_primary,
                  'is_sub_warehouse': bool(o.parent_id), 'parent_id': o.parent_id,
@@ -7964,6 +8288,7 @@ def settings_taxes_view(request):
         'tax_settings': org.tax_settings,
         'direct_tax_settings': org.direct_tax_settings
     })
+
 
 
 

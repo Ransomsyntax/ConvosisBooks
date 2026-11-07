@@ -167,21 +167,35 @@ function fld(o) {
     let optionsList = Array.isArray(o.opts) ? [...o.opts] : [];
     const n = (o.name || '').toLowerCase();
     const l = (o.label || '').toLowerCase();
+    const hasEmptyFirst = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '');
+    const insertIdx = hasEmptyFirst ? 1 : 0;
+
+    const addOptionIfNotPresent = (val, text) => {
+      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === val)) {
+        optionsList.splice(insertIdx, 0, [val, text]);
+      }
+    };
+
     if (n === 'customer' || n === 'customer_id' || l.includes('customer')) {
-      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_customer__')) {
-        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
-        optionsList.splice(insertIdx, 0, ['__new_customer__', '+ Add New Customer…']);
-      }
+      addOptionIfNotPresent('__new_customer__', '+ Add New Customer…');
     } else if (n === 'vendor' || n === 'vendor_id' || l.includes('vendor')) {
-      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_vendor__')) {
-        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
-        optionsList.splice(insertIdx, 0, ['__new_vendor__', '+ Add New Vendor…']);
-      }
-    } else if (n === 'item' || n === 'item_id' || l.includes('item')) {
-      if (!optionsList.some(item => (Array.isArray(item) ? item[0] : item) === '__new_item__')) {
-        const insertIdx = optionsList.length > 0 && ((Array.isArray(optionsList[0]) ? optionsList[0][0] : optionsList[0]) === '') ? 1 : 0;
-        optionsList.splice(insertIdx, 0, ['__new_item__', '+ Add New Item…']);
-      }
+      addOptionIfNotPresent('__new_vendor__', '+ Add New Vendor…');
+    } else if (n === 'item' || n === 'item_id' || l.includes('item') || l.includes('product')) {
+      addOptionIfNotPresent('__new_item__', '+ Add New Item…');
+    } else if (n === 'salesperson' || n === 'salesperson_id' || l.includes('salesperson') || l.includes('sales person')) {
+      addOptionIfNotPresent('__new_salesperson__', '+ Add New Salesperson…');
+    } else if (n.includes('warehouse') || l.includes('warehouse')) {
+      addOptionIfNotPresent('__new_warehouse__', '+ Add New Warehouse…');
+    } else if (n.includes('employee') || l.includes('employee')) {
+      addOptionIfNotPresent('__new_employee__', '+ Add New Employee…');
+    } else if (n.includes('category') || l.includes('category')) {
+      addOptionIfNotPresent('__new_category__', '+ Add New Category…');
+    } else if (n.includes('price') || l.includes('price list')) {
+      addOptionIfNotPresent('__new_pricelist__', '+ Add New Price List…');
+    } else if (n.includes('account') || l.includes('account')) {
+      addOptionIfNotPresent('__new_account__', '+ Add New Account…');
+    } else if (n.includes('project') || l.includes('project')) {
+      addOptionIfNotPresent('__new_project__', '+ Add New Project…');
     }
     ctl = `<select class="in" id="${id}" name="${o.name}"${req} ${at}>${opts(optionsList, v)}</select>`;
   }
@@ -190,133 +204,302 @@ function fld(o) {
   return `<div class="zb-form-row fg ${o.type === 'textarea' ? 'align-top' : ''} ${o.col || ''}"><label class="zb-form-label" for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label><div class="zb-form-ctrl">${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">${esc(o.help)}</div>` : ''}</div></div>`;
 }
 
+async function salespersonModal(onDone) {
+  formModal({
+    title: 'New Salesperson',
+    dialog: true,
+    wide: false,
+    body: `
+      <div class="zb-form-wrap">
+        ${fld({ name: 'name', label: 'Salesperson Name', req: true, ph: 'e.g. Rahul Sharma' })}
+        ${fld({ name: 'email', label: 'Email Address', type: 'email', req: false, ph: 'rahul@example.com' })}
+        ${fld({ name: 'phone', label: 'Phone Number', req: false, ph: '+91 9876543210' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const name = (d.name || '').trim();
+      if (!name) throw new ApiErr(400, { name: 'Salesperson Name is required.' }, 'Salesperson Name is required.');
+      const res = await api('salespersons/', { method: 'POST', body: d });
+      toast(`Salesperson "${res.name || name}" added successfully!`, 'ok');
+      if (onDone) onDone(res);
+      else refresh();
+    }
+  });
+}
+window.salespersonModal = salespersonModal;
+
+async function employeeModal(onDone) {
+  formModal({
+    title: 'New Employee / Staff',
+    dialog: true,
+    wide: false,
+    body: `
+      <div class="zb-form-wrap">
+        ${fld({ name: 'name', label: 'Employee Name', req: true, ph: 'e.g. Anjali Nair' })}
+        ${fld({ name: 'email', label: 'Email Address', type: 'email', req: false, ph: 'anjali@example.com' })}
+        ${fld({ name: 'phone', label: 'Phone Number', req: false, ph: '+91 9876543210' })}
+        ${fld({ name: 'department', label: 'Department / Role', ph: 'Operations / Accounts' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const name = (d.name || '').trim();
+      if (!name) throw new ApiErr(400, { name: 'Employee Name is required.' }, 'Employee Name is required.');
+      const res = await api('employees/', { method: 'POST', body: d });
+      toast(`Employee "${res.name || name}" added successfully!`, 'ok');
+      if (onDone) onDone(res);
+      else refresh();
+    }
+  });
+}
+window.employeeModal = employeeModal;
+
+async function unitModal(onDone) {
+  formModal({
+    title: 'Add New Unit of Measurement',
+    dialog: true,
+    wide: false,
+    body: `
+      <div class="zb-form-wrap">
+        ${fld({ name: 'unit_code', label: 'Unit Code', req: true, ph: 'e.g. roll, pkt, bundle' })}
+        ${fld({ name: 'unit_name', label: 'Unit Description (Optional)', ph: 'e.g. Rolls, Packets' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const code = (d.unit_code || '').trim().toLowerCase();
+      if (!code) throw new ApiErr(400, { unit_code: 'Unit code is required.' }, 'Unit code is required.');
+      const name = (d.unit_name || '').trim() || code;
+      const res = { id: code, code, name: `${code} (${name})` };
+      toast(`Unit "${code}" added!`, 'ok');
+      if (onDone) onDone(res);
+    }
+  });
+}
+window.unitModal = unitModal;
+
+async function taxRateModal(onDone) {
+  formModal({
+    title: 'Add Custom Tax Rate',
+    dialog: true,
+    wide: false,
+    body: `
+      <div class="zb-form-wrap">
+        ${fld({ name: 'tax_rate', label: 'Tax Rate (%)', type: 'number', req: true, ph: 'e.g. 12' })}
+        ${fld({ name: 'tax_name', label: 'Tax Name / Description (Optional)', ph: 'e.g. GST12 [12%]' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const rate = parseFloat(d.tax_rate);
+      if (isNaN(rate) || rate < 0 || rate > 100) throw new ApiErr(400, { tax_rate: 'Valid tax rate between 0 and 100 is required.' }, 'Invalid tax rate.');
+      const name = (d.tax_name || '').trim() || `GST${rate} [${rate}%]`;
+      const res = { id: String(rate), rate, name };
+      toast(`Tax rate "${name}" added!`, 'ok');
+      if (onDone) onDone(res);
+    }
+  });
+}
+window.taxRateModal = taxRateModal;
+
 async function handleQuickCreateSelect(selectEl, customCallback) {
-  if (!selectEl) return false;
+  if (!selectEl || selectEl._quickCreating) return false;
   const val = selectEl.value;
-  if (val !== '__new_customer__' && val !== '__new_vendor__' && val !== '__new_item__') {
-    return false;
+  const opt = selectEl.options[selectEl.selectedIndex];
+  const optText = opt ? opt.text.trim().toLowerCase() : '';
+  const selName = (selectEl.name || selectEl.id || '').toLowerCase();
+
+  // Determine entity kind
+  let entity = null;
+  if (val === '__new_customer__' || (val === '__add_new__' && selName.includes('customer')) || optText.includes('add new customer')) {
+    entity = 'customer';
+  } else if (val === '__new_vendor__' || (val === '__add_new__' && selName.includes('vendor')) || optText.includes('add new vendor')) {
+    entity = 'vendor';
+  } else if (val === '__new_item__' || (val === '__add_new__' && (selName.includes('item') || selName.includes('product'))) || optText.includes('add new item') || optText.includes('add new product')) {
+    entity = 'item';
+  } else if (val === '__new_salesperson__' || (val === '__add_new__' && selName.includes('salesperson')) || optText.includes('add new salesperson')) {
+    entity = 'salesperson';
+  } else if (val === '__new_warehouse__' || (val === '__add_new__' && selName.includes('warehouse')) || optText.includes('add new warehouse')) {
+    entity = 'warehouse';
+  } else if (val === '__new_employee__' || (val === '__add_new__' && selName.includes('employee')) || optText.includes('add new employee')) {
+    entity = 'employee';
+  } else if (val === '__new_category__' || (val === '__add_new__' && selName.includes('category')) || optText.includes('add new category')) {
+    entity = 'category';
+  } else if (val === '__new_pricelist__' || (val === '__add_new__' && (selName.includes('price') || selName.includes('scheme'))) || optText.includes('add new price list')) {
+    entity = 'pricelist';
+  } else if (val === '__new_account__' || (val === '__add_new__' && selName.includes('account')) || optText.includes('add new account')) {
+    entity = 'account';
+  } else if (val === '__new_project__' || (val === '__add_new__' && selName.includes('project')) || optText.includes('add new project')) {
+    entity = 'project';
+  } else if (val === '__new_unit__' || (val === '__add_new__' && selName.includes('unit')) || optText.includes('add new unit')) {
+    entity = 'unit';
+  } else if (val === '__new_tax__' || (val === '__add_new__' && (selName.includes('tax') || selName.includes('gst'))) || optText.includes('add new tax rate')) {
+    entity = 'tax';
   }
 
+  if (!entity) return false;
+
+  selectEl._quickCreating = true;
   const prevVal = selectEl.dataset.prevVal || '';
   selectEl.value = prevVal;
 
-  if (val === '__new_customer__') {
-    partyForm('customers', null, (newCust) => {
-      if (newCust && newCust.id) {
-        const container = selectEl.closest('form') || selectEl.closest('.invoice-form-page') || selectEl.closest('.zb-form-wrap') || document;
-        const custSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('select[name="customer"], select[name="customer_id"], #inv-customer, #q-customer, #so-customer') : [selectEl]);
-        if (!custSelects.includes(selectEl)) custSelects.push(selectEl);
+  const onCreated = (newRecord) => {
+    selectEl._quickCreating = false;
+    if (!newRecord) return;
 
-        custSelects.forEach(sel => {
-          let opt = sel.querySelector(`option[value="${newCust.id}"]`);
-          if (!opt) {
-            opt = document.createElement('option');
-            opt.value = newCust.id;
-            opt.textContent = newCust.name;
-            sel.appendChild(opt);
-          }
-        });
+    let idVal = newRecord.id;
+    let labelVal = newRecord.name;
 
-        selectEl.value = newCust.id;
-        selectEl.dataset.prevVal = newCust.id;
+    if (entity === 'customer' || entity === 'vendor') {
+      idVal = newRecord.id;
+      labelVal = newRecord.name;
+    } else if (entity === 'item') {
+      idVal = newRecord.id;
+      labelVal = newRecord.name + (newRecord.sku ? ` (${newRecord.sku})` : '');
+    } else if (entity === 'salesperson') {
+      const usesName = Array.from(selectEl.options).some(o => o.value && o.value === o.text && !o.value.startsWith('__'));
+      idVal = usesName ? (newRecord.name || newRecord.username) : (newRecord.id || newRecord.name);
+      labelVal = newRecord.name || newRecord.username;
+    } else if (entity === 'warehouse') {
+      const usesCode = (selectEl.name === 'source_warehouse' || selectEl.name === 'destination_warehouse' || selectEl.id.startsWith('st_') || Array.from(selectEl.options).some(o => o.value && o.value === newRecord.code));
+      idVal = usesCode ? (newRecord.code || newRecord.id) : (newRecord.id || newRecord.code);
+      labelVal = `${newRecord.code || ''} - ${newRecord.name || ''}`.replace(/^ - /, '');
+    } else if (entity === 'employee') {
+      idVal = newRecord.id || newRecord.name;
+      labelVal = newRecord.name || newRecord.username;
+    } else if (entity === 'category') {
+      idVal = newRecord.name || newRecord.id;
+      labelVal = newRecord.name;
+    } else if (entity === 'pricelist') {
+      idVal = newRecord.id;
+      labelVal = newRecord.name;
+    } else if (entity === 'account') {
+      const usesName = Array.from(selectEl.options).some(o => o.value && o.value === newRecord.name);
+      idVal = usesName ? newRecord.name : (newRecord.id || newRecord.name);
+      labelVal = `${newRecord.code ? newRecord.code + ' - ' : ''}${newRecord.name}`;
+    } else if (entity === 'project') {
+      idVal = newRecord.id;
+      labelVal = newRecord.name;
+    } else if (entity === 'unit') {
+      idVal = newRecord.code || newRecord.id;
+      labelVal = newRecord.name || newRecord.code;
+    } else if (entity === 'tax') {
+      idVal = String(newRecord.rate != null ? newRecord.rate : newRecord.id);
+      labelVal = newRecord.name || `${newRecord.rate}%`;
+    }
 
-        const posEl = container.querySelector ? (container.querySelector('#inv-place-of-supply') || container.querySelector('#so-pos') || container.querySelector('select[name="place_of_supply"]') || container.querySelector('input[name="place_of_supply"]')) : null;
-        if (posEl && (newCust.state || newCust.place_of_supply)) {
-          const st = (newCust.state || newCust.place_of_supply).replace(/^\[\d+\]\s*/, '').trim();
-          posEl.value = st;
-        }
+    const formContainer = selectEl.closest('form') || selectEl.closest('.zb-form-wrap') || selectEl.closest('.invoice-form-page') || selectEl.closest('#pg') || document;
+    let targetSelects = [selectEl];
 
-        if (customCallback) customCallback(newCust);
-        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+    if (entity === 'customer') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name="customer"], select[name="customer_id"], #inv-customer, #q-customer, #so-customer'));
+    } else if (entity === 'vendor') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name="vendor"], select[name="vendor_id"]'));
+    } else if (entity === 'item') {
+      targetSelects = Array.from(formContainer.querySelectorAll('.l-item, .adj-row-item, .st-item, .st-item-select, select[name="item"], select[name="item_id"]'));
+    } else if (entity === 'salesperson') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name="salesperson"], #q-salesperson, #inv-salesperson'));
+    } else if (entity === 'warehouse') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name="warehouse"], select[name="warehouse_id"], select[name="source_warehouse"], select[name="destination_warehouse"], #st-src-wh, #st-dst-wh, #st_source_warehouse, #st_dest_warehouse, #adj_warehouse, #item_warehouse'));
+    } else if (entity === 'account') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name*="account"], #item_sales_account, #item_purchase_account, #item_inventory_account, #adj_account, #adj-account'));
+    }
+
+    if (!targetSelects.includes(selectEl)) targetSelects.push(selectEl);
+
+    targetSelects.forEach(sel => {
+      let optFound = Array.from(sel.options).find(o => String(o.value) === String(idVal) || o.text === labelVal);
+      if (!optFound) {
+        optFound = document.createElement('option');
+        optFound.value = idVal;
+        optFound.textContent = labelVal;
+        sel.appendChild(optFound);
       }
     });
-    return true;
-  }
 
-  if (val === '__new_vendor__') {
-    partyForm('vendors', null, (newVendor) => {
-      if (newVendor && newVendor.id) {
-        const container = selectEl.closest('form') || selectEl.closest('.doc-canvas-scroll') || selectEl.closest('.zb-form-wrap') || document;
-        const vendorSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('select[name="vendor"], select[name="vendor_id"]') : [selectEl]);
-        if (!vendorSelects.includes(selectEl)) vendorSelects.push(selectEl);
+    selectEl.value = idVal;
+    selectEl.dataset.prevVal = idVal;
 
-        vendorSelects.forEach(sel => {
-          let opt = sel.querySelector(`option[value="${newVendor.id}"]`);
-          if (!opt) {
-            opt = document.createElement('option');
-            opt.value = newVendor.id;
-            opt.textContent = newVendor.name;
-            sel.appendChild(opt);
-          }
-        });
-
-        selectEl.value = newVendor.id;
-        selectEl.dataset.prevVal = newVendor.id;
-
-        const posEl = container.querySelector ? (container.querySelector('select[name="place_of_supply"]') || container.querySelector('input[name="place_of_supply"]')) : null;
-        if (posEl && (newVendor.state || newVendor.source_of_supply)) {
-          const st = (newVendor.state || newVendor.source_of_supply).replace(/^\[\d+\]\s*/, '').trim();
-          posEl.value = st;
-        }
-
-        if (customCallback) customCallback(newVendor);
-        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+    if (typeof selectEl._searchableSync === 'function') {
+      selectEl._searchableSync();
+    } else {
+      const searchWrap = selectEl.nextElementSibling;
+      if (searchWrap && searchWrap.classList && searchWrap.classList.contains('searchable-select-wrap')) {
+        const inp = searchWrap.querySelector('.searchable-select-input');
+        if (inp) inp.value = labelVal;
       }
-    });
-    return true;
-  }
+    }
 
-  if (val === '__new_item__') {
-    itemForm(null, (newItem) => {
-      if (newItem && newItem.id) {
-        const container = selectEl.closest('tbody') || selectEl.closest('table') || selectEl.closest('form') || document;
-        const itemSelects = Array.from(container.querySelectorAll ? container.querySelectorAll('.l-item, .adj-row-item, select[name="item"], select[name="item_id"]') : [selectEl]);
-        if (!itemSelects.includes(selectEl)) itemSelects.push(selectEl);
-
-        const labelText = newItem.name + (newItem.sku ? ` (${newItem.sku})` : '');
-        itemSelects.forEach(sel => {
-          let opt = sel.querySelector(`option[value="${newItem.id}"]`);
-          if (!opt) {
-            opt = document.createElement('option');
-            opt.value = newItem.id;
-            opt.textContent = labelText;
-            sel.appendChild(opt);
-          }
-        });
-
-        selectEl.value = newItem.id;
-        selectEl.dataset.prevVal = newItem.id;
-
-        const tr = selectEl.closest('tr');
-        if (tr) {
-          const descEl = tr.querySelector('.l-desc, input[name="description"]');
-          if (descEl) descEl.value = newItem.name;
-
-          const hsnEl = tr.querySelector('.l-hsn, input[name="hsn_sac"]');
-          if (hsnEl) hsnEl.value = newItem.hsn_sac || '';
-
-          const rateEl = tr.querySelector('.l-rate, input[name="rate"]');
-          if (rateEl) {
-            rateEl.value = newItem.selling_price || newItem.purchase_price || '0.00';
-          }
-
-          const gstEl = tr.querySelector('.l-gst, select[name="gst_rate"]');
-          if (gstEl && newItem.gst_rate != null) {
-            gstEl.value = String(num(newItem.gst_rate) || 0);
-          }
-        }
-
-        if (customCallback) customCallback(newItem);
-        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-        selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+    if (entity === 'customer') {
+      const posEl = formContainer.querySelector('#inv-place-of-supply') || formContainer.querySelector('#q-pos') || formContainer.querySelector('#so-pos') || formContainer.querySelector('select[name="place_of_supply"]') || formContainer.querySelector('input[name="place_of_supply"]');
+      if (posEl && (newRecord.state || newRecord.place_of_supply)) {
+        posEl.value = (newRecord.state || newRecord.place_of_supply).replace(/^\[\d+\]\s*/, '').trim();
       }
-    });
-    return true;
-  }
+      if (newRecord.payment_terms) {
+        const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+        const termsEl = formContainer.querySelector('#inv-terms') || formContainer.querySelector('select[name="terms"]');
+        if (termsEl && termsMap[newRecord.payment_terms]) termsEl.value = termsMap[newRecord.payment_terms];
+      }
+    } else if (entity === 'vendor') {
+      const posEl = formContainer.querySelector('select[name="place_of_supply"]') || formContainer.querySelector('input[name="place_of_supply"]');
+      if (posEl && (newRecord.state || newRecord.source_of_supply)) {
+        posEl.value = (newRecord.state || newRecord.source_of_supply).replace(/^\[\d+\]\s*/, '').trim();
+      }
+    } else if (entity === 'item') {
+      const tr = selectEl.closest('tr');
+      if (tr) {
+        const descEl = tr.querySelector('.l-desc, .st-desc, input[name="description"]');
+        if (descEl && !descEl.value) descEl.value = newRecord.name;
+        const hsnEl = tr.querySelector('.l-hsn, input[name="hsn_sac"]');
+        if (hsnEl) hsnEl.value = newRecord.hsn_sac || '';
+        const rateEl = tr.querySelector('.l-rate, input[name="rate"]');
+        if (rateEl) rateEl.value = newRecord.selling_price || newRecord.purchase_price || '0.00';
+        const gstEl = tr.querySelector('.l-gst, select[name="gst_rate"]');
+        if (gstEl && newRecord.gst_rate != null) gstEl.value = String(num(newRecord.gst_rate) || 0);
+        const unitEl = tr.querySelector('.st-unit, input[name="unit"]');
+        if (unitEl && newRecord.unit) unitEl.value = newRecord.unit;
+      }
+    } else if (entity === 'unit') {
+      const unitTextInp = formContainer.querySelector('#item_unit');
+      if (unitTextInp) unitTextInp.value = newRecord.code || newRecord.id;
+    }
 
-  return false;
+    if (customCallback) customCallback(newRecord);
+
+    selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+    selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  try {
+    if (entity === 'customer') {
+      partyForm('customers', null, onCreated);
+    } else if (entity === 'vendor') {
+      partyForm('vendors', null, onCreated);
+    } else if (entity === 'item') {
+      itemForm(null, onCreated);
+    } else if (entity === 'salesperson') {
+      salespersonModal(onCreated);
+    } else if (entity === 'warehouse') {
+      warehouseModal(null, onCreated);
+    } else if (entity === 'employee') {
+      employeeModal(onCreated);
+    } else if (entity === 'category') {
+      categoryModal(null, onCreated);
+    } else if (entity === 'pricelist') {
+      priceListModal(null, onCreated);
+    } else if (entity === 'account') {
+      accountForm(null, onCreated);
+    } else if (entity === 'project') {
+      projectModal(null, onCreated);
+    } else if (entity === 'unit') {
+      unitModal(onCreated);
+    } else if (entity === 'tax') {
+      taxRateModal(onCreated);
+    }
+    return true;
+  } catch (err) {
+    selectEl._quickCreating = false;
+    console.error(err);
+    toast(err.message, 'err');
+    return false;
+  }
 }
 window.handleQuickCreateSelect = handleQuickCreateSelect;
 
@@ -352,8 +535,9 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
 
   function syncFromSelect() {
     const selOpt = selectEl.options[selectEl.selectedIndex];
-    input.value = (selOpt && selOpt.value && !selOpt.value.startsWith('__new_')) ? selOpt.text : '';
+    input.value = (selOpt && selOpt.value && !selOpt.value.startsWith('__new_') && selOpt.value !== '__add_new__') ? selOpt.text : '';
   }
+  selectEl._searchableSync = syncFromSelect;
   syncFromSelect();
 
   function renderOptions(filterText = '') {
@@ -364,7 +548,7 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
 
     optsList.forEach(opt => {
       if (!opt.value && !opt.text.trim()) return;
-      if (opt.value.startsWith('__new_')) return;
+      if (opt.value.startsWith('__new_') || opt.value === '__add_new__' || (opt.text && opt.text.toLowerCase().includes('+ add new'))) return;
       if (q && !opt.text.toLowerCase().includes(q)) return;
 
       count++;
@@ -401,7 +585,7 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
       menu.appendChild(empty);
     }
 
-    const newOpt = optsList.find(o => o.value.startsWith('__new_'));
+    const newOpt = optsList.find(o => o.value.startsWith('__new_') || o.value === '__add_new__' || (o.text && o.text.toLowerCase().includes('+ add new')));
     const addAction = document.createElement('div');
     addAction.style.cssText = 'padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--accent, #2563eb);cursor:pointer;background:var(--surface-glass-subtle, #f8fafc);border-top:1px solid var(--bd);display:flex;align-items:center;gap:6px;';
     addAction.innerHTML = `<i class="fa-solid fa-plus" style="font-size:11px;"></i> ${newOpt ? esc(newOpt.text) : '+ Add New…'}`;
@@ -412,6 +596,8 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
       else if (newOpt) {
         selectEl.value = newOpt.value;
         selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        handleQuickCreateSelect(selectEl);
       }
     });
     menu.appendChild(addAction);
@@ -454,17 +640,21 @@ window.setupSearchableSelect = setupSearchableSelect;
 if (typeof document !== 'undefined') {
   document.addEventListener('focusin', e => {
     if (e.target && e.target.tagName === 'SELECT') {
-      if (!e.target.dataset.prevVal || (!['__new_customer__', '__new_vendor__', '__new_item__'].includes(e.target.value))) {
-        e.target.dataset.prevVal = e.target.value;
+      const v = e.target.value || '';
+      if (!e.target.dataset.prevVal || (!v.startsWith('__new_') && v !== '__add_new__')) {
+        e.target.dataset.prevVal = v;
       }
     }
   });
   document.addEventListener('change', e => {
     if (e.target && e.target.tagName === 'SELECT') {
-      if (['__new_customer__', '__new_vendor__', '__new_item__'].includes(e.target.value)) {
+      const v = e.target.value || '';
+      const opt = e.target.options[e.target.selectedIndex];
+      const txt = opt ? opt.text.toLowerCase() : '';
+      if (v.startsWith('__new_') || v === '__add_new__' || txt.includes('+ add new')) {
         handleQuickCreateSelect(e.target);
       } else {
-        e.target.dataset.prevVal = e.target.value;
+        e.target.dataset.prevVal = v;
       }
     }
   });
@@ -2578,6 +2768,7 @@ async function itemForm(id, onDone) {
               <select class="in" id="item_warehouse" name="warehouse_id" style="max-width:280px;">
                 <option value="">Select Warehouse…</option>
                 ${(warehouses || []).map(w => `<option value="${w.id}" ${(String(w.id) === String(r.warehouse_id) || w.code === r.warehouse_code) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
+                <option value="__new_warehouse__">+ Add New Warehouse…</option>
               </select>
             </div>
           </div>
@@ -3861,6 +4052,7 @@ async function adjustForm(preItem, targetEl, onDone) {
               <select class="in adj-row-project" style="font-size:12px;height:28px;padding:2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;max-width:180px;">
                 <option value="">💼 Select a project ▾</option>
                 ${projects.map(p => `<option value="${p.id}" ${String(l.project) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                <option value="__new_project__">+ Add New Project…</option>
               </select>
               <input class="in adj-row-tags" placeholder="🏷 Reporting Tags ▾" value="${esc(l.reporting_tags || '')}" style="font-size:12px;height:28px;padding:2px 8px;width:160px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;">
             </div>
@@ -3928,6 +4120,7 @@ async function adjustForm(preItem, targetEl, onDone) {
           <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Account*</label>
           <select class="in" id="adj-account" name="account" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
             ${accountOptionsHtml}
+            <option value="__new_account__">+ Add New Account…</option>
           </select>
         </div>
 
@@ -4453,11 +4646,12 @@ function orgForm() {
   });
 }
 
-async function accountForm(id) {
+async function accountForm(id, onDone) {
   const o = id ? await api(`accounts/${id}/`) : { code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', active: true };
   const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
   formModal({
     title: id ? 'Edit Account' : 'New Account',
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'code', label: 'Account Code', req: true, value: o.code, ph: 'e.g. 6095' })}
       ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
@@ -4468,10 +4662,12 @@ async function accountForm(id) {
     </div>`,
     onSubmit: async d => {
       d.active = !!d.active;
-      if (id) await api(`accounts/${id}/`, { method: 'PUT', body: d });
-      else await api('accounts/', { method: 'POST', body: d });
+      let res;
+      if (id) res = await api(`accounts/${id}/`, { method: 'PUT', body: d });
+      else res = await api('accounts/', { method: 'POST', body: d });
       toast(id ? 'Account updated' : 'Account created');
-      refresh();
+      if (onDone) onDone(res || d);
+      else refresh();
     }
   });
 }
@@ -5512,11 +5708,12 @@ async function convobotAiAssistantModal() {
 window.convobotAiAssistantModal = convobotAiAssistantModal;
 window.ziaAiAssistantModal = convobotAiAssistantModal;
 
-async function projectModal(id) {
+async function projectModal(id, onDone) {
   const custs = await api('lookup/customers/');
   const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: '', billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="g form-grid-aligned">
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
       ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
@@ -5530,10 +5727,12 @@ async function projectModal(id) {
       d.customer = d.customer ? Number(d.customer) : null;
       d.rate_per_hour = num(d.rate_per_hour);
       d.budget_hours = num(d.budget_hours);
-      if (id) await api(`projects/${id}/`, { method: 'PUT', body: d });
-      else await api('projects/', { method: 'POST', body: d });
+      let res;
+      if (id) res = await api(`projects/${id}/`, { method: 'PUT', body: d });
+      else res = await api('projects/', { method: 'POST', body: d });
       toast('Project saved');
-      refresh();
+      if (onDone) onDone(res || d);
+      else refresh();
     }
   });
 }
@@ -5569,27 +5768,31 @@ async function timelogModal(id) {
   });
 }
 
-async function categoryModal(id) {
+async function categoryModal(id, onDone) {
   const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
   formModal({
     title: id ? 'Edit Item Category' : 'New Item Category',
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="g">
       ${fld({ name: 'name', label: 'Category Name', req: true, value: o ? o.name : '', col: 's12', ph: 'e.g. Hardware Components' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o ? (o.description || '') : '', col: 's12' })}
     </div>`,
     onSubmit: async d => {
-      if (id) await api(`item-categories/${id}/`, { method: 'PUT', body: d });
-      else await api('item-categories/', { method: 'POST', body: d });
+      let res;
+      if (id) res = await api(`item-categories/${id}/`, { method: 'PUT', body: d });
+      else res = await api('item-categories/', { method: 'POST', body: d });
       toast(id ? 'Category updated' : 'Category created');
-      refresh();
+      if (onDone) onDone(res || d);
+      else refresh();
     }
   });
 }
 
-async function priceListModal(id) {
+async function priceListModal(id, onDone) {
   const rec = id ? await api(`price-lists/${id}/`).catch(() => null) : null;
   formModal({
     title: id ? 'Edit Price List' : 'New Price List',
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'name', label: 'Price List Name', req: true, value: rec?.name || '', ph: 'e.g. Wholesale Discount 15%' })}
       ${fld({ name: 'pricing_scheme', label: 'Pricing Scheme', type: 'select', opts: [['percentage', 'Percentage Markup/Discount'], ['fixed', 'Fixed Rate Card']], value: rec?.pricing_scheme || 'percentage' })}
@@ -5605,19 +5808,21 @@ async function priceListModal(id) {
       }
       d.name = n;
       d.percentage = num(d.percentage);
+      let res;
       if (id) {
-        await api(`price-lists/${id}/`, { method: 'PUT', body: d });
+        res = await api(`price-lists/${id}/`, { method: 'PUT', body: d });
         toast('Price list updated successfully!', 'ok');
       } else {
-        await api('price-lists/', { method: 'POST', body: d });
+        res = await api('price-lists/', { method: 'POST', body: d });
         toast('Price list created successfully!', 'ok');
       }
-      refresh();
+      if (onDone) onDone(res || d);
+      else refresh();
     }
   });
 }
 
-async function warehouseModal(id) {
+async function warehouseModal(id, onDone) {
   const [existingWh, rec] = await Promise.all([
     api('lookup/warehouses/').catch(() => []),
     id ? api(`warehouses/${id}/`).catch(() => null) : Promise.resolve(null)
@@ -5626,6 +5831,7 @@ async function warehouseModal(id) {
 
   formModal({
     title: (id ? 'Edit ' : 'New ') + 'Inventory Warehouse',
+    dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="g">
       ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', value: rec?.name || '', ph: 'e.g. Kottayam Central Warehouse' })}
       ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', value: rec?.code || '', ph: 'WH-KTY-01' })}
@@ -5664,9 +5870,10 @@ async function warehouseModal(id) {
         });
         if (!ok) return;
       }
-      await api(id ? `warehouses/${id}/` : 'warehouses/', { method: id ? 'PUT' : 'POST', body: d });
+      const res = await api(id ? `warehouses/${id}/` : 'warehouses/', { method: id ? 'PUT' : 'POST', body: d });
       toast(`Warehouse ${id ? 'updated' : 'created'}`);
-      refresh();
+      if (onDone) onDone(res || d);
+      else refresh();
     }
   });
 }
@@ -6670,6 +6877,7 @@ async function quoteForm(id, onDone) {
               <select class="in" id="q-salesperson" name="salesperson">
                 <option value="">Select or Add Salesperson</option>
                 ${salespersons.map(s => `<option value="${esc(s.name)}" ${qSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                <option value="__new_salesperson__">+ Add New Salesperson…</option>
               </select>
             </div>
           </div>
@@ -6680,6 +6888,7 @@ async function quoteForm(id, onDone) {
               <select class="in" id="q-project" name="project_name">
                 <option value="">Select a project</option>
                 ${projects.map(p => `<option value="${esc(p.name)}" data-cust="${p.customer_id || ''}" ${qProject === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                <option value="__new_project__">+ Add New Project…</option>
               </select>
               <div class="sub" id="q-project-hint" style="font-size:11.5px;color:var(--tx-muted);margin-top:4px;">Select a customer to associate a project.</div>
             </div>
@@ -7768,6 +7977,7 @@ async function invoiceForm(id, targetEl, onDone) {
             <select class="in" id="inv-salesperson" name="salesperson" style="width:260px;">
               <option value="">Select or Add Salesperson</option>
               ${salespersons.map(s => `<option value="${esc(s.name)}" ${invSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              <option value="__new_salesperson__">+ Add New Salesperson…</option>
             </select>
           </div>
 
@@ -8633,6 +8843,7 @@ async function stockTransferModal(id = null, onDone = null) {
       <td style="min-width:210px; padding:6px 8px;">
         <select class="in st-item" aria-label="Item" style="width:100%;">
           <option value="">— Select Item —</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
           ${goodsItems.map(it => `<option value="${it.id}" ${String(l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
       </td>
@@ -8682,12 +8893,14 @@ async function stockTransferModal(id = null, onDone = null) {
               <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Source Warehouse (From) <span style="color:#ef4444;">*</span></label>
               <select class="in" id="st-src-wh" required style="width:100%;">
                 ${whList.map(w => `<option value="${w.id}" ${String(w.id) === String(o.source_warehouse_id) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+                <option value="__new_warehouse__">+ Add New Warehouse…</option>
               </select>
             </div>
             <div>
               <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Destination Warehouse (To) <span style="color:#ef4444;">*</span></label>
               <select class="in" id="st-dst-wh" required style="width:100%;">
                 ${whList.map(w => `<option value="${w.id}" ${String(w.id) === String(o.destination_warehouse_id) ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}</option>`).join('')}
+                <option value="__new_warehouse__">+ Add New Warehouse…</option>
               </select>
             </div>
           </div>

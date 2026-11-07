@@ -164,6 +164,8 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
             'settings': ('settings', 'update_profile'),
             'roles': ('settings', 'users'),
             'users': ('settings', 'users'),
+            'salespersons': ('sales', 'quotes'),
+            'employees': ('settings', 'users'),
         }
 
         if resource_name == 'stock-transfers' and action == 'delete':
@@ -5438,6 +5440,142 @@ class StockTransferResource(Resource):
             return j(self.detail(res))
         raise ApiError(404, f'Unknown action "{name}".')
 
+
+class SalespersonResource(Resource):
+    name = 'salespersons'
+
+    def handle_collection(self, request):
+        check_permission(request, resource_name=self.name)
+        if request.method == 'GET':
+            user_org = get_user_org(request.user)
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+            results = [{'id': u.pk, 'name': u.get_full_name() or u.username, 'email': u.email} for u in sp_qs.order_by('username')]
+            return j({'count': len(results), 'page': 1, 'pages': 1, 'results': results})
+
+        if request.method == 'POST':
+            user_org = get_user_org(request.user) or Organization.get()
+            d = body(request)
+            name = (d.get('name') or '').strip()
+            if not name:
+                raise ApiError(400, 'Salesperson name is required.', {'name': 'Salesperson name is required.'})
+            email = (d.get('email') or '').strip().lower()
+            phone = (d.get('phone') or '').strip()
+
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            parts = name.split(None, 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ''
+
+            if not email:
+                base_slug = re.sub(r'[^a-zA-Z0-9]', '', name.lower()) or 'sales'
+                email = f"{base_slug}_{uuid.uuid4().hex[:4]}@convosisbooks.local"
+
+            user = User.objects.filter(email__iexact=email).first()
+            if not user:
+                username = email.split('@')[0]
+                if User.objects.filter(username=username).exists():
+                    username = f"{username}_{uuid.uuid4().hex[:4]}"
+                user = User.objects.create(
+                    username=username,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_active=True
+                )
+                user.set_unusable_password()
+                user.save()
+
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.organization = user_org
+            if phone:
+                profile.phone = phone
+            profile.role = 'staff'
+            profile.save()
+
+            services.log_audit(request.user, 'create', 'Salesperson', user.pk, f"Added salesperson: {name}", org=user_org, module='sales', submodule='salespersons')
+
+            return j({
+                'id': user.pk,
+                'name': user.get_full_name() or user.username or name,
+                'email': user.email,
+                'status': 'ok'
+            }, status=201)
+        raise ApiError(405, 'Method not allowed.')
+
+
+class EmployeeResource(Resource):
+    name = 'employees'
+
+    def handle_collection(self, request):
+        check_permission(request, resource_name=self.name)
+        if request.method == 'GET':
+            user_org = get_user_org(request.user)
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+            results = [{'id': u.pk, 'name': u.get_full_name() or u.username, 'email': u.email} for u in qs.order_by('username')]
+            return j({'count': len(results), 'page': 1, 'pages': 1, 'results': results})
+
+        if request.method == 'POST':
+            user_org = get_user_org(request.user) or Organization.get()
+            d = body(request)
+            name = (d.get('name') or '').strip()
+            if not name:
+                raise ApiError(400, 'Employee name is required.', {'name': 'Employee name is required.'})
+            email = (d.get('email') or '').strip().lower()
+            phone = (d.get('phone') or '').strip()
+            dept = (d.get('department') or '').strip()
+
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            parts = name.split(None, 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ''
+
+            if not email:
+                base_slug = re.sub(r'[^a-zA-Z0-9]', '', name.lower()) or 'emp'
+                email = f"{base_slug}_{uuid.uuid4().hex[:4]}@convosisbooks.local"
+
+            user = User.objects.filter(email__iexact=email).first()
+            if not user:
+                username = email.split('@')[0]
+                if User.objects.filter(username=username).exists():
+                    username = f"{username}_{uuid.uuid4().hex[:4]}"
+                user = User.objects.create(
+                    username=username,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_active=True
+                )
+                user.set_unusable_password()
+                user.save()
+
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.organization = user_org
+            if phone:
+                profile.phone = phone
+            if dept:
+                profile.department = dept
+            profile.role = 'staff'
+            profile.save()
+
+            services.log_audit(request.user, 'create', 'Employee', user.pk, f"Added employee: {name}", org=user_org, module='settings', submodule='employees')
+
+            return j({
+                'id': user.pk,
+                'name': user.get_full_name() or user.username or name,
+                'email': user.email,
+                'status': 'ok'
+            }, status=201)
+        raise ApiError(405, 'Method not allowed.')
+
+
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), QuoteResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
@@ -5448,7 +5586,7 @@ RESOURCES = {r.name: r for r in (
     CreditNoteResource(), VendorCreditResource(), RecurringInvoiceResource(), DeliveryChallanResource(),
     EWayBillResource(), ProjectResource(), TimeLogResource(), ItemCategoryResource(), PriceListResource(),
     WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource(),
-    StockTransferResource()
+    StockTransferResource(), SalespersonResource(), EmployeeResource()
 )}
 RESOURCES['timelogs'] = RESOURCES.get('timesheets')
 RESOURCES['inventory-summary'] = RESOURCES.get('items')
@@ -5740,6 +5878,11 @@ def lookup(request, name):
         User = get_user_model()
         sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
         data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in sp_qs.order_by('username')]
+    elif name == 'employees':
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        eq_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+        data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in eq_qs.order_by('username')]
     elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
         pfx = org.quote_prefix or 'QTN' if org else 'QTN'

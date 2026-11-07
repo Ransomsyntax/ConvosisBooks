@@ -69,20 +69,44 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        cursor: pointer;
+        cursor: grab;
         padding: 6px 10px 6px 6px;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.94);
         backdrop-filter: blur(20px) saturate(180%);
         border: 1.5px solid rgba(234, 88, 12, 0.45);
         box-shadow: 0 10px 30px -5px rgba(234, 88, 12, 0.35), 0 0 15px rgba(249, 115, 22, 0.2);
-        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         user-select: none;
+        touch-action: none;
       }
       #convobot-launcher:hover {
         transform: translateY(-3px) scale(1.03);
         box-shadow: 0 14px 35px -4px rgba(234, 88, 12, 0.5), 0 0 25px rgba(249, 115, 22, 0.35);
         border-color: #ea580c;
+      }
+      #convobot-launcher.convobot-dragging {
+        cursor: grabbing !important;
+        transition: none !important;
+        transform: scale(1.04);
+        box-shadow: 0 18px 45px rgba(234, 88, 12, 0.45);
+        user-select: none;
+      }
+      .convobot-drag-grip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #ea580c;
+        opacity: 0.5;
+        cursor: grab;
+        padding-left: 2px;
+        font-size: 14px;
+        line-height: 1;
+        user-select: none;
+        transition: opacity 0.2s;
+      }
+      #convobot-launcher:hover .convobot-drag-grip {
+        opacity: 0.9;
       }
       .convobot-launcher-icon {
         width: 42px;
@@ -687,6 +711,7 @@
         <span class="convobot-launcher-title">Convo Bot <span class="convobot-launcher-badge">AI</span></span>
         <span class="convobot-launcher-sub">Get Help with Accounting and Tax</span>
       </div>
+      <span class="convobot-drag-grip" title="Hold & drag to move Convobot">⋮⋮</span>
     `;
     document.body.appendChild(launcher);
 
@@ -706,6 +731,9 @@
           </div>
         </div>
         <div class="convobot-header-actions">
+          <button class="convobot-tool-btn" id="convobot-reset-pos-btn" title="Reset Convobot Position to Bottom-Right" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+          </button>
           <button class="convobot-tool-btn" id="convobot-reset-btn" title="New Chat / Clear Conversation" type="button">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path></svg>
           </button>
@@ -749,10 +777,15 @@
 
     renderWelcomeGreeting();
 
-    launcher.addEventListener('click', () => toggleDoubtBot());
+    initDraggableConvobot(launcher);
+    applySavedPosition();
+
     $('#convobot-close-btn').addEventListener('click', () => toggleDoubtBot(false));
     $('#convobot-max-btn').addEventListener('click', toggleMaximize);
     $('#convobot-reset-btn').addEventListener('click', resetChat);
+    const resetPosBtn = $('#convobot-reset-pos-btn');
+    if (resetPosBtn) resetPosBtn.addEventListener('click', resetConvobotPosition);
+    window.addEventListener('resize', () => { if (!isDragging) applySavedPosition(); });
 
     widget.addEventListener('click', (e) => {
       const catBtn = e.target.closest('.convobot-cat-btn');
@@ -821,12 +854,209 @@
     });
   }
 
+  let isDragging = false;
+  let dragMoved = false;
+  let startX = 0;
+  let startY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+  let preventClick = false;
+
+  function clampPosition(x, y, el) {
+    const pad = 12;
+    const w = el ? el.offsetWidth : 210;
+    const h = el ? el.offsetHeight : 54;
+    const minX = pad;
+    const maxX = Math.max(pad, window.innerWidth - w - pad);
+    const minY = pad;
+    const maxY = Math.max(pad, window.innerHeight - h - pad);
+    return {
+      x: Math.max(minX, Math.min(x, maxX)),
+      y: Math.max(minY, Math.min(y, maxY))
+    };
+  }
+
+  function applySavedPosition() {
+    const launcher = document.getElementById('convobot-launcher');
+    if (!launcher) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem('convobot_position_v2'));
+      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+        const clamped = clampPosition(saved.x, saved.y, launcher);
+        launcher.style.left = clamped.x + 'px';
+        launcher.style.top = clamped.y + 'px';
+        launcher.style.right = 'auto';
+        launcher.style.bottom = 'auto';
+        updateWidgetPosition();
+        return;
+      }
+    } catch (_) {}
+    launcher.style.left = '';
+    launcher.style.top = '';
+    launcher.style.right = '24px';
+    launcher.style.bottom = '24px';
+    updateWidgetPosition();
+  }
+
+  function updateWidgetPosition() {
+    const launcher = document.getElementById('convobot-launcher');
+    const widget = document.getElementById('convobot-widget');
+    if (!launcher || !widget || isMaximized) return;
+    if (window.innerWidth <= 640) return;
+
+    const hasCustomPos = Boolean(launcher.style.left && launcher.style.left !== 'auto');
+    if (!hasCustomPos) {
+      widget.style.left = '';
+      widget.style.top = '';
+      widget.style.right = '24px';
+      widget.style.bottom = '84px';
+      return;
+    }
+
+    const lRect = launcher.getBoundingClientRect();
+    const widgetW = 450;
+    const widgetH = Math.min(640, window.innerHeight - 80);
+
+    let top, left;
+    if (lRect.top >= widgetH + 16) {
+      top = lRect.top - widgetH - 10;
+    } else {
+      top = Math.min(window.innerHeight - widgetH - 12, lRect.bottom + 10);
+    }
+
+    if (lRect.left + widgetW > window.innerWidth - 16) {
+      left = Math.max(16, lRect.right - widgetW);
+    } else {
+      left = Math.max(16, lRect.left);
+    }
+
+    widget.style.top = Math.max(12, top) + 'px';
+    widget.style.left = Math.max(12, left) + 'px';
+    widget.style.right = 'auto';
+    widget.style.bottom = 'auto';
+  }
+
+  function resetConvobotPosition() {
+    try {
+      localStorage.removeItem('convobot_position_v2');
+    } catch (_) {}
+    const launcher = document.getElementById('convobot-launcher');
+    const widget = document.getElementById('convobot-widget');
+    if (launcher) {
+      launcher.style.left = '';
+      launcher.style.top = '';
+      launcher.style.right = '24px';
+      launcher.style.bottom = '24px';
+    }
+    if (widget && !isMaximized) {
+      widget.style.left = '';
+      widget.style.top = '';
+      widget.style.right = '24px';
+      widget.style.bottom = '84px';
+    }
+    if (typeof toast === 'function') {
+      toast('Convobot position reset to bottom-right corner.', 'ok');
+    }
+  }
+
+  function initDraggableConvobot(launcher) {
+    launcher.style.touchAction = 'none';
+
+    function onPointerDown(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      isDragging = false;
+      dragMoved = false;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      startX = clientX;
+      startY = clientY;
+
+      const rect = launcher.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      window.addEventListener('mousemove', onPointerMove, { passive: false });
+      window.addEventListener('touchmove', onPointerMove, { passive: false });
+      window.addEventListener('mouseup', onPointerUp, { once: true });
+      window.addEventListener('touchend', onPointerUp, { once: true });
+      window.addEventListener('touchcancel', onPointerUp, { once: true });
+    }
+
+    function onPointerMove(e) {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+
+      if (!isDragging && Math.hypot(dx, dy) > 4) {
+        isDragging = true;
+        dragMoved = true;
+        launcher.classList.add('convobot-dragging');
+        launcher.style.transition = 'none';
+      }
+
+      if (isDragging) {
+        if (e.cancelable) e.preventDefault();
+        const rawX = initialLeft + dx;
+        const rawY = initialTop + dy;
+        const clamped = clampPosition(rawX, rawY, launcher);
+        launcher.style.left = clamped.x + 'px';
+        launcher.style.top = clamped.y + 'px';
+        launcher.style.right = 'auto';
+        launcher.style.bottom = 'auto';
+        updateWidgetPosition();
+      }
+    }
+
+    function onPointerUp(e) {
+      window.removeEventListener('mousemove', onPointerMove);
+      window.removeEventListener('touchmove', onPointerMove);
+      launcher.classList.remove('convobot-dragging');
+      launcher.style.transition = '';
+
+      if (isDragging) {
+        preventClick = true;
+        setTimeout(() => { preventClick = false; }, 150);
+
+        const rect = launcher.getBoundingClientRect();
+        const clamped = clampPosition(rect.left, rect.top, launcher);
+        launcher.style.left = clamped.x + 'px';
+        launcher.style.top = clamped.y + 'px';
+        launcher.style.right = 'auto';
+        launcher.style.bottom = 'auto';
+
+        try {
+          localStorage.setItem('convobot_position_v2', JSON.stringify({
+            x: clamped.x,
+            y: clamped.y
+          }));
+        } catch (_) {}
+
+        updateWidgetPosition();
+      }
+      isDragging = false;
+    }
+
+    launcher.addEventListener('mousedown', onPointerDown);
+    launcher.addEventListener('touchstart', onPointerDown, { passive: true });
+
+    launcher.addEventListener('click', (e) => {
+      if (preventClick || dragMoved) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      toggleDoubtBot();
+    });
+  }
+
   function toggleDoubtBot(force) {
     createDoubtBotUI();
     const widget = $('#convobot-widget');
     if (!widget) return;
     isOpen = force !== undefined ? force : !isOpen;
     if (isOpen) {
+      updateWidgetPosition();
       widget.classList.add('open');
       setTimeout(() => $('#convobot-textarea').focus(), 150);
     } else {
@@ -839,6 +1069,16 @@
     const btn = $('#convobot-max-btn');
     isMaximized = !isMaximized;
     if (isMaximized) {
+      widget.classList.add('maximized');
+      widget.style.left = '';
+      widget.style.top = '';
+      widget.style.right = '';
+      widget.style.bottom = '';
+    } else {
+      widget.classList.remove('maximized');
+      updateWidgetPosition();
+    }
+  }
       widget.classList.add('maximized');
       btn.title = 'Dock to Corner';
       btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>`;

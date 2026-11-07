@@ -6143,7 +6143,12 @@ async function quoteForm(id, onDone) {
   ]);
 
   if (!parties.length) {
-    toast('Please create at least one customer first before making a quote.', 'err');
+    toast('No customers found. Please add a customer first.', 'err');
+    partyForm('customers', null, (newCust) => {
+      if (newCust && newCust.id) {
+        quoteForm(id, onDone);
+      }
+    });
     return;
   }
 
@@ -6396,14 +6401,14 @@ async function quoteForm(id, onDone) {
               <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
             </div>
             <div class="sub" style="font-size:11.5px;margin-top:2px;" id="q-sig-desc">
-              ${qData && qData.signature_data ? 'Quote has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
+              ${rec && rec.signature_data ? 'Quote has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <input type="hidden" id="q-signature-data" name="signature_data" value="${esc((qData && qData.signature_data) || '')}">
-            <input type="hidden" id="q-signed-by" name="signed_by" value="${esc((qData && qData.signed_by) || '')}">
-            <input type="hidden" id="q-signature-title" name="signature_title" value="${esc((qData && qData.signature_title) || '')}">
-            <button type="button" class="btn" id="btn-quote-sign"><i class="fa-solid fa-pen-nib"></i> ${((qData && qData.signature_data) || (APP.org && APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}</button>
+            <input type="hidden" id="q-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
+            <input type="hidden" id="q-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
+            <input type="hidden" id="q-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
+            <button type="button" class="btn" id="btn-quote-sign"><i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (APP.org && APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}</button>
           </div>
         </div>
 

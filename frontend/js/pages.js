@@ -164,16 +164,16 @@ const IMPORT_SPECS = {
     { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
   ],
   quotes: [
-    { key: 'number', label: 'Quote Number', aliases: ['number', 'quote_number', 'quote#', 'estimate_number'] },
-    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
-    { key: 'date', label: 'Quote Date', req: true, aliases: ['date', 'quote_date'] },
-    { key: 'expiry_date', label: 'Expiry Date', aliases: ['expiry_date', 'valid_till'] },
-    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product'] },
-    { key: 'description', label: 'Line Description', aliases: ['description', 'desc'] },
-    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty'] },
-    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'amount'] },
-    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate'] },
-    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks'] }
+    { key: 'number', label: 'Quote Number', aliases: ['number', 'quote_number', 'quote#', 'quote_no', 'quotation_number', 'quotation#', 'quotation_no', 'estimate_number', 'estimate#', 'estimate_no'] },
+    { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party', 'party_name', 'client_name', 'account_name', 'buyer'] },
+    { key: 'date', label: 'Quote Date', aliases: ['date', 'quote_date', 'doc_date', 'quotation_date', 'txn_date', 'transaction_date', 'estimate_date'] },
+    { key: 'expiry_date', label: 'Expiry Date', aliases: ['expiry_date', 'valid_till', 'valid_until', 'expiry', 'expiration_date', 'due_date'] },
+    { key: 'item', label: 'Item Name / Product', aliases: ['item', 'item_name', 'product', 'product_name', 'sku', 'service', 'service_name'] },
+    { key: 'description', label: 'Line Description', aliases: ['description', 'line_description', 'desc', 'details', 'particulars'] },
+    { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty', 'count', 'units'] },
+    { key: 'rate', label: 'Rate / Price', aliases: ['rate', 'price', 'unit_price', 'amount', 'selling_price', 'cost'] },
+    { key: 'gst_rate', label: 'GST Rate (%)', aliases: ['gst_rate', 'tax_rate', 'gst', 'tax', 'gst_%', 'tax_%'] },
+    { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks', 'terms', 'comments', 'customer_notes'] }
   ],
   'sales-orders': [
     { key: 'number', label: 'Order / SO Number', aliases: ['number', 'order_number', 'so_number', 'order#', 'so#'] },
@@ -802,6 +802,18 @@ function openUniversalImportModal(resourceName, title) {
       }
       if (!rec.active && rec.active !== false) {
         rec.active = true;
+      }
+      if (resourceName === 'quotes' || resourceName === 'invoices' || resourceName === 'sales-orders' || resourceName === 'bills' || resourceName === 'purchase-orders') {
+        const lastRec = records.length ? records[records.length - 1] : null;
+        if (lastRec && rec.number && String(rec.number).trim() === String(lastRec.number).trim()) {
+          if (!rec.customer && lastRec.customer) rec.customer = lastRec.customer;
+          if (!rec.vendor && lastRec.vendor) rec.vendor = lastRec.vendor;
+          if (!rec.date && lastRec.date) rec.date = lastRec.date;
+          if (!rec.expiry_date && lastRec.expiry_date) rec.expiry_date = lastRec.expiry_date;
+        }
+        if (!rec.date) {
+          rec.date = new Date().toISOString().split('T')[0];
+        }
       }
       records.push(rec);
     }

@@ -594,3 +594,53 @@ class TestUniversalImport(TestCase):
         self.assertIsNotNone(tl)
         self.assertEqual(tl.hours, Decimal('3.5'))
 
+    def test_quotes_import(self):
+        records = [
+            {
+                'number': 'QT-IMPORT-001',
+                'customer': 'Zenith Consulting Corp',
+                'date': '2026-11-05',
+                'expiry_date': '2026-12-05',
+                'item': 'Cloud Architecture Advisory',
+                'quantity': '2',
+                'rate': '15000.00',
+                'gst_rate': '18.00',
+                'notes': 'Valid for 30 days.'
+            },
+            {
+                'number': 'QT-IMPORT-001',
+                'customer': 'Zenith Consulting Corp',
+                'date': '2026-11-05',
+                'item': 'Security Penetration Testing',
+                'quantity': '1',
+                'rate': '25000.00',
+                'gst_rate': '18.00'
+            },
+            {
+                'number': 'QT-IMPORT-002',
+                'customer': 'Zenith Consulting Corp',
+                'date': '2026-11-06',
+                'item': 'DevOps Pipeline Automation',
+                'quantity': '1',
+                'rate': '30000.00',
+                'gst_rate': '18.00'
+            }
+        ]
+        res = self.client.post('/api/quotes/', data=json.dumps({
+            'import_records': records,
+            'duplicate_mode': 'skip'
+        }), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['imported'], 2)
+        from books.models import Quote
+        q1 = Quote.objects.filter(number='QT-IMPORT-001').first()
+        self.assertIsNotNone(q1)
+        self.assertEqual(q1.customer.name, 'Zenith Consulting Corp')
+        self.assertEqual(q1.lines.count(), 2)
+        q2 = Quote.objects.filter(number='QT-IMPORT-002').first()
+        self.assertIsNotNone(q2)
+        self.assertEqual(q2.lines.count(), 1)
+
+

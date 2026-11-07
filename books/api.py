@@ -579,6 +579,7 @@ class Resource:
                 seen_identifiers_in_file = set()
                 seen_objs_in_file = {}
                 user_org = get_user_org(request.user)
+                self.current_user_org = user_org
 
                 for idx, raw_item in enumerate(records):
                     try:
@@ -587,7 +588,12 @@ class Resource:
                         code_val = (str(clean_item.get('code') or '')).strip().upper()
                         name_val = (str(clean_item.get('name') or '')).strip().lower()
 
-                        identifier_key = sku_val or code_val or name_val
+                        if isinstance(self, DocResource):
+                            num_val = (str(clean_item.get('number') or clean_item.get('quote_number') or clean_item.get('invoice_number') or clean_item.get('bill_number') or '')).strip().upper()
+                            identifier_key = num_val or f"_doc_{idx}"
+                        else:
+                            num_val = ''
+                            identifier_key = sku_val or code_val or name_val
 
                         # 1. Check existing record in DB
                         existing = self.find_existing(clean_item, user=request.user)
@@ -602,22 +608,23 @@ class Resource:
                             duplicate_skus_count += 1
 
                         if is_duplicate:
+                            identifier_desc = f"document '{num_val}'" if (isinstance(self, DocResource) and num_val) else (f"SKU '{sku_val}'" if sku_val else f"record '{identifier_key}'")
                             if dup_mode == 'skip':
                                 skipped_count += 1
                                 if identifier_key:
                                     seen_identifiers_in_file.add(identifier_key)
                                 errors.append({
                                     'row': idx + 1,
-                                    'name': str(raw_item.get('name') or raw_item.get('Name') or ''),
-                                    'sku': str(sku_val or ''),
+                                    'name': str(raw_item.get('name') or raw_item.get('Name') or raw_item.get('customer') or raw_item.get('number') or ''),
+                                    'sku': str(sku_val or num_val or ''),
                                     'identifier': str(identifier_key or f'Row {idx + 1}'),
-                                    'error': f"Skipped: Duplicate SKU '{sku_val}' already exists." if (sku_val and existing) else (f"Skipped: Duplicate SKU '{sku_val}' repeated in CSV." if (sku_val and is_repeated_in_file) else "Skipped duplicate record.")
+                                    'error': f"Skipped: Duplicate {identifier_desc} already exists." if existing else (f"Skipped: Duplicate {identifier_desc} repeated in CSV." if is_repeated_in_file else "Skipped duplicate record.")
                                 })
                                 continue
                             elif dup_mode == 'error':
                                 reason = (
-                                    f"Duplicate SKU '{sku_val}' already exists in organization." if (sku_val and existing) else (
-                                        f"Duplicate SKU '{sku_val}' repeated in CSV file." if (sku_val and is_repeated_in_file) else
+                                    f"Duplicate {identifier_desc} already exists in organization." if existing else (
+                                        f"Duplicate {identifier_desc} repeated in CSV file." if is_repeated_in_file else
                                         f"Record '{clean_item.get('name') or identifier_key}' already exists."
                                     )
                                 )
@@ -1507,7 +1514,24 @@ class DocResource(Resource):
                     doc_map[num] = doc_copy
         return grouped
 
+    def find_existing(self, clean_item, user=None):
+        if not hasattr(self, 'model') or self.model is None:
+            return None
+        num = str(clean_item.get('number') or clean_item.get('quote_number') or clean_item.get('invoice_number') or clean_item.get('bill_number') or '').strip()
+        if not num:
+            return None
+        try:
+            qs = self.model.objects.all()
+            if hasattr(self.model, 'organization'):
+                org = get_user_org(user) if user else None
+                if org:
+                    qs = qs.filter(organization=org)
+            return qs.filter(number__iexact=num).first()
+        except Exception:
+            return None
+
     def extract_line_from_record(self, r):
+        user_org = getattr(self, 'current_user_org', None) or Organization.get()
         item_val = r.get('item') or r.get('item_name') or r.get('product') or r.get('sku') or ''
         desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
         qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
@@ -1518,10 +1542,13 @@ class DocResource(Resource):
 
         it = None
         if item_val:
-            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+            iqs = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip()))
+            if user_org:
+                iqs = iqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            it = iqs.first()
 
         if not desc:
-            desc = it.name if it else 'General Supply / Service'
+            desc = it.name if it else (str(item_val).strip() if item_val else 'General Supply / Service')
         if it and not hsn:
             hsn = it.hsn_sac or ''
         if it and (rate is None or rate == Decimal('0.00')):
@@ -1538,18 +1565,27 @@ class DocResource(Resource):
         }
 
     def prepare_import_record(self, rec):
+        user_org = getattr(self, 'current_user_org', None) or Organization.get()
         party_val = rec.get(self.party_attr) or rec.get('party') or rec.get('customer') or rec.get('vendor') or rec.get('client')
         if party_val and not str(party_val).isdigit():
             p_str = str(party_val).strip()
-            p = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str)).first()
+            pqs = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str))
+            if user_org:
+                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            p = pqs.first()
             if not p:
-                org = Organization.get()
-                p = self.Party.objects.create(name=p_str, active=True, state=org.state if org else '', organization=org)
+                p = self.Party.objects.create(name=p_str, active=True, state=user_org.state if user_org else '', organization=user_org)
             rec[self.party_attr] = p.pk
         elif not party_val:
-            first_p = self.Party.objects.first()
+            pqs = self.Party.objects.all()
+            if user_org:
+                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            first_p = pqs.first()
             if first_p:
                 rec[self.party_attr] = first_p.pk
+            else:
+                p = self.Party.objects.create(name="Default Customer" if self.party_attr == 'customer' else "Default Vendor", active=True, state=user_org.state if user_org else '', organization=user_org)
+                rec[self.party_attr] = p.pk
 
         if not rec.get('lines'):
             line = self.extract_line_from_record(rec)

@@ -3041,21 +3041,30 @@ select option {
 .doc-form-card {
   width: 100%;
   max-width: 940px;
-  background: var(--surface-glass-solid);
-  backdrop-filter: blur(36px) saturate(var(--glass-sat));
-  -webkit-backdrop-filter: blur(36px) saturate(var(--glass-sat));
-  border: 1px solid var(--bd-glass);
-  border-radius: 10px;
-  padding: 16px 24px 32px;
-  box-shadow: var(--shadow-glass-lg);
-  margin-bottom: 24px;
+  background: var(--surface-glass-solid, #ffffff);
+  backdrop-filter: blur(36px) saturate(var(--glass-sat, 140%));
+  -webkit-backdrop-filter: blur(36px) saturate(var(--glass-sat, 140%));
+  border: 1px solid var(--bd-glass, #e2e8f0);
+  border-radius: 12px;
+  padding: 24px 28px 36px;
+  box-shadow: var(--shadow-glass-lg, 0 20px 50px -10px rgba(0, 0, 0, 0.16));
+  margin: 0 auto 36px;
   box-sizing: border-box;
+  align-self: center;
+  height: auto !important;
+  min-height: auto !important;
+  flex-shrink: 0;
+  overflow: visible;
+  position: relative;
 }
 
 @media (max-width: 768px) {
   .doc-form-card {
     padding: 16px;
     border-radius: 10px;
+    margin: 0 0 24px;
+    max-width: 100%;
+    height: auto !important;
   }
 }
 

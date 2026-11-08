@@ -3402,8 +3402,8 @@ async function docForm(kind, id, targetEl, onDone) {
           <button class="btn p" type="button" id="btn-doc-save" data-action="${id ? 'update' : 'post'}">${id ? 'Update ' + docTitle : (inv ? 'Save & Send' : 'Save & Approve')}</button>
         </div>
       </div>
-      <div class="doc-canvas-scroll" style="padding:10px 20px 48px; display:flex; justify-content:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02));">
-        <form id="on-screen-doc-form" class="doc-form-card" novalidate>
+      <div class="doc-canvas-scroll" style="padding:16px 20px 60px; display:flex; flex-direction:column; align-items:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02)); box-sizing:border-box;">
+        <form id="on-screen-doc-form" class="doc-form-card" style="width:100%; max-width:940px; height:auto; min-height:auto; box-sizing:border-box;" novalidate>
           <div class="fe" data-err="_" role="alert"></div>
           <div class="zb-form-wrap">
             ${[
@@ -3439,7 +3439,7 @@ async function docForm(kind, id, targetEl, onDone) {
           <div class="er" data-err="lines" role="alert"></div>
           <button type="button" class="btn" data-add style="margin-top:10px; font-weight:600;">+ Add line</button>
 
-          <div class="tot" aria-live="polite" style="margin-top:20px;">
+          <div class="tot" aria-live="polite" style="margin-top:20px; margin-left:auto; margin-right:0; width:340px; max-width:100%; box-sizing:border-box;">
             <div><span>Taxable value</span><b data-t="sub">₹0.00</b></div>
             <div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div>
             <div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div>

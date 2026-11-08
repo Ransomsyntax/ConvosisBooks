@@ -1748,7 +1748,7 @@ class DocResource(Resource):
         elif st == 'unpaid':
             qs = qs.filter(status=P, paid_sum=0, due_date__gte=today)
         if g.get('open') == '1':
-            qs = qs.filter(status=P, paid_sum__lt=F('total'))
+            qs = qs.filter(status__in=[P, 'draft', 'partial'], paid_sum__lt=F('total'))
         if g.get('available') == '1' and self.Model is RetainerInvoice:
             qs = qs.filter(status__in=['sent', 'partial', 'paid'], paid_sum__gt=F('applied_sum'))
         pid = g.get(self.party_attr) or g.get(self.party_attr + '_id')
@@ -1775,7 +1775,7 @@ class DocResource(Resource):
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
              'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
-             'balance': o.total - paid if o.status in (self.posted, 'partial', 'paid') else Z,
+             'balance': max(Z, o.total - paid) if o.status != 'void' else Z,
              'signature_data': getattr(o, 'signature_data', '') or '',
              'signed_by': getattr(o, 'signed_by', '') or '',
              'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
@@ -1826,11 +1826,14 @@ class DocResource(Resource):
         allocations = []
         if isinstance(o, Invoice):
             payments = [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
-                         'amount': a.amount, 'type': 'payment'} for a in o.allocations.select_related('payment')]
+                         'amount': a.amount, 'type': 'payment', 'mode': a.payment.mode,
+                         'account': a.payment.account or (a.payment.bank_account.name if a.payment.bank_account else 'Bank Account'),
+                         'bank_account_name': a.payment.bank_account.name if a.payment.bank_account else (a.payment.account or ''),
+                         'reference': a.payment.reference or ''} for a in o.allocations.select_related('payment', 'payment__bank_account')]
             for ra in o.retainer_allocations.select_related('retainer'):
                 payments.append({'payment_id': None, 'number': f"Retainer {ra.retainer.number}",
                                  'retainer_id': ra.retainer_id, 'date': ra.date, 'amount': ra.amount,
-                                 'type': 'retainer_credit'})
+                                 'type': 'retainer_credit', 'mode': 'Retainer', 'bank_account_name': '', 'reference': ''})
         elif isinstance(o, RetainerInvoice):
             payments = [{'id': p.pk, 'payment_id': p.payment_received_id, 'number': p.reference or f'Payment for {o.number}',
                          'date': p.date, 'mode': p.mode, 'account': p.account, 'amount': p.amount}
@@ -1843,13 +1846,47 @@ class DocResource(Resource):
             allocations = []
         elif hasattr(o, 'allocations'):
             payments = [{'payment_id': a.payment_id, 'number': a.payment.number, 'date': a.payment.date,
-                         'amount': a.amount} for a in o.allocations.select_related('payment')]
+                         'amount': a.amount, 'mode': getattr(a.payment, 'mode', ''),
+                         'account': getattr(a.payment, 'account', ''),
+                         'bank_account_name': a.payment.bank_account.name if getattr(a.payment, 'bank_account', None) else (getattr(a.payment, 'account', '') or '')}
+                        for a in o.allocations.select_related('payment', 'payment__bank_account')]
         else:
             payments = []
             allocations = []
 
+        source_type = 'manual'
+        source_label = 'Direct / Manual Creation'
+        source_number = ''
+        if isinstance(o, Invoice):
+            sq = getattr(o, 'source_quotes', None)
+            sq_first = sq.first() if sq and hasattr(sq, 'first') else None
+            if sq_first:
+                source_type = 'quote'
+                source_number = sq_first.number
+                source_label = f'Estimate/Quote {sq_first.number}'
+            elif getattr(o, 'order_number', None):
+                so = SalesOrder.objects.filter(number=o.order_number).first()
+                if so:
+                    source_type = 'sales_order'
+                    source_number = so.number
+                    source_label = f'Sales Order {so.number}'
+                else:
+                    source_type = 'reference'
+                    source_number = o.order_number
+                    source_label = f'Ref {o.order_number}'
+        elif isinstance(o, Quote):
+            if getattr(o, 'converted_to_invoice', None):
+                source_label = f'Converted to Invoice {o.converted_to_invoice.number}'
+            elif getattr(o, 'converted_to_sales_order', None):
+                source_label = f'Converted to Sales Order {o.converted_to_sales_order.number}'
+            else:
+                source_label = 'Direct Estimate/Quote'
+
         r.update({'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst, 'notes': o.notes,
                   'order_number': getattr(o, 'order_number', '') or '',
+                  'source_type': source_type,
+                  'source_number': source_number,
+                  'source_label': source_label,
                   'intra_state': is_intra_state(o.place_of_supply, Organization.get().state),
                   'attachments': attachments, 'party_details': party_info,
                   'lines': [{'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
@@ -2359,8 +2396,14 @@ class PaymentResource(Resource):
     def row(self, o):
         applied = q2(o.applied)
         p = getattr(o, self.party_attr)
-        return {'id': o.pk, 'number': o.number, 'party_id': p.pk, 'party': p.name, 'date': o.date, 'mode': o.mode,
-                'mode_label': MODE_LABEL.get(o.mode, o.mode), 'account': o.account, 'amount': o.amount,
+        ba = getattr(o, 'bank_account', None)
+        return {'id': o.pk, 'number': o.number, 'party_id': p.pk if p else None, 'party': p.name if p else '',
+                'customer_name': p.name if p else '', 'date': o.date, 'mode': o.mode,
+                'mode_label': MODE_LABEL.get(o.mode, o.mode), 'account': o.account,
+                'bank_account_id': o.bank_account_id,
+                'bank_account_name': ba.name if ba else '',
+                'bank_name': ba.bank_name if ba else '',
+                'amount': o.amount,
                 'applied': applied, 'unapplied': o.amount - applied, 'reference': o.reference, 'notes': o.notes}
 
     def detail(self, o):
@@ -2396,11 +2439,17 @@ class PaymentResource(Resource):
                 fail('Document not found.')
             if getattr(doc, self.party_attr + '_id') != getattr(pay, self.party_attr + '_id'):
                 fail(f'{doc.number} belongs to a different party.')
-            if doc.status != self.posted:
+            if doc.status == 'draft':
+                if isinstance(doc, Invoice):
+                    services.send_invoice(doc, pay.created_by)
+                elif isinstance(doc, Bill):
+                    services.approve_bill(doc, pay.created_by)
+                doc.refresh_from_db()
+            if doc.status not in (self.posted, 'partial', 'paid'):
                 fail(f'{doc.number} is {doc.status}; payments can only be applied to posted documents.')
             bal = doc.total - sum((a.amount for a in doc.allocations.all()), Z)
             if amt > bal:
-                fail(f'{doc.number}: amount exceeds the balance due ({bal}).')
+                fail(f'{doc.number}: amount ({amt}) exceeds the balance due ({bal}).')
             rows.append((doc, amt))
             total += amt
         if existing + total > pay.amount:
@@ -2423,8 +2472,20 @@ class PaymentResource(Resource):
             party = pqs.first()
         if pid and party is None:
             c.err(self.party_attr, 'Not found.')
+
+        bank_acc_id = c.integer('bank_account_id', lo=1) or c.integer('bank_account', lo=1)
+        bank_acc = None
+        if bank_acc_id:
+            ba_qs = BankAccount.objects.filter(pk=bank_acc_id)
+            if user_org:
+                ba_qs = ba_qs.filter(organization=user_org)
+            bank_acc = ba_qs.first()
+            if not bank_acc:
+                c.err('bank_account', 'Selected bank account not found.')
+
+        acc_name = bank_acc.name if bank_acc else (c.text('account', max_len=60, default='Bank Account') or 'Bank Account')
         out = {'date': c.date('date', required=True), 'mode': c.choice('mode', MODE_KEYS, 'bank_transfer'),
-               'account': c.text('account', max_len=60, default='Bank Account') or 'Bank Account',
+               'account': acc_name,
                'amount': c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999')),
                'reference': c.text('reference', max_len=80), 'notes': c.text('notes', max_len=2000)}
         c.done()
@@ -2436,12 +2497,40 @@ class PaymentResource(Resource):
         num_exists = self.Model.objects.filter(number=pay_num, organization=user_org).exists() if (pay_num and user_org) else False
         if not pay_num or num_exists:
             pay_num = services.next_document_number(self.prefix, org=user_org, date=out['date'])
-        pay = self.Model.objects.create(number=pay_num, created_by=user, **{self.party_attr: party}, **extra, **out)
-        self.allocate(pay, data.get('allocations'))
-        if isinstance(pay, PaymentReceived):
-            services.post_payment_received_journal(pay, user)
-        else:
-            services.post_payment_made_journal(pay, user)
+
+        with transaction.atomic():
+            pay = self.Model.objects.create(number=pay_num, created_by=user, bank_account=bank_acc, **{self.party_attr: party}, **extra, **out)
+            self.allocate(pay, data.get('allocations'))
+            if bank_acc:
+                is_rec = isinstance(pay, PaymentReceived)
+                if is_rec:
+                    bank_acc.current_balance += pay.amount
+                    bank_acc.bank_balance += pay.amount
+                else:
+                    bank_acc.current_balance -= pay.amount
+                    bank_acc.bank_balance -= pay.amount
+                bank_acc.save(update_fields=['current_balance', 'bank_balance'])
+
+                BankTransaction.objects.create(
+                    organization=user_org,
+                    bank_account=bank_acc,
+                    date=pay.date,
+                    description=f"{'Payment Received' if is_rec else 'Payment Made'} {pay.number} - {party.name if party else ''}",
+                    reference=pay.reference or pay.number,
+                    transaction_type='Payment Received' if is_rec else 'Payment Made',
+                    payee=party.name if party else '',
+                    withdrawal=Decimal('0.00') if is_rec else pay.amount,
+                    deposit=pay.amount if is_rec else Decimal('0.00'),
+                    balance=bank_acc.current_balance,
+                    status='categorized',
+                    matched_entity_type='payment_received' if is_rec else 'payment_made',
+                    matched_entity_id=pay.pk
+                )
+            if isinstance(pay, PaymentReceived):
+                services.post_payment_received_journal(pay, user)
+            else:
+                services.post_payment_made_journal(pay, user)
+            services.log_audit(user, 'create', self.Model.__name__, pay.number, f"Recorded {self.Model.__name__} {pay.number} for ₹{pay.amount}")
         return pay
 
     def update(self, obj, data, user):
@@ -2486,8 +2575,21 @@ class PaymentResource(Resource):
 
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
-        Journal.objects.filter(reference=obj.number).delete()
-        obj.delete()
+        with transaction.atomic():
+            if obj.bank_account:
+                is_rec = isinstance(obj, PaymentReceived)
+                if is_rec:
+                    obj.bank_account.current_balance -= obj.amount
+                    obj.bank_account.bank_balance -= obj.amount
+                else:
+                    obj.bank_account.current_balance += obj.amount
+                    obj.bank_account.bank_balance += obj.amount
+                obj.bank_account.save(update_fields=['current_balance', 'bank_balance'])
+                m_type = 'payment_received' if is_rec else 'payment_made'
+                BankTransaction.objects.filter(matched_entity_type=m_type, matched_entity_id=obj.pk).delete()
+            Journal.objects.filter(reference=obj.number).delete()
+            services.log_audit(getattr(obj, 'created_by', None), 'delete', self.Model.__name__, obj.number, f"Reversed/deleted payment {obj.number}")
+            obj.delete()
 
     def action(self, request, obj, name):
         if name != 'apply':
@@ -3926,6 +4028,8 @@ class SalesOrderResource(Resource):
         elif name == 'convert-to-invoice':
             if obj.status == 'void':
                 raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
+            if obj.status == 'closed':
+                raise ApiError(400, f'Sales order {obj.number} has already been converted to an invoice.')
             inv = Invoice.objects.create(
                 customer=obj.customer,
                 number=next_number('INV'),
@@ -5844,7 +5948,9 @@ def lookup(request, name):
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
                 for o in org_filter(Account.objects.filter(active=True)).order_by('code')]
     elif name == 'bank-accounts':
-        data = [{'id': o.pk, 'name': o.name, 'bank_name': o.bank_name, 'account_number': o.account_number, 'balance': o.current_balance}
+        data = [{'id': o.pk, 'name': o.name, 'bank_name': o.bank_name, 'account_number': o.account_number,
+                 'account_type': o.account_type, 'balance': o.current_balance,
+                 'display_name': f"{o.name} - {o.bank_name} (••••{o.account_number[-4:] if len(o.account_number) >= 4 else o.account_number}) [₹{o.current_balance:,.2f}]"}
                 for o in org_filter(BankAccount.objects.filter(active=True)).order_by('name')]
     elif name == 'folders':
         data = [{'id': o.pk, 'name': o.name, 'color': o.color}

@@ -934,6 +934,8 @@ def post_payment_received_journal(pay, user):
     """Debit Bank/Cash, Credit Accounts Receivable."""
     org = getattr(pay, 'organization', None)
     acc_code = '1000' if pay.mode == 'cash' else '1010'
+    if getattr(pay, 'bank_account', None) and getattr(pay.bank_account, 'gl_account', None):
+        acc_code = pay.bank_account.gl_account.code
     items = [
         (acc_code, pay.amount, Decimal('0.00'), f'Payment {pay.number} from {pay.customer.name}'),
         ('1200', Decimal('0.00'), pay.amount, f'Payment {pay.number} applied to AR')
@@ -944,6 +946,8 @@ def post_payment_made_journal(pay, user):
     """Debit Accounts Payable, Credit Bank/Cash."""
     org = getattr(pay, 'organization', None)
     acc_code = '1000' if pay.mode == 'cash' else '1010'
+    if getattr(pay, 'bank_account', None) and getattr(pay.bank_account, 'gl_account', None):
+        acc_code = pay.bank_account.gl_account.code
     items = [
         ('2000', pay.amount, Decimal('0.00'), f'Payment {pay.number} to {pay.vendor.name}'),
         (acc_code, Decimal('0.00'), pay.amount, f'Payment {pay.number} disbursed')

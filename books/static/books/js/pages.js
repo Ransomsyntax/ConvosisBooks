@@ -1446,7 +1446,12 @@ const LISTS = {
       { h: 'AMOUNT', s: 'total', ...money(r => inr(r.total)) },
       { h: 'BALANCE DUE', ...money(r => inr(r.balance)) }
     ],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? invoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }) : null,
+    actions: r => {
+      const acts = [['view', 'View'], ['edit', 'Edit']];
+      if (num(r.balance) > 0 && r.raw_status !== 'void') acts.push(['pay', 'Record Payment']);
+      return acts;
+    },
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? invoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }) : a === 'pay' ? (window.recordInvoicePaymentModal ? recordInvoicePaymentModal(r, () => refresh()) : paymentForm('payments-received', { party: r.party_id, doc: r.id, amount: r.balance })) : null,
   },
   bills: {
     api: 'bills', title: 'Bills', bc: 'Purchases', newLabel: 'New bill', onNew: () => docMasterDetail($('#pg'), 'bills', 'new'), ordering: '-date', empty: 'No bills yet.',
@@ -2037,6 +2042,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
+            ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
           </table>
 
         </div>
@@ -2173,17 +2179,35 @@ function renderDocSheet(d, kind, customOpts = {}) {
         </div>
       ` : ''}
 
-      ${isRetainer && ((d.payments && d.payments.length) || (d.allocations && d.allocations.length)) ? `
+      ${((d.payments && d.payments.length) || (isRetainer && d.allocations && d.allocations.length)) ? `
         <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(0,0,0,0.08);">
           ${d.payments && d.payments.length ? `
             <div style="margin-bottom:14px;">
-              <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Payments Received</h4>
+              <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">${isBill ? 'Payments Made' : 'Payments Received / Applied'}</h4>
 
-              <table class="lt" style="font-size:12px;">
-                <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th>Account</th><th class="r">Amount</th></tr></thead>
+              <table class="lt" style="font-size:12px;width:100%;border-collapse:collapse;">
+                <thead>
+                  <tr style="border-bottom:1px solid #e2e8f0;text-align:left;">
+                    <th style="padding:6px 8px;">Date</th>
+                    <th style="padding:6px 8px;">${isBill ? 'Payment#' : 'Payment Receipt#'}</th>
+                    <th style="padding:6px 8px;">Mode</th>
+                    <th style="padding:6px 8px;">Bank Account</th>
+                    <th style="padding:6px 8px;">Reference</th>
+                    <th class="r" style="padding:6px 8px;text-align:right;">Amount</th>
+                  </tr>
+                </thead>
 
                 <tbody>
-                  ${d.payments.map(p => `<tr><td>${fd(p.date)}</td><td>${esc(p.mode || 'bank_transfer')}</td><td>${esc(p.number || p.reference || '—')}</td><td>${esc(p.account || 'Bank Account')}</td><td class="r" style="font-weight:600;color:#059669;">${inr(p.amount)}</td></tr>`).join('')}
+                  ${d.payments.map(p => `
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                      <td style="padding:6px 8px;">${fd(p.date)}</td>
+                      <td style="padding:6px 8px;font-weight:600;color:#2563eb;">${esc(p.number || p.reference || '—')}</td>
+                      <td style="padding:6px 8px;">${esc((p.mode || 'bank_transfer').replace(/_/g, ' ').toUpperCase())}</td>
+                      <td style="padding:6px 8px;">${esc(p.bank_account_name || p.account || 'Bank Account')}</td>
+                      <td style="padding:6px 8px;">${esc(p.reference || '—')}</td>
+                      <td class="r" style="padding:6px 8px;text-align:right;font-weight:700;color:#059669;">${inr(p.amount)}</td>
+                    </tr>
+                  `).join('')}
                 </tbody>
 
               </table>
@@ -2191,7 +2215,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
             </div>
 
           ` : ''}
-          ${d.allocations && d.allocations.length ? `
+          ${isRetainer && d.allocations && d.allocations.length ? `
             <div>
               <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin:0 0 6px;">Applied to Invoices</h4>
 
@@ -2603,7 +2627,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
                 ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
                 ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
               ` : `
-                ${posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
+                ${(posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
                 ${posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
                 ${isCustDoc ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
                 ${kind === 'invoices' ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
@@ -2748,7 +2772,11 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         } catch (e) { toast(e.message, 'err'); }
         return;
       }
-      if (act === 'pay') return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance });
+      if (act === 'pay') {
+        if (inv && window.recordInvoicePaymentModal) return recordInvoicePaymentModal(d, () => loadDetail(d.id));
+        if (isBill && window.recordDocumentPaymentModal) return recordDocumentPaymentModal(d, 'bills', () => loadDetail(d.id));
+        return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance });
+      }
       if (act === 'pay-retainer') return recordRetainerPaymentModal(d, () => loadDetail(d.id));
       if (act === 'apply-invoices') return applyRetainerModal(d, () => loadDetail(d.id));
       if (act === 'apply-retainer') return applyRetainerToInvoiceModal(d, () => loadDetail(d.id));
@@ -2882,7 +2910,7 @@ async function docDetail(kind, id) {
 
         ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
         ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
-        ${!isRetainer && posted && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
+        ${!isRetainer && (posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
         ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
         <button class="btn d" type="button" data-do="delete">Delete</button>
 
@@ -2926,7 +2954,12 @@ async function docDetail(kind, id) {
         $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
       });
       if (act === 'att') return openAttachmentsModal(kind, d.id, d.number);
-      if (act === 'pay') { m.close(); return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance }); }
+      if (act === 'pay') {
+        m.close();
+        if (inv && window.recordInvoicePaymentModal) return recordInvoicePaymentModal(d, () => refresh());
+        if (isBill && window.recordDocumentPaymentModal) return recordDocumentPaymentModal(d, 'bills', () => refresh());
+        return paymentForm(inv ? 'payments-received' : 'payments-made', { party: d.party_id, doc: d.id, amount: d.balance });
+      }
       if (act === 'pay-retainer') { m.close(); return recordRetainerPaymentModal(d, () => refresh()); }
       if (act === 'apply-invoices') { m.close(); return applyRetainerModal(d, () => refresh()); }
       if (act === 'apply-retainer') { m.close(); return applyRetainerToInvoiceModal(d, () => refresh()); }

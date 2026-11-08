@@ -3937,15 +3937,234 @@ async function docForm(kind, id, targetEl, onDone) {
   });
 }
 
+async function recordDocumentPaymentModal(doc, kind = 'invoices', onDone) {
+  if (!doc) return;
+  const isInvoice = kind === 'invoices' || kind === 'sales';
+  let d = doc;
+  if (typeof doc === 'number' || typeof doc === 'string' || !d.total) {
+    try {
+      d = await api(`${isInvoice ? 'invoices' : 'bills'}/${doc.id || doc}/`);
+    } catch (e) {
+      toast(e.message, 'err');
+      return;
+    }
+  }
+
+  const partyName = d.party || d.customer_name || d.vendor_name || (d.party_details && d.party_details.name) || (isInvoice ? 'Customer' : 'Vendor');
+  const partyId = d.party_id || (isInvoice ? d.customer_id : d.vendor_id) || (d.party_details && d.party_details.id);
+  const totalAmt = num(d.total);
+  const paidAmt = num(d.paid);
+  const balanceDue = Math.max(0, num(d.balance !== undefined ? d.balance : (totalAmt - paidAmt)));
+
+  if (balanceDue <= 0 && (d.status === 'Paid' || d.raw_status === 'paid')) {
+    toast(`${isInvoice ? 'Invoice' : 'Bill'} ${d.number} is already fully paid.`, 'ok');
+    return;
+  }
+
+  let bankAccounts = await api('lookup/bank-accounts/').catch(() => []);
+
+  const buildBankOpts = (accs, selId) => {
+    let out = '<option value="">Select Bank Account…</option>';
+    accs.forEach(b => {
+      const isSel = String(b.id) === String(selId) ? 'selected' : '';
+      const label = b.display_name || `${b.name} - ${b.bank_name} (${b.account_number})`;
+      out += `<option value="${b.id}" ${isSel}>${esc(label)}</option>`;
+    });
+    out += '<option value="__add_new__" style="color:#2563eb;font-weight:600;">+ Add New Bank Account…</option>';
+    return out;
+  };
+
+  const initialAmount = r2(balanceDue);
+
+  const m = Modal.open({
+    title: `Record Payment · ${isInvoice ? 'Invoice' : 'Bill'} ${esc(d.number)}`,
+    wide: false,
+    body: `
+      <div style="background:var(--surface-glass-subtle, #f8fafc);border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+          <div>
+            <span style="font-size:11.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;">${isInvoice ? 'Customer' : 'Vendor'}</span>
+            <div style="font-weight:700;font-size:14px;color:#0f172a;margin-top:2px;">${esc(partyName)}</div>
+          </div>
+          <div style="text-align:right;">
+            <span style="font-size:11.5px;color:#64748b;text-transform:uppercase;letter-spacing:0.04em;">${isInvoice ? 'Invoice Date' : 'Bill Date'}</span>
+            <div style="font-weight:600;font-size:13px;color:#334155;margin-top:2px;">${fd(d.date)}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:12px;">
+          <div>
+            <span style="color:#64748b;">Total Amount</span>
+            <div style="font-weight:700;font-size:13px;color:#0f172a;">${inr(totalAmt)}</div>
+          </div>
+          <div>
+            <span style="color:#64748b;">Previously Paid</span>
+            <div style="font-weight:700;font-size:13px;color:#059669;">${inr(paidAmt)}</div>
+          </div>
+          <div>
+            <span style="color:#64748b;">Outstanding Balance</span>
+            <div style="font-weight:800;font-size:14px;color:#2563eb;" id="pm-doc-due">${inr(balanceDue)}</div>
+          </div>
+        </div>
+      </div>
+
+      <form id="pm-single-doc-form" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="fe" style="grid-column:span 1;">
+          <label class="fl">Payment Date <span class="req">*</span></label>
+          <input class="in" type="date" name="date" required value="${APP.today}">
+        </div>
+
+        <div class="fe" style="grid-column:span 1;">
+          <label class="fl">Payment Amount (₹) <span class="req">*</span></label>
+          <input class="in" type="number" name="amount" id="pm-pay-amount" required min="0.01" step="0.01" max="${balanceDue}" value="${initialAmount}" style="font-weight:700;font-size:14px;color:#0f172a;">
+          <div id="pm-amount-err" style="color:#dc2626;font-size:11px;margin-top:3px;display:none;font-weight:500;"></div>
+        </div>
+
+        <div class="fe" style="grid-column:span 1;">
+          <label class="fl">Payment Mode <span class="req">*</span></label>
+          <select class="in" name="mode" required>
+            <option value="bank_transfer" selected>Bank Transfer / NEFT / RTGS</option>
+            <option value="upi">UPI</option>
+            <option value="cheque">Cheque</option>
+            <option value="cash">Cash</option>
+            <option value="card">Credit / Debit Card</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div class="fe" style="grid-column:span 1;">
+          <label class="fl">${isInvoice ? 'Deposit To Bank Account' : 'Paid From Bank Account'} <span class="req">*</span></label>
+          <select class="in" name="bank_account_id" id="pm-bank-select" required>
+            ${buildBankOpts(bankAccounts, bankAccounts.length ? bankAccounts[0].id : '')}
+          </select>
+        </div>
+
+        <div class="fe" style="grid-column:span 2;">
+          <label class="fl">Reference / Transaction# / Cheque#</label>
+          <input class="in" type="text" name="reference" placeholder="e.g. UTR / IMPS Ref / Cheque No">
+        </div>
+
+        <div class="fe" style="grid-column:span 2;">
+          <label class="fl">Notes / Description</label>
+          <textarea class="in" name="notes" rows="2" placeholder="${isInvoice ? 'Payment received against invoice' : 'Payment made against bill'} ${esc(d.number)}"></textarea>
+        </div>
+
+        <div style="grid-column:span 2;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:13px;color:#166534;font-weight:500;">Remaining Balance after Payment:</span>
+          <b style="font-size:14px;color:#15803d;" id="pm-calc-remaining">₹0.00</b>
+        </div>
+      </form>
+    `,
+    footer: `
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn p" type="button" id="pm-submit-btn" style="background:#2563eb;color:#fff;font-weight:600;"><i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>
+    `
+  });
+
+  const form = $('#pm-single-doc-form', m.el);
+  const amtInp = $('#pm-pay-amount', m.el);
+  const errBox = $('#pm-amount-err', m.el);
+  const remBox = $('#pm-calc-remaining', m.el);
+  const submitBtn = $('#pm-submit-btn', m.el);
+  const bankSelect = $('#pm-bank-select', m.el);
+
+  const calcRemaining = () => {
+    const val = num(amtInp.value);
+    if (val <= 0) {
+      errBox.textContent = 'Payment amount must be greater than zero.';
+      errBox.style.display = 'block';
+      submitBtn.disabled = true;
+      remBox.textContent = inr(balanceDue);
+      return;
+    }
+    if (val > balanceDue + 0.001) {
+      errBox.textContent = `Amount cannot exceed outstanding balance of ${inr(balanceDue)}.`;
+      errBox.style.display = 'block';
+      submitBtn.disabled = true;
+      remBox.textContent = '₹0.00';
+      return;
+    }
+    errBox.style.display = 'none';
+    submitBtn.disabled = false;
+    const remaining = Math.max(0, balanceDue - val);
+    remBox.textContent = inr(remaining);
+  };
+
+  amtInp.addEventListener('input', calcRemaining);
+
+  bankSelect.addEventListener('change', async () => {
+    if (bankSelect.value === '__add_new__') {
+      bankAccountForm(null, async newAcc => {
+        bankAccounts = await api('lookup/bank-accounts/').catch(() => []);
+        bankSelect.innerHTML = buildBankOpts(bankAccounts, newAcc && newAcc.id ? newAcc.id : '');
+      });
+    }
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const amtVal = num(amtInp.value);
+    if (amtVal <= 0 || amtVal > balanceDue + 0.001) {
+      calcRemaining();
+      return;
+    }
+    const bId = bankSelect.value;
+    if (!bId || bId === '__add_new__') {
+      toast('Please select a valid bank account.', 'err');
+      bankSelect.focus();
+      return;
+    }
+    const selAcc = bankAccounts.find(b => String(b.id) === String(bId));
+    const selAccName = selAcc ? selAcc.name : 'Bank Account';
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spin"></span> Recording…';
+
+    const endpoint = isInvoice ? 'payments-received/' : 'payments-made/';
+    const docKey = isInvoice ? 'invoice' : 'bill';
+    const partyKey = isInvoice ? 'customer' : 'vendor';
+
+    const payload = {
+      [partyKey]: partyId,
+      date: form.elements.date.value,
+      amount: r2(amtVal),
+      mode: form.elements.mode.value,
+      bank_account_id: Number(bId),
+      account: selAccName,
+      reference: form.elements.reference.value || '',
+      notes: form.elements.notes.value || `Payment for ${d.number}`,
+      allocations: [{ [docKey]: d.id, amount: r2(amtVal) }]
+    };
+
+    try {
+      const res = await api(endpoint, { method: 'POST', body: payload });
+      m.close();
+      toast(`Payment ${res.number || ''} recorded successfully for ${d.number}!`);
+      refresh();
+      if (typeof onDone === 'function') onDone(res);
+    } catch (e) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Record Payment';
+      toast(e.message || 'Failed to record payment.', 'err');
+    }
+  });
+}
+window.recordDocumentPaymentModal = recordDocumentPaymentModal;
+window.recordInvoicePaymentModal = (inv, onDone) => recordDocumentPaymentModal(inv, 'invoices', onDone);
+
 async function paymentForm(kind, pre = {}) {
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
-  const [parties, existing] = await Promise.all([
+  const [parties, bankAccounts, existing] = await Promise.all([
     api(`lookup/${rec ? 'customers' : 'vendors'}/`).catch(() => []),
+    api('lookup/bank-accounts/').catch(() => []),
     payId ? api(`${kind}/${payId}/`).catch(() => null) : Promise.resolve(null)
   ]);
   const dataObj = existing || (typeof pre === 'object' ? pre : {});
   const partyVal = dataObj.party_id || dataObj.customer_id || dataObj.vendor_id || dataObj.party || dataObj[pk] || '';
+  const bankOpts = [
+    ['', 'Select Bank Account…'],
+    ...bankAccounts.map(b => [b.id, b.display_name || `${b.name} (${b.bank_name})`]),
+    ['__add_new__', '+ Add New Bank Account…']
+  ];
   formModal({
     title: payId ? (rec ? `Edit payment received ${dataObj.number || ''}` : `Edit payment made ${dataObj.number || ''}`) : (rec ? 'Record payment received' : 'Record payment made'), wide: true,
     body: `<div class="zb-form-wrap">${[
@@ -3953,7 +4172,8 @@ async function paymentForm(kind, pre = {}) {
       fld({ name: 'date', label: 'Payment date', type: 'date', req: 1, value: dataObj.date || APP.today }),
       fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: 1, value: dataObj.amount || '', attrs: 'min="0.01" step="0.01"' }),
       fld({ name: 'mode', label: 'Payment mode', type: 'select', opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: dataObj.mode || 'bank_transfer' }),
-      fld({ name: 'account', label: 'Bank / cash account', value: dataObj.account || 'Bank Account' }), fld({ name: 'reference', label: 'Reference number', value: dataObj.reference || '' }),
+      fld({ name: 'bank_account_id', label: rec ? 'Deposit to Bank Account' : 'Paid from Bank Account', type: 'select', req: 1, opts: bankOpts, value: dataObj.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : '') }),
+      fld({ name: 'reference', label: 'Reference number', value: dataObj.reference || '' }),
       fld({ name: 'notes', label: 'Notes', type: 'textarea', value: dataObj.notes || '', col: 'c2' }),
     ].join('')}</div>
     <h3 style="margin:16px 0 6px;font-size:14px">Apply to ${rec ? 'invoices' : 'bills'}</h3>
@@ -3984,6 +4204,19 @@ async function paymentForm(kind, pre = {}) {
       };
       form.elements[pk].addEventListener('change', load);
       form.addEventListener('input', totals);
+      const bankEl = form.elements.bank_account_id;
+      if (bankEl) {
+        bankEl.addEventListener('change', () => {
+          if (bankEl.value === '__add_new__') {
+            bankAccountForm(null, async newAcc => {
+              const fresh = await api('lookup/bank-accounts/').catch(() => []);
+              bankEl.innerHTML = '<option value="">Select Bank Account…</option>' +
+                fresh.map(b => `<option value="${b.id}" ${newAcc && newAcc.id === b.id ? 'selected' : ''}>${esc(b.display_name || b.name)}</option>`).join('') +
+                '<option value="__add_new__" style="color:#2563eb;font-weight:600;">+ Add New Bank Account…</option>';
+            });
+          }
+        });
+      }
       form.addEventListener('click', e => {
         if (!e.target.closest('[data-auto]')) return;
         let left = num(form.elements.amount.value);
@@ -3996,6 +4229,14 @@ async function paymentForm(kind, pre = {}) {
       d.allocations = $$('.al-in', form).filter(i => num(i.value) > 0).map(i => ({ [docKey]: Number(i.dataset.id), amount: i.value }));
       const applied = d.allocations.reduce((s, x) => s + num(x.amount), 0);
       if (applied > num(d.amount) + 0.001) throw new ApiErr(400, { message: 'Please correct the allocations.', errors: { allocations: 'Applied amount exceeds the payment amount.' } });
+      if (d.bank_account_id === '__add_new__') {
+        throw new ApiErr(400, { message: 'Please select a valid bank account.', errors: { bank_account_id: 'Please select a valid bank account.' } });
+      }
+      if (d.bank_account_id) {
+        const selBa = bankAccounts.find(b => String(b.id) === String(d.bank_account_id));
+        d.account = selBa ? selBa.name : 'Bank Account';
+        d.bank_account_id = Number(d.bank_account_id);
+      }
       const p = await api(payId ? `${kind}/${payId}/` : `${kind}/`, { method: payId ? 'PUT' : 'POST', body: d });
       toast(payId ? `Payment ${p.number} updated` : `Payment ${p.number} recorded`); refresh();
     },
@@ -4822,7 +5063,7 @@ async function expenseForm(id) {
   });
 }
 
-async function bankAccountForm(id) {
+async function bankAccountForm(id, onDone) {
   const [o, accounts] = await Promise.all([
     id ? api(`bank-accounts/${id}/`) : Promise.resolve({
       name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current',
@@ -4877,10 +5118,12 @@ async function bankAccountForm(id) {
       d.gl_account = d.gl_account ? Number(d.gl_account) : null;
       d.active = Boolean(d.active);
       d.is_archived = Boolean(d.is_archived);
-      if (id) await api(`bank-accounts/${id}/`, { method: 'PUT', body: d });
-      else await api('bank-accounts/', { method: 'POST', body: d });
+      let res;
+      if (id) res = await api(`bank-accounts/${id}/`, { method: 'PUT', body: d });
+      else res = await api('bank-accounts/', { method: 'POST', body: d });
       toast('Bank account saved successfully');
       refresh();
+      if (typeof onDone === 'function') onDone(res);
     }
   });
 }

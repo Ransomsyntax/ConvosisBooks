@@ -1597,3 +1597,182 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertIsNotNone(gen_inv)
         self.assertEqual(gen_inv.lines.first().description, 'Daily Health Check')
 
+
+class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
+    """
+    Test all invoice actions:
+    - Edit, Send (Email, SMS), Share (Secure Link)
+    - Reminders (Send, Stop, Expected Payment Date)
+    - Write-off with double-entry Bad Debts ledger
+    - Clone Document
+    - Create Credit Note & Debit Note from invoice
+    - View Journal entries
+    - Add e-Way Bill
+    """
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.admin_user)
+        self.inv = Invoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            number='INV-ACT-001',
+            date=date.today(),
+            due_date=date.today() + timedelta(days=15),
+            place_of_supply=self.customer.state,
+            subtotal=Decimal('10000.00'),
+            total=Decimal('11800.00'),
+            status='sent'
+        )
+        InvoiceLine.objects.create(
+            invoice=self.inv,
+            item=self.item,
+            description='Web Consulting Services',
+            quantity=Decimal('1.000'),
+            rate=Decimal('10000.00'),
+            taxable=Decimal('10000.00'),
+            gst_rate=Decimal('18.00'),
+            tax_amount=Decimal('1800.00'),
+            line_total=Decimal('11800.00')
+        )
+
+    def test_invoice_email_and_sms(self):
+        # Email action
+        res = self.client.post(
+            f'/api/invoices/{self.inv.id}/email/',
+            data=json.dumps({
+                'to_email': 'client@example.com',
+                'subject': 'Your Invoice INV-ACT-001',
+                'message': 'Please find invoice attached.'
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['status'], 'ok')
+
+        # SMS action
+        res_sms = self.client.post(
+            f'/api/invoices/{self.inv.id}/sms/',
+            data=json.dumps({
+                'to_phone': '+919876543210',
+                'message': 'Invoice INV-ACT-001 for Rs 11,800 is ready.'
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(res_sms.status_code, 200)
+        self.assertEqual(res_sms.json()['status'], 'ok')
+
+    def test_invoice_share_link(self):
+        res = self.client.post(f'/api/invoices/{self.inv.id}/share/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('share_url', data)
+
+    def test_invoice_reminders_and_expected_date(self):
+        # Send reminder
+        res_remind = self.client.post(f'/api/invoices/{self.inv.id}/remind/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_remind.status_code, 200)
+        self.assertEqual(res_remind.json()['status'], 'ok')
+
+        # Stop reminders
+        res_stop = self.client.post(f'/api/invoices/{self.inv.id}/stop-reminders/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_stop.status_code, 200)
+        self.assertEqual(res_stop.json()['status'], 'ok')
+
+        # Expected payment date
+        exp_date = (date.today() + timedelta(days=5)).isoformat()
+        res_exp = self.client.post(
+            f'/api/invoices/{self.inv.id}/expected-payment-date/',
+            data=json.dumps({'expected_payment_date': exp_date, 'notes': 'Cheque promised by next Monday'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_exp.status_code, 200)
+        self.assertEqual(res_exp.json()['status'], 'ok')
+        self.assertEqual(res_exp.json()['expected_date'], exp_date)
+
+    def test_invoice_write_off(self):
+        # Write off outstanding invoice
+        res = self.client.post(
+            f'/api/invoices/{self.inv.id}/write-off/',
+            data=json.dumps({'reason': 'uncollectible', 'notes': 'Customer insolvent'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['write_off_amount'], '11800.00')
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.balance_due, Decimal('0.00'))
+        self.assertEqual(self.inv.status, 'paid')
+
+        # Verify journal entry was posted
+        from books.models import Journal, JournalItem
+        jnl = Journal.objects.filter(reference=self.inv.number, entry_type='invoice_write_off').first()
+        self.assertIsNotNone(jnl)
+        bad_debt_line = jnl.items.filter(debit=Decimal('11800.00')).first()
+        self.assertIsNotNone(bad_debt_line)
+        self.assertIn('5050', bad_debt_line.account.code)
+
+        # Attempting to write off again fails
+        res_again = self.client.post(
+            f'/api/invoices/{self.inv.id}/write-off/',
+            data=json.dumps({'reason': 'uncollectible'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_again.status_code, 400)
+
+    def test_clone_document(self):
+        res = self.client.post(f'/api/invoices/{self.inv.id}/clone/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'ok')
+        cloned_id = data['id']
+
+        cloned = Invoice.objects.get(pk=cloned_id)
+        self.assertEqual(cloned.status, 'draft')
+        self.assertNotEqual(cloned.number, self.inv.number)
+        self.assertEqual(cloned.lines.count(), 1)
+        self.assertEqual(cloned.lines.first().description, 'Web Consulting Services')
+
+    def test_create_credit_and_debit_note_from_invoice(self):
+        # Credit Note
+        res_cn = self.client.post(f'/api/invoices/{self.inv.id}/create-credit-note/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_cn.status_code, 200)
+        data_cn = res_cn.json()
+        self.assertEqual(data_cn['status'], 'ok')
+        cn_id = data_cn['credit_note_id']
+        from books.models import CreditNote
+        cn = CreditNote.objects.get(pk=cn_id)
+        self.assertEqual(cn.customer, self.inv.customer)
+        self.assertEqual(cn.status, 'draft')
+
+        # Debit Note
+        res_dn = self.client.post(f'/api/invoices/{self.inv.id}/create-debit-note/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_dn.status_code, 200)
+        data_dn = res_dn.json()
+        self.assertEqual(data_dn['status'], 'ok')
+
+    def test_view_journal_and_eway_bill(self):
+        # View Journal
+        res_jnl = self.client.get(f'/api/invoices/{self.inv.id}/view-journal/')
+        self.assertEqual(res_jnl.status_code, 200)
+        self.assertIn('journals', res_jnl.json())
+
+        # e-Way Bill
+        res_ewb = self.client.post(
+            f'/api/invoices/{self.inv.id}/eway-bill/',
+            data=json.dumps({
+                'bill_number': '123456789012',
+                'distance_km': 150,
+                'vehicle_number': 'KL-07-CD-5678',
+                'transporter_name': 'Express Cargo'
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(res_ewb.status_code, 200)
+        data_ewb = res_ewb.json()
+        self.assertEqual(data_ewb['status'], 'ok')
+        self.assertEqual(data_ewb['bill_number'], '123456789012')
+
+

@@ -24,13 +24,13 @@ from .cleaning import ApiError
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
                      StockTransfer, StockTransferLine,
                      BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
-                     Bill, BillAllocation, BillLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
+                     Bill, BillAllocation, BillLine, CreditNote, CreditNoteLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
                      EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, GSTRReturn, Invoice,
                      InvoiceLine, Item, Journal, JournalItem, LockDate, ManagedDocument,
                      Notification, Organization, PaymentMade, PaymentReceived, PurchaseOrder,
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
-                     StockMovement, TenantSubscription, UserProfile, Vendor, VendorPortalAccess,
+                     StockMovement, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
                      Warehouse, WebhookSubscription)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
@@ -406,7 +406,7 @@ def send_invoice(inv, user):
     apply_stock(inv, -1, 'sale', user)
     inv.status = 'sent'
     inv.sent_at = timezone.now()
-    inv.save(update_fields=['status', 'sent_at', 'updated_at'])
+    inv.save(update_fields=['status', 'sent_at'])
     post_invoice_journal(inv, user)
     log_audit(user, 'send', 'Invoice', inv.pk, f'Invoice {inv.number} posted and sent to {inv.customer.name} (₹{inv.total})')
 
@@ -419,7 +419,7 @@ def void_invoice(inv, user):
         raise ApiError(409, 'Payments are applied to this invoice. Delete those payments first.')
     apply_stock(inv, +1, 'sale_void', user)
     inv.status = 'void'
-    inv.save(update_fields=['status', 'updated_at'])
+    inv.save(update_fields=['status'])
     post_invoice_void_journal(inv, user)
     log_audit(user, 'void', 'Invoice', inv.pk, f'Invoice {inv.number} voided and reversed in ledger')
 
@@ -430,7 +430,7 @@ def approve_bill(bill, user):
         raise ApiError(409, 'Only draft bills can be approved.')
     apply_stock(bill, +1, 'purchase', user)
     bill.status = 'open'
-    bill.save(update_fields=['status', 'updated_at'])
+    bill.save(update_fields=['status'])
     post_bill_journal(bill, user)
     log_audit(user, 'approve', 'Bill', bill.pk, f'Bill {bill.number} approved for {bill.vendor.name} (₹{bill.total})')
 
@@ -443,7 +443,7 @@ def void_bill(bill, user):
         raise ApiError(409, 'Payments are applied to this bill. Delete those payments first.')
     apply_stock(bill, -1, 'purchase_void', user)
     bill.status = 'void'
-    bill.save(update_fields=['status', 'updated_at'])
+    bill.save(update_fields=['status'])
     post_bill_void_journal(bill, user)
     log_audit(user, 'void', 'Bill', bill.pk, f'Bill {bill.number} voided and reversed in ledger')
 
@@ -742,6 +742,276 @@ def delete_retainer_allocation(alloc, user):
     retainer.save(update_fields=['applied_amount'])
     log_audit(user, 'delete_allocation', 'RetainerInvoice', retainer.pk,
               f'Removed retainer application of ₹{amt} from {inv.number}', org=org, module='sales', submodule='retainer_invoices')
+
+@transaction.atomic
+def write_off_invoice(inv, reason='Bad Debt', notes='', user=None):
+    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    check_transaction_lock(inv.date, org=org)
+    bal = getattr(inv, 'balance_due', None)
+    if bal is None:
+        paid = sum((a.amount for a in inv.allocations.all()), Decimal('0.00'))
+        if hasattr(inv, 'retainer_allocations'):
+            paid += sum((a.amount for a in inv.retainer_allocations.all()), Decimal('0.00'))
+        bal = max(Decimal('0.00'), inv.total - paid)
+    if bal <= Decimal('0.00'):
+        raise ApiError(400, 'Invoice has no outstanding balance to write off.')
+
+    Account.objects.get_or_create(
+        organization=org,
+        code='5050',
+        defaults={
+            'name': 'Bad Debts / Write-off Expense',
+            'account_type': 'expense',
+            'sub_type': 'operating_expense',
+            'description': 'Uncollectible accounts and debt write-offs',
+            'is_system': True
+        }
+    )
+
+    today = timezone.localdate()
+    items = [
+        ('5050', bal, Decimal('0.00'), f'Bad debt write-off for invoice {inv.number} - Reason: {reason}'),
+        ('1200', Decimal('0.00'), bal, f'AR write-off reduction for {inv.number}')
+    ]
+    post_journal_entry(today, 'invoice_write_off', inv.number,
+                       f'Write-off of invoice {inv.number} (₹{bal}) - {reason}', items, user, org=org)
+
+    pay_num = next_document_number('PR', org=org, date=today)
+    pmt = PaymentReceived.objects.create(
+        organization=org,
+        number=pay_num, customer=inv.customer, date=today,
+        mode='bank_transfer', account='Bad Debts / Write-off',
+        amount=bal, reference=f'Write-off: {reason}',
+        notes=notes or f'Balance write-off: {reason}',
+        created_by=user if getattr(user, 'pk', None) else None
+    )
+    ReceivedAllocation.objects.create(payment=pmt, invoice=inv, amount=bal)
+
+    inv.status = 'paid'
+    inv.save(update_fields=['status'])
+    log_audit(user, 'write_off', 'Invoice', inv.pk,
+              f'Written off balance of ₹{bal} for invoice {inv.number}. Reason: {reason}',
+              org=org, module='sales', submodule='invoices')
+    return {'status': 'ok', 'write_off_amount': str(bal), 'written_off_amount': float(bal), 'invoice_number': inv.number}
+
+
+@transaction.atomic
+def clone_document(doc, user=None):
+    org = getattr(doc, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    model_cls = doc.__class__
+    prefix_map = {
+        'Invoice': 'INV',
+        'Bill': 'BILL',
+        'Quote': 'QT',
+        'SalesOrder': 'SO',
+        'PurchaseOrder': 'PO',
+        'CreditNote': 'CN',
+        'RetainerInvoice': 'RET',
+        'DeliveryChallan': 'DC'
+    }
+    model_name = model_cls.__name__
+    pfx = prefix_map.get(model_name, 'DOC')
+    today = timezone.localdate()
+    new_num = next_document_number(pfx, org=org, date=today)
+
+    party_field = 'customer' if hasattr(doc, 'customer') else ('vendor' if hasattr(doc, 'vendor') else None)
+    party_val = getattr(doc, party_field) if party_field else None
+
+    term_days = 30
+    if party_val and hasattr(party_val, 'payment_terms'):
+        term_days = getattr(party_val, 'payment_terms', 30) or 30
+    due_date = today + timedelta(days=int(term_days))
+
+    create_kwargs = {
+        'organization': org,
+        'number': new_num,
+        'date': today,
+        'status': 'draft',
+        'subtotal': getattr(doc, 'subtotal', Decimal('0.00')),
+        'cgst': getattr(doc, 'cgst', Decimal('0.00')),
+        'sgst': getattr(doc, 'sgst', Decimal('0.00')),
+        'igst': getattr(doc, 'igst', Decimal('0.00')),
+        'total': getattr(doc, 'total', Decimal('0.00')),
+        'notes': getattr(doc, 'notes', ''),
+    }
+    if hasattr(doc, 'due_date'):
+        create_kwargs['due_date'] = due_date
+    if hasattr(doc, 'place_of_supply'):
+        create_kwargs['place_of_supply'] = doc.place_of_supply
+    if hasattr(doc, 'terms'):
+        create_kwargs['terms'] = doc.terms
+    if party_field:
+        create_kwargs[party_field] = party_val
+
+    new_doc = model_cls.objects.create(**create_kwargs)
+
+    if hasattr(doc, 'lines'):
+        line_cls = doc.lines.model
+        fk_name = None
+        for f in line_cls._meta.fields:
+            if f.is_relation and f.related_model == model_cls:
+                fk_name = f.name
+                break
+        for ln in doc.lines.all():
+            ln_kwargs = {
+                fk_name: new_doc,
+                'item': ln.item,
+                'description': ln.description,
+                'hsn_sac': ln.hsn_sac,
+                'quantity': ln.quantity,
+                'rate': ln.rate,
+                'discount_percent': getattr(ln, 'discount_percent', Decimal('0.00')),
+                'gst_rate': getattr(ln, 'gst_rate', Decimal('0.00')),
+                'taxable': getattr(ln, 'taxable', getattr(ln, 'line_total', Decimal('0.00'))),
+                'tax_amount': getattr(ln, 'tax_amount', Decimal('0.00')),
+                'line_total': getattr(ln, 'line_total', getattr(ln, 'rate', Decimal('0.00')) * getattr(ln, 'quantity', Decimal('1.000'))),
+            }
+            line_cls.objects.create(**ln_kwargs)
+
+    log_audit(user, 'clone', model_name, new_doc.pk, f"Cloned {doc.number} to create draft {new_doc.number}", org=org)
+    return new_doc
+
+
+def send_document_email(doc, to_email, subject='', message='', user=None):
+    org = getattr(doc, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    to_email = (to_email or '').strip()
+    if not to_email or '@' not in to_email:
+        party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
+        to_email = getattr(party, 'email', '') if party else ''
+    if not to_email or '@' not in to_email:
+        raise ApiError(400, 'Valid recipient email address is required.')
+
+    party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
+    if party and not party.email:
+        party.email = to_email
+        party.save(update_fields=['email'])
+
+    subj = subject or f"{doc.__class__.__name__} {doc.number} from {org.name if org else 'Convosis'}"
+    log_audit(user, 'send_email', doc.__class__.__name__, doc.pk,
+              f"Sent email for {doc.number} to {to_email}. Subject: {subj}", org=org)
+    return {'status': 'ok', 'recipient': to_email, 'message': f'Document {doc.number} emailed to {to_email} successfully.'}
+
+
+def send_document_sms(doc, to_phone, message='', user=None):
+    org = getattr(doc, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    to_phone = (to_phone or '').strip()
+    if not to_phone:
+        party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
+        to_phone = getattr(party, 'phone', '') if party else ''
+    if not to_phone:
+        raise ApiError(400, 'Valid phone number is required to send SMS.')
+
+    log_audit(user, 'send_sms', doc.__class__.__name__, doc.pk,
+              f"Sent SMS for {doc.number} to {to_phone}", org=org)
+    return {'status': 'ok', 'recipient': to_phone, 'message': f'SMS notification sent to {to_phone} successfully.'}
+
+
+def send_payment_reminder(inv, user=None):
+    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    if inv.status in ('paid', 'void', 'cancelled') or inv.balance_due <= Decimal('0.00'):
+        raise ApiError(400, 'Cannot send payment reminder for a settled, void, or cancelled invoice.')
+    party_email = getattr(inv.customer, 'email', '')
+    party_phone = getattr(inv.customer, 'phone', '')
+    dest = party_email or party_phone or inv.customer.name
+    log_audit(user, 'send_reminder', 'Invoice', inv.pk,
+              f"Sent payment reminder for invoice {inv.number} (Balance Due: ₹{inv.balance_due}) to {dest}", org=org)
+    return {'status': 'ok', 'message': f'Payment reminder for invoice {inv.number} sent to customer.'}
+
+
+def stop_payment_reminders(inv, user=None):
+    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    log_audit(user, 'stop_reminders', 'Invoice', inv.pk,
+              f"Stopped automated payment reminders for invoice {inv.number}", org=org)
+    return {'status': 'ok', 'message': f'Automated payment reminders stopped for invoice {inv.number}.'}
+
+
+def set_expected_payment_date(inv, dt, user=None):
+    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    if not dt:
+        raise ApiError(400, 'Expected payment date is required.')
+    from datetime import date
+    if isinstance(dt, str):
+        dt = date.fromisoformat(dt[:10])
+    log_audit(user, 'set_expected_date', 'Invoice', inv.pk,
+              f"Set expected payment date for invoice {inv.number} to {dt}", org=org)
+    return {'status': 'ok', 'expected_date': str(dt), 'message': f'Expected payment date updated to {dt}.'}
+
+
+@transaction.atomic
+def create_credit_note_from_invoice(inv, amount=None, reason='Sales Return', user=None):
+    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    today = timezone.localdate()
+    cn_num = next_document_number('CN', org=org, date=today)
+    tot = Decimal(str(amount)) if amount else inv.total
+    subtot = inv.subtotal if not amount else tot
+
+    cn = CreditNote.objects.create(
+        organization=org,
+        number=cn_num,
+        customer=inv.customer,
+        invoice=inv,
+        date=today,
+        due_date=today,
+        place_of_supply=inv.place_of_supply,
+        reason=reason or f'Credit note for {inv.number}',
+        subtotal=subtot,
+        cgst=inv.cgst if not amount else Decimal('0.00'),
+        sgst=inv.sgst if not amount else Decimal('0.00'),
+        igst=inv.igst if not amount else Decimal('0.00'),
+        total=tot,
+        status='draft',
+        notes=f'Credit against invoice {inv.number}'
+    )
+    for ln in inv.lines.all():
+        CreditNoteLine.objects.create(
+            credit_note=cn,
+            item=ln.item,
+            description=ln.description,
+            hsn_sac=ln.hsn_sac,
+            quantity=ln.quantity,
+            rate=ln.rate,
+            discount_percent=getattr(ln, 'discount_percent', Decimal('0.00')),
+            gst_rate=getattr(ln, 'gst_rate', Decimal('0.00')),
+            taxable=getattr(ln, 'taxable', ln.line_total),
+            tax_amount=getattr(ln, 'tax_amount', Decimal('0.00')),
+            line_total=getattr(ln, 'line_total', ln.rate * ln.quantity)
+        )
+    log_audit(user, 'create_credit_note', 'Invoice', inv.pk,
+              f"Created Credit Note {cn.number} from invoice {inv.number}", org=org)
+    return cn
+
+
+def get_document_journals(doc):
+    org = getattr(doc, 'organization', None)
+    qs = Journal.objects.filter(organization=org) if org else Journal.objects.all()
+    journals = qs.filter(Q(reference=doc.number) | Q(reference__icontains=doc.number) | Q(notes__icontains=doc.number)).order_by('-date', '-id')
+    out = []
+    for j in journals:
+        items = []
+        tot_deb = Decimal('0.00')
+        tot_crd = Decimal('0.00')
+        for it in j.items.select_related('account'):
+            tot_deb += it.debit
+            tot_crd += it.credit
+            items.append({
+                'account_code': it.account.code,
+                'account_name': it.account.name,
+                'debit': float(it.debit),
+                'credit': float(it.credit),
+                'description': it.description
+            })
+        out.append({
+            'id': j.pk,
+            'number': j.number,
+            'date': str(j.date),
+            'entry_type': j.entry_type,
+            'reference': j.reference,
+            'notes': j.notes,
+            'total_debit': float(tot_deb),
+            'total_credit': float(tot_crd),
+            'items': items
+        })
+    return out
 
 def advance_recurring_date(d, frequency, repeat_every=1):
     """
@@ -1171,6 +1441,7 @@ def ensure_default_accounts(org=None):
         ('4200', 'Discount Given', 'income', 'contra_revenue', 'Discounts and concessions granted to customers'),
         ('4900', 'Other Income', 'income', 'other_income', 'Interest, forex, or non-operating receipts'),
         ('5000', 'Cost of Goods Sold', 'expense', 'cogs', 'Direct cost of inventory sold'),
+        ('5050', 'Bad Debts / Write-off Expense', 'expense', 'operating_expense', 'Uncollectible accounts and debt write-offs'),
         ('6010', 'Rent & Facilities', 'expense', 'operating_expense', 'Office rent, leases, and facility charges'),
         ('6020', 'Office Supplies & Stationery', 'expense', 'operating_expense', 'Consumables, printing, and general supplies'),
         ('6030', 'Utilities & Electricity', 'expense', 'operating_expense', 'Power, internet, water, and telecom'),

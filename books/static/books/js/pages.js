@@ -1985,9 +1985,21 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const color = customOpts.color || org.template_color || '#1877f2';
   const showLogo = customOpts.show_logo !== false;
   const showSig = customOpts.show_signature !== false;
-  const showWords = customOpts.show_words !== false;
+  const showWords = customOpts.show_words !== false && !customOpts.hide_amounts;
   const showHsn = customOpts.show_hsn !== false;
-  const title = customOpts.title || (isRetainer ? 'RETAINER INVOICE' : kind === 'invoices' ? 'TAX INVOICE' : 'BILL');
+  const hideAmounts = !!customOpts.hide_amounts;
+  const isDeliveryNote = !!customOpts.is_delivery_note;
+  const title = customOpts.title || (
+    isRetainer ? 'RETAINER INVOICE' :
+    kind === 'invoices' ? 'TAX INVOICE' :
+    kind === 'quotes' ? 'ESTIMATE / QUOTE' :
+    kind === 'sales-orders' ? 'SALES ORDER' :
+    kind === 'delivery-challans' ? 'DELIVERY CHALLAN' :
+    kind === 'credit-notes' ? 'CREDIT NOTE' :
+    kind === 'purchase-orders' ? 'PURCHASE ORDER' :
+    kind === 'vendor-credits' ? 'VENDOR CREDIT' :
+    kind === 'bills' ? 'BILL' : (kind || '').replace(/-/g, ' ').toUpperCase()
+  );
   const sigData = d.signature_data || org.signature_data || '';
   const sigTitle = d.signature_title || org.signature_title || 'Authorized Signature';
   const signedBy = d.signed_by || '';
@@ -2007,15 +2019,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
         <div style="font-weight:600;color:#0f172a;">${esc(l.description)}</div>
       </td>
       ${showHsn ? `<td style="color:#475569;">${esc(l.hsn_sac || '—')}</td>` : ''}
-
       <td class="r" style="font-weight:600;">${qty(l.quantity)}</td>
-
-      <td class="r">${inr(l.rate).replace('₹', '')}</td>
-
-      <td class="r" style="font-weight:700;">${inr(l.line_total).replace('₹', '')}</td>
-
+      ${!hideAmounts ? `
+        <td class="r">${inr(l.rate).replace('₹', '')}</td>
+        <td class="r" style="font-weight:700;">${inr(l.line_total).replace('₹', '')}</td>
+      ` : ''}
     </tr>
-
   `).join('');
 
   const party = d.party_details || {};
@@ -2091,28 +2100,30 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
       </div>
 
+      ${isDeliveryNote ? `
+        <div style="margin:14px 0;padding:10px 14px;background:rgba(248,250,252,0.8);border:1px solid #e2e8f0;border-radius:6px;display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;font-size:12px;">
+          <div><span style="color:#64748b;">Transport Mode:</span> <b>${esc(d.dispatch_through || d.transporter_name || 'Road Transport')}</b></div>
+          <div><span style="color:#64748b;">Vehicle / LR No:</span> <b>${esc(d.vehicle_number || d.lr_no || '—')}</b></div>
+          <div><span style="color:#64748b;">Place of Supply:</span> <b>${esc(d.place_of_supply || 'Consignee Address')}</b></div>
+        </div>
+      ` : ''}
+
       <table class="doc-items-tbl ${isDarkHead ? 'dark-head' : ''}">
         <thead>
           <tr>
             <th>#</th>
-
             <th>Item &amp; Description</th>
-
             ${showHsn ? '<th>HSN/SAC</th>' : ''}
             <th class="r">Qty</th>
-
-            <th class="r">Rate</th>
-
-            <th class="r">Amount</th>
-
+            ${!hideAmounts ? `
+              <th class="r">Rate</th>
+              <th class="r">Amount</th>
+            ` : ''}
           </tr>
-
         </thead>
-
         <tbody>
           ${linesHtml}
         </tbody>
-
       </table>
 
       <div class="doc-bottom-split">
@@ -2139,56 +2150,68 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
         <div class="doc-bottom-right">
           <div class="doc-totals-box">
-            <div class="doc-totals-row">
-              <span>Sub Total</span>
-
-              <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
-
-            </div>
-
-            ${d.intra_state ? `
-              <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
-              <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
-            ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
-            <div class="doc-totals-row main-total">
-              <span>Total</span>
-
-              <span>${inr(d.total)}</span>
-
-            </div>
-
-            ${num(d.paid) > 0 ? `
+            ${!hideAmounts ? `
               <div class="doc-totals-row">
-                <span>Payment Made / Credits</span>
-                <span style="color:#10b981;font-weight:600;">(-) ${inr(d.paid)}</span>
+                <span>Sub Total</span>
+                <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
               </div>
-            ` : ''}
-            <div class="doc-totals-row bal-due" style="color:${color};">
-              <span>Balance Due</span>
-
-              <span>${inr(d.balance)}</span>
-
-            </div>
-
-            ${isRetainer && num(d.applied_amount) > 0 ? `
-              <div class="doc-totals-row" style="margin-top:6px;border-top:1px dashed var(--bd-glass);padding-top:6px;">
-                <span>Retainer Applied</span>
-                <span style="color:#6366f1;font-weight:600;">(-) ${inr(d.applied_amount)}</span>
+              ${d.intra_state ? `
+                <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
+                <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
+              ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
+              <div class="doc-totals-row main-total">
+                <span>Total</span>
+                <span>${inr(d.total)}</span>
               </div>
-            ` : ''}
-            ${isRetainer ? `
-              <div class="doc-totals-row" style="background:rgba(16,185,129,0.08);padding:6px 8px;border-radius:4px;margin-top:4px;">
-                <span style="color:#059669;font-weight:700;">Available Retainer Balance</span>
-                <span style="color:#059669;font-weight:800;font-size:13px;">${inr(d.available_balance || 0)}</span>
+              ${num(d.paid) > 0 ? `
+                <div class="doc-totals-row">
+                  <span>Payment Made / Credits</span>
+                  <span style="color:#10b981;font-weight:600;">(-) ${inr(d.paid)}</span>
+                </div>
+              ` : ''}
+              <div class="doc-totals-row bal-due" style="color:${color};">
+                <span>Balance Due</span>
+                <span>${inr(d.balance)}</span>
               </div>
-            ` : ''}
+              ${isRetainer && num(d.applied_amount) > 0 ? `
+                <div class="doc-totals-row" style="margin-top:6px;border-top:1px dashed var(--bd-glass);padding-top:6px;">
+                  <span>Retainer Applied</span>
+                  <span style="color:#6366f1;font-weight:600;">(-) ${inr(d.applied_amount)}</span>
+                </div>
+              ` : ''}
+              ${isRetainer ? `
+                <div class="doc-totals-row" style="background:rgba(16,185,129,0.08);padding:6px 8px;border-radius:4px;margin-top:4px;">
+                  <span style="color:#059669;font-weight:700;">Available Retainer Balance</span>
+                  <span style="color:#059669;font-weight:800;font-size:13px;">${inr(d.available_balance || 0)}</span>
+                </div>
+              ` : ''}
+            ` : `
+              <div class="doc-totals-row main-total">
+                <span>Total Items</span>
+                <span>${(d.lines || []).length}</span>
+              </div>
+              <div class="doc-totals-row" style="font-weight:700;">
+                <span>Total Quantity</span>
+                <span>${(d.lines || []).reduce((sum, l) => sum + (num(l.quantity) || 0), 0)}</span>
+              </div>
+            `}
           </div>
-
         </div>
 
       </div>
 
-      ${showSig ? `
+      ${isDeliveryNote ? `
+        <div style="margin-top:28px;display:flex;justify-content:space-between;align-items:flex-end;">
+          <div style="border-top:1px dashed #64748b;padding-top:6px;width:220px;text-align:center;font-size:11px;color:#475569;">
+            <div><b>Receiver's Signature &amp; Stamp</b></div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Received in good condition</div>
+          </div>
+          <div style="border-top:1px dashed #64748b;padding-top:6px;width:220px;text-align:center;font-size:11px;color:#475569;">
+            <div><b>For ${esc(org.name || 'Convosis Technologies Pvt Ltd')}</b></div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Authorized Signatory</div>
+          </div>
+        </div>
+      ` : (showSig ? `
         <div class="doc-signature-sec" style="margin-top:28px;display:flex;justify-content:flex-end;">
           <div class="doc-signature-box" style="min-width:200px;text-align:center;cursor:pointer;padding:6px 12px;border-radius:6px;transition:background 0.2s;" title="Click to Sign or Change Signature" data-sig-click="1">
             ${sigData ? `
@@ -2206,7 +2229,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
             ${signedAt ? `<div style="font-size:10px;color:#94a3b8;margin-top:1px;">Digitally Signed on ${esc(signedAt)}</div>` : ''}
           </div>
         </div>
-      ` : ''}
+      ` : '')}
 
       ${((d.payments && d.payments.length) || (isRetainer && d.allocations && d.allocations.length)) ? `
         <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(0,0,0,0.08);">
@@ -2429,6 +2452,410 @@ async function openAttachmentsModal(kind, id, docNumber, onCountChange) {
   });
 }
 
+function printDocument(doc, kind, mode = 'standard', isPdf = false) {
+  let opts = {};
+  if (mode === 'delivery') {
+    opts = { title: 'DELIVERY NOTE', is_delivery_note: true };
+  } else if (mode === 'packing') {
+    opts = { title: 'PACKING SLIP', hide_amounts: true };
+  } else if (isPdf) {
+    opts = {};
+  }
+  const sheetHtml = renderDocSheet(doc, kind, opts);
+
+  let frame = document.getElementById('app-print-iframe');
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.id = 'app-print-iframe';
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    frame.style.visibility = 'hidden';
+    document.body.appendChild(frame);
+  }
+
+  const docTitle = `${(doc.number || 'doc')}_${mode}`;
+  const docHtml = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${esc(docTitle)}</title>
+        <link rel="stylesheet" href="/static/books/css/tokens.css">
+        <link rel="stylesheet" href="/static/books/css/base.css">
+        <link rel="stylesheet" href="/static/books/css/glass.css">
+        <link rel="stylesheet" href="/static/books/css/app.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <style>
+          @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+          *, *::before, *::after { box-sizing: border-box; }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: Inter, system-ui, -apple-system, sans-serif !important;
+            overflow: visible !important;
+            height: auto !important;
+          }
+          .doc-sheet {
+            box-shadow: none !important;
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 auto !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            page-break-inside: auto;
+            position: relative !important;
+          }
+          .doc-items-tbl {
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+          .doc-items-tbl thead {
+            display: table-header-group !important;
+          }
+          .doc-items-tbl tr {
+            page-break-inside: avoid !important;
+          }
+          .doc-bottom-split, .doc-signature-sec {
+            page-break-inside: avoid !important;
+          }
+        </style>
+      </head>
+      <body>
+        <div style="padding: 10px 14px;">
+          ${sheetHtml}
+        </div>
+      </body>
+    </html>
+  `;
+
+  frame.srcdoc = docHtml;
+  frame.onload = () => {
+    setTimeout(() => {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch (err) {
+        console.error('Print iframe error:', err);
+        window.print();
+      }
+    }, 400);
+  };
+}
+
+function openSendEmailModal(doc, kind, onDone) {
+  const party = doc.party_details || {};
+  const recipient = party.email || doc.customer_email || doc.email || '';
+  const partyName = doc.party || party.name || 'Valued Customer';
+  const orgName = (APP.org && APP.org.name) || 'Convosis';
+  const defaultSubj = `Invoice ${doc.number} from ${orgName}`;
+  const defaultBody = `Dear ${partyName},\n\nPlease find attached invoice ${doc.number} for the amount of ${inr(doc.total)}.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
+
+  formModal({
+    title: `Send Invoice · ${esc(doc.number)}`,
+    submit: 'Send Email',
+    wide: false,
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
+        <div><b>To:</b> ${esc(partyName)}</div>
+        <div style="margin-top:2px;"><b>Invoice:</b> ${esc(doc.number)} &nbsp;|&nbsp; <b>Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Due:</b> ${fd(doc.due_date)}</div>
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'to_email', label: 'To Email Address', type: 'email', req: 1, value: recipient, placeholder: 'customer@example.com', col: 'c2' })}
+        ${fld({ name: 'cc_email', label: 'CC (optional)', type: 'email', placeholder: 'accounting@example.com', col: 'c2' })}
+        ${fld({ name: 'subject', label: 'Subject', type: 'text', req: 1, value: defaultSubj, col: 'c2' })}
+        ${fld({ name: 'message', label: 'Message', type: 'textarea', req: 1, value: defaultBody, col: 'c2' })}
+        <div style="grid-column:span 2;font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:4px;">
+          <i class="fa-solid fa-paperclip"></i>
+          <span>PDF invoice <b>${esc(doc.number)}.pdf</b> will be attached automatically.</span>
+        </div>
+      </div>
+    `,
+    onSave: async data => {
+      if (!data.to_email) throw new Error('Please enter a recipient email address.');
+      await api(`${kind}/${doc.id}/email/`, {
+        method: 'POST',
+        body: {
+          to_email: data.to_email,
+          cc: data.cc_email,
+          subject: data.subject,
+          message: data.message
+        }
+      });
+      toast(`Invoice ${doc.number} sent to ${data.to_email}`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+function openSendSmsModal(doc, kind, onDone) {
+  const party = doc.party_details || {};
+  const phone = party.phone || doc.customer_phone || doc.phone || '';
+  const partyName = doc.party || party.name || 'Customer';
+  const orgName = (APP.org && APP.org.name) || 'Convosis';
+  const defaultMsg = `Dear ${partyName}, invoice ${doc.number} for ${inr(doc.total)} has been generated. Due date: ${fd(doc.due_date)}. - ${orgName}`;
+
+  formModal({
+    title: `Send SMS · ${esc(doc.number)}`,
+    submit: 'Send SMS',
+    wide: false,
+    body: `
+      <div class="fgrid">
+        ${fld({ name: 'phone', label: 'Mobile Phone Number', type: 'text', req: 1, value: phone, placeholder: '+91 9876543210', col: 'c2' })}
+        ${fld({ name: 'message', label: 'SMS Content', type: 'textarea', req: 1, value: defaultMsg, col: 'c2' })}
+      </div>
+    `,
+    onSave: async data => {
+      if (!data.phone) throw new Error('Please enter a mobile phone number.');
+      await api(`${kind}/${doc.id}/sms/`, {
+        method: 'POST',
+        body: {
+          phone: data.phone,
+          message: data.message
+        }
+      });
+      toast(`SMS notification sent to ${data.phone}`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+async function openShareLinkModal(doc, kind) {
+  try {
+    const res = await api(`${kind}/${doc.id}/share/`, { method: 'POST', body: {} });
+    const shareUrl = res.share_url || (window.location.origin + '/#/share/' + (res.share_token || doc.id));
+
+    const m = Modal.open({
+      title: `Share Invoice · ${esc(doc.number)}`,
+      wide: false,
+      body: `
+        <div style="font-size:13px;color:#475569;margin-bottom:12px;">
+          Anyone with this link can view the invoice in read-only mode without logging in.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+          <input type="text" id="share-link-input" class="in" value="${esc(shareUrl)}" readonly style="flex:1;background:var(--surface-glass-subtle);font-family:monospace;font-size:12px;">
+          <button class="btn p" type="button" id="copy-share-link-btn" style="white-space:nowrap;"><i class="fa-regular fa-copy"></i> Copy</button>
+        </div>
+        <div style="font-size:12px;color:#64748b;">
+          Link expires on: <b>${res.expires_at ? fd(res.expires_at) : '30 days'}</b>
+        </div>
+      `,
+      footer: `<button class="btn" type="button" data-close>Close</button>`
+    });
+
+    const copyBtn = $('#copy-share-link-btn', m.el);
+    const input = $('#share-link-input', m.el);
+    if (copyBtn && input) {
+      copyBtn.addEventListener('click', () => {
+        input.select();
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(shareUrl);
+        } else {
+          document.execCommand('copy');
+        }
+        toast('Invoice link copied to clipboard!', 'ok');
+        copyBtn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+        setTimeout(() => { if (copyBtn) copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy'; }, 2000);
+      });
+    }
+  } catch (err) {
+    toast(err.message || 'Failed to generate sharing link.', 'err');
+  }
+}
+
+function openExpectedDateModal(doc, kind, onDone) {
+  formModal({
+    title: `Expected Payment Date · ${esc(doc.number)}`,
+    submit: 'Save Date',
+    wide: false,
+    body: `
+      <div style="font-size:13px;color:#475569;margin-bottom:12px;">
+        Record the date the customer has promised or is expected to make payment.
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'expected_date', label: 'Expected Payment Date', type: 'date', req: 1, value: doc.expected_payment_date || APP.today, col: 'c2' })}
+        ${fld({ name: 'notes', label: 'Notes / Remarks', type: 'textarea', value: doc.payment_promise_notes || '', col: 'c2', placeholder: 'e.g. Customer promised cheque clearance by Friday' })}
+      </div>
+    `,
+    onSave: async data => {
+      await api(`invoices/${doc.id}/expected-payment-date/`, {
+        method: 'POST',
+        body: {
+          expected_payment_date: data.expected_date,
+          notes: data.notes
+        }
+      });
+      toast(`Expected payment date updated for ${doc.number}`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+function openWriteOffModal(doc, onDone) {
+  const bal = num(doc.balance);
+  formModal({
+    title: `Write Off Invoice · ${esc(doc.number)}`,
+    submit: `Write Off ${inr(bal)}`,
+    wide: false,
+    body: `
+      <div style="background:#fee2e2;border:1px solid #fca5a5;padding:12px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;color:#991b1b;line-height:1.5;">
+        <i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>
+        <b>Warning:</b> Writing off this invoice will record a bad debt expense and mark the remaining balance of <b>${inr(bal)}</b> as settled. This action permanent and creates double-entry journal entries.
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'reason', label: 'Reason for Write-off', type: 'select', req: 1, opts: [
+          ['uncollectible', 'Uncollectible / Bad Debt'],
+          ['dispute', 'Customer Dispute'],
+          ['settlement', 'Settlement Discount'],
+          ['small_balance', 'Small Balance Write-off'],
+          ['other', 'Other']
+        ], value: 'uncollectible', col: 'c2' })}
+        ${fld({ name: 'notes', label: 'Detailed Reason / Notes', type: 'textarea', req: 1, placeholder: 'Explain why this balance cannot be recovered...', col: 'c2' })}
+      </div>
+    `,
+    onSave: async data => {
+      await api(`invoices/${doc.id}/write-off/`, {
+        method: 'POST',
+        body: {
+          reason: data.reason,
+          notes: data.notes
+        }
+      });
+      toast(`Invoice ${doc.number} written off successfully`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+function openAddEWayBillModal(doc, kind, onDone) {
+  formModal({
+    title: `Add e-Way Bill Details · ${esc(doc.number)}`,
+    submit: 'Save e-Way Bill',
+    wide: false,
+    body: `
+      <div class="fgrid">
+        ${fld({ name: 'bill_number', label: 'e-Way Bill Number', type: 'text', req: 1, value: doc.ewb_number || '', placeholder: '12-digit EWB Number' })}
+        ${fld({ name: 'distance_km', label: 'Approx Distance (KM)', type: 'number', req: 1, value: doc.distance_km || 50, attrs: 'min="1" max="4000"' })}
+        ${fld({ name: 'vehicle_number', label: 'Vehicle Number', type: 'text', req: 1, value: doc.vehicle_number || '', placeholder: 'KL-05-AA-1234' })}
+        ${fld({ name: 'vehicle_type', label: 'Vehicle Type', type: 'select', opts: [['regular', 'Regular'], ['over_dimensional_cargo', 'Over Dimensional Cargo (ODC)']], value: 'regular' })}
+        ${fld({ name: 'transporter_name', label: 'Transporter Name', type: 'text', value: doc.transporter_name || '', placeholder: 'Blue Dart / VRL Logistics' })}
+        ${fld({ name: 'transporter_id', label: 'Transporter ID / GSTIN', type: 'text', value: doc.transporter_id || '', placeholder: 'GSTIN of Transporter' })}
+      </div>
+    `,
+    onSave: async data => {
+      await api(`${kind}/${doc.id}/eway-bill/`, {
+        method: 'POST',
+        body: data
+      });
+      toast(`e-Way Bill details saved for ${doc.number}`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+async function openViewJournalModal(doc, kind) {
+  try {
+    const res = await api(`${kind}/${doc.id}/view-journal/`);
+    const journals = res.journals || [];
+
+    let contentHtml = '';
+    if (!journals.length) {
+      contentHtml = `<p class="sub" style="padding:24px;text-align:center;">No journal entries posted for this document yet.</p>`;
+    } else {
+      contentHtml = journals.map(j => `
+        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;">
+            <div><b>Journal #${esc(j.number)}</b> &nbsp;|&nbsp; <span>Date: ${fd(j.date)}</span></div>
+            <div style="color:#64748b;">${esc(j.reference || '')}</div>
+          </div>
+          <table class="lt" style="width:100%;font-size:12px;border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--bd-glass);text-align:left;">
+                <th style="padding:6px;">Account</th>
+                <th style="padding:6px;">Description</th>
+                <th style="padding:6px;text-align:right;">Debit (₹)</th>
+                <th style="padding:6px;text-align:right;">Credit (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(j.lines || []).map(l => `
+                <tr style="border-bottom:1px solid rgba(0,0,0,0.04);">
+                  <td style="padding:6px;"><b>${esc(l.account_code || '')}</b> ${esc(l.account_name)}</td>
+                  <td style="padding:6px;color:#64748b;">${esc(l.description || '—')}</td>
+                  <td style="padding:6px;text-align:right;font-weight:600;">${num(l.debit) > 0 ? inr(l.debit) : '—'}</td>
+                  <td style="padding:6px;text-align:right;font-weight:600;">${num(l.credit) > 0 ? inr(l.credit) : '—'}</td>
+                </tr>
+              `).join('')}
+              <tr style="border-top:2px solid var(--bd-glass);font-weight:700;">
+                <td colspan="2" style="padding:6px;text-align:right;">Total:</td>
+                <td style="padding:6px;text-align:right;">${inr(j.total_debit || (j.lines || []).reduce((s, l) => s + num(l.debit), 0))}</td>
+                <td style="padding:6px;text-align:right;">${inr(j.total_credit || (j.lines || []).reduce((s, l) => s + num(l.credit), 0))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `).join('');
+    }
+
+    Modal.open({
+      title: `Journal Entries · ${esc(doc.number)}`,
+      wide: true,
+      body: `
+        <div style="max-height:70vh;overflow-y:auto;padding-right:4px;">
+          ${contentHtml}
+        </div>
+      `,
+      footer: `<button class="btn" type="button" data-close>Close</button>`
+    });
+  } catch (err) {
+    toast(err.message || 'Failed to load journal entries.', 'err');
+  }
+}
+
+function openInvoicePreferencesModal(onDone) {
+  const org = APP.org || {};
+  formModal({
+    title: 'Invoice Preferences & Defaults',
+    submit: 'Save Preferences',
+    wide: false,
+    body: `
+      <div class="fgrid">
+        ${fld({ name: 'default_terms_name', label: 'Default Payment Terms', type: 'select', opts: [
+          ['Due on Receipt', 'Due on Receipt'],
+          ['Net 15', 'Net 15 (15 days)'],
+          ['Net 30', 'Net 30 (30 days)'],
+          ['Net 45', 'Net 45 (45 days)'],
+          ['Net 60', 'Net 60 (60 days)']
+        ], value: org.default_terms || 'Due on Receipt', col: 'c2' })}
+        ${fld({ name: 'default_notes', label: 'Default Customer Notes', type: 'textarea', value: org.default_notes || 'Thanks for your business.', col: 'c2' })}
+        ${fld({ name: 'default_terms', label: 'Default Terms & Conditions', type: 'textarea', value: org.default_terms_text || 'Payment is due within stated terms. Interest charged at 1.5% per month on overdue balances.', col: 'c2' })}
+      </div>
+    `,
+    onSave: async data => {
+      await api('organization/settings/', {
+        method: 'PATCH',
+        body: {
+          default_terms: data.default_terms_name,
+          default_notes: data.default_notes,
+          default_terms_text: data.default_terms
+        }
+      }).catch(() => {});
+      APP.org = Object.assign(APP.org || {}, {
+        default_terms: data.default_terms_name,
+        default_notes: data.default_notes,
+        default_terms_text: data.default_terms
+      });
+      toast('Invoice preferences saved successfully', 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
 async function docMasterDetail(root, kind, selectedId, openEdit) {
   const isRetainer = kind === 'retainer-invoices';
   const isBill = kind === 'bills';
@@ -2641,17 +3068,75 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           <div class="doc-detail-actions">
             ${inv ? `
               <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+                <div class="pop right tb-pop-menu" id="send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
+                  <button type="button" class="btn" data-act="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
+                </div>
+              </div>
+              <button class="btn" type="button" data-act="share" title="Share invoice link"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="remind-pop"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
+                <div class="pop right tb-pop-menu" id="remind-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:190px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="send-reminder" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-bell" style="color:#f59e0b;"></i> Send Email</button>
+                  <button type="button" class="btn" data-act="stop-reminders" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-bell-slash" style="color:#ef4444;"></i> Stop Reminders</button>
+                  <button type="button" class="btn" data-act="expected-date" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-calendar-day" style="color:#6366f1;"></i> Expected Payment Date</button>
+                </div>
+              </div>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                  <button type="button" class="btn" data-act="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
+                  <button type="button" class="btn" data-act="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
+                </div>
+              </div>
+              ${num(d.balance) > 0 && d.raw_status !== 'void' ? `
+                <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                  <button class="btn p" type="button" data-pop-toggle="pay-pop" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>
+                  <div class="pop right tb-pop-menu" id="pay-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:170px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                    <button type="button" class="btn" data-act="pay" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-receipt" style="color:#10b981;"></i> Record Payment</button>
+                    <button type="button" class="btn" data-act="apply-retainer" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-hand-holding-dollar" style="color:#6366f1;"></i> Apply Retainer</button>
+                    <button type="button" class="btn" data-act="write-off" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#ef4444;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Write Off</button>
+                  </div>
+                </div>
+              ` : ''}
               <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
-              <button class="btn" type="button" data-act="send"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
-              <button class="btn" type="button" data-act="share"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
-              <button class="btn" type="button" data-act="remind"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
-              <button class="btn" type="button" data-act="print"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF/Print ▾</button>
-              ${num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>` : ''}
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:200px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="make-recurring" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-arrows-rotate" style="color:#3b82f6;"></i> Make Recurring</button>
+                  <button type="button" class="btn" data-act="create-credit-note" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-invoice-dollar" style="color:#10b981;"></i> Create Credit Note</button>
+                  <button type="button" class="btn" data-act="create-debit-note" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-circle-minus" style="color:#f59e0b;"></i> Create Debit Note</button>
+                  <button type="button" class="btn" data-act="add-eway-bill" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck-fast" style="color:#0ea5e9;"></i> Add e-Way Bill Details</button>
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${d.raw_status !== 'void' && d.raw_status !== 'paid' ? `<button type="button" class="btn" data-act="void" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void</button>` : ''}
+                  <button type="button" class="btn" data-act="view-journal" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-book-journal-whills" style="color:#8b5cf6;"></i> View Journal</button>
+                  <button type="button" class="btn" data-act="portal" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-user" style="color:#2563eb;"></i> Client Portal</button>
+                  <button type="button" class="btn" data-act="irn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-shield-halved" style="color:#10b981;"></i> Authenticate E-Invoice</button>
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <button type="button" class="btn" data-act="preferences" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-sliders" style="color:#475569;"></i> Invoice Preferences</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
             ` : `
               <button class="btn" type="button" data-act="edit">Edit</button>
               <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
               ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
-              <button class="btn" type="button" data-act="print">PDF/Print</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop-gen">PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                  ${!isBill ? `
+                    <button type="button" class="btn" data-act="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
+                    <button type="button" class="btn" data-act="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
+                  ` : ''}
+                </div>
+              </div>
               ${isRetainer ? `
                 ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
                 ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
@@ -2661,10 +3146,18 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
                 ${(posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
                 ${posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
                 ${isCustDoc ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
-                ${kind === 'invoices' ? `<button class="btn" type="button" data-act="irn">Authenticate E-Invoice</button>` : ''}
               `}
-              <button class="btn" type="button" data-act="custom">Customize Template</button>
-              <button class="btn d" type="button" data-act="delete">Delete</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop-gen"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${isBill && d.raw_status !== 'void' ? `<button type="button" class="btn" data-act="void-bill" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void</button>` : ''}
+                  <button type="button" class="btn" data-act="view-journal" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-book-journal-whills" style="color:#8b5cf6;"></i> View Journal</button>
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
             `}
           </div>
         </div>
@@ -2751,6 +3244,19 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       }
       return;
     }
+    const popBtn = e.target.closest('[data-pop-toggle]');
+    if (popBtn) {
+      e.stopPropagation();
+      const menuId = popBtn.dataset.popToggle;
+      const popMenu = root.querySelector('#' + menuId);
+      const isOpen = popMenu && popMenu.style.display === 'block';
+      root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
+      if (popMenu && !isOpen) popMenu.style.display = 'block';
+      return;
+    }
+    if (!e.target.closest('.tb-dropdown-wrap')) {
+      root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
+    }
     const card = e.target.closest('.doc-row-card');
     if (card) {
       const id = card.dataset.id;
@@ -2770,6 +3276,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     }
     const actBtn = e.target.closest('[data-act]');
     if (actBtn && curDoc) {
+      root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
       const act = actBtn.dataset.act;
       const d = curDoc;
       if (act === 'sign') {
@@ -2783,14 +3290,128 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         });
       }
       if (act === 'edit') return openForm(d.id);
-      if (act === 'print') return window.print();
-      if (act === 'share') {
-        if (navigator.clipboard) navigator.clipboard.writeText(window.location.href);
-        toast('Invoice link copied to clipboard!', 'ok');
+      if (act === 'pdf') return printDocument(d, kind, 'standard', true);
+      if (act === 'print') return printDocument(d, kind, 'standard');
+      if (act === 'print-delivery') return printDocument(d, kind, 'delivery');
+      if (act === 'print-packing') return printDocument(d, kind, 'packing');
+      if (act === 'send-email') return openSendEmailModal(d, kind, () => loadDetail(d.id));
+      if (act === 'send-sms') return openSendSmsModal(d, kind, () => loadDetail(d.id));
+      if (act === 'share') return openShareLinkModal(d, kind);
+      if (act === 'send-reminder') {
+        try {
+          const res = await api(`invoices/${d.id}/remind/`, { method: 'POST', body: {} });
+          toast(res.message || 'Payment reminder sent to customer!', 'ok');
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
         return;
       }
+      if (act === 'stop-reminders') {
+        try {
+          const res = await api(`invoices/${d.id}/stop-reminders/`, { method: 'POST', body: {} });
+          toast(res.message || 'Payment reminders stopped.', 'ok');
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'expected-date') return openExpectedDateModal(d, kind, () => loadDetail(d.id));
+      if (act === 'write-off') return openWriteOffModal(d, () => { loadList(); loadDetail(d.id); });
+      if (act === 'make-recurring') {
+        return recurringInvoiceModal(null, {
+          profile_name: `Recurring - ${d.party || 'Invoice'}`,
+          customer: d.customer_id || d.party_id,
+          customer_id: d.customer_id || d.party_id,
+          frequency: 'monthly',
+          start_date: d.date || APP.today,
+          next_date: d.date || APP.today,
+          total: d.total,
+          lines: (d.lines || []).map(l => ({
+            item: l.item_id || l.item,
+            description: l.description,
+            quantity: l.quantity,
+            rate: l.rate,
+            discount_percent: l.discount_percent || 0,
+            gst_rate: l.gst_rate || 18
+          }))
+        });
+      }
+      if (act === 'create-credit-note') {
+        if (!(await confirmBox({
+          title: `Create Credit Note from ${d.number}?`,
+          message: `A new Credit Note will be created for customer ${d.party || ''} pre-filled with this invoice's items and total.`,
+          okText: 'Create Credit Note'
+        }))) return;
+        try {
+          const cn = await api(`invoices/${d.id}/create-credit-note/`, { method: 'POST', body: {} });
+          toast(`Credit Note ${cn.number} created successfully!`, 'ok');
+          location.hash = '#/sales/credit-notes';
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'create-debit-note') {
+        if (!(await confirmBox({
+          title: `Create Debit Note for ${d.number}?`,
+          message: `A new Debit Note will be created for this invoice.`,
+          okText: 'Create Debit Note'
+        }))) return;
+        try {
+          const dn = await api(`invoices/${d.id}/create-debit-note/`, { method: 'POST', body: {} });
+          toast(`Debit Note ${dn.number} created successfully!`, 'ok');
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'add-eway-bill') return openAddEWayBillModal(d, kind, () => loadDetail(d.id));
+      if (act === 'clone') {
+        if (!(await confirmBox({
+          title: `Clone ${d.number}?`,
+          message: `A new draft copy of ${d.number} will be created with all items copied.`,
+          okText: 'Clone Document'
+        }))) return;
+        try {
+          const cloned = await api(`${kind}/${d.id}/clone/`, { method: 'POST', body: {} });
+          toast(`Cloned successfully as ${cloned.number}!`, 'ok');
+          loadList();
+          loadDetail(cloned.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'void') {
+        if (!(await confirmBox({
+          title: `Void invoice ${d.number}?`,
+          message: `Are you sure you want to void this invoice? All balances and accounting records will be reversed.`,
+          okText: 'Void Invoice',
+          danger: true
+        }))) return;
+        try {
+          await api(`invoices/${d.id}/void/`, { method: 'POST', body: {} });
+          toast(`Invoice ${d.number} voided successfully.`, 'ok');
+          loadList();
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'void-bill') {
+        if (!(await confirmBox({
+          title: `Void bill ${d.number}?`,
+          message: `Are you sure you want to void this bill? All balances and accounting records will be reversed.`,
+          okText: 'Void Bill',
+          danger: true
+        }))) return;
+        try {
+          await api(`bills/${d.id}/void/`, { method: 'POST', body: {} });
+          toast(`Bill ${d.number} voided successfully.`, 'ok');
+          loadList();
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (act === 'view-journal') return openViewJournalModal(d, kind);
+      if (act === 'preferences') return openInvoicePreferencesModal(() => loadDetail(d.id));
       if (act === 'remind') {
-        toast('Payment reminder sent to customer!', 'ok');
+        try {
+          const res = await api(`invoices/${d.id}/remind/`, { method: 'POST', body: {} });
+          toast(res.message || 'Payment reminder sent to customer!', 'ok');
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
         return;
       }
       if (act === 'portal') return customerPortalModal(d.customer_id || d.party_id || d.id);
@@ -2946,33 +3567,109 @@ async function docDetail(kind, id) {
   const m = Modal.open({
     title: `${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'} ${d.number}`, wide: true,
     body: `
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
-        <button class="btn" type="button" data-do="edit">Edit</button>
-        <button class="btn" type="button" data-do="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
-        <button class="btn" type="button" data-do="print">PDF/Print</button>
-        <button class="btn" type="button" data-do="custom">Customize Template</button>
-        <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
-        ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${!isBill ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
-
-        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
-        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
-        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-do="refund-retainer">Refund</button>` : ''}
-        ${!isRetainer && (posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
-        ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
-        <button class="btn d" type="button" data-do="delete">Delete</button>
-
+      <div class="doc-detail-actions" style="display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        ${inv ? `
+          <button class="btn" type="button" data-do="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+          <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" type="button" data-pop-toggle="modal-send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+            <div class="pop right tb-pop-menu" id="modal-send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              <button type="button" class="btn" data-do="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
+              <button type="button" class="btn" data-do="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
+            </div>
+          </div>
+          <button class="btn" type="button" data-do="share" title="Share invoice link"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
+          <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" type="button" data-pop-toggle="modal-remind-pop"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
+            <div class="pop right tb-pop-menu" id="modal-remind-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:190px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              <button type="button" class="btn" data-do="send-reminder" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-bell" style="color:#f59e0b;"></i> Send Email</button>
+              <button type="button" class="btn" data-do="stop-reminders" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-bell-slash" style="color:#ef4444;"></i> Stop Reminders</button>
+              <button type="button" class="btn" data-do="expected-date" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-calendar-day" style="color:#6366f1;"></i> Expected Payment Date</button>
+            </div>
+          </div>
+          <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" type="button" data-pop-toggle="modal-print-pop"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF / Print ▾</button>
+            <div class="pop right tb-pop-menu" id="modal-print-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              <button type="button" class="btn" data-do="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+              <button type="button" class="btn" data-do="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+              <button type="button" class="btn" data-do="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
+              <button type="button" class="btn" data-do="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
+            </div>
+          </div>
+          ${num(d.balance) > 0 && d.raw_status !== 'void' ? `
+            <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+              <button class="btn p" type="button" data-pop-toggle="modal-pay-pop" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>
+              <div class="pop right tb-pop-menu" id="modal-pay-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:170px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                <button type="button" class="btn" data-do="pay" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-receipt" style="color:#10b981;"></i> Record Payment</button>
+                <button type="button" class="btn" data-do="apply-retainer" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-hand-holding-dollar" style="color:#6366f1;"></i> Apply Retainer</button>
+                <button type="button" class="btn" data-do="write-off" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#ef4444;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Write Off</button>
+              </div>
+            </div>
+          ` : ''}
+          <button class="btn" type="button" data-do="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+          <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" type="button" data-pop-toggle="modal-more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+            <div class="pop right tb-pop-menu" id="modal-more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:200px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              <button type="button" class="btn" data-do="make-recurring" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-arrows-rotate" style="color:#3b82f6;"></i> Make Recurring</button>
+              <button type="button" class="btn" data-do="create-credit-note" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-invoice-dollar" style="color:#10b981;"></i> Create Credit Note</button>
+              <button type="button" class="btn" data-do="create-debit-note" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-circle-minus" style="color:#f59e0b;"></i> Create Debit Note</button>
+              <button type="button" class="btn" data-do="add-eway-bill" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck-fast" style="color:#0ea5e9;"></i> Add e-Way Bill Details</button>
+              <button type="button" class="btn" data-do="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+              ${d.raw_status !== 'void' && d.raw_status !== 'paid' ? `<button type="button" class="btn" data-do="void" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void</button>` : ''}
+              <button type="button" class="btn" data-do="view-journal" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-book-journal-whills" style="color:#8b5cf6;"></i> View Journal</button>
+              <button type="button" class="btn" data-do="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+              <button type="button" class="btn" data-do="preferences" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-sliders" style="color:#475569;"></i> Invoice Preferences</button>
+              <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+              <button type="button" class="btn" data-do="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+            </div>
+          </div>
+        ` : `
+          <button class="btn" type="button" data-do="edit">Edit</button>
+          <button class="btn" type="button" data-do="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+          <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" type="button" data-pop-toggle="modal-print-pop-gen">PDF / Print ▾</button>
+            <div class="pop right tb-pop-menu" id="modal-print-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              <button type="button" class="btn" data-do="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+              <button type="button" class="btn" data-do="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+              ${!isBill ? `
+                <button type="button" class="btn" data-do="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
+                <button type="button" class="btn" data-do="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
+              ` : ''}
+            </div>
+          </div>
+          <button class="btn" type="button" data-do="custom">Customize Template</button>
+          <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
+          ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${!isBill ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
+          ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
+          ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
+          ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-do="refund-retainer">Refund</button>` : ''}
+          ${!isRetainer && (posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
+          ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
+          <button class="btn d" type="button" data-do="delete">Delete</button>
+        `}
       </div>
 
       <div id="modal-sheet-viewport" style="display:flex;justify-content:center;background:rgba(0,0,0,0.02);padding:14px;border-radius:6px;max-height:75vh;overflow-y:auto;">
         ${renderDocSheet(d, kind)}
       </div>
-
     `,
     footer: `<button class="btn" type="button" data-close>Close</button>`,
-
   });
 
   m.el.addEventListener('click', async e => {
+    const popBtn = e.target.closest('[data-pop-toggle]');
+    if (popBtn) {
+      e.stopPropagation();
+      const menuId = popBtn.dataset.popToggle;
+      const popMenu = m.el.querySelector('#' + menuId);
+      const isOpen = popMenu && popMenu.style.display === 'block';
+      m.el.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
+      if (popMenu && !isOpen) popMenu.style.display = 'block';
+      return;
+    }
+    if (!e.target.closest('.tb-dropdown-wrap')) {
+      m.el.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
+    }
+
     const sigBox = e.target.closest('[data-sig-click]');
     if (sigBox) {
       return openSignatureModal(d, kind, updated => {
@@ -2984,6 +3681,7 @@ async function docDetail(kind, id) {
       });
     }
     const a = e.target.closest('[data-do]'); if (!a) return;
+    m.el.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
     const act = a.dataset.do;
     try {
       if (act === 'sign') {
@@ -2995,7 +3693,105 @@ async function docDetail(kind, id) {
           $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
         });
       }
-      if (act === 'print') return window.print();
+      if (act === 'pdf') return printDocument(d, kind, 'standard', true);
+      if (act === 'print') return printDocument(d, kind, 'standard');
+      if (act === 'print-delivery') return printDocument(d, kind, 'delivery');
+      if (act === 'print-packing') return printDocument(d, kind, 'packing');
+      if (act === 'send-email') return openSendEmailModal(d, kind, async () => {
+        const fresh = await api(`${kind}/${id}/`);
+        Object.assign(d, fresh);
+        $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+      });
+      if (act === 'send-sms') return openSendSmsModal(d, kind);
+      if (act === 'share') return openShareLinkModal(d, kind);
+      if (act === 'send-reminder') {
+        const res = await api(`invoices/${d.id}/remind/`, { method: 'POST', body: {} });
+        return toast(res.message || 'Reminder sent!', 'ok');
+      }
+      if (act === 'stop-reminders') {
+        const res = await api(`invoices/${d.id}/stop-reminders/`, { method: 'POST', body: {} });
+        return toast(res.message || 'Reminders stopped.', 'ok');
+      }
+      if (act === 'expected-date') return openExpectedDateModal(d, kind, async () => {
+        const fresh = await api(`${kind}/${id}/`);
+        Object.assign(d, fresh);
+        $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+      });
+      if (act === 'write-off') return openWriteOffModal(d, () => { m.close(); refresh(); });
+      if (act === 'make-recurring') {
+        m.close();
+        return recurringInvoiceModal(null, {
+          profile_name: `Recurring - ${d.party || 'Invoice'}`,
+          customer: d.customer_id || d.party_id,
+          customer_id: d.customer_id || d.party_id,
+          frequency: 'monthly',
+          start_date: d.date || APP.today,
+          next_date: d.date || APP.today,
+          total: d.total,
+          lines: (d.lines || []).map(l => ({
+            item: l.item_id || l.item,
+            description: l.description,
+            quantity: l.quantity,
+            rate: l.rate,
+            discount_percent: l.discount_percent || 0,
+            gst_rate: l.gst_rate || 18
+          }))
+        });
+      }
+      if (act === 'create-credit-note') {
+        if (!(await confirmBox({
+          title: `Create Credit Note from ${d.number}?`,
+          message: `A new Credit Note will be created for customer ${d.party || ''} pre-filled with this invoice's items and total.`,
+          okText: 'Create Credit Note'
+        }))) return;
+        const cn = await api(`invoices/${d.id}/create-credit-note/`, { method: 'POST', body: {} });
+        toast(`Credit Note ${cn.number} created!`, 'ok');
+        m.close();
+        location.hash = '#/sales/credit-notes';
+        return;
+      }
+      if (act === 'create-debit-note') {
+        if (!(await confirmBox({
+          title: `Create Debit Note for ${d.number}?`,
+          message: `A new Debit Note will be created for this invoice.`,
+          okText: 'Create Debit Note'
+        }))) return;
+        const dn = await api(`invoices/${d.id}/create-debit-note/`, { method: 'POST', body: {} });
+        toast(`Debit Note ${dn.number} created!`, 'ok');
+        return;
+      }
+      if (act === 'add-eway-bill') return openAddEWayBillModal(d, kind, async () => {
+        const fresh = await api(`${kind}/${id}/`);
+        Object.assign(d, fresh);
+        $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+      });
+      if (act === 'clone') {
+        if (!(await confirmBox({
+          title: `Clone ${d.number}?`,
+          message: `A new draft copy of ${d.number} will be created with all items copied.`,
+          okText: 'Clone Document'
+        }))) return;
+        const cloned = await api(`${kind}/${d.id}/clone/`, { method: 'POST', body: {} });
+        toast(`Cloned successfully as ${cloned.number}!`, 'ok');
+        m.close();
+        refresh();
+        return;
+      }
+      if (act === 'void') {
+        if (!(await confirmBox({
+          title: `Void invoice ${d.number}?`,
+          message: `Are you sure you want to void this invoice? All balances and accounting records will be reversed.`,
+          okText: 'Void Invoice',
+          danger: true
+        }))) return;
+        await api(`invoices/${d.id}/void/`, { method: 'POST', body: {} });
+        toast(`Invoice ${d.number} voided successfully.`, 'ok');
+        m.close();
+        refresh();
+        return;
+      }
+      if (act === 'view-journal') return openViewJournalModal(d, kind);
+      if (act === 'preferences') return openInvoicePreferencesModal();
       if (act === 'edit') { m.close(); return docMasterDetail($('#pg'), kind, id, true); }
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
         $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);

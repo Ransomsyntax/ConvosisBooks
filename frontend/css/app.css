@@ -1031,22 +1031,68 @@ body.modal-open {
 }
 
 @media print {
-  #top, #side, .master-col, .doc-detail-bar, .mf, .mh .x, .no-print, .wallpaper, .ap-drawer, button { display: none !important; }
-  body, main, .pg, .split-view-container, .detail-col, .doc-canvas-scroll {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 10mm 15mm 10mm;
+  }
+  html, body {
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
     margin: 0 !important;
     padding: 0 !important;
-    background: none !important;
+  }
+  #top, #side, .master-col, .doc-detail-bar, .whats-next-banner, .user-menu-wrap, #toast, .wallpaper, .ap-drawer, button, nav, header, .no-print, .mf, .mh .x, .convo-bot, .bot-trigger-pill, #convo-bot-root, .pop, .menu-pop {
+    display: none !important;
+  }
+  main, .pg, .split-view-container, .detail-col, .doc-canvas-scroll, #detail-col-box, #modal-sheet-viewport {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
     height: auto !important;
+    min-height: auto !important;
     overflow: visible !important;
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
   .doc-sheet {
     box-shadow: none !important;
     border: none !important;
     padding: 0 !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     max-width: 100% !important;
     min-height: auto !important;
     width: 100% !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    page-break-after: auto;
+  }
+  .doc-sheet-header, .doc-party-sec, .doc-signature-sec, .doc-bottom-split {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .doc-items-tbl {
+    width: 100% !important;
+    page-break-inside: auto !important;
+    border-collapse: collapse !important;
+  }
+  .doc-items-tbl thead {
+    display: table-header-group !important;
+  }
+  .doc-items-tbl tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .doc-items-tbl td, .doc-items-tbl th {
+    padding: 8px 6px !important;
+  }
+  .doc-totals-box {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }
 

@@ -902,7 +902,7 @@ class Resource:
 
     def handle_action(self, request, pk, name):
         check_permission(request, resource_name=self.name, action_name=name)
-        if request.method != 'POST':
+        if request.method not in ('POST', 'GET') if name in ('view-journal', 'journals', 'journal-entries') else request.method != 'POST':
             raise ApiError(405, 'Method not allowed.')
         obj = self.get_object(pk, request)
         with transaction.atomic():
@@ -2101,6 +2101,61 @@ class DocResource(Resource):
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
+        elif name in ('clone', 'duplicate'):
+            cloned = services.clone_document(obj, request.user)
+            return j({'status': 'ok', 'id': cloned.pk, 'number': cloned.number, 'message': f'Document cloned as draft {cloned.number}'})
+        elif name in ('email', 'send-email'):
+            b = body(request)
+            to_email = b.get('to_email') or b.get('email')
+            subject = b.get('subject', '')
+            message = b.get('message', '')
+            res = services.send_document_email(obj, to_email, subject, message, request.user)
+            return j(res)
+        elif name in ('sms', 'send-sms'):
+            b = body(request)
+            to_phone = b.get('to_phone') or b.get('phone')
+            message = b.get('message', '')
+            res = services.send_document_sms(obj, to_phone, message, request.user)
+            return j(res)
+        elif name in ('share', 'share-link'):
+            base_url = request.build_absolute_uri('/')
+            share_url = f"{base_url}#/portal/document?type={self.name}&id={obj.pk}"
+            return j({'status': 'ok', 'share_url': share_url, 'number': obj.number})
+        elif name in ('view-journal', 'journals', 'journal-entries'):
+            journals = services.get_document_journals(obj)
+            return j({'status': 'ok', 'journals': journals})
+        elif name in ('eway-bill', 'add-eway-bill'):
+            b = body(request)
+            c = Cleaner(b)
+            bill_num = c.text('bill_number', max_len=16) or f"EWB{timezone.now().strftime('%y%m%d%H%M%S')}"
+            dist = c.integer('distance_km', lo=1, default=50)
+            trans_id = c.text('transporter_id', max_len=20)
+            trans_name = c.text('transporter_name', max_len=100)
+            veh_num = c.text('vehicle_number', max_len=30)
+            org = getattr(obj, 'organization', None) or get_user_org(request.user)
+            party = getattr(obj, 'customer', getattr(obj, 'vendor', None))
+            pname = getattr(party, 'name', 'Party') if party else 'Party'
+            pgstin = getattr(party, 'gstin', '') if party else ''
+            pstate = getattr(party, 'state', '') or getattr(obj, 'place_of_supply', '') or 'Kerala'
+            ewb = EWayBill.objects.create(
+                organization=org,
+                bill_number=bill_num,
+                doc_type=self.prefix or 'INV',
+                doc_number=obj.number,
+                doc_date=obj.date,
+                party_name=pname,
+                party_gstin=pgstin,
+                from_state=getattr(org, 'state', 'Kerala'),
+                to_state=pstate,
+                distance_km=dist,
+                transporter_id=trans_id,
+                transporter_name=trans_name,
+                vehicle_number=veh_num,
+                valid_until=timezone.now() + timedelta(days=3),
+                status='generated'
+            )
+            services.log_audit(request.user, 'generate_eway_bill', 'EWayBill', ewb.pk, f"Generated E-Way Bill {ewb.bill_number} for {obj.number}", org=org)
+            return j({'status': 'ok', 'eway_bill_id': ewb.pk, 'bill_number': ewb.bill_number, 'message': f'E-Way Bill {ewb.bill_number} generated successfully.'})
         raise ApiError(404, 'Unknown action.')
 
 class InvoiceResource(DocResource):
@@ -2124,8 +2179,41 @@ class InvoiceResource(DocResource):
     def action(self, request, obj, name):
         if name == 'send':
             services.send_invoice(obj, request.user)
+            return j({'status': 'ok', 'message': f'Invoice {obj.number} sent.'})
         elif name == 'void':
             services.void_invoice(obj, request.user)
+            return j({'status': 'ok', 'message': f'Invoice {obj.number} voided.'})
+        elif name == 'write-off':
+            b = body(request)
+            reason = b.get('reason') or 'Bad Debt'
+            notes = b.get('notes', '')
+            res = services.write_off_invoice(obj, reason=reason, notes=notes, user=request.user)
+            return j(res)
+        elif name in ('remind', 'send-reminder'):
+            res = services.send_payment_reminder(obj, user=request.user)
+            return j(res)
+        elif name == 'stop-reminders':
+            res = services.stop_payment_reminders(obj, user=request.user)
+            return j(res)
+        elif name in ('expected-payment-date', 'set-expected-date'):
+            b = body(request)
+            dt = b.get('date') or b.get('expected_payment_date')
+            res = services.set_expected_payment_date(obj, dt, user=request.user)
+            return j(res)
+        elif name == 'create-credit-note':
+            b = body(request)
+            amount = b.get('amount')
+            reason = b.get('reason') or f'Credit against invoice {obj.number}'
+            cn = services.create_credit_note_from_invoice(obj, amount=amount, reason=reason, user=request.user)
+            return j({'status': 'ok', 'credit_note_id': cn.pk, 'number': cn.number, 'message': f'Credit note {cn.number} created.'})
+        elif name == 'create-debit-note':
+            b = body(request)
+            reason = b.get('reason') or f'Debit adjustment for invoice {obj.number}'
+            dn = services.clone_document(obj, request.user)
+            dn.order_number = f"DN for {obj.number}"
+            dn.notes = f"{dn.notes}\nDebit Note adjustment for invoice {obj.number}. Reason: {reason}".strip()
+            dn.save(update_fields=['order_number', 'notes'])
+            return j({'status': 'ok', 'debit_note_id': dn.pk, 'number': dn.number, 'message': f'Debit note {dn.number} created.'})
         elif name == 'apply-retainer':
             b = body(request)
             raw_allocs = b.get('allocations', [])
@@ -2139,6 +2227,7 @@ class InvoiceResource(DocResource):
                 if not ret:
                     raise ApiError(404, 'Retainer invoice not found.')
                 services.apply_retainer_to_invoices(ret, [{'invoice': obj, 'amount': amt, 'notes': it.get('notes', '')}], request.user, dt)
+            return j({'status': 'ok', 'message': 'Retainer applied successfully.'})
         else:
             return super().action(request, obj, name)
 

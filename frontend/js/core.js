@@ -95,7 +95,7 @@ async function api(path, opt = {}) {
     }
   }
   let res;
-  const cleanPath = (path || '').replace(/^\/+/, '');
+  const cleanPath = String(path || '').replace(/^\/+/, '');
   try { res = await fetch('/api/' + cleanPath, init); } catch (e) { throw new ApiErr(0, { message: 'Network error: could not reach the server.' }); }
   if (res.status === 401) { location.href = '/accounts/login/?next=/'; throw new ApiErr(401, { message: 'Session expired.' }); }
   if (res.status === 204) return null;

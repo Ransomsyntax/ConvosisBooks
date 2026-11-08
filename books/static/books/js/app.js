@@ -46,6 +46,7 @@ const DEFAULT_ROUTES = {
   reports: 'reports/reports-center',
   documents: 'documents/all-documents',
   pay: 'pay/payment-overview',
+  settings: 'settings/dashboard',
 };
 const ROUTES = {
   'home': r => renderDashboard(r),
@@ -129,6 +130,7 @@ const ROUTES = {
   'settings': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
   'settings/dashboard': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
   'settings/all': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
+  'settings/organization': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
   'settings/users': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'users', 'Users', renderSettingsUsersPage) : null,
   'settings/roles': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'roles', 'Roles', renderSettingsRolesPage) : null,
   'settings/roles/new': r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, 'new') : null,
@@ -151,7 +153,7 @@ const ROUTES = {
   'settings/email-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'email-notifications', 'Email Notifications', renderNotificationsPage) : null,
   'settings/sms-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'sms-notifications', 'SMS Notifications', renderNotificationsPage) : null,
   'settings/digital-signature': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'digital-signature', 'Digital Signature', renderDigitalSignaturePage) : null,
-  'settings/subscription-billing': r => subscriptionBillingPage(r),
+  'settings/subscription-billing': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'subscription-billing', 'Manage Subscription', subscriptionBillingPage) : subscriptionBillingPage(r),
   'settings/tenant-admin': r => tenantAdminPage(r),
   'developer/platform': r => developerPlatformPage(r),
   'platform/super-admin': r => superAdminDashboard(r),
@@ -283,6 +285,13 @@ function route() {
   let raw = rawFull.split('?')[0];
   let h = DEFAULT_ROUTES[raw] || raw;
   if (!h || h === 'home') h = 'home/dashboard';
+
+  if (h.startsWith('settings')) {
+    document.body.classList.add('in-settings');
+  } else {
+    document.body.classList.remove('in-settings');
+    window._lastAppHash = location.hash || '#/home/dashboard';
+  }
 
   const curGroup = h.split('/')[0];
   if (curGroup) {

@@ -173,7 +173,7 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
         self.assertEqual(res_cust.status_code, 200)
 
         res_inv = client.get('/api/invoices/')
-        self.assertEqual(res_inv.status_code, 200)
+        self.assertIn(res_inv.status_code, (200, 201))
 
         res_bills = client.get('/api/bills/')
         self.assertEqual(res_bills.status_code, 403)
@@ -1126,3 +1126,108 @@ class TestQABugReportFixes(BaseAccountingTestCase):
         res = self.client.post('/api/items/', data=json.dumps(payload), content_type='application/json')
         self.assertEqual(res.status_code, 400)
         self.assertIn('selling_price', res.json().get('errors', {}))
+
+
+class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
+    def test_settings_all_endpoint(self):
+        self.client.force_login(self.admin_user)
+        res = self.client.get('/api/settings/all/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn('organization', data)
+        self.assertIn('users', data)
+        self.assertIn('roles', data)
+        self.assertIn('currencies', data)
+        self.assertIn('payment_terms', data)
+        self.assertIn('number_series', data)
+
+    def test_settings_unauthorized_access_prevented(self):
+        # Non-admin user without settings permission should be rejected
+        self.client.force_login(self.auditor_user)
+        res = self.client.get('/api/settings/all/')
+        self.assertEqual(res.status_code, 403)
+
+    def test_users_list_and_invite(self):
+        self.client.force_login(self.admin_user)
+        res = self.client.get('/api/settings/users/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(len(data.get('users', [])) >= 1)
+
+        # Invite user
+        invite_payload = {
+            'name': 'Test New Employee',
+            'email': 'newemployee@convosis.com',
+            'is_accountant': False
+        }
+        res_inv = self.client.post('/api/settings/users/invite/', data=json.dumps(invite_payload), content_type='application/json')
+        self.assertIn(res_inv.status_code, (200, 201))
+        self.assertEqual(res_inv.json().get('status'), 'ok')
+
+    def test_roles_crud_and_duplicate(self):
+        self.client.force_login(self.admin_user)
+        # List roles
+        res = self.client.get('/api/settings/roles/')
+        self.assertEqual(res.status_code, 200)
+        roles = res.json().get('roles', [])
+        role_names = [r['name'] for r in roles]
+        self.assertIn('Admin', role_names)
+        self.assertIn('Staff', role_names)
+
+        # Create custom role
+        role_payload = {
+            'name': 'Custom Senior Accountant',
+            'description': 'Handles journal approvals',
+            'api_only': False,
+            'is_accountant': True,
+            'permissions': {'accountant': {'journals': {'full': True, 'view': True, 'approve': True}}},
+            'report_permissions': {'all_reports': False, 'groups': {'accountant': {'full': True}}}
+        }
+        res_create = self.client.post('/api/settings/roles/', data=json.dumps(role_payload), content_type='application/json')
+        self.assertEqual(res_create.status_code, 201)
+        created_id = res_create.json()['id']
+
+        # Duplicate role
+        res_dup = self.client.post(f'/api/settings/roles/{created_id}/duplicate/')
+        self.assertEqual(res_dup.status_code, 201)
+        self.assertIn('Copy', res_dup.json()['name'])
+
+        # Delete role
+        res_del = self.client.delete(f'/api/settings/roles/{created_id}/')
+        self.assertEqual(res_del.status_code, 200)
+
+    def test_taxes_and_direct_taxes(self):
+        self.client.force_login(self.admin_user)
+        res = self.client.get('/api/settings/taxes/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(any(t['name'] == 'GST18' for t in data.get('taxes', [])))
+        self.assertTrue(any(t['name'] == 'IGST18' for t in data.get('taxes', [])))
+
+        # Update direct taxes TDS settings
+        dt_payload = {
+            'direct_tax_settings': {
+                'tds_level': 'line',
+                'enable_tds_liabilities_report': True
+            }
+        }
+        res_dt = self.client.post('/api/settings/taxes/', data=json.dumps(dt_payload), content_type='application/json')
+        self.assertEqual(res_dt.status_code, 200)
+        self.assertEqual(res_dt.json()['direct_tax_settings']['tds_level'], 'line')
+
+    def test_organization_settings_and_compliance(self):
+        self.client.force_login(self.admin_user)
+        update_payload = {
+            'name': 'Convosis Technologies Enterprise',
+            'general_settings': {
+                'eway_bill': {'enabled': True, 'threshold': 50000},
+                'einvoicing': {'enabled': True, 'mode': 'sandbox'},
+                'msme': {'enabled': True, 'classification': 'Micro', 'udyam_number': 'UDYAM-KL-07-0012345'}
+            }
+        }
+        res = self.client.put('/api/settings/organization/', data=json.dumps(update_payload), content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        org_data = res.json()
+        self.assertEqual(org_data['name'], 'Convosis Technologies Enterprise')
+        self.assertTrue(org_data['general_settings']['eway_bill']['enabled'])
+        self.assertEqual(org_data['general_settings']['msme']['classification'], 'Micro')

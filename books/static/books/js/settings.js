@@ -286,11 +286,8 @@ async function renderSettingsDashboard(root) {
 }
 
 function closeSettingsDashboard() {
-  if (window.history.length > 1) {
-    window.history.back();
-  } else {
-    location.hash = '#/home/dashboard';
-  }
+  const target = (window._lastAppHash && !window._lastAppHash.includes('settings')) ? window._lastAppHash : '#/home/dashboard';
+  location.hash = target;
 }
 
 // =========================================================================
@@ -368,6 +365,13 @@ function renderSettingsShell(root, activeSubKey, title, renderPageContentFn) {
   `;
 
   const pane = $('#settingsMainPane');
+  if (pane) {
+    if (activeSubKey === 'taxes' || activeSubKey === 'direct-taxes') {
+      pane.style.padding = '0';
+    } else {
+      pane.style.padding = '28px 36px 60px';
+    }
+  }
   const renderer = renderPageContentFn || getSettingsPageRenderer(activeSubKey);
   if (pane && renderer) {
     Promise.resolve(renderer(pane)).catch(err => {
@@ -755,16 +759,47 @@ async function renderRoleEditorPage(container, roleId) {
   const p = roleData.permissions || {};
   const rp = roleData.report_permissions || {};
 
+  const org = APP.org || {};
+  const orgName = org.name || 'Convosis Technologies Pvt Ltd';
+
   container.innerHTML = `
-    <div class="role-editor-container">
-      <div class="role-editor-top">
-        <h1 class="role-editor-title">Role</h1>
-        <div class="role-editor-breadcrumbs">
-          <span class="crumb-active">✓ General</span>
-          <span class="crumb-separator">&gt;</span>
-          <span class="crumb-active">Segmented Access Control</span>
+    <div class="settings-fullpage-wrap" style="background:#ffffff; min-height:100vh;">
+      <div class="settings-topbar">
+        <div class="settings-topbar-left">
+          <button type="button" class="settings-back-btn" onclick="location.hash='#/settings/roles'" title="Back to Roles">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <div class="settings-brand-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/></svg>
+          </div>
+          <div>
+            <div class="settings-topbar-title">All Settings</div>
+            <div class="settings-topbar-org">${esc(orgName)}</div>
+          </div>
+        </div>
+
+        <div class="settings-topbar-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search settings (/)" onclick="location.hash='#/settings/dashboard'">
+        </div>
+
+        <div class="settings-topbar-right">
+          <button type="button" class="btn-close-settings" onclick="closeSettingsDashboard()">
+            Close Settings <span style="font-size:14px; margin-left:4px;">✕</span>
+          </button>
         </div>
       </div>
+
+      <div style="flex:1; overflow-y:auto; padding:28px 36px 80px;">
+        <div class="role-editor-container">
+          <div class="role-editor-top">
+            <h1 class="role-editor-title">Role</h1>
+            <div class="role-editor-breadcrumbs">
+              <span class="crumb-active">✓ General</span>
+              <span class="crumb-separator">&gt;</span>
+              <span class="crumb-active">Segmented Access Control</span>
+            </div>
+          </div>
 
       ${roleData.is_system ? `
         <div class="info-alert-card" style="margin:16px 0;">
@@ -1130,11 +1165,13 @@ async function renderRoleEditorPage(container, roleId) {
       </div>
 
       <!-- Sticky Bottom Action Bar -->
-      <div class="role-sticky-footer">
+      <div class="role-sticky-footer" style="margin:24px 0 0 0;">
         <button type="button" class="btn-primary" id="btnSaveRolePermissions">Proceed</button>
         <button type="button" class="btn-secondary" onclick="location.hash='#/settings/roles'">Cancel</button>
       </div>
     </div>
+  </div>
+</div>
   `;
 
   // Attach interactive parent-child checkbox listeners
@@ -2053,6 +2090,7 @@ async function renderTaxesPage(container) {
     container.innerHTML = `
       <div style="display:flex; height:100%; min-height:0; flex:1;">
         <nav class="taxes-subnav">
+          <div style="font-size:17px; font-weight:700; color:#0f172a; padding:16px 20px 14px; border-bottom:1px solid #e2e8f0; margin-bottom:6px;">Taxes</div>
           ${items.map(it => `
             <button type="button" class="taxes-subnav-item${it.key === currentTab ? ' active' : ''}"
               data-tax-tab="${it.key}">
@@ -2458,7 +2496,10 @@ async function renderDirectTaxesPage(container) {
 
     container.innerHTML = `
       <div style="display:flex; height:100%; min-height:0; flex:1;">
-        <nav class="taxes-subnav">${subNavHtml}</nav>
+        <nav class="taxes-subnav">
+          <div style="font-size:17px; font-weight:700; color:#0f172a; padding:16px 20px 14px; border-bottom:1px solid #e2e8f0; margin-bottom:6px;">Direct Taxes</div>
+          ${subNavHtml}
+        </nav>
         <div class="taxes-content-panel">
           ${rightContentHtml}
         </div>

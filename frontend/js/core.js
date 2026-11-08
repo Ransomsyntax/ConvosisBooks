@@ -105,8 +105,39 @@ async function api(path, opt = {}) {
   return data;
 }
 
-const BADGE = { Paid: 'ok', Overdue: 'ba', 'Partially Paid': 'wa', 'Partially Applied': 'wa', 'Fully Applied': 'ok', Sent: 'in', Open: 'in', Draft: 'gr', Void: 'gr', Cancelled: 'gr', Active: 'ok', active: 'ok', Inactive: 'gr', paused: 'wa', Paused: 'wa', completed: 'ok', Completed: 'ok', cancelled: 'gr', 'Low stock': 'wa', 'Out of stock': 'ba' };
-const badge = s => `<span class="st ${BADGE[s] || 'gr'}">${esc(s)}</span>`;
+const BADGE = {
+  Paid: 'ok', paid: 'ok',
+  Overdue: 'ba', overdue: 'ba',
+  'Partially Paid': 'wa', 'partially_paid': 'wa', partial: 'wa',
+  'Partially Applied': 'wa', 'partially_applied': 'wa',
+  'Fully Applied': 'ok', 'fully_applied': 'ok',
+  Sent: 'in', sent: 'in',
+  Open: 'in', open: 'in',
+  Draft: 'gr', draft: 'gr',
+  Void: 'gr', void: 'gr',
+  Cancelled: 'gr', cancelled: 'gr',
+  Active: 'ok', active: 'ok',
+  Inactive: 'gr', inactive: 'gr',
+  Paused: 'wa', paused: 'wa',
+  Completed: 'ok', completed: 'ok',
+  Failed: 'ba', failed: 'ba',
+  Expired: 'ba', expired: 'ba',
+  'Low stock': 'wa',
+  'Out of stock': 'ba'
+};
+const badge = s => {
+  if (s == null || s === '') return '';
+  const str = String(s).trim();
+  const lower = str.toLowerCase();
+  const cls = BADGE[str] || BADGE[lower] || 'gr';
+  return `<span class="st ${cls}">${esc(str)}</span>`;
+};
+const statusBadge = badge;
+if (typeof window !== 'undefined') {
+  window.badge = badge;
+  window.statusBadge = badge;
+  window.BADGE = BADGE;
+}
 const spinner = '<div class="spin" role="status">Loading…</div>';
 const errBox = (msg, retry) => `<div class="empty" role="alert"><div>${esc(msg)}${retry ? '<br><button class="btn" data-retry type="button" style="margin-top:8px">Retry</button>' : ''}</div></div>`;
 

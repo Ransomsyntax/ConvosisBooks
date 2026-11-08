@@ -1526,11 +1526,42 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         rec.refresh_from_db()
         self.assertEqual(rec.status, 'active')
 
+        # Edit recurring profile
+        edit_payload = {
+            'profile_name': 'Monthly Cloud Hosting Plan Pro',
+            'customer': self.customer.id,
+            'frequency': 'monthly',
+            'repeat_every': 2,
+            'start_date': str(start_d),
+            'next_date': str(rec.next_date),
+            'total': '12000.00'
+        }
+        res_edit = self.client.put(f'/api/recurring-invoices/{rec_id}/', data=json.dumps(edit_payload), content_type='application/json')
+        self.assertEqual(res_edit.status_code, 200)
+        rec.refresh_from_db()
+        self.assertEqual(rec.profile_name, 'Monthly Cloud Hosting Plan Pro')
+
+        # Search and Pagination
+        res_list = self.client.get('/api/recurring-invoices/?q=Hosting&page=1&page_size=10')
+        self.assertEqual(res_list.status_code, 200)
+        list_data = res_list.json()
+        self.assertGreaterEqual(list_data['count'], 1)
+        self.assertTrue(any(item['id'] == rec.id for item in list_data['results']))
+
+        # CSV Export
+        res_export = self.client.get('/api/recurring-invoices/?export=csv')
+        self.assertEqual(res_export.status_code, 200)
+
         # Cancel Schedule
         res_cancel = self.client.post(f'/api/recurring-invoices/{rec_id}/cancel/', data=json.dumps({}), content_type='application/json')
         self.assertEqual(res_cancel.status_code, 200)
         rec.refresh_from_db()
         self.assertEqual(rec.status, 'cancelled')
+
+        # Delete Profile
+        res_del = self.client.delete(f'/api/recurring-invoices/{rec_id}/')
+        self.assertEqual(res_del.status_code, 204)
+        self.assertFalse(RecurringInvoice.objects.filter(pk=rec_id).exists())
 
     def test_recurring_invoices_management_command(self):
         """

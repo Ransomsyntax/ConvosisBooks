@@ -3408,7 +3408,7 @@ async function viewRecurringInvoiceModal(id) {
       ['Start Date', fd(d.start_date)],
       ['Next Invoice Date', fd(d.next_date)],
       ['End Date', d.end_date ? fd(d.end_date) : 'Never (Unlimited)'],
-      ['Status', statusBadge(d.status_label || d.status)],
+      ['Status', badge(d.status_label || d.status)],
       ['Subtotal', inr(d.subtotal || 0)],
       ['Tax Amount', inr(d.tax_amount || 0)],
       ['Total Amount', inr(d.total_amount || 0)],
@@ -3489,7 +3489,7 @@ async function viewRecurringInvoiceModal(id) {
                   <td>${fd(inv.due_date)}</td>
                   <td class="r">${inr(inv.total)}</td>
                   <td class="r">${inr(inv.balance)}</td>
-                  <td>${statusBadge(inv.status)}</td>
+                  <td>${badge(inv.status)}</td>
                   <td class="r">
                     <button class="btn s inv-view-btn" type="button" data-inv-id="${inv.id}">View</button>
                   </td>

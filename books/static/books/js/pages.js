@@ -2617,7 +2617,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
               <button class="btn" type="button" data-act="share"><i class="fa-solid fa-share-nodes" style="font-size:11px;margin-right:4px;"></i> Share</button>
               <button class="btn" type="button" data-act="remind"><i class="fa-regular fa-clock" style="font-size:11px;margin-right:4px;"></i> Reminders ▾</button>
               <button class="btn" type="button" data-act="print"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF/Print ▾</button>
-              ${num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay" style="background:#2563eb;color:#fff;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>` : ''}
+              ${num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment ▾</button>` : ''}
             ` : `
               <button class="btn" type="button" data-act="edit">Edit</button>
               <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
@@ -2650,7 +2650,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
             <span style="font-size:16px;">✨</span>
             <span><b>WHAT'S NEXT?</b> Payment is overdue. Send a payment reminder or record payment.</span>
           </div>
-          <button class="btn p" type="button" data-act="pay" style="background:#2563eb;color:#fff;border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;white-space:nowrap;cursor:pointer;">Record Payment</button>
+          <button class="btn p" type="button" data-act="pay" style="border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;white-space:nowrap;cursor:pointer;">Record Payment</button>
         </div>
         <div style="margin:0 24px 16px;font-size:12px;color:#475569;display:flex;align-items:center;gap:6px;">
           <i class="fa-regular fa-file-lines" style="color:#64748b;"></i>

@@ -12,6 +12,9 @@
   --accent-to: #0369a1;
   --accent-on: #ffffff;
 
+  --primary-blue: #078BCB;
+  --primary-blue-rgb: 7, 139, 203;
+
   --convosis-cyan: var(--accent);
   --convosis-blue: var(--accent-to);
   --convosis-blue-dark: #075985;
@@ -397,9 +400,9 @@ html, body {
 }
 
 .plus, .btn-quick-create {
-  background: var(--convosis-gradient);
-  color: var(--accent-on, #fff);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: var(--primary-blue, #078BCB) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--primary-blue, #078BCB) !important;
   border-radius: 9px;
   height: 36px;
   padding: 0 14px;
@@ -409,16 +412,43 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(7, 139, 203, 0.25);
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.plus *, .btn-quick-create * {
+  color: inherit !important;
+  stroke: currentColor;
+  transition: color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              stroke 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .plus:hover, .btn-quick-create:hover {
-  transform: translateY(-1.5px) scale(1.02);
-  box-shadow: 0 8px 24px rgba(var(--accent-rgb), 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  filter: brightness(1.08);
+  background: #ffffff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 16px rgba(7, 139, 203, 0.35), 0 0 0 1px rgba(7, 139, 203, 0.18) !important;
+  filter: none !important;
+}
+.plus:hover *, .btn-quick-create:hover * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+  fill: currentColor;
 }
 .plus:active, .btn-quick-create:active {
-  transform: translateY(0) scale(0.98);
+  background: #f0f9ff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(7, 139, 203, 0.25) inset !important;
+}
+.plus:active *, .btn-quick-create:active * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+  fill: currentColor;
 }
 
 .av {
@@ -867,37 +897,147 @@ main, .main-wrapper {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), var(--specular-sheen);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not(.p):not(.btn-primary):not(.d):not(.btn-danger) {
   background: var(--surface-glass-elevated);
   border-color: var(--border-highlight);
   color: var(--accent);
   box-shadow: 0 6px 20px rgba(var(--accent-rgb), 0.2), var(--specular-sheen);
   transform: translateY(-1px);
 }
-.btn:active:not(:disabled) {
+.btn:active:not(:disabled):not(.p):not(.btn-primary):not(.d):not(.btn-danger) {
   transform: translateY(0);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
-.btn:disabled {
+.btn:disabled:not(.p):not(.btn-primary) {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn.p, .btn-primary {
-  background: var(--convosis-gradient);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  color: var(--accent-on, #ffffff);
+/* ==========================================================================
+   PRIMARY BLUE ACTION BUTTONS (Save, Save & Send, Submit, Add New, Import, Update, etc.)
+   Default: Blue background (#078BCB), White text (#FFFFFF), Blue border.
+   Hover: White background (#FFFFFF), Blue text (#078BCB), Blue border, Soft blue shadow.
+   Active: Consistent blue-and-white theme, soft blue tint (#f0f9ff).
+   ========================================================================== */
+.btn.p,
+.btn-primary,
+button.btn.p,
+button.btn-primary,
+a.btn.p,
+a.btn-primary,
+input[type="submit"].btn.p,
+input[type="button"].btn.p {
+  background: var(--primary-blue, #078BCB) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--primary-blue, #078BCB) !important;
+  border-radius: 9px;
   font-weight: 600;
-  box-shadow: 0 4px 18px rgba(var(--accent-rgb), 0.35), var(--specular-sheen);
+  box-shadow: 0 2px 8px rgba(7, 139, 203, 0.25);
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.btn.p:hover:not(:disabled), .btn-primary:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.7);
-  color: var(--accent-on, #ffffff);
-  box-shadow: 0 8px 26px rgba(var(--accent-rgb), 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.7);
-  transform: translateY(-1.5px);
-  filter: brightness(1.08);
+
+.btn.p *,
+.btn-primary *,
+button.btn.p *,
+button.btn-primary *,
+a.btn.p *,
+a.btn-primary * {
+  color: inherit !important;
+  stroke: currentColor;
+  transition: color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              stroke 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Hover State - White button with blue text, blue border, soft blue shadow */
+.btn.p:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+button.btn.p:hover:not(:disabled),
+button.btn-primary:hover:not(:disabled),
+a.btn.p:hover:not([aria-disabled="true"]),
+a.btn-primary:hover:not([aria-disabled="true"]),
+input[type="submit"].btn.p:hover:not(:disabled),
+input[type="button"].btn.p:hover:not(:disabled) {
+  background: #ffffff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 4px 16px rgba(7, 139, 203, 0.35), 0 0 0 1px rgba(7, 139, 203, 0.2) !important;
+  transform: translateY(-1px);
+  filter: none !important;
+}
+
+.btn.p:hover:not(:disabled) *,
+.btn-primary:hover:not(:disabled) *,
+button.btn.p:hover:not(:disabled) *,
+button.btn-primary:hover:not(:disabled) *,
+a.btn.p:hover:not([aria-disabled="true"]) *,
+a.btn-primary:hover:not([aria-disabled="true"]) * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+  fill: currentColor;
+}
+
+/* Active / Click State - Maintain clean blue-and-white theme */
+.btn.p:active:not(:disabled),
+.btn-primary:active:not(:disabled),
+button.btn.p:active:not(:disabled),
+button.btn-primary:active:not(:disabled),
+a.btn.p:active:not([aria-disabled="true"]),
+a.btn-primary:active:not([aria-disabled="true"]),
+input[type="submit"].btn.p:active:not(:disabled),
+input[type="button"].btn.p:active:not(:disabled) {
+  background: #f0f9ff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 1px 4px rgba(7, 139, 203, 0.25) inset, 0 0 0 1px rgba(7, 139, 203, 0.25) !important;
+  transform: translateY(0);
+}
+
+.btn.p:active:not(:disabled) *,
+.btn-primary:active:not(:disabled) *,
+button.btn.p:active:not(:disabled) *,
+button.btn-primary:active:not(:disabled) *,
+a.btn.p:active:not([aria-disabled="true"]) *,
+a.btn-primary:active:not([aria-disabled="true"]) * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+  fill: currentColor;
+}
+
+/* Focus Visible State */
+.btn.p:focus-visible,
+.btn-primary:focus-visible,
+button.btn.p:focus-visible,
+button.btn-primary:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(7, 139, 203, 0.35), 0 2px 8px rgba(7, 139, 203, 0.25) !important;
+}
+
+/* Disabled State */
+.btn.p:disabled,
+.btn-primary:disabled,
+button.btn.p:disabled,
+button.btn-primary:disabled,
+.btn.p[disabled],
+.btn-primary[disabled] {
+  background: var(--primary-blue, #078BCB) !important;
+  color: #ffffff !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+  transform: none !important;
+  pointer-events: none !important;
+}
+
+.btn.p:disabled *,
+.btn-primary:disabled *,
+button.btn.p:disabled *,
+button.btn-primary:disabled * {
+  color: #ffffff !important;
 }
 
 .btn.d {
@@ -3824,17 +3964,39 @@ th.l, td.l, table th.l, table td.l {
   background: #2563eb !important;
 }
 
-/* Login submit button permanent styling */
-.login-btn-submit,
-.login-btn-submit:hover,
-.login-btn-submit:active,
-.login-btn-submit:focus,
-.login-btn-submit:disabled {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+/* Login submit button styling */
+.login-btn-submit {
+  background: var(--primary-blue, #078BCB) !important;
   color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.4) !important;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
-  opacity: 1 !important;
+  border: 1px solid var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 4px 14px rgba(7, 139, 203, 0.35) !important;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.login-btn-submit:hover:not(:disabled) {
+  background: #ffffff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 4px 16px rgba(7, 139, 203, 0.35), 0 0 0 1px rgba(7, 139, 203, 0.2) !important;
+  transform: translateY(-1px) !important;
+}
+.login-btn-submit:hover:not(:disabled) * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+}
+.login-btn-submit:active:not(:disabled) {
+  background: #f0f9ff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 1px 4px rgba(7, 139, 203, 0.25) inset !important;
+  transform: translateY(0) !important;
+}
+.login-btn-submit:disabled {
+  opacity: 0.65 !important;
+  cursor: not-allowed !important;
 }
 .login-spinner {
   display: inline-block;

@@ -1062,16 +1062,38 @@ th.l, td.l, table th.l, table td.l {
   text-align: left !important;
 }
 
-.login-btn-submit,
-.login-btn-submit:hover,
-.login-btn-submit:active,
-.login-btn-submit:focus,
-.login-btn-submit:disabled {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+.login-btn-submit {
+  background: var(--primary-blue, #078BCB) !important;
   color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.4) !important;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
-  opacity: 1 !important;
+  border: 1px solid var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 4px 14px rgba(7, 139, 203, 0.35) !important;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.login-btn-submit:hover:not(:disabled) {
+  background: #ffffff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 4px 16px rgba(7, 139, 203, 0.35), 0 0 0 1px rgba(7, 139, 203, 0.2) !important;
+  transform: translateY(-1px) !important;
+}
+.login-btn-submit:hover:not(:disabled) * {
+  color: var(--primary-blue, #078BCB) !important;
+  stroke: var(--primary-blue, #078BCB) !important;
+}
+.login-btn-submit:active:not(:disabled) {
+  background: #f0f9ff !important;
+  color: var(--primary-blue, #078BCB) !important;
+  border-color: var(--primary-blue, #078BCB) !important;
+  box-shadow: 0 1px 4px rgba(7, 139, 203, 0.25) inset !important;
+  transform: translateY(0) !important;
+}
+.login-btn-submit:disabled {
+  opacity: 0.65 !important;
+  cursor: not-allowed !important;
 }
 
 

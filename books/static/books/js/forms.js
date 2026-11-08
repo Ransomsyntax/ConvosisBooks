@@ -948,7 +948,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
     footer: `
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
         <button type="button" class="btn" data-close>Cancel</button>
-        <button type="button" class="btn p" id="btn-sig-save" style="background:#2563eb;color:#fff;font-weight:600;display:flex;align-items:center;gap:6px;">
+        <button type="button" class="btn p" id="btn-sig-save" style="display:flex;align-items:center;gap:6px;">
           <i class="fa-solid fa-check"></i> Save & Apply Signature
         </button>
       </div>
@@ -4056,7 +4056,7 @@ async function recordDocumentPaymentModal(doc, kind = 'invoices', onDone) {
     `,
     footer: `
       <button class="btn" type="button" data-close>Cancel</button>
-      <button class="btn p" type="button" id="pm-submit-btn" style="background:#2563eb;color:#fff;font-weight:600;"><i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>
+      <button class="btn p" type="button" id="pm-submit-btn" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>
     `
   });
 
@@ -4458,7 +4458,7 @@ async function adjustForm(preItem, targetEl, onDone) {
 
       <!-- Sticky Footer Bar -->
       <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:14px 32px;display:flex;align-items:center;gap:12px;box-shadow:0 -2px 10px rgba(0,0,0,0.04);z-index:30;">
-        <button type="button" class="btn p" id="btn-adj-save-draft" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save as Draft</button>
+        <button type="button" class="btn p" id="btn-adj-save-draft" style="border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Save as Draft</button>
         <button type="button" class="btn" id="btn-adj-convert-adjusted" style="background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Convert to Adjusted</button>
         <button type="button" class="btn" id="btn-adj-cancel" style="background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
       </div>
@@ -7077,7 +7077,7 @@ async function quoteForm(id, onDone) {
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
-              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;background:#2563eb;color:#fff;border-radius:6px;border:none;">
+              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;border-radius:6px;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
             </div>
@@ -7729,7 +7729,7 @@ async function salesOrderForm(id, onDone) {
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
-              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;background:#2563eb;color:#fff;border-radius:6px;border:none;cursor:pointer;">
+              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;border-radius:6px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
             </div>
@@ -8176,7 +8176,7 @@ async function invoiceForm(id, targetEl, onDone) {
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
-              <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;background:#2563eb;color:#fff;border-radius:4px;border:none;cursor:pointer;">
+              <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
             </div>
@@ -8375,7 +8375,7 @@ async function invoiceForm(id, targetEl, onDone) {
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-inv-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
-            <button type="button" class="btn p" id="btn-inv-save-send" style="background:#2563eb;color:#fff;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn p" id="btn-inv-save-send" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
               Save and Send <i class="fa-solid fa-caret-up" style="font-size:10px;"></i>
             </button>
             <button type="button" class="btn" id="btn-inv-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>

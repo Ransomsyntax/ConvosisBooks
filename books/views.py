@@ -112,3 +112,15 @@ def login_view(request, tab=None):
 @ensure_csrf_cookie
 def index(request):
     return render(request, 'index.html')
+
+def custom_404_view(request, exception=None):
+    from django.http import JsonResponse, HttpResponseNotFound
+    if request.path.startswith('/api/'):
+        return JsonResponse({'error': 'Resource not found', 'message': 'The requested endpoint does not exist.'}, status=404)
+    return HttpResponseNotFound('<!DOCTYPE html><html><head><title>404 Not Found</title></head><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1>404 - Page Not Found</h1><p>The requested resource could not be found.</p><a href="/">Return to Home</a></body></html>')
+
+def custom_500_view(request):
+    from django.http import JsonResponse, HttpResponseServerError
+    if request.path.startswith('/api/'):
+        return JsonResponse({'error': 'Server error', 'message': 'An unexpected server error occurred.'}, status=500)
+    return HttpResponseServerError('<!DOCTYPE html><html><head><title>500 Internal Error</title></head><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1>500 - Server Error</h1><p>An unexpected server error occurred. Please contact system support.</p><a href="/">Return to Home</a></body></html>')

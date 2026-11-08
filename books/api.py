@@ -9745,14 +9745,17 @@ def dpdp_export_principal_data_view(request):
     Generates a consolidated portability package of all personal and transactional
     records for a given Data Principal within the current organization.
     """
-    if request.method != 'POST':
+    if request.method not in ('GET', 'POST'):
         raise ApiError(405, 'Method not allowed.')
     user_org = get_user_org(request.user, request)
     if not user_org:
         raise ApiError(403, 'Organization required.')
 
-    d = body(request)
-    identifier = (d.get('identifier') or d.get('email') or d.get('phone') or d.get('name') or '').strip()
+    d = body(request) if request.method == 'POST' else {}
+    identifier = (
+        request.GET.get('identifier') or request.GET.get('email') or request.GET.get('phone') or request.GET.get('name') or
+        d.get('identifier') or d.get('email') or d.get('phone') or d.get('name') or ''
+    ).strip()
     if not identifier:
         raise ApiError(400, 'Data Principal email, phone, or name is required.')
 
@@ -9776,6 +9779,13 @@ def dpdp_export_principal_data_view(request):
     payments_rec = list(PaymentReceived.objects.filter(organization=user_org, customer_id__in=cust_ids).values('id', 'number', 'date', 'amount', 'mode'))
     payments_made = list(PaymentMade.objects.filter(organization=user_org, vendor_id__in=vend_ids).values('id', 'number', 'date', 'amount', 'mode'))
 
+    cust_list = [
+        {
+            'id': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone,
+            'company': c.company, 'gstin': c.gstin, 'billing_address': c.billing_address
+        } for c in custs
+    ]
+
     export_pkg = {
         'export_metadata': {
             'organization': user_org.name,
@@ -9783,12 +9793,8 @@ def dpdp_export_principal_data_view(request):
             'requested_identifier': identifier,
             'compliance': 'DPDP Act 2023 Section 11 Right to Access'
         },
-        'customer_profiles': [
-            {
-                'id': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone,
-                'company': c.company, 'gstin': c.gstin, 'billing_address': c.billing_address
-            } for c in custs
-        ],
+        'customer_profiles': cust_list,
+        'customer_profile': cust_list[0] if cust_list else {},
         'vendor_profiles': [
             {
                 'id': v.id, 'name': v.name, 'email': v.email, 'phone': v.phone,

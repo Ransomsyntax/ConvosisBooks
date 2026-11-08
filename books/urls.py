@@ -98,6 +98,10 @@ urlpatterns = [
 
     path('subscription/summary/', api.subscription_summary_view),
     path('subscription/update/', api.subscription_update_view),
+    path('subscription/trial/', api.subscription_trial_view),
+    path('subscription/addon/', api.subscription_addon_view),
+    path('subscription/autorenew/', api.subscription_autorenew_view),
+    path('subscription/invoices/<int:pk>/receipt/', api.subscription_receipt_download_view),
 
     path('tenant/admin/summary/', api.tenant_admin_summary_view),
     path('tenant/admin/invite/', api.tenant_admin_invite_user_view),

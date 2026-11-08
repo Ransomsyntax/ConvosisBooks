@@ -5,6 +5,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.db.models import ProtectedError
+from django.utils import timezone
 
 MONEY = {'max_digits': 14, 'decimal_places': 2}
 QTY = {'max_digits': 14, 'decimal_places': 3}
@@ -1393,27 +1394,68 @@ class Notification(models.Model):
 
 class TenantSubscription(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='subscriptions')
+    FREE, PROFESSIONAL, PREMIUM = 'free', 'professional', 'premium'
     STARTER, GROWTH, ENTERPRISE = 'starter', 'growth', 'enterprise'
     TIERS = [
-        (STARTER, 'Starter Edition (Small Business)'),
-        (GROWTH, 'Growth Edition (Mid-Market)'),
-        (ENTERPRISE, 'Enterprise Scale Edition (Multi-GSTIN)'),
+        (FREE, 'Free Plan'),
+        (PROFESSIONAL, 'Professional Plan'),
+        (PREMIUM, 'Premium Plan'),
+        (STARTER, 'Starter Plan (Legacy)'),
+        (GROWTH, 'Growth Plan (Legacy)'),
+        (ENTERPRISE, 'Enterprise Scale Plan (Legacy)'),
     ]
 
-    tier = models.CharField(max_length=30, choices=TIERS, default=GROWTH)
+    tier = models.CharField(max_length=30, choices=TIERS, default=FREE)
     billing_cycle = models.CharField(max_length=20, default='annual')
     status = models.CharField(max_length=20, default='active')
-    invoice_limit = models.PositiveIntegerField(default=1000)
-    user_seat_limit = models.PositiveIntegerField(default=15)
-    storage_limit_mb = models.PositiveIntegerField(default=10240)
+    invoice_limit = models.PositiveIntegerField(default=100)
+    record_limit = models.PositiveIntegerField(default=100)
+    user_seat_limit = models.PositiveIntegerField(default=1)
+    storage_limit_mb = models.PositiveIntegerField(default=500)
+    purchased_books_users = models.PositiveIntegerField(default=0)
+    purchased_addons = models.JSONField(default=dict, blank=True)
+    is_trial = models.BooleanField(default=False)
+    trial_ends_at = models.DateField(null=True, blank=True)
     period_start = models.DateField(null=True, blank=True)
     period_end = models.DateField(null=True, blank=True)
     auto_renew = models.BooleanField(default=True)
     payment_method = models.CharField(max_length=50, default='Visa ending in 4242')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def total_allowed_users(self):
+        return self.user_seat_limit + self.purchased_books_users
+
+    @property
+    def plan_tier(self):
+        return self.tier
+
+    @property
+    def current_period_end(self):
+        return self.period_end
+
+    @property
+    def max_users(self):
+        return self.total_allowed_users
+
     def __str__(self):
         return f'{self.tier} ({self.status})'
+
+class SubscriptionInvoice(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='subscription_invoices')
+    invoice_no = models.CharField(max_length=60)
+    date = models.DateField(default=timezone.localdate)
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    status = models.CharField(max_length=30, default='Paid')
+    payment_method = models.CharField(max_length=50, default='Visa ending in 4242')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.invoice_no} - {self.description}'
 
 class DeveloperApiKey(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='developer_api_keys')

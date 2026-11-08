@@ -35,7 +35,7 @@ from .models import (
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
-    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, TenantSubscription, TimeLog, UserInvitation, UserProfile, Vendor, VendorCredit,
+    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
@@ -2022,8 +2022,9 @@ class DocResource(Resource):
                                                  line_total=l['line_total'], position=l['position']) for l in comp])
 
     def create(self, data, user):
-        head, lines = self.parse(data, user=user)
         user_org = get_user_org(user)
+        services.check_subscription_limits(user_org, 'record')
+        head, lines = self.parse(data, user=user)
         services.check_transaction_lock(head['date'], org=user_org)
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
@@ -7703,7 +7704,8 @@ def notifications_mark_all_read_view(request):
 
 @api_view
 def subscription_summary_view(request):
-    res = services.get_tenant_subscription_summary()
+    org = get_user_org(request.user)
+    res = services.get_tenant_subscription_summary(org=org)
     return j(res)
 
 @api_view
@@ -7711,11 +7713,77 @@ def subscription_summary_view(request):
 def subscription_update_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
+    org = get_user_org(request.user)
     d = body(request)
-    tier = d.get('tier', 'growth')
+    tier = d.get('tier', 'professional')
     cycle = d.get('billing_cycle', 'annual')
-    res = services.update_tenant_subscription(tier, billing_cycle=cycle)
+    res = services.update_tenant_subscription(org=org, tier=tier, billing_cycle=cycle, user=request.user)
     return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN)
+def subscription_trial_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    org = get_user_org(request.user)
+    d = body(request)
+    tier = d.get('tier', 'professional')
+    res = services.start_subscription_trial(org=org, tier=tier, user=request.user)
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN)
+def subscription_addon_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    org = get_user_org(request.user)
+    d = body(request)
+    addon_key = d.get('addon_key') or d.get('addon_id') or ''
+    qty = int(d.get('quantity') or 1)
+    res = services.purchase_subscription_addon(org=org, addon_key=addon_key, quantity=qty, user=request.user)
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN)
+def subscription_autorenew_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    org = get_user_org(request.user)
+    d = body(request)
+    auto_renew = d.get('auto_renew')
+    res = services.toggle_subscription_autorenew(org=org, auto_renew=auto_renew, user=request.user)
+    return j(res)
+
+@api_view
+def subscription_receipt_download_view(request, pk):
+    org = get_user_org(request.user)
+    inv = SubscriptionInvoice.objects.filter(organization=org, pk=pk).first()
+    if not inv:
+        raise ApiError(404, 'Subscription invoice receipt not found.')
+
+    receipt_text = f"""CONVOSIS TECHNOLOGIES PRIVATE LIMITED
+TAX INVOICE / SUBSCRIPTION RECEIPT
+------------------------------------------------------------
+Receipt Number : {inv.invoice_no}
+Billing Date   : {inv.date.strftime('%d %b %Y')}
+Status         : {inv.status}
+Payment Method : {inv.payment_method}
+Organization   : {org.name if org else 'Convosis Books'}
+GSTIN          : {org.gstin if org else '32AANCC9298C1ZE'}
+------------------------------------------------------------
+Item Description                                      Amount
+------------------------------------------------------------
+{inv.description[:45]:<45}   INR {inv.amount:>10.2f}
+------------------------------------------------------------
+Total Paid:                                    INR {inv.amount:>10.2f}
+------------------------------------------------------------
+This is a computer-generated tax receipt. No physical signature required.
+convosis.com | support@convosis.com
+"""
+    from django.http import HttpResponse
+    response = HttpResponse(receipt_text, content_type='text/plain; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{inv.invoice_no}.txt"'
+    return response
 
 @api_view
 @role_required(UserProfile.ADMIN)
@@ -8468,6 +8536,7 @@ def settings_invite_user_view(request):
     """Invite a new user or accountant with role assignment."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
+    services.check_subscription_limits(org, 'user')
 
     data = body(request)
     email = (data.get('email') or '').strip().lower()

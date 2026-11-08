@@ -27,10 +27,10 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      Bill, BillAllocation, BillLine, CreditNote, CreditNoteLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
                      EInvoiceRecord, EWayBill, Expense, FinancialAnomaly, GSTRReturn, Invoice,
                      InvoiceLine, Item, Journal, JournalItem, LockDate, ManagedDocument,
-                     Notification, Organization, PaymentMade, PaymentReceived, PurchaseOrder,
+                     Notification, Organization, PaymentMade, PaymentReceived, PurchaseOrder, Quote,
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
-                     StockMovement, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
+                     StockMovement, SubscriptionInvoice, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
                      Warehouse, WebhookSubscription)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
@@ -5459,69 +5459,516 @@ def mark_all_notifications_read(user=None):
     count = qs.update(is_read=True)
     return {'status': 'success', 'marked_count': count}
 
-def get_tenant_subscription_summary():
-    sub = TenantSubscription.objects.first()
-    if not sub:
-        today = timezone.localdate()
-        sub = TenantSubscription.objects.create(
-            tier=TenantSubscription.GROWTH,
-            billing_cycle='annual',
-            status='active',
-            invoice_limit=1000,
-            user_seat_limit=15,
-            storage_limit_mb=10240,
-            period_start=today,
-            period_end=today + timedelta(days=365),
-            payment_method='Visa ending in 4242'
-        )
+def normalize_subscription_tier(tier):
+    t = str(tier or '').strip().lower()
+    mapping = {
+        'starter': 'free',
+        'growth': 'professional',
+        'enterprise': 'premium',
+        'free': 'free',
+        'professional': 'professional',
+        'premium': 'premium'
+    }
+    return mapping.get(t, 'free')
 
-    total_invoices = Invoice.objects.count()
-    from django.contrib.auth import get_user_model
-    User = get_user_model()
-    total_users = User.objects.count()
-    total_storage = sum(d.file_size or 0 for d in ManagedDocument.objects.all()) // (1024 * 1024)
+BOOKS_SUBSCRIPTION_PLANS = {
+    'free': {
+        'id': 'free',
+        'name': 'Free',
+        'display_name': 'Free Plan',
+        'price_annual': 0,
+        'price_annual_formatted': '₹0',
+        'monthly_equiv': 0,
+        'monthly_equiv_formatted': '₹0',
+        'billing_note': '/ year',
+        'monthly_note': 'just ₹0 a month',
+        'description': 'Small team operations starting their finance journey.',
+        'books_users': 1,
+        'hrm_users': 5,
+        'payroll_users': 10,
+        'projects_users': 15,
+        'record_limit': 100,
+        'record_limit_display': '100 records',
+        'storage_limit_mb': 500,
+        'storage_limit_display': '500 MB storage',
+        'popular': False,
+        'badge': '',
+        'features': [
+            {'text': '1 Books user', 'available': True},
+            {'text': '5 HRM users', 'available': False, 'coming_soon': True},
+            {'text': '10 Payroll users', 'available': False, 'coming_soon': True},
+            {'text': '15 Projects users', 'available': False, 'coming_soon': True},
+            {'text': '100 records', 'available': True},
+            {'text': '500 MB storage', 'available': True},
+        ],
+    },
+    'professional': {
+        'id': 'professional',
+        'name': 'Professional',
+        'display_name': 'Professional Plan',
+        'price_annual': 5000,
+        'price_annual_formatted': '₹5,000',
+        'monthly_equiv': 417,
+        'monthly_equiv_formatted': '₹417',
+        'billing_note': '/ org / year',
+        'monthly_note': 'just ₹417 a month',
+        'description': 'The complete core growth tier for operational control.',
+        'books_users': 2,
+        'hrm_users': 10,
+        'payroll_users': 10,
+        'projects_users': 10,
+        'record_limit': 500000,
+        'record_limit_display': '5 lakh records',
+        'storage_limit_mb': 10240,
+        'storage_limit_display': '10 GB storage',
+        'popular': True,
+        'badge': 'Most popular',
+        'features': [
+            {'text': '2 Books users', 'available': True},
+            {'text': '10 HRM users', 'available': False, 'coming_soon': True},
+            {'text': '10 Payroll users', 'available': False, 'coming_soon': True},
+            {'text': '10 Projects users', 'available': False, 'coming_soon': True},
+            {'text': '5 lakh records', 'available': True},
+            {'text': '10 GB storage', 'available': True},
+            {'text': 'Complete sales and purchase', 'available': True, 'divider_before': True},
+            {'text': 'Multiple banks', 'available': True},
+            {'text': 'All reports', 'available': True},
+            {'text': 'Reconciliation support', 'available': True},
+            {'text': 'Multi-currency support', 'available': True},
+            {'text': 'Complete leads life cycle', 'available': True},
+            {'text': 'Task, case and call log management', 'available': True},
+        ],
+    },
+    'premium': {
+        'id': 'premium',
+        'name': 'Premium',
+        'display_name': 'Premium Plan',
+        'price_annual': 20000,
+        'price_annual_formatted': '₹20,000',
+        'monthly_equiv': 1667,
+        'monthly_equiv_formatted': '₹1,667',
+        'billing_note': '/ org / year',
+        'monthly_note': 'just ₹1,667 a month',
+        'description': 'Maximum scale, warehousing, custom APIs and analytics.',
+        'books_users': 5,
+        'hrm_users': 15,
+        'payroll_users': 15,
+        'projects_users': 15,
+        'record_limit': 5000000,
+        'record_limit_display': '5 million records',
+        'storage_limit_mb': 51200,
+        'storage_limit_display': '50 GB storage',
+        'popular': False,
+        'badge': '',
+        'features': [
+            {'text': '5 Books users', 'available': True},
+            {'text': '15 HRM users', 'available': False, 'coming_soon': True},
+            {'text': '15 Payroll users', 'available': False, 'coming_soon': True},
+            {'text': '15 Projects users', 'available': False, 'coming_soon': True},
+            {'text': '5 million records', 'available': True},
+            {'text': '50 GB storage', 'available': True},
+            {'text': 'Everything in Professional', 'available': True, 'bold': True, 'divider_before': True},
+            {'text': 'Custom reports', 'available': True},
+            {'text': 'Custom dashboards', 'available': True},
+            {'text': 'Advanced inventory tracking', 'available': True},
+            {'text': 'AI agents', 'available': True},
+            {'text': 'AI assistance', 'available': True},
+            {'text': 'Customer portals', 'available': True},
+            {'text': 'Workflows', 'available': True},
+            {'text': 'Cloud functions', 'available': True},
+        ],
+    },
+}
+
+SUBSCRIPTION_FEATURE_ADDONS = [
+    {'id': 'custom_reports', 'name': 'Custom reports', 'price': 5000, 'price_display': '₹5,000 / year', 'description': ''},
+    {'id': 'advanced_analytics', 'name': 'Advanced analytics', 'price': 10000, 'price_display': '₹10,000 / year', 'description': ''},
+    {'id': 'document_scanning', 'name': 'Document scanning', 'price': 2000, 'price_display': '₹2,000 / year', 'description': '600 scans'},
+    {'id': 'additional_sales_orders', 'name': 'Additional sales orders', 'price': 5000, 'price_display': '₹5,000 / year', 'description': '600 orders'},
+    {'id': 'inventory_tracking', 'name': 'Inventory tracking', 'price': 10000, 'price_display': '₹10,000 / year', 'description': ''},
+    {'id': 'workflow_tasks', 'name': 'Workflow tasks', 'price': 5000, 'price_display': '₹5,000 / year', 'description': '60,000 tasks'},
+    {'id': 'locations', 'name': 'Locations', 'price': 350, 'price_display': '₹350 / location / year', 'description': ''},
+    {'id': 'custom_logics', 'name': 'Custom logics', 'price': 3000, 'price_display': '₹3,000 / year', 'description': '6 lakh executions'},
+]
+
+SUBSCRIPTION_USER_ADDONS = [
+    {'id': 'books_user', 'name': 'Books user', 'price': 2500, 'price_display': '₹2,500 / year', 'description': '', 'status': 'available'},
+    {'id': 'hrms_user', 'name': 'HRMS user', 'price': 6000, 'price_display': '₹6,000 / year', 'description': '10 users', 'status': 'coming_soon'},
+    {'id': 'projects_user', 'name': 'Projects user', 'price': 1500, 'price_display': '₹1,500 / year', 'description': '', 'status': 'coming_soon'},
+    {'id': 'payroll_user', 'name': 'Payroll user', 'price': 4000, 'price_display': '₹4,000 / year', 'description': '10 users', 'status': 'coming_soon'},
+    {'id': 'portal_user', 'name': 'Portal user', 'price': 10000, 'price_display': '₹10,000 / year', 'description': '100 users', 'status': 'available'},
+]
+
+BOOKS_COMPARISON_MATRIX = [
+    {'feature': 'Contact management', 'free': True, 'professional': True, 'premium': True},
+    {'feature': 'Quotes & invoices', 'free': True, 'professional': True, 'premium': True},
+    {'feature': 'GST filing', 'free': True, 'professional': True, 'premium': True},
+    {'feature': 'Inventory management', 'free': False, 'professional': True, 'premium': True},
+    {'feature': 'Multi-currency', 'free': False, 'professional': True, 'premium': True},
+    {'feature': 'Approvals', 'free': False, 'professional': True, 'premium': True},
+    {'feature': 'Budgeting', 'free': False, 'professional': False, 'premium': True},
+    {'feature': 'Vendor portal', 'free': False, 'professional': False, 'premium': True},
+    {'feature': 'Custom functions', 'free': False, 'professional': False, 'premium': True},
+    {'feature': 'Warehouse management', 'free': False, 'professional': False, 'premium': True},
+    {'feature': 'Serial & batch tracking', 'free': False, 'professional': False, 'premium': True},
+]
+
+def get_tenant_subscription_summary(org=None):
+    if not org:
+        org = Organization.get()
+
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    today = timezone.localdate()
+
+    if not sub:
+        # Check if an unassigned subscription exists or create a default Free tier
+        sub = TenantSubscription.objects.filter(organization__isnull=True).first()
+        if sub:
+            sub.organization = org
+            sub.save(update_fields=['organization'])
+        else:
+            sub = TenantSubscription.objects.create(
+                organization=org,
+                tier=TenantSubscription.FREE,
+                billing_cycle='annual',
+                status='active',
+                invoice_limit=100,
+                record_limit=100,
+                user_seat_limit=1,
+                storage_limit_mb=500,
+                purchased_books_users=0,
+                purchased_addons={},
+                period_start=today,
+                period_end=today + timedelta(days=365),
+                payment_method='Visa ending in 4242'
+            )
+
+    # Normalize tier if legacy
+    normalized_tier = normalize_subscription_tier(sub.tier)
+    if sub.tier != normalized_tier:
+        sub.tier = normalized_tier
+        spec = BOOKS_SUBSCRIPTION_PLANS.get(normalized_tier, BOOKS_SUBSCRIPTION_PLANS['free'])
+        sub.record_limit = spec['record_limit']
+        sub.user_seat_limit = spec['books_users']
+        sub.storage_limit_mb = spec['storage_limit_mb']
+        sub.save()
+
+    # Check trial expiration
+    if sub.is_trial and sub.trial_ends_at:
+        if sub.trial_ends_at < today:
+            sub.is_trial = False
+            sub.tier = TenantSubscription.FREE
+            sub.record_limit = 100
+            sub.user_seat_limit = 1
+            sub.storage_limit_mb = 500
+            sub.save()
+
+    spec = BOOKS_SUBSCRIPTION_PLANS.get(sub.tier, BOOKS_SUBSCRIPTION_PLANS['free'])
+
+    # Calculate actual usage metrics
+    total_records = (
+        Invoice.objects.filter(organization=org).count() +
+        Bill.objects.filter(organization=org).count() +
+        Quote.objects.filter(organization=org).count() +
+        SalesOrder.objects.filter(organization=org).count() +
+        PurchaseOrder.objects.filter(organization=org).count() +
+        RetainerInvoice.objects.filter(organization=org).count() +
+        CreditNote.objects.filter(organization=org).count() +
+        VendorCredit.objects.filter(organization=org).count()
+    )
+
+    total_users = UserProfile.objects.filter(organization=org).count()
+    if total_users == 0:
+        total_users = 1
+
+    total_storage = sum(d.file_size or 0 for d in ManagedDocument.objects.filter(organization=org)) // (1024 * 1024)
     if total_storage == 0:
         total_storage = 142
 
+    allowed_users = sub.user_seat_limit + (sub.purchased_books_users or 0)
+    record_limit = sub.record_limit or spec['record_limit']
+    storage_limit = sub.storage_limit_mb or spec['storage_limit_mb']
+
+    # Billing history
+    invoices_history_qs = SubscriptionInvoice.objects.filter(organization=org).order_by('-date', '-id')
+    if not invoices_history_qs.exists():
+        # Provide clean initial statement
+        init_amount = Decimal(str(spec['price_annual']))
+        init_desc = f"Convosis Books {spec['name']} Plan (Annual Subscription)"
+        init_inv = SubscriptionInvoice.objects.create(
+            organization=org,
+            invoice_no=f"INV-SUB-{today.year}-001",
+            date=sub.period_start or today,
+            description=init_desc,
+            amount=init_amount,
+            status='Paid',
+            payment_method=sub.payment_method or 'Visa ending in 4242'
+        )
+        invoices_history_qs = [init_inv]
+
+    invoices_history = [
+        {
+            'id': inv.pk,
+            'invoice_no': inv.invoice_no,
+            'date': inv.date.strftime('%d %b %Y') if inv.date else '',
+            'description': inv.description,
+            'amount': f"₹{inv.amount:,.2f}",
+            'status': inv.status,
+            'payment_method': inv.payment_method
+        }
+        for inv in invoices_history_qs[:15]
+    ]
+
+    trial_days_remaining = max(0, (sub.trial_ends_at - today).days) if (sub.is_trial and sub.trial_ends_at) else 0
+
     return {
         'tier': sub.tier,
-        'tier_display': sub.get_tier_display(),
-        'status': sub.status,
+        'tier_display': spec['display_name'],
+        'tier_name': spec['name'],
+        'status': 'Trial' if (sub.is_trial and trial_days_remaining > 0) else sub.status,
+        'is_trial': sub.is_trial,
+        'trial_days_remaining': trial_days_remaining,
         'billing_cycle': sub.billing_cycle,
         'period_start': sub.period_start.isoformat() if sub.period_start else '',
         'period_end': sub.period_end.isoformat() if sub.period_end else '',
         'auto_renew': sub.auto_renew,
         'payment_method': sub.payment_method,
         'usage': {
-            'invoices': {'used': total_invoices, 'limit': sub.invoice_limit, 'pct': min(100, int((total_invoices / sub.invoice_limit) * 100)) if sub.invoice_limit else 0},
-            'user_seats': {'used': total_users, 'limit': sub.user_seat_limit, 'pct': min(100, int((total_users / sub.user_seat_limit) * 100)) if sub.user_seat_limit else 0},
-            'storage_mb': {'used': total_storage, 'limit': sub.storage_limit_mb, 'pct': min(100, int((total_storage / sub.storage_limit_mb) * 100)) if sub.storage_limit_mb else 0},
-            'connected_banks': BankAccount.objects.count()
+            'records': {
+                'used': total_records,
+                'limit': record_limit,
+                'pct': min(100, int((total_records / record_limit) * 100)) if record_limit else 0
+            },
+            'invoices': {
+                'used': total_records,
+                'limit': record_limit,
+                'pct': min(100, int((total_records / record_limit) * 100)) if record_limit else 0
+            },
+            'user_seats': {
+                'used': total_users,
+                'limit': allowed_users,
+                'base': sub.user_seat_limit,
+                'addons': sub.purchased_books_users or 0,
+                'pct': min(100, int((total_users / allowed_users) * 100)) if allowed_users else 0
+            },
+            'storage_mb': {
+                'used': total_storage,
+                'limit': storage_limit,
+                'pct': min(100, int((total_storage / storage_limit) * 100)) if storage_limit else 0
+            },
+            'connected_banks': BankAccount.objects.filter(organization=org).count() if hasattr(BankAccount, 'organization') else BankAccount.objects.count()
         },
-        'invoices_history': [
-            {'invoice_no': 'INV-SUB-2026-001', 'date': '15 Jan 2026', 'description': 'Convosis Books Growth Edition (Annual Subscription)', 'amount': '₹24,000.00', 'status': 'Paid'},
-            {'invoice_no': 'INV-SUB-2025-001', 'date': '15 Jan 2025', 'description': 'Convosis Books Growth Edition (Annual Subscription)', 'amount': '₹24,000.00', 'status': 'Paid'}
-        ]
+        'plans': BOOKS_SUBSCRIPTION_PLANS,
+        'feature_addons': SUBSCRIPTION_FEATURE_ADDONS,
+        'user_addons': SUBSCRIPTION_USER_ADDONS,
+        'purchased_addons': sub.purchased_addons or {},
+        'comparison_features': BOOKS_COMPARISON_MATRIX,
+        'invoices_history': invoices_history
     }
 
-def update_tenant_subscription(tier, billing_cycle='annual'):
-    sub = TenantSubscription.objects.first()
+def update_tenant_subscription(org=None, tier='professional', billing_cycle='annual', user=None):
+    if not org:
+        org = Organization.get()
+
+    norm_tier = normalize_subscription_tier(tier)
+    spec = BOOKS_SUBSCRIPTION_PLANS.get(norm_tier, BOOKS_SUBSCRIPTION_PLANS['professional'])
+    today = timezone.localdate()
+
+    sub = TenantSubscription.objects.filter(organization=org).first()
     if not sub:
-        sub = TenantSubscription()
-    
-    limits = {
-        'starter': {'invoices': 300, 'seats': 5, 'storage': 2048},
-        'growth': {'invoices': 1000, 'seats': 15, 'storage': 10240},
-        'enterprise': {'invoices': 10000, 'seats': 100, 'storage': 102400},
-    }
-    lim = limits.get(tier, limits['growth'])
-    sub.tier = tier
+        sub = TenantSubscription(organization=org)
+
+    sub.tier = norm_tier
     sub.billing_cycle = billing_cycle
-    sub.invoice_limit = lim['invoices']
-    sub.user_seat_limit = lim['seats']
-    sub.storage_limit_mb = lim['storage']
+    sub.status = 'active'
+    sub.is_trial = False
+    sub.trial_ends_at = None
+    sub.record_limit = spec['record_limit']
+    sub.invoice_limit = spec['record_limit']
+    sub.user_seat_limit = spec['books_users']
+    sub.storage_limit_mb = spec['storage_limit_mb']
+    sub.period_start = today
+    sub.period_end = today + timedelta(days=365)
     sub.save()
-    return get_tenant_subscription_summary()
+
+    # Record subscription invoice if price > 0
+    if spec['price_annual'] > 0:
+        inv_count = SubscriptionInvoice.objects.filter(organization=org).count() + 1
+        SubscriptionInvoice.objects.create(
+            organization=org,
+            invoice_no=f"INV-SUB-{today.year}-{inv_count:03d}",
+            date=today,
+            description=f"Convosis Books {spec['name']} Plan ({billing_cycle.title()} Subscription)",
+            amount=Decimal(str(spec['price_annual'])),
+            status='Paid',
+            payment_method=sub.payment_method or 'Visa ending in 4242'
+        )
+
+    if user:
+        log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Upgraded/switched subscription to {spec['name']} Plan")
+
+    return get_tenant_subscription_summary(org=org)
+
+def start_subscription_trial(org=None, tier='professional', user=None):
+    if not org:
+        org = Organization.get()
+
+    norm_tier = normalize_subscription_tier(tier)
+    spec = BOOKS_SUBSCRIPTION_PLANS.get(norm_tier, BOOKS_SUBSCRIPTION_PLANS['professional'])
+    today = timezone.localdate()
+
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    if not sub:
+        sub = TenantSubscription(organization=org)
+
+    sub.tier = norm_tier
+    sub.status = 'trial'
+    sub.is_trial = True
+    sub.trial_ends_at = today + timedelta(days=45)
+    sub.record_limit = spec['record_limit']
+    sub.invoice_limit = spec['record_limit']
+    sub.user_seat_limit = spec['books_users']
+    sub.storage_limit_mb = spec['storage_limit_mb']
+    sub.period_start = today
+    sub.period_end = today + timedelta(days=45)
+    sub.save()
+
+    if user:
+        log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Started 45-day free trial of {spec['name']} Plan")
+
+    return get_tenant_subscription_summary(org=org)
+
+def purchase_subscription_addon(org=None, addon_key='', quantity=1, user=None):
+    if not org:
+        org = Organization.get()
+
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    if not sub:
+        get_tenant_subscription_summary(org=org)
+        sub = TenantSubscription.objects.filter(organization=org).first()
+
+    today = timezone.localdate()
+    quantity = max(1, int(quantity or 1))
+
+    if addon_key == 'books_user':
+        sub.purchased_books_users = (sub.purchased_books_users or 0) + quantity
+        amount = Decimal('2500.00') * quantity
+        desc = f"Books User Add-on ({quantity} seat{'s' if quantity > 1 else ''})"
+    elif addon_key == 'portal_user':
+        addons = dict(sub.purchased_addons or {})
+        addons['portal_user'] = addons.get('portal_user', 0) + (100 * quantity)
+        sub.purchased_addons = addons
+        amount = Decimal('10000.00') * quantity
+        desc = f"Customer Portal Users Pack ({100 * quantity} users)"
+    else:
+        # Check coming soon user addons
+        coming_soon_addons = {'hrms_user': 'HRMS user', 'projects_user': 'Projects user', 'payroll_user': 'Payroll user'}
+        if addon_key in coming_soon_addons:
+            raise ApiError(400, f"{coming_soon_addons[addon_key]} is Coming Soon and cannot be purchased yet.")
+
+        # Check feature addons
+        feature_dict = {f['id']: f for f in SUBSCRIPTION_FEATURE_ADDONS}
+        if addon_key in feature_dict:
+            finfo = feature_dict[addon_key]
+            addons = dict(sub.purchased_addons or {})
+            addons[addon_key] = True
+            sub.purchased_addons = addons
+            amount = Decimal(str(finfo['price'])) * quantity
+            desc = f"Feature Add-on: {finfo['name']}"
+        else:
+            raise ApiError(400, f"Unrecognized add-on module: {addon_key}")
+
+    sub.save()
+
+    # Generate billing invoice
+    inv_count = SubscriptionInvoice.objects.filter(organization=org).count() + 1
+    SubscriptionInvoice.objects.create(
+        organization=org,
+        invoice_no=f"INV-ADD-{today.year}-{inv_count:03d}",
+        date=today,
+        description=desc,
+        amount=amount,
+        status='Paid',
+        payment_method=sub.payment_method or 'Visa ending in 4242'
+    )
+
+    if user:
+        log_audit(user, 'create', 'TenantSubscriptionAddon', sub.pk, f"Purchased add-on {desc}")
+
+    return get_tenant_subscription_summary(org=org)
+
+def toggle_subscription_autorenew(org=None, auto_renew=None, user=None):
+    if not org:
+        org = Organization.get()
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    if not sub:
+        get_tenant_subscription_summary(org=org)
+        sub = TenantSubscription.objects.filter(organization=org).first()
+
+    if auto_renew is None:
+        sub.auto_renew = not sub.auto_renew
+    else:
+        sub.auto_renew = bool(auto_renew)
+    sub.save(update_fields=['auto_renew'])
+    if user:
+        log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Set auto-renew to {sub.auto_renew}")
+    return {'status': 'success', 'auto_renew': sub.auto_renew}
+
+def check_subscription_limits(org, limit_type='record'):
+    if not org:
+        org = Organization.get()
+    sub = TenantSubscription.objects.filter(organization=org).first()
+    if not sub:
+        return True
+
+    today = timezone.localdate()
+    # Check trial expiry
+    if sub.is_trial and sub.trial_ends_at and sub.trial_ends_at < today:
+        sub.is_trial = False
+        sub.tier = TenantSubscription.FREE
+        sub.record_limit = 100
+        sub.user_seat_limit = 1
+        sub.storage_limit_mb = 500
+        sub.save()
+
+    if limit_type == 'record':
+        total_records = (
+            Invoice.objects.filter(organization=org).count() +
+            Bill.objects.filter(organization=org).count() +
+            Quote.objects.filter(organization=org).count() +
+            SalesOrder.objects.filter(organization=org).count() +
+            PurchaseOrder.objects.filter(organization=org).count() +
+            RetainerInvoice.objects.filter(organization=org).count() +
+            CreditNote.objects.filter(organization=org).count() +
+            VendorCredit.objects.filter(organization=org).count()
+        )
+        if sub.record_limit is not None and total_records >= sub.record_limit:
+            raise ApiError(
+                403,
+                f"You have reached the maximum record limit ({sub.record_limit:,} records) for your {sub.get_tier_display()}. Please upgrade your plan to continue creating records.",
+                {'code': 'PLAN_RECORD_LIMIT_REACHED', 'limit': sub.record_limit, 'current': total_records}
+            )
+
+    elif limit_type == 'user':
+        allowed = sub.user_seat_limit + (sub.purchased_books_users or 0)
+        current_users = UserProfile.objects.filter(organization=org).count()
+        if allowed is not None and current_users >= allowed:
+            raise ApiError(
+                403,
+                f"You have reached the user seat limit ({allowed} users) for your {sub.get_tier_display()}. Please upgrade your plan or purchase Books User Add-ons.",
+                {'code': 'PLAN_USER_LIMIT_REACHED', 'limit': allowed, 'current': current_users}
+            )
+
+    elif limit_type == 'storage':
+        total_mb = sum(d.file_size or 0 for d in ManagedDocument.objects.filter(organization=org)) // (1024 * 1024)
+        if sub.storage_limit_mb is not None and total_mb >= sub.storage_limit_mb:
+            raise ApiError(
+                403,
+                f"You have reached your vault storage quota ({sub.storage_limit_mb:,} MB). Please upgrade your plan to expand storage capacity.",
+                {'code': 'PLAN_STORAGE_LIMIT_REACHED', 'limit': sub.storage_limit_mb, 'current': total_mb}
+            )
+
+    return True
 
 def get_tenant_admin_summary(org=None):
     from django.contrib.auth import get_user_model
@@ -5580,6 +6027,7 @@ def get_tenant_admin_summary(org=None):
 def invite_tenant_user(username, email, role='accountant', phone='', full_name='', password=None, org=None):
     from django.contrib.auth import get_user_model
     User = get_user_model()
+    check_subscription_limits(org, 'user')
     if User.objects.filter(username=username).exists():
         raise ApiError(400, f'Username "{username}" already exists.')
 

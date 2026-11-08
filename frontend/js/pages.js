@@ -8068,215 +8068,584 @@ async function subscriptionBillingPage(root) {
   try {
     const data = await api('subscription/summary/');
 
+    const curTier = data.tier || 'free';
+    const curStatus = data.status || 'Active';
+    const isTrial = Boolean(data.is_trial);
+    const trialDays = data.trial_days_remaining || 0;
+    const purchasedAddons = data.purchased_addons || {};
+
+    const checkIcon = `<span style="color:#10b981;font-size:16px;font-weight:700;display:inline-block;width:18px;">✓</span>`;
+    const crossIcon = `<span style="color:#94a3b8;font-size:15px;display:inline-block;width:18px;">✕</span>`;
+
     root.innerHTML = `
       <div class="bc">Home / Settings / Subscription & Billing</div>
-      <div class="hd">
-        <div>
-          <h1>Subscription, Usage Metering & Billing</h1>
-          <div class="sub" style="margin-top:2px;">
-            Manage SaaS tier plans, invoice volume quotas, user seats, and billing statements.
+
+      <!-- Top Hero Header -->
+      <div style="text-align:center;padding:20px 10px 10px;margin-bottom:10px;">
+        <h1 style="font-size:32px;font-weight:800;color:var(--tx-main);margin:0 0 6px;letter-spacing:-0.5px;">Simple pricing for every business.</h1>
+        <p style="font-size:15px;color:var(--tx-muted);margin:0;">Start free. Move up when your team and records grow.</p>
+      </div>
+
+      <!-- Current Subscription & Usage Metering Overview -->
+      <div class="card" style="margin-top:10px;padding:20px 24px;border-radius:16px;background:var(--surface-glass-elevated);border:1px solid var(--bd);">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;padding-bottom:16px;border-bottom:1px solid var(--bd-light);">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,rgba(37,99,235,0.15),rgba(99,102,241,0.15));color:#2563eb;display:grid;place-items:center;font-size:22px;">⚡</div>
+            <div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <h2 style="font-size:18px;margin:0;font-weight:700;">${esc(data.tier_display || 'Free Plan')}</h2>
+                ${isTrial && trialDays > 0 ? `
+                  <span class="pastel-chip chip-amber" style="font-size:11px;padding:3px 9px;font-weight:700;text-transform:uppercase;">45-Day Trial (${trialDays} days left)</span>
+                ` : `
+                  <span class="pastel-chip chip-mint" style="font-size:11px;padding:3px 9px;font-weight:700;text-transform:uppercase;">${esc(curStatus)}</span>
+                `}
+              </div>
+              <div class="sub" style="font-size:12.5px;margin-top:3px;">
+                Billed ${esc(data.billing_cycle || 'annually')} · Auto-renews on <b>${esc(data.period_end || 'Next billing cycle')}</b> via ${esc(data.payment_method || 'Visa ending in 4242')}
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn" id="btnToggleAutoRenew" type="button" style="font-size:12px;">
+              ${data.auto_renew ? 'Auto-Renew: ON' : 'Auto-Renew: OFF'}
+            </button>
+            <button class="btn" id="btnUpdatePaymentMethod" type="button" style="font-size:12px;">Update Payment Method</button>
           </div>
         </div>
-        <div class="act">
-          <button class="btn p" id="btnChangePlan" type="button" style="background:linear-gradient(135deg,var(--accent),var(--accent-to));border:none;">
-            Change Plan / Upgrade
-          </button>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px;">
+          <div style="background:var(--surface);padding:14px;border-radius:12px;border:1px solid var(--bd-light);">
+            <div class="sub" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">Accounting Records Quota</div>
+            <div style="font-size:22px;font-weight:800;margin:6px 0;">${Number(data.usage.records.used).toLocaleString()} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${Number(data.usage.records.limit).toLocaleString()}</span></div>
+            <div class="bar" style="height:6px;border-radius:4px;"><i style="width:${data.usage.records.pct}%;background:#2563eb;border-radius:4px;"></i></div>
+            <div class="sub" style="font-size:11px;margin-top:5px;">${data.usage.records.pct}% of plan record quota utilized</div>
+          </div>
+
+          <div style="background:var(--surface);padding:14px;border-radius:12px;border:1px solid var(--bd-light);">
+            <div class="sub" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">Books User Licenses</div>
+            <div style="font-size:22px;font-weight:800;margin:6px 0;">${data.usage.user_seats.used} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.user_seats.limit}</span></div>
+            <div class="bar" style="height:6px;border-radius:4px;"><i style="width:${data.usage.user_seats.pct}%;background:#10b981;border-radius:4px;"></i></div>
+            <div class="sub" style="font-size:11px;margin-top:5px;">${data.usage.user_seats.base} base plan seats ${data.usage.user_seats.addons > 0 ? `+ ${data.usage.user_seats.addons} add-on seats` : ''}</div>
+          </div>
+
+          <div style="background:var(--surface);padding:14px;border-radius:12px;border:1px solid var(--bd-light);">
+            <div class="sub" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">Document Vault Storage</div>
+            <div style="font-size:22px;font-weight:800;margin:6px 0;">${data.usage.storage_mb.used} MB <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.storage_mb.limit >= 1024 ? (data.usage.storage_mb.limit / 1024).toFixed(0) + ' GB' : data.usage.storage_mb.limit + ' MB'}</span></div>
+            <div class="bar" style="height:6px;border-radius:4px;"><i style="width:${data.usage.storage_mb.pct}%;background:#0ea5e9;border-radius:4px;"></i></div>
+            <div class="sub" style="font-size:11px;margin-top:5px;">AES-256 encrypted ledger attachments</div>
+          </div>
+
+          <div style="background:var(--surface);padding:14px;border-radius:12px;border:1px solid var(--bd-light);">
+            <div class="sub" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;">Connected Banks</div>
+            <div style="font-size:22px;font-weight:800;margin:6px 0;color:#2563eb;">${data.usage.connected_banks} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">accounts</span></div>
+            <div class="sub" style="font-size:11px;margin-top:14px;">Open Banking automated reconciliation</div>
+          </div>
         </div>
       </div>
 
-      <div class="card" style="margin-top:14px;padding:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;background:var(--surface-glass-elevated);">
-        <div style="display:flex;align-items:center;gap:14px;">
-          <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(168,85,247,0.18));color:var(--accent);display:grid;place-items:center;font-size:22px;">⚡</div>
+      <!-- 3 Books Subscription Plans Cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px;margin-top:30px;align-items:stretch;">
+
+        <!-- 1. FREE PLAN -->
+        <div class="card" style="padding:28px 24px;border-radius:20px;border:${curTier === 'free' ? '2px solid #2563eb' : '1px solid var(--bd)'};background:var(--surface-card);display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 4px 20px rgba(0,0,0,0.03);">
           <div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <h2 style="font-size:17px;margin:0;">${esc(data.tier_display || 'Growth Edition')}</h2>
-              <span class="pastel-chip chip-mint" style="font-size:11px;padding:2px 8px;text-transform:uppercase;">${esc(data.status || 'Active')}</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <h3 style="font-size:19px;font-weight:700;margin:0;">Free</h3>
+              ${curTier === 'free' ? '<span class="pastel-chip chip-indigo" style="font-size:11px;padding:2px 8px;font-weight:700;">Current Plan</span>' : ''}
             </div>
-            <div class="sub" style="font-size:12px;margin-top:2px;">
-              Billed ${esc(data.billing_cycle || 'annually')} · Auto-renews on <b>${esc(data.period_end || '15 Jan 2027')}</b> via ${esc(data.payment_method || 'Visa ending in 4242')}
+            <div style="font-size:36px;font-weight:800;color:var(--tx-main);margin:14px 0 2px;">₹0 <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ year</span></div>
+            <div class="sub" style="font-size:12.5px;color:var(--tx-muted);margin-bottom:14px;">just ₹0 a month</div>
+            <p style="font-size:13px;color:var(--tx-muted);line-height:1.45;margin:0 0 20px;min-height:38px;">Small team operations starting their finance journey.</p>
+            
+            <ul style="list-style:none;padding:0;margin:0 0 24px;font-size:13px;line-height:2.1;color:var(--tx-main);">
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>1 Books user</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>5 HRM users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>10 Payroll users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>15 Projects users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>100 records</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>500 MB storage</span></li>
+            </ul>
+          </div>
+
+          <div>
+            ${curTier === 'free' ? `
+              <button class="btn" style="width:100%;border-radius:24px;padding:11px;font-weight:600;" disabled>Current Active Plan</button>
+            ` : `
+              <button class="btn" style="width:100%;border-radius:24px;padding:11px;font-weight:600;" onclick="choosePlanAction('free')">Downgrade to Free</button>
+            `}
+          </div>
+        </div>
+
+        <!-- 2. PROFESSIONAL PLAN (Most Popular) -->
+        <div class="card" style="padding:28px 24px;border-radius:20px;border:${curTier === 'professional' ? '2.5px solid #2563eb' : '2px solid #3b82f6'};background:var(--surface-card);position:relative;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 10px 30px rgba(37,99,235,0.08);">
+          <div style="position:absolute;top:-13px;left:50%;transform:translateX(-50%);background:#2563eb;color:#fff;font-size:11.5px;font-weight:700;padding:3px 16px;border-radius:14px;box-shadow:0 2px 8px rgba(37,99,235,0.35);letter-spacing:0.2px;">Most popular</div>
+
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <h3 style="font-size:19px;font-weight:700;margin:0;">Professional</h3>
+              ${curTier === 'professional' ? '<span class="pastel-chip chip-mint" style="font-size:11px;padding:2px 8px;font-weight:700;">Current Plan</span>' : ''}
             </div>
+            <div style="font-size:36px;font-weight:800;color:var(--tx-main);margin:14px 0 2px;">₹5,000 <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ org / year</span></div>
+            <div class="sub" style="font-size:12.5px;color:var(--tx-muted);margin-bottom:14px;">just ₹417 a month</div>
+            <p style="font-size:13px;color:var(--tx-muted);line-height:1.45;margin:0 0 20px;min-height:38px;">The complete core growth tier for operational control.</p>
+
+            <ul style="list-style:none;padding:0;margin:0 0 24px;font-size:13px;line-height:2.05;color:var(--tx-main);">
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>2 Books users</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>10 HRM users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>10 Payroll users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>10 Projects users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>5 lakh records</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>10 GB storage</span></li>
+              <li style="border-top:1px dashed var(--bd-light);margin:8px 0;padding-top:8px;display:flex;align-items:center;gap:8px;">${checkIcon} <span>Complete sales and purchase</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Multiple banks</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>All reports</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Reconciliation support</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Multi-currency support</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Complete leads life cycle</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Task, case and call log management</span></li>
+            </ul>
+          </div>
+
+          <div>
+            ${curTier === 'professional' ? `
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;" disabled>Current Active Plan</button>
+            ` : curTier === 'free' && !isTrial ? `
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="startTrialAction('professional')">Start 45 days free trial</button>
+            ` : `
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('professional')">Upgrade to Professional</button>
+            `}
           </div>
         </div>
-        <div style="display:flex;gap:10px;">
-          <button class="btn" id="btnUpdatePaymentMethod" type="button" style="font-size:12px;">Update Payment Method</button>
+
+        <!-- 3. PREMIUM PLAN -->
+        <div class="card" style="padding:28px 24px;border-radius:20px;border:${curTier === 'premium' ? '2.5px solid #2563eb' : '1px solid var(--bd)'};background:var(--surface-card);display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 4px 20px rgba(0,0,0,0.03);">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <h3 style="font-size:19px;font-weight:700;margin:0;">Premium</h3>
+              ${curTier === 'premium' ? '<span class="pastel-chip chip-mint" style="font-size:11px;padding:2px 8px;font-weight:700;">Current Plan</span>' : ''}
+            </div>
+            <div style="font-size:36px;font-weight:800;color:var(--tx-main);margin:14px 0 2px;">₹20,000 <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ org / year</span></div>
+            <div class="sub" style="font-size:12.5px;color:var(--tx-muted);margin-bottom:14px;">just ₹1,667 a month</div>
+            <p style="font-size:13px;color:var(--tx-muted);line-height:1.45;margin:0 0 20px;min-height:38px;">Maximum scale, warehousing, custom APIs and analytics.</p>
+
+            <ul style="list-style:none;padding:0;margin:0 0 24px;font-size:13px;line-height:2.05;color:var(--tx-main);">
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>5 Books users</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>15 HRM users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>15 Payroll users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>15 Projects users <span style="color:#ef4444;font-size:11px;font-weight:600;margin-left:2px;">Coming soon</span></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>5 million records</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>50 GB storage</span></li>
+              <li style="border-top:1px dashed var(--bd-light);margin:8px 0;padding-top:8px;display:flex;align-items:center;gap:8px;">${checkIcon} <span><b>Everything in Professional</b></span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Custom reports</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Custom dashboards</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Advanced inventory tracking</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>AI agents</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>AI assistance</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Customer portals</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Workflows</span></li>
+              <li style="display:flex;align-items:center;gap:8px;">${checkIcon} <span>Cloud functions</span></li>
+            </ul>
+          </div>
+
+          <div>
+            ${curTier === 'premium' ? `
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;" disabled>Current Active Plan</button>
+            ` : curTier === 'free' && !isTrial ? `
+              <button class="btn" style="width:100%;border-radius:24px;padding:11px;font-weight:600;" onclick="startTrialAction('premium')">Start 45 days free trial</button>
+            ` : `
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('premium')">Upgrade to Premium</button>
+            `}
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Custom Plan at Dedicated Scale Banner -->
+      <div class="card" style="margin-top:34px;padding:26px 32px;background:linear-gradient(135deg,rgba(238,242,255,0.7),rgba(243,244,246,0.9));border:1px solid rgba(219,234,254,0.9);border-radius:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;">
+        <div style="max-width:680px;">
+          <h3 style="font-size:18px;font-weight:800;margin:0 0 6px;color:#1e293b;">Need a custom plan at dedicated scale?</h3>
+          <p style="font-size:13.5px;color:#475569;margin:0;line-height:1.5;">Custom record limits, dedicated hosting, custom APIs, SLA-backed support and isolated databases for enterprise operations.</p>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <button class="btn" type="button" id="btnContactSales" style="background:#2563eb;color:#fff;border:none;border-radius:22px;padding:9px 22px;font-weight:700;font-size:13px;box-shadow:0 2px 8px rgba(37,99,235,0.3);">Contact sales</button>
+          <button class="btn" type="button" id="btnBookDemo" style="background:#fff;color:#1e293b;border:1px solid #cbd5e1;border-radius:22px;padding:9px 22px;font-weight:600;font-size:13px;">Book a demo</button>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
-        <div class="card" style="padding:16px;">
-          <div class="sub" style="font-size:12px;">Monthly Invoices Generated</div>
-          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.invoices.used} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.invoices.limit}</span></div>
-          <div class="bar"><i style="width:${data.usage.invoices.pct}%;background:var(--accent);"></i></div>
-          <div class="sub" style="font-size:11px;">${data.usage.invoices.pct}% of monthly tier quota used</div>
-        </div>
+      <!-- Feature Add-ons (2 Columns Layout) -->
+      <div style="margin-top:48px;">
+        <h2 style="font-size:22px;font-weight:800;color:var(--tx-main);margin:0 0 4px;">Feature add-ons</h2>
+        <p style="font-size:13.5px;color:var(--tx-muted);margin:0 0 22px;">Available on Professional and bundled free into Premium.</p>
 
-        <div class="card" style="padding:16px;">
-          <div class="sub" style="font-size:12px;">User Seat Licenses</div>
-          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.user_seats.used} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${data.usage.user_seats.limit}</span></div>
-          <div class="bar"><i style="width:${data.usage.user_seats.pct}%;background:var(--up);"></i></div>
-          <div class="sub" style="font-size:11px;">${data.usage.user_seats.limit - data.usage.user_seats.used} additional seats available</div>
-        </div>
-
-        <div class="card" style="padding:16px;">
-          <div class="sub" style="font-size:12px;">Secure Document Vault Storage</div>
-          <div style="font-size:22px;font-weight:700;margin:6px 0;">${data.usage.storage_mb.used} MB <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">/ ${(data.usage.storage_mb.limit / 1024).toFixed(0)} GB</span></div>
-          <div class="bar"><i style="width:${data.usage.storage_mb.pct}%;background:var(--ok);"></i></div>
-          <div class="sub" style="font-size:11px;">AES-256 encrypted OCR staging</div>
-        </div>
-
-        <div class="card" style="padding:16px;">
-          <div class="sub" style="font-size:12px;">Connected Bank Feeds</div>
-          <div style="font-size:22px;font-weight:700;margin:6px 0;color:var(--accent);">${data.usage.connected_banks} <span style="font-size:13px;font-weight:500;color:var(--tx-muted);">accounts</span></div>
-          <div class="sub" style="font-size:11px;margin-top:14px;">Open Banking automated reconciliation</div>
-        </div>
-      </div>
-
-      <h2 style="font-size:16px;margin:24px 0 12px;font-weight:700;">Available SaaS Edition Tiers</h2>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
-
-        <div class="card" style="padding:22px;border:${data.tier === 'starter' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <b style="font-size:16px;">Starter Edition</b>
-            ${data.tier === 'starter' ? '<span class="pastel-chip chip-indigo">Current</span>' : ''}
-          </div>
-          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹899 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
-          <div class="sub" style="font-size:12px;margin-bottom:16px;">Best for sole proprietors and boutique agencies.</div>
-          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
-            <li>Up to 300 tax invoices / month</li>
-            <li>5 User seats with RBAC</li>
-            <li>2 GB Document vault storage</li>
-            <li>Standard GST & P&L reports</li>
-          </ul>
-          <button class="btn" style="width:100%;" ${data.tier === 'starter' ? 'disabled' : ''} onclick="changePlanAction('starter')">
-            ${data.tier === 'starter' ? 'Active Plan' : 'Downgrade to Starter'}
-          </button>
-        </div>
-
-        <div class="card" style="padding:22px;border:${data.tier === 'growth' ? '2px solid var(--accent)' : '1px solid var(--bd)'};background:var(--surface-glass-elevated);position:relative;">
-          <div style="position:absolute;top:-10px;right:20px;background:linear-gradient(135deg,var(--accent),var(--accent-to));color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;text-transform:uppercase;">Most Popular</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <b style="font-size:16px;">Growth Edition</b>
-            ${data.tier === 'growth' ? '<span class="pastel-chip chip-mint">Current</span>' : ''}
-          </div>
-          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹2,499 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
-          <div class="sub" style="font-size:12px;margin-bottom:16px;">For fast-growing companies and multi-branch operations.</div>
-          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
-            <li>Up to 1,000 tax invoices / month</li>
-            <li>15 User seats & Customer Portals</li>
-            <li>10 GB Encrypted storage</li>
-            <li>Live Open Banking Feeds & Auto-matching</li>
-            <li>IRN E-Invoicing & E-Way Bills</li>
-            <li>ConvoBot AI Ledger Intelligence (LLM Powered)</li>
-          </ul>
-          <button class="btn p" style="width:100%;" ${data.tier === 'growth' ? 'disabled' : ''} onclick="changePlanAction('growth')">
-            ${data.tier === 'growth' ? 'Current Active Edition' : 'Upgrade to Growth'}
-          </button>
-        </div>
-
-        <div class="card" style="padding:22px;border:${data.tier === 'enterprise' ? '2px solid var(--accent)' : '1px solid var(--bd)'};">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <b style="font-size:16px;">Enterprise Scale</b>
-            ${data.tier === 'enterprise' ? '<span class="pastel-chip chip-mint">Current</span>' : ''}
-          </div>
-          <div style="font-size:24px;font-weight:700;margin-bottom:4px;">₹6,999 <span style="font-size:12px;font-weight:400;color:var(--tx-muted);">/ month</span></div>
-          <div class="sub" style="font-size:12px;margin-bottom:16px;">High-throughput multi-entity enterprise operations.</div>
-          <ul style="font-size:12.5px;line-height:1.8;padding-left:18px;margin-bottom:20px;color:var(--tx);">
-            <li>10,000+ invoices / month quota</li>
-            <li>100 User seats & Auditor logins</li>
-            <li>100 GB High-availability vault storage</li>
-            <li>Multi-GSTIN multi-warehouse matrix</li>
-            <li>Dedicated API Webhooks & 100 req/sec quota</li>
-            <li>Priority 24/7 SLA & compliance support</li>
-          </ul>
-          <button class="btn" style="width:100%;" ${data.tier === 'enterprise' ? 'disabled' : ''} onclick="changePlanAction('enterprise')">
-            ${data.tier === 'enterprise' ? 'Active Plan' : 'Upgrade to Enterprise'}
-          </button>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px 40px;">
+          ${(data.feature_addons || []).map(addon => {
+            const isPurchased = Boolean(purchasedAddons[addon.id]);
+            const isBundled = curTier === 'premium';
+            return `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--bd-light);">
+                <div>
+                  <div style="font-size:14.5px;font-weight:600;color:var(--tx-main);">${esc(addon.name)}</div>
+                  ${addon.description ? `<div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">${esc(addon.description)}</div>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;">
+                  <div style="font-size:15px;font-weight:700;color:var(--tx-main);">${esc(addon.price_display)}</div>
+                  ${isBundled ? `
+                    <span class="pastel-chip chip-mint" style="font-size:11px;padding:3px 9px;">Included in Premium</span>
+                  ` : isPurchased ? `
+                    <span class="pastel-chip chip-indigo" style="font-size:11px;padding:3px 9px;">Active</span>
+                  ` : `
+                    <button class="btn" type="button" style="font-size:12px;padding:4px 12px;border-radius:14px;" onclick="purchaseAddonAction('${addon.id}', '${esc(addon.name)}', ${addon.price})">+ Add</button>
+                  `}
+                </div>
+              </div>
+            `;
+          }).join('')}
         </div>
       </div>
 
-      <h2 style="font-size:16px;margin:28px 0 12px;font-weight:700;">Billing Invoices & Payment Statements</h2>
-      <div class="card" style="padding:0;overflow:hidden;">
-        <table>
-          <thead>
-            <tr>
-              <th>Invoice Number</th>
-              <th>Billing Date</th>
-              <th>Description</th>
-              <th>Status</th>
-              <th class="r">Amount Paid</th>
-              <th class="r">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${data.invoices_history.map(inv => `
-              <tr>
-                <td><b>${esc(inv.invoice_no)}</b></td>
-                <td>${esc(inv.date)}</td>
-                <td>${esc(inv.description)}</td>
-                <td><span class="st ok">${esc(inv.status)}</span></td>
-                <td class="r"><b>${esc(inv.amount)}</b></td>
-                <td class="r">
-                  <button class="btn" type="button" style="font-size:11px;padding:3px 9px;" onclick="toast('Downloaded tax receipt ${inv.invoice_no}', 'ok')">Download Receipt</button>
-                </td>
+      <!-- User Add-ons (2 Columns Layout, Strictly Books/HRMS/Projects/Payroll/Portal) -->
+      <div style="margin-top:48px;">
+        <h2 style="font-size:22px;font-weight:800;color:var(--tx-main);margin:0 0 4px;">User add-ons</h2>
+        <p style="font-size:13.5px;color:var(--tx-muted);margin:0 0 22px;">Add user packs for the apps your team needs.</p>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px 40px;">
+          ${(data.user_addons || []).map(addon => {
+            const isComingSoon = addon.status === 'coming_soon';
+            return `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--bd-light);">
+                <div>
+                  <div style="font-size:14.5px;font-weight:600;color:var(--tx-main);display:flex;align-items:center;gap:8px;">
+                    ${esc(addon.name)}
+                    ${isComingSoon ? '<span style="color:#ef4444;font-size:11px;font-weight:600;">Coming soon</span>' : ''}
+                  </div>
+                  ${addon.description ? `<div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">${esc(addon.description)}</div>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;">
+                  <div style="font-size:15px;font-weight:700;color:var(--tx-main);">${esc(addon.price_display)}</div>
+                  ${isComingSoon ? `
+                    <button class="btn" disabled style="font-size:11px;padding:4px 10px;border-radius:14px;opacity:0.6;">Coming Soon</button>
+                  ` : `
+                    <button class="btn p" type="button" style="font-size:12px;padding:4px 12px;border-radius:14px;background:#2563eb;" onclick="purchaseUserAddonAction('${addon.id}', '${esc(addon.name)}', ${addon.price})">+ Add Pack</button>
+                  `}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Feature Comparison Table: BOOKS (Pure Books, No Tabs / No CRM Toggle) -->
+      <div style="margin-top:54px;">
+        <h2 style="font-size:24px;font-weight:800;color:var(--tx-main);margin:0 0 6px;">Every plan, feature by feature</h2>
+        <p style="font-size:13.5px;color:var(--tx-muted);margin:0 0 20px;">Pick the model that fits your team size, control needs and growth.</p>
+
+        <div class="card" style="padding:0;overflow:hidden;border-radius:16px;border:1px solid var(--bd);">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:var(--surface-header);border-bottom:1px solid var(--bd);">
+                <th style="padding:16px 20px;text-align:left;font-size:13.5px;font-weight:700;color:var(--tx-main);width:40%;">Feature</th>
+                <th style="padding:16px 14px;text-align:center;font-size:13.5px;font-weight:700;color:var(--tx-main);width:20%;">Free</th>
+                <th style="padding:16px 14px;text-align:center;font-size:13.5px;font-weight:700;color:#2563eb;width:20%;">Professional</th>
+                <th style="padding:16px 14px;text-align:center;font-size:13.5px;font-weight:700;color:var(--tx-main);width:20%;">Premium</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${(data.comparison_features || []).map((row, idx) => `
+                <tr style="border-bottom:1px solid var(--bd-light);background:${idx % 2 === 0 ? 'var(--surface-card)' : 'transparent'};">
+                  <td style="padding:14px 20px;font-size:13.5px;color:var(--tx-main);font-weight:500;">${esc(row.feature)}</td>
+                  <td style="padding:14px;text-align:center;">${row.free ? checkIcon : crossIcon}</td>
+                  <td style="padding:14px;text-align:center;">${row.professional ? checkIcon : crossIcon}</td>
+                  <td style="padding:14px;text-align:center;">${row.premium ? checkIcon : crossIcon}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Billing Invoices & Payment Statements -->
+      <div style="margin-top:54px;margin-bottom:20px;">
+        <h2 style="font-size:20px;font-weight:800;color:var(--tx-main);margin:0 0 6px;">Billing Invoices & Payment Statements</h2>
+        <p style="font-size:13px;color:var(--tx-muted);margin:0 0 16px;">Download GST compliant subscription receipts and track past payment transactions.</p>
+
+        <div class="card" style="padding:0;overflow:hidden;border-radius:16px;border:1px solid var(--bd);">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:var(--surface-header);border-bottom:1px solid var(--bd);">
+                <th style="padding:14px 18px;text-align:left;">Invoice Number</th>
+                <th style="padding:14px 14px;text-align:left;">Billing Date</th>
+                <th style="padding:14px 14px;text-align:left;">Description</th>
+                <th style="padding:14px 14px;text-align:left;">Status</th>
+                <th style="padding:14px 18px;text-align:right;">Amount Paid</th>
+                <th style="padding:14px 18px;text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(data.invoices_history || []).map(inv => `
+                <tr style="border-bottom:1px solid var(--bd-light);">
+                  <td style="padding:14px 18px;"><b>${esc(inv.invoice_no)}</b></td>
+                  <td style="padding:14px 14px;color:var(--tx-muted);">${esc(inv.date)}</td>
+                  <td style="padding:14px 14px;color:var(--tx-main);">${esc(inv.description)}</td>
+                  <td style="padding:14px 14px;"><span class="st ok">${esc(inv.status)}</span></td>
+                  <td style="padding:14px 18px;text-align:right;"><b>${esc(inv.amount)}</b></td>
+                  <td style="padding:14px 18px;text-align:right;">
+                    <button class="btn" type="button" style="font-size:11.5px;padding:4px 11px;border-radius:8px;" onclick="downloadReceiptAction(${inv.id || 0}, '${esc(inv.invoice_no)}')">
+                      <i class="fa-solid fa-download"></i> Receipt
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
     `;
 
-    window.changePlanAction = async (targetTier) => {
-      try {
-        const res = await api('subscription/update/', { method: 'POST', body: { tier: targetTier } });
-        toast(`Successfully switched subscription to ${res.tier_display}!`, 'ok');
-        subscriptionBillingPage(root);
-      } catch (e) { toast(e.message, 'err'); }
-    };
-
-    $('#btnChangePlan', root).addEventListener('click', () => {
+    // Global Action Handlers
+    window.choosePlanAction = async (targetTier) => {
+      const planNames = { free: 'Free Plan', professional: 'Professional Plan', premium: 'Premium Plan' };
+      const planPrices = { free: '₹0/yr', professional: '₹5,000/yr', premium: '₹20,000/yr' };
+      
       Modal.open({
-        title: 'Modify SaaS Subscription Tier',
+        title: `Switch to ${planNames[targetTier]}`,
         body: `
           <div style="padding:10px 0;">
-            <p class="sub" style="margin-bottom:14px;">Select your preferred edition and billing cadence:</p>
-            <div class="fg" style="margin-bottom:12px;">
-              <label>Edition Tier</label>
-              <select class="in" id="modalPlanTier">
-                <option value="starter" ${data.tier === 'starter' ? 'selected' : ''}>Starter Edition (₹899/mo)</option>
-                <option value="growth" ${data.tier === 'growth' ? 'selected' : ''}>Growth Edition (₹2,499/mo)</option>
-                <option value="enterprise" ${data.tier === 'enterprise' ? 'selected' : ''}>Enterprise Scale Edition (₹6,999/mo)</option>
+            <p style="font-size:14px;color:var(--tx-main);margin-bottom:16px;">
+              You are selecting the <b>${planNames[targetTier]}</b> (${planPrices[targetTier]}).
+            </p>
+            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
+                <span>Plan Subscription:</span>
+                <b>${planPrices[targetTier]}</b>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
+                <span>Payment Mode:</span>
+                <span>UPI / Credit Card / NetBanking</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--tx-muted);">
+                <span>Billing Period:</span>
+                <span>Annual (365 days)</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:var(--tx-muted);margin:0;">
+              By confirming, your plan quotas and access privileges will be updated immediately.
+            </p>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnConfirmPlanSwitch" style="background:#2563eb;">Confirm & Switch Plan</button>
+        `
+      });
+
+      $('#btnConfirmPlanSwitch').addEventListener('click', async () => {
+        try {
+          Modal.close();
+          toast('Processing subscription update…', 'info');
+          const res = await api('subscription/update/', { method: 'POST', body: { tier: targetTier, billing_cycle: 'annual' } });
+          toast(`Successfully updated subscription to ${res.tier_display}!`, 'ok');
+          subscriptionBillingPage(root);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
+    };
+
+    window.startTrialAction = async (targetTier) => {
+      const planNames = { professional: 'Professional Plan', premium: 'Premium Plan' };
+      try {
+        toast('Activating 45-day free trial…', 'info');
+        const res = await api('subscription/trial/', { method: 'POST', body: { tier: targetTier } });
+        toast(`45-Day Free Trial activated for ${planNames[targetTier] || 'Professional'}! Enjoy full access.`, 'ok');
+        subscriptionBillingPage(root);
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    };
+
+    window.purchaseAddonAction = async (addonId, addonName, price) => {
+      Modal.open({
+        title: `Add Feature: ${addonName}`,
+        body: `
+          <div style="padding:10px 0;">
+            <p style="font-size:13.5px;color:var(--tx-main);margin-bottom:14px;">
+              Add <b>${addonName}</b> to your current organization subscription.
+            </p>
+            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
+                <span>Module:</span>
+                <b>${addonName}</b>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;">
+                <span>Annual Add-on Cost:</span>
+                <b>₹${Number(price).toLocaleString()} / year</b>
+              </div>
+            </div>
+            <p style="font-size:12px;color:var(--tx-muted);margin:0;">
+              A GST invoice receipt will be generated and added to your billing history.
+            </p>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnConfirmAddon" style="background:#2563eb;">Confirm & Add</button>
+        `
+      });
+
+      $('#btnConfirmAddon').addEventListener('click', async () => {
+        try {
+          Modal.close();
+          toast(`Purchasing ${addonName}…`, 'info');
+          await api('subscription/addon/', { method: 'POST', body: { addon_key: addonId, quantity: 1 } });
+          toast(`${addonName} activated successfully!`, 'ok');
+          subscriptionBillingPage(root);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
+    };
+
+    window.purchaseUserAddonAction = async (addonId, addonName, unitPrice) => {
+      Modal.open({
+        title: `Add ${addonName} Pack`,
+        body: `
+          <div style="padding:10px 0;">
+            <div class="fg" style="margin-bottom:14px;">
+              <label>Number of User Packs</label>
+              <select class="in" id="addonPackQty">
+                <option value="1">1 Pack (₹${Number(unitPrice).toLocaleString()}/yr)</option>
+                <option value="2">2 Packs (₹${Number(unitPrice * 2).toLocaleString()}/yr)</option>
+                <option value="5">5 Packs (₹${Number(unitPrice * 5).toLocaleString()}/yr)</option>
+                <option value="10">10 Packs (₹${Number(unitPrice * 10).toLocaleString()}/yr)</option>
               </select>
             </div>
-            <div class="fg">
-              <label>Billing Cadence</label>
-              <select class="in" id="modalPlanCadence">
-                <option value="annual">Annual Billing (Save 20%)</option>
-                <option value="monthly">Monthly Billing</option>
-              </select>
+            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;">
+                <span>Total Annual Amount:</span>
+                <b id="addonPackTotal" style="color:#2563eb;">₹${Number(unitPrice).toLocaleString()} / yr</b>
+              </div>
             </div>
           </div>
         `,
         footer: `
           <button class="btn" data-close>Cancel</button>
-          <button class="btn p" id="btnConfirmPlanChange">Confirm Plan Update</button>
+          <button class="btn p" id="btnConfirmUserPack" style="background:#2563eb;">Confirm & Purchase</button>
         `
       });
 
-      $('#btnConfirmPlanChange').addEventListener('click', async () => {
-        const tier = $('#modalPlanTier').value;
-        const cycle = $('#modalPlanCadence').value;
+      const qtySelect = $('#addonPackQty');
+      const totalDisplay = $('#addonPackTotal');
+      if (qtySelect && totalDisplay) {
+        qtySelect.addEventListener('change', () => {
+          const q = parseInt(qtySelect.value, 10) || 1;
+          totalDisplay.textContent = `₹${Number(unitPrice * q).toLocaleString()} / yr`;
+        });
+      }
+
+      $('#btnConfirmUserPack').addEventListener('click', async () => {
+        const qty = parseInt(qtySelect.value, 10) || 1;
         try {
-          await api('subscription/update/', { method: 'POST', body: { tier, billing_cycle: cycle } });
-          toast('Subscription plan updated successfully!', 'ok');
           Modal.close();
+          toast(`Purchasing user seats…`, 'info');
+          await api('subscription/addon/', { method: 'POST', body: { addon_key: addonId, quantity: qty } });
+          toast(`User seats added successfully! Quota updated.`, 'ok');
           subscriptionBillingPage(root);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
+    };
+
+    window.downloadReceiptAction = (invId, invNo) => {
+      if (invId) {
+        window.open(`/api/subscription/invoices/${invId}/receipt/`, '_blank');
+      } else {
+        toast(`Downloaded receipt ${invNo}`, 'ok');
+      }
+    };
+
+    // Toggle Auto-Renew
+    $('#btnToggleAutoRenew', root).addEventListener('click', async () => {
+      try {
+        const res = await api('subscription/autorenew/', { method: 'POST', body: { auto_renew: !data.auto_renew } });
+        toast(`Auto-renew turned ${res.auto_renew ? 'ON' : 'OFF'}.`, 'ok');
+        subscriptionBillingPage(root);
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    });
+
+    // Update Payment Method
+    $('#btnUpdatePaymentMethod', root).addEventListener('click', () => {
+      Modal.open({
+        title: 'Update Billing & Payment Method',
+        body: `
+          <div style="padding:10px 0;">
+            <p class="sub" style="margin-bottom:14px;">Select your preferred corporate payment gateway or UPI handle:</p>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Payment Mode</label>
+              <select class="in" id="selPayMode">
+                <option value="UPI">UPI AutoPay (Google Pay, PhonePe, Paytm)</option>
+                <option value="Card">Corporate Credit / Debit Card (Visa, Mastercard, RuPay)</option>
+                <option value="NetBanking">Direct Net Banking (HDFC, ICICI, SBI, Axis)</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label>VPA / Card Details / Account Reference</label>
+              <input type="text" class="in" id="txtPayRef" placeholder="e.g. accounts@okaxis or Card ending 4242" value="${esc(data.payment_method || '')}">
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnSavePaymentMethod" style="background:#2563eb;">Save Payment Details</button>
+        `
+      });
+
+      $('#btnSavePaymentMethod').addEventListener('click', () => {
+        const ref = $('#txtPayRef').value.trim() || 'UPI AutoPay';
+        toast(`Payment details updated to: ${ref}`, 'ok');
+        Modal.close();
       });
     });
 
-    $('#btnUpdatePaymentMethod', root).addEventListener('click', () => {
-      toast('Payment gateway portal: UPI payment collection active and validated.', 'ok');
-    });
+    // Contact Sales / Book Demo
+    const showSalesModal = (actionTitle) => {
+      Modal.open({
+        title: actionTitle,
+        body: `
+          <div style="padding:10px 0;">
+            <p style="font-size:13.5px;color:var(--tx-muted);margin-bottom:14px;">
+              Our enterprise solution architect will get in touch within 2 business hours.
+            </p>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Contact Name</label>
+              <input type="text" class="in" id="txtLeadName" placeholder="Your full name" value="Convosis Administrator">
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Business Email</label>
+              <input type="email" class="in" id="txtLeadEmail" placeholder="name@company.com" value="admin@convosis.com">
+            </div>
+            <div class="fg" style="margin-bottom:12px;">
+              <label>Estimated Monthly Record Quota or Needs</label>
+              <input type="text" class="in" id="txtLeadNeeds" placeholder="e.g. 50+ million records, dedicated database, custom ERP sync">
+            </div>
+          </div>
+        `,
+        footer: `
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn p" id="btnSubmitSalesLead" style="background:#2563eb;">Submit Request</button>
+        `
+      });
+
+      $('#btnSubmitSalesLead').addEventListener('click', () => {
+        toast('Your inquiry has been submitted! Our enterprise team will contact you shortly.', 'ok');
+        Modal.close();
+      });
+    };
+
+    $('#btnContactSales', root).addEventListener('click', () => showSalesModal('Contact Enterprise Sales'));
+    $('#btnBookDemo', root).addEventListener('click', () => showSalesModal('Schedule a Dedicated Product Demo'));
 
   } catch (e) {
     root.innerHTML = errBox(e.message, true);

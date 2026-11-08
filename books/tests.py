@@ -1776,3 +1776,203 @@ class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
         self.assertEqual(data_ewb['bill_number'], '123456789012')
 
 
+class TestBooksSubscriptionAndBilling(TestCase):
+    def setUp(self):
+        from books import services
+        self.org = Organization.objects.first() or Organization.objects.create(name='Convosis Org Test')
+        self.admin_user = User.objects.create_user(username='subadmin', email='subadmin@convosis.com', password='password123')
+        self.profile = UserProfile.objects.create(user=self.admin_user, organization=self.org, role=UserProfile.ADMIN)
+        services.get_tenant_subscription_summary(org=self.org)
+        self.client.force_login(self.admin_user)
+
+    def test_subscription_summary_and_plan_structure(self):
+        res = self.client.get('/api/subscription/summary/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn('plans', data)
+        self.assertIn('free', data['plans'])
+        self.assertIn('professional', data['plans'])
+        self.assertIn('premium', data['plans'])
+
+        # Verify Free plan pricing & limits
+        free_plan = data['plans']['free']
+        self.assertEqual(free_plan['price_annual'], 0)
+        self.assertEqual(free_plan['monthly_equiv'], 0)
+        self.assertEqual(free_plan['books_users'], 1)
+        self.assertEqual(free_plan['record_limit'], 100)
+
+        # Verify Professional plan pricing & limits
+        pro_plan = data['plans']['professional']
+        self.assertEqual(pro_plan['price_annual'], 5000)
+        self.assertEqual(pro_plan['monthly_equiv'], 417)
+        self.assertEqual(pro_plan['books_users'], 2)
+        self.assertEqual(pro_plan['record_limit'], 500000)
+        self.assertTrue(pro_plan['popular'])
+
+        # Verify Premium plan pricing & limits
+        prem_plan = data['plans']['premium']
+        self.assertEqual(prem_plan['price_annual'], 20000)
+        self.assertEqual(prem_plan['monthly_equiv'], 1667)
+        self.assertEqual(prem_plan['books_users'], 5)
+        self.assertEqual(prem_plan['record_limit'], 5000000)
+
+        # Verify Comparison matrix has 11 features and no CRM features
+        self.assertEqual(len(data['comparison_features']), 11)
+        feature_names = [f['feature'] for f in data['comparison_features']]
+        self.assertIn('Contact management', feature_names)
+        self.assertIn('Quotes & invoices', feature_names)
+        self.assertIn('GST filing', feature_names)
+        self.assertIn('Inventory management', feature_names)
+        self.assertIn('Multi-currency', feature_names)
+        self.assertIn('Approvals', feature_names)
+        self.assertIn('Budgeting', feature_names)
+        self.assertIn('Vendor portal', feature_names)
+        self.assertIn('Custom functions', feature_names)
+        self.assertIn('Warehouse management', feature_names)
+        self.assertIn('Serial & batch tracking', feature_names)
+
+        # Verify Add-ons
+        self.assertEqual(len(data['feature_addons']), 8)
+        user_addon_ids = [u['id'] for u in data['user_addons']]
+        self.assertIn('books_user', user_addon_ids)
+        self.assertNotIn('crm_user', user_addon_ids)
+
+    def test_plan_upgrade_and_billing_invoice_generation(self):
+        # Upgrade to Professional
+        res = self.client.post(
+            '/api/subscription/update/',
+            data=json.dumps({'tier': 'professional', 'billing_cycle': 'annual'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['tier'], 'professional')
+        self.assertEqual(data['usage']['records']['limit'], 500000)
+        self.assertEqual(data['usage']['user_seats']['limit'], 2)
+
+        # Check SubscriptionInvoice
+        from books.models import SubscriptionInvoice
+        inv = SubscriptionInvoice.objects.filter(organization=self.org).first()
+        self.assertIsNotNone(inv)
+        self.assertEqual(inv.amount, Decimal('5000.00'))
+        self.assertEqual(inv.status, 'Paid')
+
+        # Download receipt
+        res_rcpt = self.client.get(f'/api/subscription/invoices/{inv.id}/receipt/')
+        self.assertEqual(res_rcpt.status_code, 200)
+        self.assertIn(inv.invoice_no, res_rcpt.content.decode('utf-8'))
+
+    def test_free_trial_activation(self):
+        res = self.client.post(
+            '/api/subscription/trial/',
+            data=json.dumps({'tier': 'professional'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data['is_trial'])
+        self.assertEqual(data['status'], 'Trial')
+        self.assertGreaterEqual(data['trial_days_remaining'], 44)
+
+    def test_addon_purchases_and_validation(self):
+        # Purchase Books user seat pack
+        res_usr = self.client.post(
+            '/api/subscription/addon/',
+            data=json.dumps({'addon_key': 'books_user', 'quantity': 2}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_usr.status_code, 200)
+        data_usr = res_usr.json()
+        self.assertEqual(data_usr['usage']['user_seats']['addons'], 2)
+
+        # Purchase feature add-on: custom_reports
+        res_feat = self.client.post(
+            '/api/subscription/addon/',
+            data=json.dumps({'addon_key': 'custom_reports'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_feat.status_code, 200)
+        data_feat = res_feat.json()
+        self.assertTrue(data_feat['purchased_addons'].get('custom_reports'))
+
+        # Reject Coming Soon add-on purchase
+        res_cs = self.client.post(
+            '/api/subscription/addon/',
+            data=json.dumps({'addon_key': 'hrms_user'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_cs.status_code, 400)
+        self.assertIn('Coming Soon', res_cs.json()['error'])
+
+    def test_record_and_user_limit_enforcement(self):
+        from books.models import TenantSubscription, Customer
+        sub = TenantSubscription.objects.get(organization=self.org)
+        sub.record_limit = 0  # Force record limit to 0
+        sub.save()
+
+        cust = Customer.objects.create(organization=self.org, name='Limit Cust', email='limit@cust.com')
+
+        # Try creating invoice via DocResource
+        res_inv = self.client.post(
+            '/api/invoices/',
+            data=json.dumps({
+                'customer': cust.id,
+                'date': '2026-11-08',
+                'lines': [{
+                    'description': 'Consulting services',
+                    'quantity': 1,
+                    'rate': 1000,
+                    'taxable': 1000,
+                    'tax_amount': 180,
+                    'line_total': 1180,
+                    'gst_rate': 18
+                }]
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(res_inv.status_code, 403)
+        self.assertIn('record limit', res_inv.json()['error'].lower())
+
+        # Test user limit enforcement
+        sub.record_limit = 1000
+        sub.user_seat_limit = 1  # Admin user is already 1 user
+        sub.purchased_books_users = 0
+        sub.save()
+
+        res_invite = self.client.post(
+            '/api/settings/users/invite/',
+            data=json.dumps({'email': 'newguy@example.com', 'name': 'New Guy'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_invite.status_code, 403)
+        self.assertIn('user seat limit', res_invite.json()['error'].lower())
+
+    def test_organization_subscription_isolation(self):
+        from books.models import TenantSubscription
+        org2 = Organization.objects.create(name='Second Org Ltd')
+        sub2 = TenantSubscription.objects.create(
+            organization=org2,
+            tier=TenantSubscription.PREMIUM,
+            record_limit=5000000,
+            user_seat_limit=5,
+            storage_limit_mb=51200
+        )
+
+        user2 = User.objects.create_user(username='org2admin', email='admin@org2.com', password='password123')
+        UserProfile.objects.create(user=user2, organization=org2, role=UserProfile.ADMIN)
+
+        client2 = self.client_class()
+        client2.force_login(user2)
+
+        res2 = client2.get('/api/subscription/summary/')
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.json()['tier'], 'premium')
+        self.assertEqual(res2.json()['usage']['records']['limit'], 5000000)
+
+        # Ensure Org 1 was not affected
+        res1 = self.client.get('/api/subscription/summary/')
+        self.assertEqual(res1.status_code, 200)
+        self.assertNotEqual(res1.json()['usage']['records']['limit'], 5000000)
+
+
+

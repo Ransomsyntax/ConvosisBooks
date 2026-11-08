@@ -105,7 +105,7 @@ async function api(path, opt = {}) {
   return data;
 }
 
-const BADGE = { Paid: 'ok', Overdue: 'ba', 'Partially Paid': 'wa', Sent: 'in', Open: 'in', Draft: 'gr', Void: 'gr', Active: 'ok', Inactive: 'gr', 'Low stock': 'wa', 'Out of stock': 'ba' };
+const BADGE = { Paid: 'ok', Overdue: 'ba', 'Partially Paid': 'wa', 'Partially Applied': 'wa', 'Fully Applied': 'ok', Sent: 'in', Open: 'in', Draft: 'gr', Void: 'gr', Cancelled: 'gr', Active: 'ok', active: 'ok', Inactive: 'gr', paused: 'wa', Paused: 'wa', completed: 'ok', Completed: 'ok', cancelled: 'gr', 'Low stock': 'wa', 'Out of stock': 'ba' };
 const badge = s => `<span class="st ${BADGE[s] || 'gr'}">${esc(s)}</span>`;
 const spinner = '<div class="spin" role="status">Loading…</div>';
 const errBox = (msg, retry) => `<div class="empty" role="alert"><div>${esc(msg)}${retry ? '<br><button class="btn" data-retry type="button" style="margin-top:8px">Retry</button>' : ''}</div></div>`;

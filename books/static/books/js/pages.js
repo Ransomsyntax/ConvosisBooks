@@ -1731,10 +1731,39 @@ const LISTS = {
   },
   'recurring-invoices': {
     api: 'recurring-invoices', title: 'Recurring Invoices', bc: 'Sales', newLabel: 'New recurring profile', onNew: () => recurringInvoiceModal(), ordering: '-created_at', empty: 'No recurring profiles yet.',
-    cols: [{ h: 'Profile Name', s: 'profile_name', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.profile_name)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Frequency', f: r => badge(r.frequency) }, { h: 'Next Date', f: r => fd(r.next_date) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Status', f: r => badge(r.status) }],
-    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => {
-      if (a === 'edit') recurringInvoiceModal(r.id);
+    cols: [
+      { h: 'Profile Name', s: 'profile_name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.profile_name)}</button>` },
+      { h: 'Customer', f: r => esc(r.customer_name) },
+      { h: 'Frequency', f: r => badge(r.frequency) },
+      { h: 'Next Date', f: r => fd(r.next_date) },
+      { h: 'Total', ...money(r => inr(r.total)) },
+      { h: 'Status', f: r => badge(r.status) }
+    ],
+    actions: r => [
+      ['view', 'View Profile & Invoices'],
+      ['generate', 'Generate Invoice Now'],
+      ['edit', 'Edit Profile'],
+      ['toggle-status', r.status === 'active' ? 'Pause Schedule' : 'Resume Schedule'],
+      ['delete', 'Delete', 'd']
+    ],
+    onAction: async (a, r) => {
+      if (a === 'view') viewRecurringInvoiceModal(r.id);
+      else if (a === 'generate') {
+        try {
+          const res = await api(`recurring-invoices/${r.id}/generate-invoice/`, { method: 'POST', body: {} });
+          toast(`Generated invoice ${res.invoice_number || ''} successfully!`, 'ok');
+          if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+          else refresh();
+        } catch (e) { toast(e.message, 'err'); }
+      } else if (a === 'toggle-status') {
+        const nextAct = r.status === 'active' ? 'pause' : 'resume';
+        try {
+          await api(`recurring-invoices/${r.id}/${nextAct}/`, { method: 'POST', body: {} });
+          toast(`Profile ${nextAct === 'pause' ? 'paused' : 'resumed'}`);
+          if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+          else refresh();
+        } catch (e) { toast(e.message, 'err'); }
+      } else if (a === 'edit') recurringInvoiceModal(r.id);
       else if (a === 'delete') deleteRecord('recurring-invoices', r, 'recurring profile');
     },
   },
@@ -2624,8 +2653,10 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
               ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send">${!isBill ? 'Send' : 'Approve'}</button>` : ''}
               <button class="btn" type="button" data-act="print">PDF/Print</button>
               ${isRetainer ? `
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-act="refund-retainer" title="Refund available retainer balance">Refund</button>` : ''}
+                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' ? `<button class="btn" type="button" data-act="void-retainer">Void / Cancel</button>` : ''}
               ` : `
                 ${(posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
                 ${posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
@@ -2780,6 +2811,21 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       if (act === 'pay-retainer') return recordRetainerPaymentModal(d, () => loadDetail(d.id));
       if (act === 'apply-invoices') return applyRetainerModal(d, () => loadDetail(d.id));
       if (act === 'apply-retainer') return applyRetainerToInvoiceModal(d, () => loadDetail(d.id));
+      if (act === 'refund-retainer') return refundRetainerModal(d, () => loadDetail(d.id));
+      if (act === 'void-retainer') {
+        if (!(await confirmBox({
+          title: `Void / Cancel ${d.number}?`,
+          message: `Are you sure you want to void/cancel retainer invoice ${d.number}?`,
+          okText: 'Void Retainer',
+          danger: true
+        }))) return;
+        try {
+          await api(`retainer-invoices/${d.id}/void/`, { method: 'POST', body: {} });
+          toast(`${d.number} voided successfully`);
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
       if (act === 'custom') return openTemplateCustomizer(d, kind, () => {
         $('#doc-sheet-viewport', root).innerHTML = renderDocSheet(curDoc, kind);
       });
@@ -2908,8 +2954,9 @@ async function docDetail(kind, id) {
         <button class="btn" type="button" data-do="att">📎 Attachments (${attCount})</button>
         ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-do="post">${!isBill ? 'Mark as sent' : 'Approve bill'}</button>` : ''}
 
-        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
-        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
+        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-do="pay-retainer">Record Payment</button>` : ''}
+        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-do="apply-invoices">Apply to Invoices</button>` : ''}
+        ${isRetainer && d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-do="refund-retainer">Refund</button>` : ''}
         ${!isRetainer && (posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-do="pay">Record Payment</button>` : ''}
         ${inv && posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-do="apply-retainer">Apply Retainer</button>` : ''}
         <button class="btn d" type="button" data-do="delete">Delete</button>
@@ -2963,6 +3010,7 @@ async function docDetail(kind, id) {
       if (act === 'pay-retainer') { m.close(); return recordRetainerPaymentModal(d, () => refresh()); }
       if (act === 'apply-invoices') { m.close(); return applyRetainerModal(d, () => refresh()); }
       if (act === 'apply-retainer') { m.close(); return applyRetainerToInvoiceModal(d, () => refresh()); }
+      if (act === 'refund-retainer') { m.close(); return refundRetainerModal(d, () => refresh()); }
       if (act === 'post') { await api(`${kind}/${id}/${!isBill ? 'send' : 'approve'}/`, { method: 'POST', body: {} }); toast(d.number + (!isBill ? ' sent' : ' approved')); m.close(); refresh(); }
       if (act === 'delete') {
         const docLabel = isRetainer ? 'retainer invoice ' : inv ? 'invoice ' : 'bill ';
@@ -3020,6 +3068,61 @@ async function recordRetainerPaymentModal(doc, onDone) {
   });
 }
 
+async function refundRetainerModal(doc, onDone) {
+  const avail = num(doc.available_balance || 0);
+  if (avail <= 0) {
+    toast('No available retainer balance to refund.', 'err');
+    return;
+  }
+  let bankOpts = [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash']];
+  try {
+    const bas = await api('lookup/bank-accounts/');
+    if (bas && bas.length) {
+      bankOpts = bas.map(b => [b.name, `${b.name} (${b.bank_name || 'Bank'})`]);
+      bankOpts.push(['Cash', 'Petty Cash']);
+    }
+  } catch (e) {}
+
+  formModal({
+    title: `Refund Advance · Retainer ${doc.number}`,
+    wide: false,
+    submit: 'Process Refund',
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
+        <div><b>Customer:</b> ${esc(doc.party || doc.customer_name)}</div>
+        <div style="margin-top:2px;"><b>Retainer Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Available to Refund:</b> <span style="color:#059669;font-weight:700;">${inr(avail)}</span></div>
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'amount', label: 'Refund Amount (₹)', type: 'number', req: 1, value: avail.toFixed(2), attrs: `min="0.01" max="${avail}" step="0.01"` })}
+        ${fld({ name: 'date', label: 'Refund Date', type: 'date', req: 1, value: APP.today })}
+        ${fld({ name: 'mode', label: 'Refund Mode', type: 'select', opts: [['bank_transfer', 'Bank Transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Credit/Debit Card'], ['other', 'Other']], value: 'bank_transfer' })}
+        ${fld({ name: 'account', label: 'Paid From', type: 'select', opts: bankOpts, value: bankOpts[0][0] })}
+        ${fld({ name: 'reference', label: 'Reference#', col: 'c2', placeholder: 'UTR / Transaction ID / Cheque#' })}
+        ${fld({ name: 'notes', label: 'Notes / Reason', type: 'textarea', col: 'c2', placeholder: 'Reason for refund' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const refAmt = num(d.amount);
+      if (refAmt <= 0) throw new ApiErr(400, { amount: 'Refund amount must be greater than zero.' });
+      if (refAmt > avail + 0.009) throw new ApiErr(400, { amount: `Refund amount cannot exceed available balance (${inr(avail)}).` });
+
+      await api(`retainer-invoices/${doc.id}/refund/`, {
+        method: 'POST',
+        body: {
+          amount: refAmt,
+          date: d.date,
+          mode: d.mode,
+          account: d.account,
+          reference: d.reference,
+          notes: d.notes,
+        }
+      });
+      toast(`Refund of ${inr(refAmt)} processed successfully`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
 async function applyRetainerModal(retainerDoc, onDone) {
   const avail = num(retainerDoc.available_balance || 0);
   if (avail <= 0) {
@@ -3028,7 +3131,7 @@ async function applyRetainerModal(retainerDoc, onDone) {
   }
   let res;
   try {
-    res = await api('invoices/?' + qs({ customer: retainerDoc.party_id || retainerDoc.customer_id, status: 'unpaid', page_size: 100 }));
+    res = await api('invoices/?' + qs({ customer: retainerDoc.party_id || retainerDoc.customer_id, open: '1', page_size: 100 }));
   } catch (e) {
     toast(e.message, 'err');
     return;
@@ -3292,6 +3395,199 @@ async function applyRetainerToInvoiceModal(invoiceDoc, onDone) {
       }
     }
   });
+}
+
+async function viewRecurringInvoiceModal(id) {
+  try {
+    const d = await api(`recurring-invoices/${id}/`);
+    const kv = [
+      ['Customer', esc(d.customer_name || '—')],
+      ['Profile Name', esc(d.name || '—')],
+      ['Frequency', esc(d.frequency_label || d.frequency || 'Monthly')],
+      ['Repeat Every', `${d.repeat_every || 1} ${d.frequency || ''}`],
+      ['Start Date', fd(d.start_date)],
+      ['Next Invoice Date', fd(d.next_date)],
+      ['End Date', d.end_date ? fd(d.end_date) : 'Never (Unlimited)'],
+      ['Status', statusBadge(d.status_label || d.status)],
+      ['Subtotal', inr(d.subtotal || 0)],
+      ['Tax Amount', inr(d.tax_amount || 0)],
+      ['Total Amount', inr(d.total_amount || 0)],
+      ['Payment Terms', d.payment_terms === 0 ? 'Due on Receipt' : `Net ${d.payment_terms} days`],
+      ['Auto-Send Email', d.auto_send ? 'Enabled (Automatic)' : 'Disabled (Manual)']
+    ];
+
+    let linesHtml = '';
+    if (d.lines && d.lines.length) {
+      linesHtml = `
+        <h4 style="margin:16px 0 8px 0;font-size:13px;font-weight:600;">Items & Line Details</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item / Description</th>
+                <th class="r">Qty</th>
+                <th class="r">Rate</th>
+                <th class="r">Disc %</th>
+                <th class="r">GST %</th>
+                <th class="r">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${d.lines.map(ln => `
+                <tr>
+                  <td>
+                    <div style="font-weight:500;">${esc(ln.description || 'Line item')}</div>
+                    ${ln.hsn_sac ? `<div class="sub" style="font-size:11px;">HSN/SAC: ${esc(ln.hsn_sac)}</div>` : ''}
+                  </td>
+                  <td class="r">${ln.quantity}</td>
+                  <td class="r">${inr(ln.rate)}</td>
+                  <td class="r">${ln.discount_percent || 0}%</td>
+                  <td class="r">${ln.gst_rate || 0}%</td>
+                  <td class="r">${inr(ln.line_total)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    let upcomingHtml = '';
+    if (d.upcoming_dates && d.upcoming_dates.length) {
+      upcomingHtml = `
+        <div style="margin:12px 0;padding:10px;background:var(--bg-subtle,#f8fafc);border-radius:6px;border:1px solid var(--border,#e2e8f0);">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Upcoming Scheduled Invoice Dates:</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${d.upcoming_dates.map(dt => `<span class="badge wa" style="font-size:11px;">${fd(dt)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let invoicesHtml = '';
+    if (d.invoices && d.invoices.length) {
+      invoicesHtml = `
+        <h4 style="margin:16px 0 8px 0;font-size:13px;font-weight:600;">Generated Invoices History (${d.invoices.length})</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Date</th>
+                <th>Due Date</th>
+                <th class="r">Total</th>
+                <th class="r">Balance</th>
+                <th>Status</th>
+                <th class="r">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${d.invoices.map(inv => `
+                <tr>
+                  <td style="font-weight:600;color:var(--primary);cursor:pointer;" class="inv-link" data-inv-id="${inv.id}">${esc(inv.number)}</td>
+                  <td>${fd(inv.date)}</td>
+                  <td>${fd(inv.due_date)}</td>
+                  <td class="r">${inr(inv.total)}</td>
+                  <td class="r">${inr(inv.balance)}</td>
+                  <td>${statusBadge(inv.status)}</td>
+                  <td class="r">
+                    <button class="btn s inv-view-btn" type="button" data-inv-id="${inv.id}">View</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else {
+      invoicesHtml = `
+        <h4 style="margin:16px 0 8px 0;font-size:13px;font-weight:600;">Generated Invoices History</h4>
+        <p class="sub" style="font-size:12px;">No invoices generated yet for this recurring profile. Click <strong>Generate Invoice Now</strong> to create the first invoice.</p>
+      `;
+    }
+
+    const isPaused = d.status === 'paused';
+    const isCompleted = d.status === 'completed' || d.status === 'cancelled';
+
+    const m = Modal.open({
+      dialog: true,
+      title: `Recurring Invoice: ${esc(d.name || ('#' + d.id))}`,
+      body: `
+        ${kvBox(kv)}
+        ${upcomingHtml}
+        ${linesHtml}
+        ${invoicesHtml}
+      `,
+      footer: `
+        <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
+          <div>
+            ${!isCompleted ? `<button class="btn s d" type="button" id="m-rec-stop-btn">Cancel Schedule</button>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" type="button" data-close>Close</button>
+            ${!isCompleted ? `
+              <button class="btn" type="button" id="m-rec-toggle-btn">${isPaused ? 'Resume Schedule' : 'Pause Schedule'}</button>
+              <button class="btn" type="button" id="m-rec-edit-btn">Edit Profile</button>
+              <button class="btn p" type="button" id="m-rec-gen-btn">Generate Invoice Now</button>
+            ` : ''}
+          </div>
+        </div>
+      `
+    });
+
+    m.el.addEventListener('click', async e => {
+      const invBtn = e.target.closest('.inv-view-btn') || e.target.closest('.inv-link');
+      if (invBtn) {
+        const invId = invBtn.getAttribute('data-inv-id');
+        if (invId) {
+          m.close();
+          docDetail('invoices', Number(invId));
+        }
+        return;
+      }
+
+      if (e.target.id === 'm-rec-gen-btn') {
+        try {
+          const res = await api(`recurring-invoices/${id}/generate-invoice/`, { method: 'POST', body: {} });
+          toast(`Generated invoice ${res.invoice_number || ''} successfully!`, 'ok');
+          m.close();
+          refresh();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      } else if (e.target.id === 'm-rec-toggle-btn') {
+        try {
+          const act = isPaused ? 'resume' : 'pause';
+          await api(`recurring-invoices/${id}/${act}/`, { method: 'POST', body: {} });
+          toast(`Schedule ${act}d successfully!`, 'ok');
+          m.close();
+          refresh();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      } else if (e.target.id === 'm-rec-stop-btn') {
+        if (!(await confirmBox({
+          title: `Cancel recurring schedule for ${d.name}?`,
+          message: 'Future scheduled invoices will not be generated. Past invoices will remain unaffected.',
+          okText: 'Cancel Schedule',
+          danger: true
+        }))) return;
+        try {
+          await api(`recurring-invoices/${id}/cancel/`, { method: 'POST', body: {} });
+          toast('Recurring schedule cancelled', 'ok');
+          m.close();
+          refresh();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      } else if (e.target.id === 'm-rec-edit-btn') {
+        m.close();
+        recurringInvoiceModal(id);
+      }
+    });
+  } catch (err) {
+    toast(err.message, 'err');
+  }
 }
 
 async function paymentDetail(kind, id) {

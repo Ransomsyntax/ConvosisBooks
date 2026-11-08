@@ -3407,7 +3407,7 @@ async function docForm(kind, id, targetEl, onDone) {
           <div class="fe" data-err="_" role="alert"></div>
           <div class="zb-form-wrap">
             ${[
-              fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
+              fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], [inv ? '__new_customer__' : '__new_vendor__', inv ? '+ Add New Customer…' : '+ Add New Vendor…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
               fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
               fld({ name: 'date', label: 'Date', type: 'date', req: 1, value: r.date }),
               fld({ name: 'due_date', label: 'Due date', type: 'date', value: due0 }),
@@ -6250,43 +6250,256 @@ async function ewayBillModal() {
   });
 }
 
-async function recurringInvoiceModal(id) {
+async function recurringInvoiceModal(id, initialData) {
   const custs = await api('lookup/customers/').catch(() => []);
-  const o = id ? await api(`recurring-invoices/${id}/`) : { profile_name: '', customer: '', frequency: 'monthly', start_date: APP.today, next_date: APP.today, total: '15000.00', status: 'active' };
-  formModal({
+  const items = await api('lookup/items/').catch(() => []);
+  const o = id ? await api(`recurring-invoices/${id}/`) : (initialData || { profile_name: '', customer: '', frequency: 'monthly', repeat_every: 1, start_date: APP.today, next_date: APP.today, end_date: '', total: '15000.00', status: 'active', payment_terms: 30, auto_send: false, lines: [] });
+
+  const custOpts = [
+    ['', 'Select Customer…'],
+    ['__new_customer__', '+ Add New Customer…'],
+    ...custs.map(c => [c.id, c.name])
+  ];
+  const freqOpts = [
+    ['daily', 'Daily'],
+    ['weekly', 'Weekly'],
+    ['monthly', 'Monthly'],
+    ['quarterly', 'Quarterly'],
+    ['half_yearly', 'Half-Yearly'],
+    ['yearly', 'Yearly'],
+    ['custom', 'Custom Interval']
+  ];
+  const statusOpts = [
+    ['active', 'Active'],
+    ['paused', 'Paused'],
+    ['completed', 'Completed'],
+    ['cancelled', 'Cancelled']
+  ];
+  const itemOpts = [
+    ['', '— Custom line —'],
+    ['__new_item__', '+ Add New Item…'],
+    ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])
+  ];
+  const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
+
+  const existingLines = o.lines && o.lines.length ? o.lines : [{ description: o.profile_name || 'Service Retainer', quantity: 1, rate: o.total || '15000.00', discount_percent: 0, gst_rate: 18 }];
+
+  const lineRow = (l = {}) => `
+    <tr class="ln">
+      <td>
+        <select class="in l-item" style="margin-bottom:4px;" aria-label="Item">${opts(itemOpts, l.item)}</select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}">
+      </td>
+      <td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td>
+      <td><input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || 1)}" style="width:70px;"></td>
+      <td><input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '' : l.rate)}" style="width:90px;"></td>
+      <td><input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="width:65px;"></td>
+      <td><select class="in l-gst" style="width:80px;">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td>
+      <td class="r l-amt" style="font-weight:600;min-width:85px;">—</td>
+      <td><button type="button" class="btn ic" data-rm title="Remove line">×</button></td>
+    </tr>
+  `;
+
+  const m = formModal({
     title: id ? 'Edit Recurring Invoice Profile' : 'New Recurring Invoice Profile',
+    wide: true,
     body: `<div class="g form-grid-aligned">
       ${fld({ name: 'profile_name', label: 'Profile Name', req: true, value: o.profile_name, col: 's6', ph: 'e.g. Monthly Retainer Support' })}
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Select Customer…'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', req: true, col: 's6' })}
-      ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: [['weekly', 'Weekly'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']], value: o.frequency, col: 's6' })}
-      ${fld({ name: 'total', label: 'Recurring Amount (₹)', type: 'number', req: true, value: o.total, col: 's6', ph: '15000.00' })}
-      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date, col: 's6' })}
-      ${fld({ name: 'next_date', label: 'Next Invoice Date', type: 'date', req: true, value: o.next_date, col: 's6' })}
-      ${fld({ name: 'status', label: 'Status', type: 'select', opts: [['active', 'Active'], ['paused', 'Paused'], ['expired', 'Expired']], value: o.status || 'active', col: 's6' })}
+      ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: custOpts, value: o.customer_id || o.customer || '', req: true, col: 's6' })}
+      ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: freqOpts, value: o.frequency || 'monthly', col: 's3' })}
+      ${fld({ name: 'repeat_every', label: 'Repeat Every', type: 'number', value: o.repeat_every || 1, attrs: 'min="1" max="365"', col: 's3', help: 'e.g. 1 month, 2 weeks' })}
+      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date || APP.today, col: 's3' })}
+      ${fld({ name: 'next_date', label: 'Next Invoice Date', type: 'date', req: true, value: o.next_date || APP.today, col: 's3' })}
+      ${fld({ name: 'end_date', label: 'End Date (Optional)', type: 'date', value: o.end_date || '', col: 's3', help: 'Leave blank for unlimited duration' })}
+      ${fld({ name: 'payment_terms', label: 'Payment Terms (Days)', type: 'number', value: o.payment_terms != null ? o.payment_terms : 30, attrs: 'min="0" max="365"', col: 's3' })}
+      ${fld({ name: 'status', label: 'Status', type: 'select', opts: statusOpts, value: o.status || 'active', col: 's3' })}
+      <div class="fld s3" style="display:flex;align-items:center;margin-top:22px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" name="auto_send" id="rec-auto-send" ${o.auto_send ? 'checked' : ''}>
+          <span>Auto-send invoice by email</span>
+        </label>
+      </div>
+    </div>
+
+    <div style="margin:20px 0 8px;display:flex;justify-content:space-between;align-items:center;">
+      <h4 style="font-size:13px;font-weight:700;margin:0;color:var(--tx);">Line Items & Rates</h4>
+      <button type="button" class="btn" id="btn-rec-add-line" style="font-size:12px;padding:4px 10px;">+ Add line</button>
+    </div>
+    <div class="tw" style="border:1px solid var(--bd-glass);border-radius:6px;overflow:hidden;margin-bottom:12px;">
+      <table class="lt" id="rec-lines-table">
+        <thead>
+          <tr>
+            <th style="min-width:200px;">Item / Description</th>
+            <th>HSN/SAC</th>
+            <th>Qty</th>
+            <th>Rate (₹)</th>
+            <th>Disc %</th>
+            <th>GST</th>
+            <th class="r">Amount</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rec-lines-body">
+          ${existingLines.map(lineRow).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:14px;padding-top:12px;border-top:1px solid var(--bd-glass);">
+      <div style="font-size:12px;color:var(--sub);max-width:320px;">
+        Scheduled invoices will be automatically generated with these items, taxes, discounts, and payment terms.
+      </div>
+      <div class="tot" style="margin:0;min-width:260px;">
+        <div><span>Subtotal</span><b id="rec-tot-sub">₹0.00</b></div>
+        <div><span>Tax</span><b id="rec-tot-tax">₹0.00</b></div>
+        <div class="gt"><span>Total (₹)</span><b id="rec-tot-grand">₹0.00</b></div>
+        <input type="hidden" name="total" id="rec-total-hidden" value="${o.total || '0.00'}">
+      </div>
     </div>`,
     onSubmit: async d => {
       const pName = (d.profile_name || '').trim();
-      if (!pName) {
-        throw new ApiErr(400, { profile_name: 'Profile Name is required.' }, 'Profile Name is required.');
-      }
-      if (/[#@!$%^*+=~`<>?[\]\\{}]/.test(pName)) {
-        throw new ApiErr(400, { profile_name: 'Profile Name contains invalid characters. Special characters like @, #, $, %, ^, * are not allowed.' }, 'Profile Name contains invalid special characters.');
-      }
+      if (!pName) throw new ApiErr(400, { profile_name: 'Profile Name is required.' }, 'Profile Name is required.');
+      if (/[#@!$%^*+=~`<>?[\]\\{}]/.test(pName)) throw new ApiErr(400, { profile_name: 'Profile Name contains invalid special characters.' }, 'Profile Name contains invalid special characters.');
+      if (!d.customer || d.customer === '__new_customer__') throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
 
-      if (!d.customer || d.customer === '__new_customer__') {
-        throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
-      }
       d.customer = Number(d.customer);
-
       if (d.start_date && d.next_date && new Date(d.next_date) < new Date(d.start_date)) {
         throw new ApiErr(400, { next_date: 'Next Invoice Date cannot be earlier than Start Date.' }, 'Next Invoice Date cannot be earlier than Start Date.');
       }
+      if (d.start_date && d.end_date && new Date(d.end_date) < new Date(d.start_date)) {
+        throw new ApiErr(400, { end_date: 'End Date cannot be earlier than Start Date.' }, 'End Date cannot be earlier than Start Date.');
+      }
 
-      d.total = num(d.total);
+      d.repeat_every = Math.max(1, Number(d.repeat_every) || 1);
+      d.payment_terms = Math.max(0, Number(d.payment_terms) || 30);
+      d.auto_send = !!(m.el.querySelector('#rec-auto-send') && m.el.querySelector('#rec-auto-send').checked);
+
+      const lines = [];
+      const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
+      trs.forEach(tr => {
+        const itemVal = (tr.querySelector('.l-item') || {}).value;
+        const desc = (tr.querySelector('.l-desc') || {}).value;
+        const hsn = (tr.querySelector('.l-hsn') || {}).value;
+        const q = num((tr.querySelector('.l-qty') || {}).value) || 1;
+        const r = num((tr.querySelector('.l-rate') || {}).value) || 0;
+        const disc = num((tr.querySelector('.l-disc') || {}).value) || 0;
+        const gst = num((tr.querySelector('.l-gst') || {}).value) || 0;
+        const taxable = r2(q * r * (100 - disc) / 100);
+        const ltot = r2(taxable * (1 + gst / 100));
+        lines.push({
+          item: (itemVal && itemVal !== '__new_item__') ? Number(itemVal) : null,
+          description: desc || 'Line item',
+          hsn_sac: hsn || '',
+          quantity: q,
+          rate: r,
+          discount_percent: disc,
+          gst_rate: gst,
+          line_total: ltot
+        });
+      });
+      d.lines = lines;
+
+      const calcTotal = num((m.el.querySelector('#rec-total-hidden') || {}).value);
+      d.total = calcTotal > 0 ? calcTotal : (num(d.total) || 100);
+
       if (id) await api(`recurring-invoices/${id}/`, { method: 'PUT', body: d });
       else await api('recurring-invoices/', { method: 'POST', body: d });
-      toast('Recurring profile saved');
+      toast('Recurring profile saved', 'ok');
       refresh();
+    }
+  });
+
+  const calcRecTotals = () => {
+    let sub = 0, tax = 0;
+    const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
+    trs.forEach(tr => {
+      const q = num((tr.querySelector('.l-qty') || {}).value) || 0;
+      const r = num((tr.querySelector('.l-rate') || {}).value) || 0;
+      const disc = num((tr.querySelector('.l-disc') || {}).value) || 0;
+      const gst = num((tr.querySelector('.l-gst') || {}).value) || 0;
+      const taxable = r2(q * r * (100 - disc) / 100);
+      const t = r2(taxable * gst / 100);
+      sub += taxable;
+      tax += t;
+      const amtEl = tr.querySelector('.l-amt');
+      if (amtEl) amtEl.textContent = inr(taxable + t);
+    });
+    const grand = r2(sub + tax);
+    const subEl = m.el.querySelector('#rec-tot-sub');
+    const taxEl = m.el.querySelector('#rec-tot-tax');
+    const grandEl = m.el.querySelector('#rec-tot-grand');
+    const hiddenTot = m.el.querySelector('#rec-total-hidden');
+    if (subEl) subEl.textContent = inr(sub);
+    if (taxEl) taxEl.textContent = inr(tax);
+    if (grandEl) grandEl.textContent = inr(grand);
+    if (hiddenTot) hiddenTot.value = grand.toFixed(2);
+  };
+
+  calcRecTotals();
+
+  m.el.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcRecTotals();
+  });
+
+  m.el.addEventListener('change', e => {
+    if (e.target.name === 'customer' && e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        custs.push(newCust);
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        e.target.appendChild(opt);
+        e.target.value = newCust.id;
+      });
+      return;
+    }
+    if (e.target.classList.contains('l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          const tr = e.target.closest('tr');
+          if (tr) {
+            tr.querySelector('.l-desc').value = newItem.name;
+            tr.querySelector('.l-hsn').value = newItem.hsn_sac || '';
+            tr.querySelector('.l-rate').value = newItem.selling_price || 0;
+            tr.querySelector('.l-gst').value = String(num(newItem.gst_rate) || 18);
+          }
+          calcRecTotals();
+        });
+        return;
+      }
+      const it = byId[e.target.value];
+      const tr = e.target.closest('tr');
+      if (it && tr) {
+        tr.querySelector('.l-desc').value = it.name;
+        tr.querySelector('.l-hsn').value = it.hsn_sac || '';
+        tr.querySelector('.l-rate').value = it.selling_price || 0;
+        tr.querySelector('.l-gst').value = String(num(it.gst_rate) || 18);
+      }
+      calcRecTotals();
+    }
+    if (e.target.classList.contains('l-gst')) calcRecTotals();
+  });
+
+  m.el.addEventListener('click', e => {
+    if (e.target.closest('#btn-rec-add-line')) {
+      const tb = m.el.querySelector('#rec-lines-body');
+      if (tb) {
+        tb.insertAdjacentHTML('beforeend', lineRow({}));
+        calcRecTotals();
+      }
+    }
+    const rmBtn = e.target.closest('[data-rm]');
+    if (rmBtn) {
+      const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
+      if (trs.length > 1) {
+        rmBtn.closest('tr').remove();
+        calcRecTotals();
+      } else {
+        toast('At least one line item is required.', 'err');
+      }
     }
   });
 }
@@ -8708,9 +8921,29 @@ async function invoiceForm(id, targetEl, onDone) {
   const recBtn = $('#btn-inv-make-recurring', form);
   if (recBtn) {
     recBtn.addEventListener('click', () => {
-      toast('Opening recurring invoices...', 'ok');
-      location.hash = '#/sales/recurring-invoices';
-      route();
+      const custId = $('#inv-customer', form) ? $('#inv-customer', form).value : '';
+      const lines = $$('tr.ln', form).map(tr => ({
+        item: $('.l-item', tr) ? $('.l-item', tr).value : null,
+        description: $('.l-desc', tr) ? $('.l-desc', tr).value : '',
+        hsn_sac: $('.l-hsn', tr) ? $('.l-hsn', tr).value : '',
+        quantity: num($('.l-qty', tr) ? $('.l-qty', tr).value : 1) || 1,
+        rate: num($('.l-rate', tr) ? $('.l-rate', tr).value : 0) || 0,
+        discount_percent: num($('.l-disc', tr) ? $('.l-disc', tr).value : 0) || 0,
+        gst_rate: num($('.l-gst', tr) ? $('.l-gst', tr).value : 18) || 18
+      }));
+      const totText = $('#inv-tot-grand', form) ? $('#inv-tot-grand', form).textContent : '';
+      const tot = num(totText.replace(/[^0-9.]/g, '')) || 0;
+      const custObj = parties.find(p => String(p.id) === String(custId));
+      recurringInvoiceModal(null, {
+        profile_name: `Recurring - ${custObj ? custObj.name : 'Invoice'}`,
+        customer: custId,
+        customer_id: custId,
+        frequency: 'monthly',
+        start_date: ($('#inv-date', form) && $('#inv-date', form).value) || APP.today,
+        next_date: ($('#inv-date', form) && $('#inv-date', form).value) || APP.today,
+        total: tot,
+        lines: lines
+      });
     });
   }
 

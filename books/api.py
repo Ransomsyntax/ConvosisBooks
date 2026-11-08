@@ -1594,9 +1594,22 @@ def parse_lines(raw, org=None):
 def display_status(doc, posted, today):
     if doc.status == 'draft':
         return 'Draft'
-    if doc.status == 'void':
-        return 'Void'
-    paid = q2(doc.paid_sum)
+    if doc.status in ('void', 'cancelled'):
+        return 'Cancelled' if isinstance(doc, RetainerInvoice) else 'Void'
+    paid = q2(getattr(doc, 'paid_sum', getattr(doc, 'paid_amount', 0)))
+    if isinstance(doc, RetainerInvoice):
+        applied = q2(getattr(doc, 'applied_sum', getattr(doc, 'applied_amount', 0)))
+        if paid >= doc.total and paid > 0:
+            if applied >= paid:
+                return 'Fully Applied'
+            elif applied > 0:
+                return 'Partially Applied'
+            return 'Paid'
+        elif paid > 0:
+            if applied > 0:
+                return 'Partially Applied'
+            return 'Partially Paid'
+        return 'Sent'
     if doc.total - paid <= 0:
         return 'Paid'
     if doc.due_date and doc.due_date < today:
@@ -2155,10 +2168,15 @@ class RetainerInvoiceResource(DocResource):
     def action(self, request, obj, name):
         if name == 'send':
             services.send_retainer_invoice(obj, request.user)
-        elif name == 'void':
+        elif name in ('void', 'cancel'):
             services.void_retainer_invoice(obj, request.user)
         elif name in ('pay', 'record-payment'):
-            c = Cleaner(body(request))
+            b = dict(body(request))
+            if 'account' not in b and 'bank_account' in b:
+                b['account'] = b['bank_account']
+            if 'mode' not in b and 'payment_mode' in b:
+                b['mode'] = b['payment_mode']
+            c = Cleaner(b)
             amt = c.number('amount', required=True, lo=Decimal('0.01'))
             dt = c.date('date', required=True)
             mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
@@ -2174,6 +2192,35 @@ class RetainerInvoiceResource(DocResource):
             if not raw_allocs or not isinstance(raw_allocs, list):
                 raise ApiError(400, 'Expected non-empty allocations list.')
             services.apply_retainer_to_invoices(obj, raw_allocs, request.user, dt)
+        elif name == 'refund':
+            b = dict(body(request))
+            if 'account' not in b and 'bank_account' in b:
+                b['account'] = b['bank_account']
+            if 'mode' not in b and 'payment_mode' in b:
+                b['mode'] = b['payment_mode']
+            c = Cleaner(b)
+            amt = c.number('amount', required=True, lo=Decimal('0.01'))
+            dt = c.date('date') or timezone.localdate()
+            mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
+            account = c.text('account', default='Bank Account', max_len=60)
+            ref = c.text('reference', max_len=80)
+            notes = c.text('notes', max_len=2000)
+            c.done()
+            services.refund_retainer_payment(obj, amt, dt, mode, account, ref, notes, request.user)
+        elif name in ('delete-payment', 'remove-payment'):
+            b = body(request)
+            pid = b.get('payment_id') or b.get('id')
+            p = obj.payments.filter(pk=pid).first() if pid else None
+            if not p:
+                raise ApiError(404, 'Retainer payment not found.')
+            services.delete_retainer_payment(p, request.user)
+        elif name in ('delete-allocation', 'remove-allocation'):
+            b = body(request)
+            aid = b.get('allocation_id') or b.get('id')
+            a = obj.allocations.filter(pk=aid).first() if aid else None
+            if not a:
+                raise ApiError(404, 'Retainer allocation not found.')
+            services.delete_retainer_allocation(a, request.user)
         else:
             return super().action(request, obj, name)
 
@@ -4798,6 +4845,8 @@ class RecurringInvoiceResource(Resource):
     model = RecurringInvoice
     search_fields = ('profile_name', 'customer__name')
     default_ordering = ('-created_at',)
+    FREQUENCIES = ['daily', 'weekly', 'monthly', 'quarterly', 'half_yearly', 'yearly', 'custom']
+    STATUSES = ['active', 'paused', 'completed', 'cancelled', 'expired']
 
     def prepare_import_record(self, rec):
         cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
@@ -4822,7 +4871,7 @@ class RecurringInvoiceResource(Resource):
             rec['next_date'] = rec['start_date']
 
         freq = str(rec.get('frequency', '')).lower().strip()
-        if freq not in ['weekly', 'monthly', 'quarterly', 'yearly']:
+        if freq not in self.FREQUENCIES:
             rec['frequency'] = 'monthly'
 
         total_val = rec.get('total') or rec.get('amount')
@@ -4833,38 +4882,152 @@ class RecurringInvoiceResource(Resource):
         rec['total'] = total_val
 
     def row(self, o):
+        meta = o.lines_data if isinstance(o.lines_data, dict) else {}
+        repeat_every = int(meta.get('repeat_every', 1) or 1)
+        pt = meta.get('payment_terms')
+        if pt is None:
+            pt = getattr(o.customer, 'payment_terms', 30) or 30
+        freq_disp = dict(getattr(o, 'FREQUENCIES', [])).get(o.frequency, o.frequency.replace('_', ' ').capitalize())
         return {
-            'id': o.pk, 'profile_name': o.profile_name, 'customer_id': o.customer_id,
+            'id': o.pk, 'profile_name': o.profile_name, 'name': o.profile_name, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'frequency': o.frequency,
+            'frequency_label': freq_disp,
+            'repeat_every': repeat_every,
             'start_date': o.start_date, 'end_date': o.end_date, 'next_date': o.next_date,
-            'status': o.status, 'total': o.total
+            'status': o.status, 'status_label': o.status.replace('_', ' ').capitalize(),
+            'total': o.total, 'total_amount': o.total, 'subtotal': o.subtotal,
+            'tax_amount': max(Decimal('0.00'), (o.total or Decimal('0.00')) - (o.subtotal or Decimal('0.00'))),
+            'payment_terms': int(pt),
+            'auto_send': bool(meta.get('auto_send', False))
         }
+
+    def detail(self, o):
+        d = self.row(o)
+        meta = o.lines_data if isinstance(o.lines_data, dict) else {}
+        lines = meta.get('lines', []) if isinstance(o.lines_data, dict) else (o.lines_data if isinstance(o.lines_data, list) else [])
+        
+        # Invoices generated from this profile
+        inv_qs = Invoice.objects.filter(customer=o.customer, order_number=f"REC-{o.pk}").order_by('-date', '-id')
+        generated_invoices = []
+        for inv in inv_qs[:50]:
+            paid = q2(getattr(inv, 'paid_sum', 0))
+            generated_invoices.append({
+                'id': inv.pk,
+                'number': inv.number,
+                'invoice_id': inv.pk,
+                'invoice_number': inv.number,
+                'date': inv.date,
+                'due_date': inv.due_date,
+                'status': inv.status,
+                'total': inv.total,
+                'balance': max(Decimal('0.00'), inv.total - paid)
+            })
+
+        # Calculate upcoming 3 dates
+        upcoming = []
+        cur_d = o.next_date
+        if o.status == 'active':
+            for _ in range(3):
+                if o.end_date and cur_d > o.end_date:
+                    break
+                upcoming.append(cur_d.isoformat())
+                cur_d = services.advance_recurring_date(cur_d, o.frequency, meta.get('repeat_every', 1))
+
+        d.update({
+            'lines': lines,
+            'notes': meta.get('notes', ''),
+            'terms': meta.get('terms', ''),
+            'max_occurrences': meta.get('max_occurrences'),
+            'occurrences_count': meta.get('occurrences_count', len(generated_invoices)),
+            'invoices': generated_invoices,
+            'history': generated_invoices,
+            'upcoming_dates': upcoming
+        })
+        return d
 
     def create(self, data, user):
         c = Cleaner(data)
+        user_org = get_user_org(user) or Organization.get()
         pname = c.text('profile_name', required=True, max_len=150)
         if pname and re.search(r'[#@!$%^*+=~`<>{}[\]\\]', pname):
             c.err('profile_name', 'Profile name contains invalid characters.')
         cid = c.integer('customer', required=True, lo=1)
-        cust = Customer.objects.filter(pk=cid).first()
+        cust = Customer.objects.filter(pk=cid, organization=user_org).first() if user_org else Customer.objects.filter(pk=cid).first()
         if not cust:
             raise ApiError(404, 'Customer not found.')
-        freq = c.choice('frequency', ['weekly', 'monthly', 'quarterly', 'yearly'], default='monthly')
+        freq = c.choice('frequency', self.FREQUENCIES, default='monthly')
+        repeat_every = c.integer('repeat_every', lo=1, default=1)
         sdate = c.date('start_date', required=True)
         edate = c.date('end_date')
         next_d = c.date('next_date', default=sdate)
         if sdate and next_d and next_d < sdate:
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
-        tot = c.number('total', required=True, lo=Decimal('0.01'))
+        if sdate and edate and edate < sdate:
+            c.err('end_date', 'End date cannot be earlier than start date.')
+        tot = c.number('total', lo=Decimal('0.01'), default=Decimal('0.00'))
+        status_val = c.choice('status', self.STATUSES, default='active')
+        payment_terms = c.integer('payment_terms', lo=0, default=getattr(cust, 'payment_terms', 30) or 30)
+        auto_send = c.boolean('auto_send', default=False)
+        notes = c.text('notes', max_len=2000)
+        terms = c.text('terms', max_len=2000)
+        max_occ = c.integer('max_occurrences', lo=1)
         c.done()
-        return RecurringInvoice.objects.create(
-            profile_name=pname, customer=cust, frequency=freq,
-            start_date=sdate, end_date=edate, next_date=next_d,
-            total=tot, subtotal=tot
+
+        # Handle lines
+        raw_lines = data.get('lines', [])
+        lines_data_clean = []
+        if raw_lines and isinstance(raw_lines, list):
+            for rl in raw_lines:
+                if isinstance(rl, dict) and (rl.get('description') or rl.get('item') or rl.get('rate')):
+                    lines_data_clean.append({
+                        'item': rl.get('item') or rl.get('item_id') or None,
+                        'description': str(rl.get('description') or '').strip() or 'Line item',
+                        'hsn_sac': str(rl.get('hsn_sac') or '').strip(),
+                        'quantity': float(rl.get('quantity') or 1),
+                        'rate': float(rl.get('rate') or 0),
+                        'discount_percent': float(rl.get('discount_percent') or 0),
+                        'gst_rate': float(rl.get('gst_rate') or 0),
+                        'line_total': float(rl.get('line_total') or 0)
+                    })
+            if lines_data_clean:
+                computed_tot = sum((Decimal(str(l['quantity'])) * Decimal(str(l['rate'])) * (100 - Decimal(str(l['discount_percent']))) / 100 for l in lines_data_clean), Decimal('0.00'))
+                if tot <= Decimal('0.00'):
+                    tot = computed_tot
+
+        if tot <= Decimal('0.00'):
+            tot = Decimal('100.00')
+
+        meta_dict = {
+            'lines': lines_data_clean,
+            'repeat_every': repeat_every,
+            'payment_terms': payment_terms,
+            'auto_send': auto_send,
+            'notes': notes,
+            'terms': terms,
+            'max_occurrences': max_occ,
+            'occurrences_count': 0,
+            'history': []
+        }
+
+        rec = RecurringInvoice.objects.create(
+            organization=user_org,
+            profile_name=pname,
+            customer=cust,
+            frequency=freq,
+            start_date=sdate,
+            end_date=edate,
+            next_date=next_d,
+            status=status_val,
+            total=tot,
+            subtotal=tot,
+            lines_data=meta_dict
         )
+        services.log_audit(user, 'create', 'RecurringInvoice', rec.pk, f"Created recurring profile {rec.profile_name}", org=user_org, module='sales', submodule='recurring_invoices')
+        return rec
 
     def update(self, obj, data, user):
         c = Cleaner(data)
+        user_org = obj.organization or get_user_org(user)
         if 'profile_name' in data:
             pname = c.text('profile_name', required=True, max_len=150)
             if pname and re.search(r'[#@!$%^*+=~`<>{}[\]\\]', pname):
@@ -4872,12 +5035,12 @@ class RecurringInvoiceResource(Resource):
             obj.profile_name = pname
         if 'customer' in data:
             cid = c.integer('customer', required=True, lo=1)
-            cust = Customer.objects.filter(pk=cid).first()
+            cust = Customer.objects.filter(pk=cid, organization=user_org).first() if user_org else Customer.objects.filter(pk=cid).first()
             if not cust:
                 raise ApiError(404, 'Customer not found.')
             obj.customer = cust
         if 'frequency' in data:
-            obj.frequency = c.choice('frequency', ['weekly', 'monthly', 'quarterly', 'yearly'], default=obj.frequency)
+            obj.frequency = c.choice('frequency', self.FREQUENCIES, default=obj.frequency)
         if 'start_date' in data:
             obj.start_date = c.date('start_date', required=True)
         if 'end_date' in data:
@@ -4887,15 +5050,62 @@ class RecurringInvoiceResource(Resource):
         if obj.start_date and obj.next_date and obj.next_date < obj.start_date:
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
         if 'status' in data:
-            obj.status = c.choice('status', ['active', 'paused', 'expired'], default=obj.status)
+            obj.status = c.choice('status', self.STATUSES, default=obj.status)
         if 'total' in data:
             tot = c.number('total', required=True, lo=Decimal('0.01'))
             obj.total = tot
             obj.subtotal = tot
         c.done()
+
+        meta = obj.lines_data if isinstance(obj.lines_data, dict) else {}
+        if 'repeat_every' in data:
+            meta['repeat_every'] = max(1, int(data.get('repeat_every') or 1))
+        if 'payment_terms' in data:
+            meta['payment_terms'] = int(data.get('payment_terms') or 30)
+        if 'auto_send' in data:
+            meta['auto_send'] = bool(data.get('auto_send'))
+        if 'notes' in data:
+            meta['notes'] = str(data.get('notes') or '')
+        if 'terms' in data:
+            meta['terms'] = str(data.get('terms') or '')
+        if 'max_occurrences' in data:
+            meta['max_occurrences'] = int(data.get('max_occurrences')) if data.get('max_occurrences') else None
+        if 'lines' in data and isinstance(data['lines'], list):
+            meta['lines'] = data['lines']
+
+        obj.lines_data = meta
         obj.save()
-        services.log_audit(user, 'update', 'RecurringInvoice', obj.profile_name, f"Updated recurring profile {obj.profile_name}")
+        services.log_audit(user, 'update', 'RecurringInvoice', obj.pk, f"Updated recurring profile {obj.profile_name}", org=user_org, module='sales', submodule='recurring_invoices')
         return obj
+
+    def action(self, request, obj, name):
+        if name in ('generate', 'generate-invoice', 'create-invoice'):
+            inv = services.generate_invoice_from_recurring_profile(obj, user=request.user)
+            return j({
+                'success': True,
+                'status': 'ok',
+                'invoice_id': inv.pk,
+                'invoice_number': inv.number,
+                'invoice_total': str(inv.total),
+                'next_date': obj.next_date.isoformat() if obj.next_date else None,
+                'message': f"Generated invoice {inv.number} successfully."
+            })
+        elif name == 'pause':
+            obj.status = 'paused'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'pause', 'RecurringInvoice', obj.pk, f"Paused recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile paused.'})
+        elif name == 'resume':
+            obj.status = 'active'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'resume', 'RecurringInvoice', obj.pk, f"Resumed recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile resumed.'})
+        elif name == 'cancel':
+            obj.status = 'cancelled'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'cancel', 'RecurringInvoice', obj.pk, f"Cancelled recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile cancelled.'})
+        raise ApiError(404, 'Unknown action.')
 
 class DeliveryChallanResource(Resource):
     name = 'delivery-challans'

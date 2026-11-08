@@ -6,7 +6,7 @@ Comprehensive automated tests for ConvosisBooks:
 4. Consistent API error handling & status codes
 """
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -15,11 +15,12 @@ from django.test import Client, TestCase
 from django.utils import timezone
 
 from books import services
+from books.services import advance_recurring_date
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, Customer, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
-    UserProfile, Vendor, Warehouse
+    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice
 )
 
 User = get_user_model()
@@ -1231,3 +1232,337 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.assertEqual(org_data['name'], 'Convosis Technologies Enterprise')
         self.assertTrue(org_data['general_settings']['eway_bill']['enabled'])
         self.assertEqual(org_data['general_settings']['msme']['classification'], 'Micro')
+
+
+class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.admin_user)
+
+    def test_retainer_invoice_lifecycle_and_accounting(self):
+        """
+        Retainer Invoice:
+        1. Create retainer invoice
+        2. Record full payment -> updates bank, posts advance liability journal, status -> Paid
+        3. Create final sales invoice
+        4. Apply retainer credit to invoice -> reduces invoice balance, posts allocation journal, status -> Fully Applied
+        """
+        # 1. Create Retainer Invoice
+        create_payload = {
+            'customer': self.customer.id,
+            'date': str(date.today()),
+            'due_date': str(date.today() + timedelta(days=15)),
+            'reference': 'RET-PO-900',
+            'lines': [
+                {
+                    'item': self.item.id,
+                    'description': 'Advance for Q4 Software Development',
+                    'quantity': 1,
+                    'rate': '100000.00',
+                    'discount_percent': '0.00',
+                    'gst_rate': '0.00'
+                }
+            ],
+            'notes': 'Advance payment request'
+        }
+        res = self.client.post('/api/retainer-invoices/', data=json.dumps(create_payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        ret_id = res.json()['id']
+        ret = RetainerInvoice.objects.get(pk=ret_id)
+        self.assertEqual(ret.total_amount, Decimal('100000.00'))
+        self.assertEqual(ret.status, 'draft')
+
+        # Send Retainer
+        res_send = self.client.post(f'/api/retainer-invoices/{ret_id}/send/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_send.status_code, 200)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, 'sent')
+
+        # 2. Record Payment: 100,000 received into bank
+        initial_bank_bal = self.bank_hdfc.current_balance
+        pay_payload = {
+            'amount': '100000.00',
+            'date': str(date.today()),
+            'bank_account': self.bank_hdfc.name,
+            'payment_mode': 'bank_transfer',
+            'reference': 'NEFT-RET-12345',
+            'notes': 'Received full advance'
+        }
+        res_pay = self.client.post(f'/api/retainer-invoices/{ret_id}/pay/', data=json.dumps(pay_payload), content_type='application/json')
+        self.assertEqual(res_pay.status_code, 200)
+        ret.refresh_from_db()
+        self.assertEqual(ret.status, 'paid')
+        self.assertEqual(ret.paid_amount, Decimal('100000.00'))
+        self.assertEqual(ret.available_balance, Decimal('100000.00'))
+
+        # Check Bank balance increased
+        self.bank_hdfc.refresh_from_db()
+        self.assertEqual(self.bank_hdfc.current_balance, initial_bank_bal + Decimal('100000.00'))
+
+        # Check Advance Liability Journal posted (Debit 1010 Bank, Credit 2100 Customer Advance)
+        gl_adv = Account.objects.filter(organization=self.org, code='2100').first()
+        self.assertIsNotNone(gl_adv)
+        last_journal = Journal.objects.filter(organization=self.org, reference__icontains=ret.retainer_number).order_by('-id').first()
+        self.assertIsNotNone(last_journal)
+        credit_line = last_journal.items.filter(account=gl_adv).first()
+        self.assertIsNotNone(credit_line)
+        self.assertEqual(credit_line.credit, Decimal('100000.00'))
+
+        # 3. Create Final Sales Invoice of 100,000
+        inv_payload = {
+            'customer': self.customer.id,
+            'date': str(date.today()),
+            'due_date': str(date.today() + timedelta(days=30)),
+            'lines': [
+                {
+                    'item': self.item.id,
+                    'description': 'Completed Software Development Project',
+                    'quantity': 1,
+                    'rate': '100000.00',
+                    'gst_rate': '0.00'
+                }
+            ]
+        }
+        res_inv = self.client.post('/api/invoices/', data=json.dumps(inv_payload), content_type='application/json')
+        self.assertEqual(res_inv.status_code, 201)
+        inv_id = res_inv.json()['id']
+        inv = Invoice.objects.get(pk=inv_id)
+
+        # Send/approve invoice
+        res_send_inv = self.client.post(f'/api/invoices/{inv_id}/send/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_send_inv.status_code, 200)
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance_due, Decimal('100000.00'))
+
+        # 4. Apply 30,000 retainer credit to final invoice
+        apply_payload = {
+            'allocations': [
+                {
+                    'retainer_id': ret.id,
+                    'amount': '30000.00',
+                    'notes': 'Partial retainer application'
+                }
+            ],
+            'date': str(date.today())
+        }
+        res_apply = self.client.post(f'/api/invoices/{inv_id}/apply-retainer/', data=json.dumps(apply_payload), content_type='application/json')
+        self.assertEqual(res_apply.status_code, 200)
+
+        # Verify Invoice balance reduced to 70,000
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance_due, Decimal('70000.00'))
+
+        # Verify Retainer is now partially applied with 70,000 remaining
+        ret.refresh_from_db()
+        self.assertEqual(ret.applied_amount, Decimal('30000.00'))
+        self.assertEqual(ret.available_balance, Decimal('70000.00'))
+        res_ret = self.client.get(f'/api/retainer-invoices/{ret.id}/')
+        self.assertEqual(res_ret.json()['status'], 'Partially Applied')
+
+        # Apply the remaining 70,000 to clear the invoice
+        apply_payload_2 = {
+            'allocations': [
+                {
+                    'retainer_id': ret.id,
+                    'amount': '70000.00',
+                    'notes': 'Clear remaining invoice balance'
+                }
+            ],
+            'date': str(date.today())
+        }
+        res_apply_2 = self.client.post(f'/api/invoices/{inv_id}/apply-retainer/', data=json.dumps(apply_payload_2), content_type='application/json')
+        self.assertEqual(res_apply_2.status_code, 200)
+
+        # Verify Invoice is fully paid
+        inv.refresh_from_db()
+        self.assertEqual(inv.balance_due, Decimal('0.00'))
+        self.assertEqual(inv.status, 'paid')
+
+        # Verify Retainer is fully applied
+        ret.refresh_from_db()
+        self.assertEqual(ret.applied_amount, Decimal('100000.00'))
+        self.assertEqual(ret.available_balance, Decimal('0.00'))
+        res_ret_2 = self.client.get(f'/api/retainer-invoices/{ret.id}/')
+        self.assertEqual(res_ret_2.json()['status'], 'Fully Applied')
+
+        # Attempting to apply more must fail with 400
+        res_fail = self.client.post(f'/api/invoices/{inv_id}/apply-retainer/', data=json.dumps(apply_payload_2), content_type='application/json')
+        self.assertEqual(res_fail.status_code, 400)
+
+    def test_retainer_refund_and_void(self):
+        """
+        Retainer refund:
+        - Record 50,000 payment
+        - Refund 20,000
+        - Bank balance reduced by 20,000
+        - Available balance reduced to 30,000
+        - Customer advance liability debited
+        """
+        ret = RetainerInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            number='RET-REFUND-01',
+            date=date.today(),
+            due_date=date.today(),
+            place_of_supply=self.customer.state,
+            total=Decimal('50000.00'),
+            status='sent'
+        )
+
+        initial_bank_bal = self.bank_hdfc.current_balance
+        # Record payment
+        pay_payload = {
+            'amount': '50000.00',
+            'date': str(date.today()),
+            'bank_account': self.bank_hdfc.name,
+            'payment_mode': 'bank_transfer'
+        }
+        self.client.post(f'/api/retainer-invoices/{ret.id}/pay/', data=json.dumps(pay_payload), content_type='application/json')
+        ret.refresh_from_db()
+        self.assertEqual(ret.available_balance, Decimal('50000.00'))
+
+        # Refund 20,000
+        refund_payload = {
+            'amount': '20000.00',
+            'date': str(date.today()),
+            'bank_account': self.bank_hdfc.name,
+            'payment_mode': 'bank_transfer',
+            'reference': 'REFUND-001',
+            'notes': 'Partial customer refund'
+        }
+        res_ref = self.client.post(f'/api/retainer-invoices/{ret.id}/refund/', data=json.dumps(refund_payload), content_type='application/json')
+        self.assertEqual(res_ref.status_code, 200)
+
+        # Check retainer available balance reduced
+        ret.refresh_from_db()
+        self.assertEqual(ret.available_balance, Decimal('30000.00'))
+
+        # Check bank balance reduced by 20,000
+        self.bank_hdfc.refresh_from_db()
+        self.assertEqual(self.bank_hdfc.current_balance, initial_bank_bal + Decimal('30000.00'))
+
+        # Over-refund must fail
+        over_refund = {
+            'amount': '35000.00',
+            'bank_account': self.bank_hdfc.name
+        }
+        res_over = self.client.post(f'/api/retainer-invoices/{ret.id}/refund/', data=json.dumps(over_refund), content_type='application/json')
+        self.assertEqual(res_over.status_code, 400)
+
+    def test_recurring_invoice_lifecycle(self):
+        """
+        Recurring Invoice:
+        1. Create recurring profile (monthly, repeat every 1)
+        2. Generate invoice now
+        3. Check generated invoice attributes and link
+        4. Check next generation date advanced
+        5. Pause schedule -> Resume schedule -> Cancel schedule
+        """
+        start_d = date.today()
+        rec_payload = {
+            'customer': self.customer.id,
+            'profile_name': 'Monthly Cloud Hosting Plan',
+            'frequency': 'monthly',
+            'repeat_every': 1,
+            'start_date': str(start_d),
+            'next_date': str(start_d),
+            'payment_terms': 15,
+            'auto_send': False,
+            'lines': [
+                {
+                    'item': self.item.id,
+                    'description': 'Managed Server Subscription',
+                    'quantity': 2,
+                    'rate': '5000.00',
+                    'discount_percent': '10.00',
+                    'gst_rate': '18.00'
+                }
+            ]
+        }
+        res = self.client.post('/api/recurring-invoices/', data=json.dumps(rec_payload), content_type='application/json')
+        self.assertEqual(res.status_code, 201)
+        rec_id = res.json()['id']
+        rec = RecurringInvoice.objects.get(pk=rec_id)
+        self.assertEqual(rec.frequency, 'monthly')
+        self.assertEqual(rec.status, 'active')
+
+        # Check Detail endpoint
+        res_det = self.client.get(f'/api/recurring-invoices/{rec_id}/')
+        self.assertEqual(res_det.status_code, 200)
+        data = res_det.json()
+        self.assertEqual(data['name'], 'Monthly Cloud Hosting Plan')
+        self.assertEqual(len(data['upcoming_dates']), 3)
+
+        # Generate invoice now
+        res_gen = self.client.post(f'/api/recurring-invoices/{rec_id}/generate-invoice/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_gen.status_code, 200)
+        gen_data = res_gen.json()
+        self.assertTrue(gen_data['success'])
+        inv_id = gen_data['invoice_id']
+
+        # Verify generated Invoice
+        inv = Invoice.objects.get(pk=inv_id)
+        self.assertEqual(inv.customer, self.customer)
+        self.assertEqual(inv.order_number, f"REC-{rec.pk}")
+        self.assertEqual(inv.lines.count(), 1)
+        ln = inv.lines.first()
+        self.assertEqual(ln.quantity, 2)
+        self.assertEqual(ln.rate, Decimal('5000.00'))
+
+        # Check next_date advanced by 1 month
+        rec.refresh_from_db()
+        expected_next = advance_recurring_date(start_d, 'monthly', 1)
+        self.assertEqual(rec.next_date, expected_next)
+
+        # Pause Schedule
+        res_pause = self.client.post(f'/api/recurring-invoices/{rec_id}/pause/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_pause.status_code, 200)
+        rec.refresh_from_db()
+        self.assertEqual(rec.status, 'paused')
+
+        # Resume Schedule
+        res_resume = self.client.post(f'/api/recurring-invoices/{rec_id}/resume/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_resume.status_code, 200)
+        rec.refresh_from_db()
+        self.assertEqual(rec.status, 'active')
+
+        # Cancel Schedule
+        res_cancel = self.client.post(f'/api/recurring-invoices/{rec_id}/cancel/', data=json.dumps({}), content_type='application/json')
+        self.assertEqual(res_cancel.status_code, 200)
+        rec.refresh_from_db()
+        self.assertEqual(rec.status, 'cancelled')
+
+    def test_recurring_invoices_management_command(self):
+        """
+        Test python manage.py generate_recurring_invoices
+        """
+        from django.core.management import call_command
+        rec = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Daily Maintenance Job',
+            frequency='daily',
+            start_date=date.today(),
+            next_date=date.today(),
+            status='active',
+            lines_data={
+                'repeat_every': 1,
+                'lines': [{'description': 'Daily Health Check', 'quantity': 1, 'rate': 250, 'gst_rate': 0}]
+            }
+        )
+
+        # Run command with --dry-run
+        call_command('generate_recurring_invoices', dry_run=True)
+        rec.refresh_from_db()
+        self.assertEqual(rec.next_date, date.today())  # Dry run doesn't advance
+
+        # Run actual command
+        call_command('generate_recurring_invoices', org_id=self.org.id)
+        rec.refresh_from_db()
+        self.assertEqual(rec.next_date, date.today() + timedelta(days=1))
+
+        # Check that invoice was created
+        gen_inv = Invoice.objects.filter(customer=self.customer, order_number=f"REC-{rec.pk}").first()
+        self.assertIsNotNone(gen_inv)
+        self.assertEqual(gen_inv.lines.first().description, 'Daily Health Check')
+

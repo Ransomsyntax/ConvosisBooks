@@ -19,7 +19,7 @@ from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .calc import q2
+from .calc import q2, compute, is_intra_state
 from .cleaning import ApiError
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
                      StockTransfer, StockTransferLine,
@@ -110,12 +110,15 @@ def get_document_module_config(module_or_pfx):
     from .models import (
         Customer, Vendor, Item, Invoice, Bill, Quote, SalesOrder,
         PurchaseOrder, PaymentReceived, PaymentMade, CreditNote,
-        VendorCredit, Journal, DeliveryChallan, Expense, StockMovement
+        VendorCredit, Journal, DeliveryChallan, Expense, StockMovement,
+        RetainerInvoice
     )
     raw = (module_or_pfx or '').upper().strip()
     
     if raw in ('INV', 'INVOICE', 'INVOICES'):
         return {'pfx': 'INV', 'digits': 5, 'has_fy': True, 'model': Invoice, 'field': 'number'}
+    elif raw in ('RET', 'RETAINER', 'RETAINER_INVOICE', 'RETAINER-INVOICE', 'RETAINER-INVOICES'):
+        return {'pfx': 'RET', 'digits': 5, 'has_fy': True, 'model': RetainerInvoice, 'field': 'number'}
     elif raw in ('CUST', 'CUSTOMER', 'CUSTOMERS'):
         return {'pfx': 'CUST', 'digits': 6, 'has_fy': True, 'model': Customer, 'field': 'code'}
     elif raw in ('VEND', 'VENDOR', 'VENDORS'):
@@ -451,7 +454,7 @@ def send_retainer_invoice(retainer, user):
         raise ApiError(409, 'Only draft retainer invoices can be sent.')
     retainer.status = 'sent'
     retainer.sent_at = timezone.now()
-    retainer.save(update_fields=['status', 'sent_at', 'updated_at'])
+    retainer.save(update_fields=['status', 'sent_at'])
     log_audit(user, 'send', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} sent to {retainer.customer.name} (₹{retainer.total})')
 
 @transaction.atomic
@@ -464,12 +467,13 @@ def void_retainer_invoice(retainer, user):
     if retainer.payments.exists():
         raise ApiError(409, 'Payments are recorded for this retainer invoice. Delete those payments before voiding.')
     retainer.status = 'void'
-    retainer.save(update_fields=['status', 'updated_at'])
+    retainer.save(update_fields=['status'])
     log_audit(user, 'void', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} voided')
 
 @transaction.atomic
 def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', account='Bank Account', reference='', notes='', user=None):
-    check_transaction_lock(date_)
+    user_org = getattr(retainer, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    check_transaction_lock(date_, org=user_org)
     amount = q2(amount)
     if amount <= Decimal('0.00'):
         raise ApiError(400, 'Payment amount must be greater than zero.')
@@ -478,41 +482,74 @@ def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', accou
     if amount > bal:
         raise ApiError(400, f'Payment amount (₹{amount}) exceeds remaining balance due (₹{bal}).')
 
-    pay_num = next_number('RCPT')
+    pay_num = next_document_number('PR', org=user_org, date=date_)
+    bank_acc = BankAccount.objects.filter(name=account, organization=user_org).first() if user_org else BankAccount.objects.filter(name=account).first()
+    if not bank_acc and account:
+        bank_acc = BankAccount.objects.filter(bank_name__iexact=account, organization=user_org).first()
+
     pmt = PaymentReceived.objects.create(
+        organization=user_org,
         number=pay_num, customer=retainer.customer, date=date_,
-        mode=mode, account=account, amount=amount,
+        mode=mode, account=account, bank_account=bank_acc, amount=amount,
         reference=reference or f'Payment for Retainer {retainer.number}',
         notes=notes, created_by=user if getattr(user, 'pk', None) else None
     )
     ret_pay = RetainerPayment.objects.create(
+        organization=user_org,
         retainer=retainer, payment_received=pmt, date=date_, amount=amount,
         mode=mode, account=account, reference=reference, notes=notes
     )
     new_paid = paid_sum + amount
     retainer.status = 'paid' if new_paid >= retainer.total else 'partial'
-    retainer.save(update_fields=['status', 'updated_at'])
+    retainer.save(update_fields=['status'])
+
+    if bank_acc:
+        bank_acc.current_balance += amount
+        bank_acc.bank_balance += amount
+        bank_acc.save(update_fields=['current_balance', 'bank_balance'])
+
+        BankTransaction.objects.create(
+            organization=user_org,
+            bank_account=bank_acc,
+            date=date_,
+            description=f"Retainer Payment {pay_num} - {retainer.customer.name}",
+            reference=reference or pay_num,
+            transaction_type='Payment Received',
+            payee=retainer.customer.name,
+            withdrawal=Decimal('0.00'),
+            deposit=amount,
+            balance=bank_acc.current_balance,
+            status='categorized',
+            matched_entity_type='payment_received',
+            matched_entity_id=pmt.pk
+        )
 
     post_retainer_payment_journal(ret_pay, user)
     log_audit(user, 'payment', 'RetainerInvoice', retainer.pk,
-              f'Recorded payment of ₹{amount} for retainer invoice {retainer.number} ({retainer.customer.name})')
+              f'Recorded payment of ₹{amount} for retainer invoice {retainer.number} ({retainer.customer.name})',
+              org=user_org, module='sales', submodule='retainer_invoices')
     return ret_pay
 
 def post_retainer_payment_journal(ret_pay, user):
     """Debit Bank/Cash, Credit Customer Advance / Retainer Liability."""
+    org = getattr(ret_pay, 'organization', None) or getattr(ret_pay.retainer, 'organization', None)
     acc_code = '1000' if ret_pay.mode == 'cash' else '1010'
+    pmt = getattr(ret_pay, 'payment_received', None)
+    if pmt and getattr(pmt, 'bank_account', None) and getattr(pmt.bank_account, 'gl_account', None):
+        acc_code = pmt.bank_account.gl_account.code
     items = [
         (acc_code, ret_pay.amount, Decimal('0.00'), f'Retainer payment {ret_pay.retainer.number} from {ret_pay.retainer.customer.name}'),
         ('2100', Decimal('0.00'), ret_pay.amount, f'Customer Advance / Retainer liability on {ret_pay.retainer.number}')
     ]
     return post_journal_entry(ret_pay.date, 'retainer_payment', ret_pay.retainer.number,
-                              f'Payment received for retainer {ret_pay.retainer.number}', items, user)
+                              f'Payment received for retainer {ret_pay.retainer.number}', items, user, org=org)
 
 @transaction.atomic
 def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
+    user_org = getattr(retainer, 'organization', None) or (get_user_org(user) if user else Organization.get())
     if not date_:
         date_ = timezone.localdate()
-    check_transaction_lock(date_)
+    check_transaction_lock(date_, org=user_org)
 
     paid_sum = sum((p.amount for p in retainer.payments.all()), Decimal('0.00'))
     applied_sum = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
@@ -535,8 +572,8 @@ def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
             raise ApiError(404, 'Invoice not found.')
         if inv.customer_id != retainer.customer_id:
             raise ApiError(400, f'Invoice {inv.number} does not belong to customer {retainer.customer.name}.')
-        if inv.status != 'sent':
-            raise ApiError(400, f'Invoice {inv.number} is {inv.status}; retainers can only be applied to sent invoices.')
+        if inv.status not in ('sent', 'partial'):
+            raise ApiError(400, f'Invoice {inv.number} is {inv.status}; retainers can only be applied to open/sent invoices.')
 
         curr_paid = sum((a.amount for a in inv.allocations.all()), Decimal('0.00')) + \
                     sum((a.amount for a in inv.retainer_allocations.all()), Decimal('0.00'))
@@ -553,48 +590,399 @@ def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
         )
         created_allocs.append(alloc)
         post_retainer_apply_journal(alloc, user)
+        if curr_paid + amt >= inv.total:
+            inv.status = 'paid'
+            inv.save(update_fields=['status'])
         log_audit(user, 'apply_retainer', 'Invoice', inv.pk,
-                  f'Applied retainer credit of ₹{amt} from {retainer.number} to invoice {inv.number}')
+                  f'Applied retainer credit of ₹{amt} from {retainer.number} to invoice {inv.number}',
+                  org=user_org, module='sales', submodule='retainer_invoices')
 
     retainer.applied_amount = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
-    retainer.save(update_fields=['applied_amount', 'updated_at'])
+    retainer.save(update_fields=['applied_amount'])
     return created_allocs
 
 def post_retainer_apply_journal(alloc, user):
     """Debit Customer Advance / Retainer Liability, Credit Accounts Receivable."""
+    org = getattr(alloc.retainer, 'organization', None) or getattr(alloc.invoice, 'organization', None)
     items = [
         ('2100', alloc.amount, Decimal('0.00'), f'Application of Retainer {alloc.retainer.number} to {alloc.invoice.number}'),
         ('1200', Decimal('0.00'), alloc.amount, f'AR credit from Retainer {alloc.retainer.number} on {alloc.invoice.number}')
     ]
     return post_journal_entry(alloc.date, 'retainer_applied', alloc.retainer.number,
-                              f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user)
+                              f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user, org=org)
+
+@transaction.atomic
+def refund_retainer_payment(retainer, amount, date_=None, mode='bank_transfer', account='Bank Account', reference='', notes='', user=None):
+    """
+    Refund customer advance retainer balance back to customer.
+    Debit Customer Advance / Retainer Liability (2100), Credit Bank/Cash (1010/1000).
+    """
+    user_org = getattr(retainer, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    if not date_:
+        date_ = timezone.localdate()
+    check_transaction_lock(date_, org=user_org)
+    amount = q2(amount)
+    if amount <= Decimal('0.00'):
+        raise ApiError(400, 'Refund amount must be greater than zero.')
+
+    paid_sum = sum((p.amount for p in retainer.payments.all()), Decimal('0.00'))
+    applied_sum = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
+    available = max(Decimal('0.00'), paid_sum - applied_sum)
+    if amount > available:
+        raise ApiError(400, f'Refund amount (₹{amount}) exceeds available unapplied balance (₹{available}).')
+
+    bank_acc = BankAccount.objects.filter(name=account, organization=user_org).first() if user_org else BankAccount.objects.filter(name=account).first()
+    if not bank_acc and account:
+        bank_acc = BankAccount.objects.filter(bank_name__iexact=account, organization=user_org).first()
+
+    ref_pay = RetainerPayment.objects.create(
+        organization=user_org,
+        retainer=retainer, payment_received=None, date=date_, amount=-amount,
+        mode=mode, account=account, reference=reference or f'Refund on {retainer.number}',
+        notes=notes or 'Customer Retainer Refund'
+    )
+
+    new_paid = paid_sum - amount
+    if new_paid <= 0 and applied_sum <= 0:
+        retainer.status = 'void'
+    elif new_paid >= retainer.total:
+        retainer.status = 'paid'
+    elif new_paid > 0:
+        retainer.status = 'partial'
+    else:
+        retainer.status = 'sent'
+    retainer.save(update_fields=['status'])
+
+    acc_code = '1000' if mode == 'cash' else '1010'
+    if bank_acc:
+        if getattr(bank_acc, 'gl_account', None):
+            acc_code = bank_acc.gl_account.code
+        bank_acc.current_balance -= amount
+        bank_acc.bank_balance -= amount
+        bank_acc.save(update_fields=['current_balance', 'bank_balance'])
+
+        pay_num = next_document_number('PM', org=user_org, date=date_)
+        BankTransaction.objects.create(
+            organization=user_org,
+            bank_account=bank_acc,
+            date=date_,
+            description=f"Retainer Refund {pay_num} - {retainer.customer.name}",
+            reference=reference or pay_num,
+            transaction_type='Payment Made',
+            payee=retainer.customer.name,
+            withdrawal=amount,
+            deposit=Decimal('0.00'),
+            balance=bank_acc.current_balance,
+            status='categorized',
+            matched_entity_type='retainer_refund',
+            matched_entity_id=ref_pay.pk
+        )
+
+    items = [
+        ('2100', amount, Decimal('0.00'), f'Refund of advance retainer {retainer.number} to {retainer.customer.name}'),
+        (acc_code, Decimal('0.00'), amount, f'Refund payout on {retainer.number}')
+    ]
+    post_journal_entry(date_, 'retainer_refund', retainer.number,
+                       f'Refund of retainer {retainer.number}', items, user, org=user_org)
+
+    log_audit(user, 'refund', 'RetainerInvoice', retainer.pk,
+              f'Processed refund of ₹{amount} on retainer {retainer.number} ({retainer.customer.name})',
+              org=user_org, module='sales', submodule='retainer_invoices')
+    return ref_pay
 
 @transaction.atomic
 def delete_retainer_payment(ret_pay, user):
     retainer = ret_pay.retainer
+    org = getattr(retainer, 'organization', None)
     paid_after = sum((p.amount for p in retainer.payments.exclude(pk=ret_pay.pk)), Decimal('0.00'))
     applied_sum = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
     if paid_after < applied_sum:
         raise ApiError(400, 'Cannot delete payment: retainer credits have already been applied to invoices. Remove applications first.')
+
+    amt = ret_pay.amount
+    if amt > Decimal('0.00'):
+        acc_code = '1000' if ret_pay.mode == 'cash' else '1010'
+        pmt = getattr(ret_pay, 'payment_received', None)
+        if pmt and getattr(pmt, 'bank_account', None):
+            ba = pmt.bank_account
+            if getattr(ba, 'gl_account', None):
+                acc_code = ba.gl_account.code
+            ba.current_balance -= amt
+            ba.bank_balance -= amt
+            ba.save(update_fields=['current_balance', 'bank_balance'])
+        items = [
+            ('2100', amt, Decimal('0.00'), f'Reversal of retainer payment liability on {retainer.number}'),
+            (acc_code, Decimal('0.00'), amt, f'Reversal of retainer payment receipt on {retainer.number}')
+        ]
+        post_journal_entry(timezone.localdate(), 'retainer_payment_void', retainer.number,
+                           f'Reversal of payment on retainer {retainer.number}', items, user, org=org)
+
     if ret_pay.payment_received:
         ret_pay.payment_received.delete()
-    amt = ret_pay.amount
     ret_pay.delete()
     retainer.status = 'paid' if paid_after >= retainer.total else ('partial' if paid_after > 0 else 'sent')
-    retainer.save(update_fields=['status', 'updated_at'])
+    retainer.save(update_fields=['status'])
     log_audit(user, 'delete_payment', 'RetainerInvoice', retainer.pk,
-              f'Deleted payment of ₹{amt} on retainer {retainer.number}')
+              f'Deleted payment of ₹{amt} on retainer {retainer.number}', org=org, module='sales', submodule='retainer_invoices')
 
 @transaction.atomic
 def delete_retainer_allocation(alloc, user):
     retainer = alloc.retainer
     inv = alloc.invoice
     amt = alloc.amount
+    org = getattr(retainer, 'organization', None) or getattr(inv, 'organization', None)
+    items = [
+        ('1200', amt, Decimal('0.00'), f'Reversal of retainer allocation on {inv.number}'),
+        ('2100', Decimal('0.00'), amt, f'Restoration of advance liability on {retainer.number}')
+    ]
+    post_journal_entry(timezone.localdate(), 'retainer_unapplied', retainer.number,
+                       f'Unapplied retainer credit {retainer.number} from {inv.number}', items, user, org=org)
     alloc.delete()
     retainer.applied_amount = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
-    retainer.save(update_fields=['applied_amount', 'updated_at'])
+    retainer.save(update_fields=['applied_amount'])
     log_audit(user, 'delete_allocation', 'RetainerInvoice', retainer.pk,
-              f'Removed retainer application of ₹{amt} from {inv.number}')
+              f'Removed retainer application of ₹{amt} from {inv.number}', org=org, module='sales', submodule='retainer_invoices')
+
+def advance_recurring_date(d, frequency, repeat_every=1):
+    """
+    Given a date, frequency, and repeat_every interval, calculate the next date.
+    Preserves end-of-month dates (e.g. Jan 31 -> Feb 28 -> Mar 31).
+    """
+    import calendar
+    import datetime
+    from datetime import date, timedelta
+
+    if not isinstance(d, (date, datetime.date)):
+        if hasattr(d, 'date'):
+            d = d.date()
+        else:
+            d = date.fromisoformat(str(d)[:10])
+
+    repeat_every = max(1, int(repeat_every or 1))
+    freq = (frequency or 'monthly').lower().strip()
+
+    if freq == 'daily':
+        return d + timedelta(days=repeat_every)
+    elif freq == 'weekly':
+        return d + timedelta(weeks=repeat_every)
+    elif freq == 'monthly':
+        total_months = d.year * 12 + (d.month - 1) + repeat_every
+        new_year = total_months // 12
+        new_month = (total_months % 12) + 1
+        max_day = calendar.monthrange(new_year, new_month)[1]
+        new_day = min(d.day, max_day)
+        return date(new_year, new_month, new_day)
+    elif freq == 'quarterly':
+        total_months = d.year * 12 + (d.month - 1) + (3 * repeat_every)
+        new_year = total_months // 12
+        new_month = (total_months % 12) + 1
+        max_day = calendar.monthrange(new_year, new_month)[1]
+        new_day = min(d.day, max_day)
+        return date(new_year, new_month, new_day)
+    elif freq == 'half_yearly':
+        total_months = d.year * 12 + (d.month - 1) + (6 * repeat_every)
+        new_year = total_months // 12
+        new_month = (total_months % 12) + 1
+        max_day = calendar.monthrange(new_year, new_month)[1]
+        new_day = min(d.day, max_day)
+        return date(new_year, new_month, new_day)
+    elif freq == 'yearly':
+        new_year = d.year + repeat_every
+        new_month = d.month
+        max_day = calendar.monthrange(new_year, new_month)[1]
+        new_day = min(d.day, max_day)
+        return date(new_year, new_month, new_day)
+    elif freq == 'custom':
+        return d + timedelta(days=repeat_every)
+    else:
+        total_months = d.year * 12 + (d.month - 1) + repeat_every
+        new_year = total_months // 12
+        new_month = (total_months % 12) + 1
+        max_day = calendar.monthrange(new_year, new_month)[1]
+        new_day = min(d.day, max_day)
+        return date(new_year, new_month, new_day)
+
+@transaction.atomic
+def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=None):
+    """
+    Generate an actual sales invoice from a recurring invoice profile.
+    Guarantees idempotency and prevents duplicate invoice generation.
+    """
+    import datetime
+    from datetime import timedelta
+    from .models import Invoice, InvoiceLine, Item, Organization
+
+    org = profile.organization or Organization.get()
+    target_date = scheduled_date or profile.next_date
+    if not isinstance(target_date, datetime.date):
+        if hasattr(target_date, 'date'):
+            target_date = target_date.date()
+        else:
+            target_date = datetime.date.fromisoformat(str(target_date)[:10])
+
+    meta = profile.lines_data if isinstance(profile.lines_data, dict) else {}
+    raw_lines = meta.get('lines', []) if isinstance(profile.lines_data, dict) else (profile.lines_data if isinstance(profile.lines_data, list) else [])
+
+    rec_order_no = f"REC-{profile.pk}"
+    existing_inv = Invoice.objects.filter(
+        organization=org, customer=profile.customer, order_number=rec_order_no, date=target_date
+    ).first()
+    if existing_inv:
+        repeat_every = meta.get('repeat_every', 1)
+        next_d = advance_recurring_date(target_date, profile.frequency, repeat_every)
+        if profile.next_date <= target_date:
+            profile.next_date = next_d
+            if profile.end_date and profile.next_date > profile.end_date:
+                profile.status = 'completed'
+            profile.save(update_fields=['next_date', 'status'])
+        return existing_inv
+
+    payment_terms_days = meta.get('payment_terms')
+    if payment_terms_days is None:
+        payment_terms_days = getattr(profile.customer, 'payment_terms', 30) or 30
+    due_date = target_date + timedelta(days=int(payment_terms_days))
+
+    pos = getattr(profile.customer, 'place_of_supply', None) or profile.customer.state or (org.state if org else '')
+    org_state = org.state if org else ''
+    intra = is_intra_state(pos, org_state)
+
+    parsed_lines = []
+    if raw_lines:
+        for idx, rl in enumerate(raw_lines, 1):
+            it_id = rl.get('item') or rl.get('item_id')
+            item_obj = Item.objects.filter(pk=it_id, organization=org).first() if it_id and org else (Item.objects.filter(pk=it_id).first() if it_id else None)
+            desc = rl.get('description') or (item_obj.name if item_obj else profile.profile_name)
+            hsn = rl.get('hsn_sac') or (item_obj.hsn_sac if item_obj else '')
+            qty_val = Decimal(str(rl.get('quantity') or 1))
+            rate_val = Decimal(str(rl.get('rate') or (item_obj.selling_price if item_obj else profile.total)))
+            disc_val = Decimal(str(rl.get('discount_percent') or 0))
+            gst_val = Decimal(str(rl.get('gst_rate') or (item_obj.gst_rate if item_obj else 0)))
+            parsed_lines.append({
+                'item': item_obj,
+                'description': desc,
+                'hsn_sac': hsn,
+                'quantity': qty_val,
+                'rate': rate_val,
+                'discount_percent': disc_val,
+                'gst_rate': gst_val,
+                'position': idx
+            })
+    else:
+        parsed_lines.append({
+            'item': None,
+            'description': profile.profile_name,
+            'hsn_sac': '',
+            'quantity': Decimal('1'),
+            'rate': profile.total,
+            'discount_percent': Decimal('0.00'),
+            'gst_rate': Decimal('0.00'),
+            'position': 1
+        })
+
+    comp, tot = compute(parsed_lines, intra)
+    inv_num = next_document_number('INV', org=org, date=target_date)
+
+    inv = Invoice.objects.create(
+        organization=org,
+        customer=profile.customer,
+        number=inv_num,
+        date=target_date,
+        due_date=due_date,
+        place_of_supply=pos,
+        order_number=rec_order_no,
+        notes=meta.get('notes') or f"Generated automatically from recurring profile: {profile.profile_name}",
+        terms=meta.get('terms') or getattr(org, 'terms_default', 'Due on Receipt'),
+        subtotal=tot['subtotal'],
+        cgst=tot['cgst'],
+        sgst=tot['sgst'],
+        igst=tot['igst'],
+        total=tot['total'],
+        status='draft'
+    )
+
+    InvoiceLine.objects.bulk_create([
+        InvoiceLine(
+            invoice=inv,
+            item=l['item'],
+            description=l['description'],
+            hsn_sac=l['hsn_sac'],
+            quantity=l['quantity'],
+            rate=l['rate'],
+            discount_percent=l['discount_percent'],
+            gst_rate=l['gst_rate'],
+            taxable=l['taxable'],
+            tax_amount=l['tax_amount'],
+            line_total=l['line_total'],
+            position=l['position']
+        )
+        for l in comp
+    ])
+
+    auto_send = meta.get('auto_send', False)
+    if auto_send:
+        try:
+            send_invoice(inv, user)
+        except Exception:
+            pass
+
+    history = meta.get('history', [])
+    history.insert(0, {
+        'id': inv.pk,
+        'number': inv.number,
+        'invoice_id': inv.pk,
+        'invoice_number': inv.number,
+        'date': target_date.isoformat(),
+        'due_date': due_date.isoformat(),
+        'total': str(inv.total),
+        'status': inv.status,
+        'created_at': timezone.now().isoformat()
+    })
+    meta['history'] = history[:100]
+
+    occurrences_count = int(meta.get('occurrences_count', 0)) + 1
+    meta['occurrences_count'] = occurrences_count
+
+    repeat_every = meta.get('repeat_every', 1)
+    next_d = advance_recurring_date(target_date, profile.frequency, repeat_every)
+    profile.next_date = next_d
+
+    if profile.end_date and profile.next_date > profile.end_date:
+        profile.status = 'completed'
+    max_occ = meta.get('max_occurrences')
+    if max_occ and occurrences_count >= int(max_occ):
+        profile.status = 'completed'
+
+    profile.lines_data = meta
+    profile.save(update_fields=['next_date', 'status', 'lines_data'])
+
+    log_audit(
+        user, 'generate_invoice', 'RecurringInvoice', profile.pk,
+        f"Generated invoice {inv.number} (₹{inv.total}) from recurring profile {profile.profile_name}",
+        org=org, module='sales', submodule='recurring_invoices'
+    )
+    return inv
+
+def process_due_recurring_invoices(as_of_date=None, org=None, user=None):
+    """
+    Process all recurring invoices that are due on or before as_of_date.
+    Called by management command, background workers, or scheduled jobs.
+    """
+    from .models import RecurringInvoice
+    if not as_of_date:
+        as_of_date = timezone.localdate()
+
+    qs = RecurringInvoice.objects.filter(status='active', next_date__lte=as_of_date)
+    if org:
+        qs = qs.filter(organization=org)
+
+    generated = []
+    for profile in qs.select_related('customer', 'organization'):
+        try:
+            inv = generate_invoice_from_recurring_profile(profile, scheduled_date=profile.next_date, user=user)
+            generated.append(inv)
+        except Exception:
+            continue
+    return generated
 
 def _sum(qs, field):
     return qs.aggregate(t=Sum(field))['t'] or Z

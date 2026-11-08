@@ -238,12 +238,34 @@ class Invoice(Document):
     def __str__(self):
         return self.number
 
+    @property
+    def paid_amount(self):
+        if not self.pk:
+            return Decimal('0.00')
+        p_alloc = sum((a.amount for a in self.allocations.all()), Decimal('0.00'))
+        r_alloc = sum((a.amount for a in self.retainer_allocations.all()), Decimal('0.00')) if hasattr(self, 'retainer_allocations') else Decimal('0.00')
+        return p_alloc + r_alloc
+
+    @property
+    def balance_due(self):
+        return max(Decimal('0.00'), self.total - self.paid_amount)
+
 class Bill(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='bills')
     vendor_ref = models.CharField(max_length=60, blank=True)
 
     def __str__(self):
         return self.number
+
+    @property
+    def paid_amount(self):
+        if not self.pk:
+            return Decimal('0.00')
+        return sum((a.amount for a in self.allocations.all()), Decimal('0.00'))
+
+    @property
+    def balance_due(self):
+        return max(Decimal('0.00'), self.total - self.paid_amount)
 
 class Line(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
@@ -662,11 +684,21 @@ class RetainerInvoice(Document):
 
     @property
     def paid_amount(self):
+        if not self.pk:
+            return Decimal('0.00')
         return sum((p.amount for p in self.payments.all()), Decimal('0.00'))
 
     @property
     def available_balance(self):
         return max(Decimal('0.00'), self.paid_amount - self.applied_amount)
+
+    @property
+    def total_amount(self):
+        return self.total
+
+    @property
+    def retainer_number(self):
+        return self.number
 
 class RetainerInvoiceLine(Line):
     retainer = models.ForeignKey(RetainerInvoice, on_delete=models.CASCADE, related_name='lines')

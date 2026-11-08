@@ -368,12 +368,45 @@ function renderSettingsShell(root, activeSubKey, title, renderPageContentFn) {
   `;
 
   const pane = $('#settingsMainPane');
-  if (pane && renderPageContentFn) {
-    Promise.resolve(renderPageContentFn(pane)).catch(err => {
-      pane.innerHTML = `<div class="error-msg-card">${esc(err.message || 'Failed to load page.')}</div>`;
+  const renderer = renderPageContentFn || getSettingsPageRenderer(activeSubKey);
+  if (pane && renderer) {
+    Promise.resolve(renderer(pane)).catch(err => {
+      pane.innerHTML = `<div class="error-msg-card" style="padding:20px;margin:20px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#b91c1c;">${esc(err.message || 'Failed to load settings page.')}</div>`;
       console.error(err);
     });
+  } else if (pane && !renderer) {
+    pane.innerHTML = `<div class="info-alert-card" style="margin:30px;">Settings section <b>${esc(title)}</b> is ready.</div>`;
   }
+}
+
+function getSettingsPageRenderer(key) {
+  const map = {
+    'users': typeof renderSettingsUsersPage === 'function' ? renderSettingsUsersPage : null,
+    'roles': typeof renderSettingsRolesPage === 'function' ? renderSettingsRolesPage : null,
+    'profile': typeof renderOrgProfilePage === 'function' ? renderOrgProfilePage : null,
+    'branding': typeof renderBrandingPage === 'function' ? renderBrandingPage : null,
+    'ai': typeof renderAiControlCenterPage === 'function' ? renderAiControlCenterPage : null,
+    'taxes': typeof renderTaxesPage === 'function' ? renderTaxesPage : null,
+    'direct-taxes': typeof renderDirectTaxesPage === 'function' ? renderDirectTaxesPage : null,
+    'eway-bills': typeof renderEwayBillsPage === 'function' ? renderEwayBillsPage : null,
+    'einvoicing': typeof renderEinvoicingPage === 'function' ? renderEinvoicingPage : null,
+    'msme': typeof renderMsmePage === 'function' ? renderMsmePage : null,
+    'general': typeof renderGeneralSettingsPage === 'function' ? renderGeneralSettingsPage : null,
+    'currencies': typeof renderCurrenciesPage === 'function' ? renderCurrenciesPage : null,
+    'payment-terms': typeof renderPaymentTermsPage === 'function' ? renderPaymentTermsPage : null,
+    'opening-balances': typeof renderOpeningBalancesPage === 'function' ? renderOpeningBalancesPage : null,
+    'reminders': typeof renderRemindersPage === 'function' ? renderRemindersPage : null,
+    'customer-portal': typeof renderCustomerPortalPage === 'function' ? renderCustomerPortalPage : null,
+    'number-series': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
+    'pdf-templates': typeof renderPdfTemplatesPage === 'function' ? renderPdfTemplatesPage : null,
+    'email-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
+    'sms-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
+    'digital-signature': typeof renderDigitalSignaturePage === 'function' ? renderDigitalSignaturePage : null,
+    'mod-prefs': typeof renderGeneralSettingsPage === 'function' ? renderGeneralSettingsPage : null,
+    'sales-invoices': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
+    'sales-quotes': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
+  };
+  return map[key] || null;
 }
 
 function toggleSettingsNavGroup(btn) {
@@ -468,8 +501,25 @@ async function renderSettingsUsersPage(container) {
   `;
 }
 
-function openInviteUserModal(isAccountant = false) {
-  const roles = (cachedSettingsData && cachedSettingsData.roles) || [];
+async function openInviteUserModal(isAccountant = false) {
+  let roles = (cachedSettingsData && cachedSettingsData.roles) || [];
+  if (!roles || !roles.length) {
+    try {
+      const rData = await api('/settings/roles/');
+      roles = rData.roles || [];
+      if (!cachedSettingsData) cachedSettingsData = {};
+      cachedSettingsData.roles = roles;
+    } catch(e) {
+      roles = [];
+    }
+  }
+  if (!roles.length) {
+    roles = [
+      { id: '1', name: 'Admin' },
+      { id: '2', name: 'Staff' },
+      { id: '3', name: 'Accountant' }
+    ];
+  }
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.innerHTML = `
@@ -1753,22 +1803,24 @@ async function renderAiControlCenterPage(container) {
 // =========================================================================
 
 async function renderTaxesPage(container) {
-  let taxes = [];
-  let page = 1;
-  let total = 0;
-  let activeFilter = 'active';
+  let taxesData = {};
+  let currentTab = 'tax-rates';
 
-  async function loadTaxes() {
+  async function loadData() {
     try {
-      const data = await api('/settings/taxes/');
-      taxes = data.taxes || [];
-      total = taxes.length;
-    } catch(e) { taxes = []; }
+      taxesData = await api('/settings/taxes/');
+    } catch(e) {
+      taxesData = { taxes: [], tax_exemptions: [], tax_settings: {} };
+    }
   }
 
-  await loadTaxes();
+  await loadData();
 
-  function taxesSubNavHtml(activeItem) {
+  function renderView() {
+    const taxes = taxesData.taxes || [];
+    const exemptions = taxesData.tax_exemptions || [];
+    const ts = taxesData.tax_settings || {};
+
     const items = [
       { key: 'tax-rates',      label: 'Tax Rates' },
       { key: 'tax-exemptions', label: 'Tax Exemptions' },
@@ -1777,37 +1829,20 @@ async function renderTaxesPage(container) {
       { key: 'gst-tds',        label: 'GST TDS Settings' },
       { key: 'online-filing',  label: 'Online Filing Settings' },
     ];
-    return `
-      <nav class="taxes-subnav">
-        ${items.map(it => `
-          <button type="button" class="taxes-subnav-item${it.key === activeItem ? ' active' : ''}"
-            data-subnav="${it.key}"
-            onclick="document.querySelectorAll('.taxes-subnav-item').forEach(b=>b.classList.remove('active')); this.classList.add('active');">
-            ${esc(it.label)}
-          </button>
-        `).join('')}
-      </nav>
-    `;
-  }
 
-  const filteredTaxes = taxes.filter(t => activeFilter === 'all' || t.status !== 'inactive');
+    let contentHtml = '';
 
-  container.innerHTML = `
-    <div style="display:flex; height:100%; min-height:0; flex:1;">
-      ${taxesSubNavHtml('tax-rates')}
-      <div class="taxes-content-panel">
+    if (currentTab === 'tax-rates') {
+      contentHtml = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
           <div style="display:flex; align-items:center; gap:10px;">
             <h2 style="font-size:18px; font-weight:700; margin:0;">Active taxes</h2>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
           </div>
           <div style="display:flex; gap:10px; align-items:center;">
-            <button type="button" class="btn-primary" style="display:flex; align-items:center; gap:6px;" onclick="alert('Add tax coming soon')">
+            <button type="button" class="btn-primary" style="display:flex; align-items:center; gap:6px;" id="btnOpenNewTax">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
               New Tax
-            </button>
-            <button type="button" class="btn-outline" style="padding:8px 10px;" title="More options">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
             </button>
             <button type="button" class="btn-outline" style="padding:8px 14px; display:flex; align-items:center; gap:6px;">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -1828,13 +1863,13 @@ async function renderTaxesPage(container) {
               </tr>
             </thead>
             <tbody>
-              ${filteredTaxes.length ? filteredTaxes.map(t => `
+              ${taxes.length ? taxes.map(t => `
                 <tr>
                   <td><input type="checkbox"></td>
-                  <td><a href="javascript:void(0)" style="color:#2563eb; font-weight:500;">${esc(t.name)}</a>${t.tax_group ? ` <span style="font-size:11px; color:#9ca3af;">(Tax Group)</span>` : ''}</td>
-                  <td>${esc(t.type || '')}</td>
-                  <td>${esc(t.country || '')}</td>
-                  <td style="text-align:right; font-weight:500;">${t.rate || 0}</td>
+                  <td><a href="javascript:void(0)" style="color:#2563eb; font-weight:500;">${esc(t.name)}</a>${t.type === 'Tax Group' ? ` <span style="font-size:11px; color:#9ca3af;">(Tax Group)</span>` : ''}</td>
+                  <td>${esc(t.type || 'Standard')}</td>
+                  <td>${esc(t.country || 'India')}</td>
+                  <td style="text-align:right; font-weight:500;">${t.rate || 0}%</td>
                 </tr>
               `).join('') : `
                 <tr><td colspan="5" style="text-align:center; padding:40px; color:#9ca3af;">No taxes configured yet.</td></tr>
@@ -1842,26 +1877,440 @@ async function renderTaxesPage(container) {
             </tbody>
           </table>
           <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-top:1px solid var(--bd);">
-            <div style="font-size:13px; color:#6b7280;">Total Count: <a href="javascript:void(0)" style="color:#2563eb;">View</a></div>
-            <div style="display:flex; gap:8px;">
-              <button type="button" class="btn-outline" style="padding:4px 10px;">‹</button>
-              <span style="font-size:13px; padding:4px 8px;">1 - ${Math.min(12, total || 1)}</span>
-              <button type="button" class="btn-outline" style="padding:4px 10px;">›</button>
+            <div style="font-size:13px; color:#6b7280;">Total Count: <span style="color:#2563eb; font-weight:600;">${taxes.length}</span></div>
+          </div>
+        </div>
+      `;
+    } else if (currentTab === 'tax-exemptions') {
+      contentHtml = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px;">
+          <div>
+            <h2 style="font-size:18px; font-weight:700; margin:0;">Tax Exemptions</h2>
+            <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Reasons for supplies exempted from GST under Section 11 of CGST Act.</p>
+          </div>
+          <button type="button" class="btn-primary" id="btnOpenNewExemption" style="display:flex; align-items:center; gap:6px;">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            Add Exemption Reason
+          </button>
+        </div>
+
+        <div class="settings-table-card">
+          <table class="settings-data-table">
+            <thead>
+              <tr>
+                <th style="min-width:220px;">EXEMPTION REASON</th>
+                <th>DESCRIPTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${exemptions.map(ex => `
+                <tr>
+                  <td><b>${esc(ex.reason)}</b></td>
+                  <td style="color:#4b5563;">${esc(ex.description || '—')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (currentTab === 'default-pref') {
+      contentHtml = `
+        <div style="margin-bottom:18px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0;">Default Tax Preference</h2>
+          <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Specify default tax behavior when adding items and new transactions.</p>
+        </div>
+
+        <div class="settings-form-card">
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <label class="custom-radio-label">
+              <input type="radio" name="taxPref" value="taxable" ${ts.default_tax_preference !== 'non-taxable' ? 'checked' : ''}>
+              <span><b>Taxable</b> (Sales and purchases are taxable unless specifically exempted)</span>
+            </label>
+            <label class="custom-radio-label">
+              <input type="radio" name="taxPref" value="non-taxable" ${ts.default_tax_preference === 'non-taxable' ? 'checked' : ''}>
+              <span><b>Non-Taxable / Exempt</b> (Default all lines as non-taxable / exempt)</span>
+            </label>
+
+            <div class="form-group" style="margin-top:10px;">
+              <label style="font-weight:600; font-size:13px;">Default Intra-State Tax Rate</label>
+              <select id="defTaxRate" class="form-control" style="max-width:320px;">
+                <option value="GST18" ${ts.default_rate === 'GST18' ? 'selected' : ''}>GST 18% (Standard Rate)</option>
+                <option value="GST12" ${ts.default_rate === 'GST12' ? 'selected' : ''}>GST 12%</option>
+                <option value="GST5" ${ts.default_rate === 'GST5' ? 'selected' : ''}>GST 5%</option>
+                <option value="GST0" ${ts.default_rate === 'GST0' ? 'selected' : ''}>GST 0%</option>
+                <option value="GST28" ${ts.default_rate === 'GST28' ? 'selected' : ''}>GST 28%</option>
+              </select>
+            </div>
+
+            <div>
+              <button type="button" class="btn-primary" id="btnSaveTaxPref">Save Preference</button>
             </div>
           </div>
         </div>
+      `;
+    } else if (currentTab === 'gst-settings') {
+      contentHtml = `
+        <div style="margin-bottom:18px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0;">GST Settings</h2>
+          <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Manage Goods and Services Tax configuration and registration profile.</p>
+        </div>
+
+        <div class="settings-form-card">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">GSTIN*</label>
+              <input type="text" id="gstSettingsGstin" value="${esc(APP.org?.gstin || ts.gstin || '')}" placeholder="e.g. 29ABCDE1234F1Z5" class="form-control" style="text-transform:uppercase;">
+            </div>
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">GST Registration Type</label>
+              <select id="gstRegType" class="form-control">
+                <option value="regular" ${ts.reg_type !== 'composition' ? 'selected' : ''}>Regular Scheme</option>
+                <option value="composition" ${ts.reg_type === 'composition' ? 'selected' : ''}>Composition Scheme</option>
+                <option value="sez" ${ts.reg_type === 'sez' ? 'selected' : ''}>Special Economic Zone (SEZ)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px;">
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">Filing Periodicity</label>
+              <select id="gstFilingPeriod" class="form-control">
+                <option value="monthly" ${ts.filing_period !== 'quarterly' ? 'selected' : ''}>Monthly (GSTR-1 & GSTR-3B)</option>
+                <option value="quarterly" ${ts.filing_period === 'quarterly' ? 'selected' : ''}>Quarterly (QRMP Scheme)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">Reverse Charge Mechanism (RCM)</label>
+              <label class="custom-checkbox-label" style="margin-top:8px;">
+                <input type="checkbox" id="gstRcmEnabled" ${ts.rcm_enabled ? 'checked' : ''}>
+                <span>Track reverse charge on inward supplies</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="margin-top:20px;">
+            <button type="button" class="btn-primary" id="btnSaveGstSettings">Save GST Settings</button>
+          </div>
+        </div>
+      `;
+    } else if (currentTab === 'gst-tds') {
+      contentHtml = `
+        <div style="margin-bottom:18px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0;">GST TDS Settings</h2>
+          <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Tax Deducted at Source under GST Section 51 for government/specified deductors.</p>
+        </div>
+
+        <div class="settings-form-card">
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            <label class="custom-checkbox-label">
+              <input type="checkbox" id="gstTdsApplicable" ${ts.gst_tds_applicable ? 'checked' : ''}>
+              <span><b>This organization is required to deduct GST TDS</b> (Specified Government entities, PSUs, Local authorities)</span>
+            </label>
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">Threshold Limit for Contract Value (₹)</label>
+              <input type="number" id="gstTdsThreshold" value="${ts.gst_tds_threshold || 250000}" class="form-control" style="max-width:320px;">
+              <small style="color:#6b7280;">Statutory mandate: ₹2,50,000 per supply contract</small>
+            </div>
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">GST TDS Rate (%)</label>
+              <input type="number" id="gstTdsRate" value="${ts.gst_tds_rate || 2}" class="form-control" style="max-width:320px;" readonly>
+              <small style="color:#6b7280;">Fixed by statute at 2% (1% CGST + 1% SGST, or 2% IGST)</small>
+            </div>
+            <div>
+              <button type="button" class="btn-primary" id="btnSaveGstTds">Save GST TDS Settings</button>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (currentTab === 'online-filing') {
+      contentHtml = `
+        <div style="margin-bottom:18px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0;">Online Filing Settings</h2>
+          <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Direct GST Common Portal connectivity for seamless return filing and reconciliation.</p>
+        </div>
+
+        <div class="settings-form-card">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">GST Portal Username</label>
+              <input type="text" id="gstPortalUser" value="${esc(ts.portal_user || '')}" placeholder="Portal Username" class="form-control">
+            </div>
+            <div class="form-group">
+              <label style="font-weight:600; font-size:13px;">Auto-Reconciliation Frequency</label>
+              <select id="gstAutoRecon" class="form-control">
+                <option value="weekly" ${ts.auto_recon === 'weekly' ? 'selected' : ''}>Weekly GSTR-2B Sync</option>
+                <option value="monthly" ${ts.auto_recon !== 'weekly' ? 'selected' : ''}>Monthly Sync before 14th</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:20px;">
+            <button type="button" class="btn-primary" id="btnSaveOnlineFiling">Save Online Filing Settings</button>
+          </div>
+        </div>
+      `;
+    }
+
+    container.innerHTML = `
+      <div style="display:flex; height:100%; min-height:0; flex:1;">
+        <nav class="taxes-subnav">
+          ${items.map(it => `
+            <button type="button" class="taxes-subnav-item${it.key === currentTab ? ' active' : ''}"
+              data-tax-tab="${it.key}">
+              ${esc(it.label)}
+            </button>
+          `).join('')}
+        </nav>
+        <div class="taxes-content-panel">
+          ${contentHtml}
+        </div>
+      </div>
+    `;
+
+    // Hook tab buttons
+    container.querySelectorAll('.taxes-subnav-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentTab = btn.getAttribute('data-tax-tab');
+        renderView();
+      });
+    });
+
+    // Hook handlers for active tab
+    if (currentTab === 'tax-rates') {
+      const btnNew = container.querySelector('#btnOpenNewTax');
+      if (btnNew) {
+        btnNew.addEventListener('click', () => {
+          openAddTaxModal(async () => {
+            await loadData();
+            renderView();
+          });
+        });
+      }
+    } else if (currentTab === 'tax-exemptions') {
+      const btnNewEx = container.querySelector('#btnOpenNewExemption');
+      if (btnNewEx) {
+        btnNewEx.addEventListener('click', () => {
+          openAddExemptionModal(async () => {
+            await loadData();
+            renderView();
+          });
+        });
+      }
+    } else if (currentTab === 'default-pref') {
+      const btnSave = container.querySelector('#btnSaveTaxPref');
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const pref = container.querySelector('input[name="taxPref"]:checked')?.value || 'taxable';
+          const defRate = container.querySelector('#defTaxRate').value;
+          try {
+            await api('/settings/taxes/', {
+              method: 'POST',
+              body: { tax_settings: { default_tax_preference: pref, default_rate: defRate } }
+            });
+            toast('Default tax preference saved.', 'success');
+            await loadData();
+          } catch(err) {
+            toast(err.message || 'Failed to save preference.', 'error');
+          }
+        });
+      }
+    } else if (currentTab === 'gst-settings') {
+      const btnSave = container.querySelector('#btnSaveGstSettings');
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const gstin = container.querySelector('#gstSettingsGstin').value.trim().toUpperCase();
+          const reg_type = container.querySelector('#gstRegType').value;
+          const filing_period = container.querySelector('#gstFilingPeriod').value;
+          const rcm_enabled = container.querySelector('#gstRcmEnabled').checked;
+          try {
+            await api('/settings/taxes/', {
+              method: 'POST',
+              body: { tax_settings: { gstin, reg_type, filing_period, rcm_enabled } }
+            });
+            if (gstin && APP.org) APP.org.gstin = gstin;
+            toast('GST settings updated successfully.', 'success');
+            await loadData();
+          } catch(err) {
+            toast(err.message || 'Failed to update GST settings.', 'error');
+          }
+        });
+      }
+    } else if (currentTab === 'gst-tds') {
+      const btnSave = container.querySelector('#btnSaveGstTds');
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const gst_tds_applicable = container.querySelector('#gstTdsApplicable').checked;
+          const gst_tds_threshold = parseFloat(container.querySelector('#gstTdsThreshold').value) || 250000;
+          try {
+            await api('/settings/taxes/', {
+              method: 'POST',
+              body: { tax_settings: { gst_tds_applicable, gst_tds_threshold } }
+            });
+            toast('GST TDS settings saved.', 'success');
+            await loadData();
+          } catch(err) {
+            toast(err.message || 'Failed to save GST TDS settings.', 'error');
+          }
+        });
+      }
+    } else if (currentTab === 'online-filing') {
+      const btnSave = container.querySelector('#btnSaveOnlineFiling');
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const portal_user = container.querySelector('#gstPortalUser').value.trim();
+          const auto_recon = container.querySelector('#gstAutoRecon').value;
+          try {
+            await api('/settings/taxes/', {
+              method: 'POST',
+              body: { tax_settings: { portal_user, auto_recon } }
+            });
+            toast('Online filing preferences saved.', 'success');
+            await loadData();
+          } catch(err) {
+            toast(err.message || 'Failed to save online filing settings.', 'error');
+          }
+        });
+      }
+    }
+  }
+
+  renderView();
+}
+
+function openAddTaxModal(onSuccess) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-header">
+        <h3>New Tax</h3>
+        <button type="button" class="modal-close-btn" onclick="this.closest('.modal-backdrop').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label style="font-weight:600;font-size:13px;">Tax Name*</label>
+          <input type="text" id="newTaxName" placeholder="e.g. GST18, Kerala Flood Cess" class="form-control" required>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label style="font-weight:600;font-size:13px;">Tax Rate (%)*</label>
+          <input type="number" id="newTaxRate" placeholder="e.g. 18" step="0.01" min="0" max="100" class="form-control" required>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label style="font-weight:600;font-size:13px;">Tax Type*</label>
+          <select id="newTaxType" class="form-control">
+            <option value="Tax Group">Tax Group (CGST + SGST)</option>
+            <option value="IGST">IGST</option>
+            <option value="Cess">Cess</option>
+            <option value="GST">GST</option>
+            <option value="Custom">Custom / State Tax</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label style="font-weight:600;font-size:13px;">Country / Region</label>
+          <input type="text" id="newTaxCountry" value="India" class="form-control">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-backdrop').remove()">Cancel</button>
+        <button type="button" class="btn-primary" id="btnSubmitNewTax">Save Tax</button>
       </div>
     </div>
   `;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#btnSubmitNewTax').addEventListener('click', async () => {
+    const name = modal.querySelector('#newTaxName').value.trim();
+    const rate = parseFloat(modal.querySelector('#newTaxRate').value);
+    const type = modal.querySelector('#newTaxType').value;
+    const country = modal.querySelector('#newTaxCountry').value.trim() || 'India';
+
+    if (!name) {
+      toast('Please enter tax name.', 'error');
+      return;
+    }
+    if (isNaN(rate) || rate < 0) {
+      toast('Please enter a valid tax rate.', 'error');
+      return;
+    }
+
+    try {
+      await api('/settings/taxes/', {
+        method: 'POST',
+        body: { new_tax: { name, rate, type, country } }
+      });
+      toast(`Tax "${name}" added successfully.`, 'success');
+      modal.remove();
+      if (typeof onSuccess === 'function') onSuccess();
+    } catch(err) {
+      toast(err.message || 'Failed to add tax.', 'error');
+    }
+  });
+}
+
+function openAddExemptionModal(onSuccess) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-header">
+        <h3>Add Tax Exemption</h3>
+        <button type="button" class="modal-close-btn" onclick="this.closest('.modal-backdrop').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label style="font-weight:600;font-size:13px;">Exemption Reason*</label>
+          <input type="text" id="newExReason" placeholder="e.g. Export of IT Services under LUT" class="form-control" required>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label style="font-weight:600;font-size:13px;">Description / Section Reference</label>
+          <textarea id="newExDesc" placeholder="e.g. Zero rated supply under Section 16 of IGST Act" class="form-control" style="height:70px;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="this.closest('.modal-backdrop').remove()">Cancel</button>
+        <button type="button" class="btn-primary" id="btnSubmitNewEx">Save Exemption</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#btnSubmitNewEx').addEventListener('click', async () => {
+    const reason = modal.querySelector('#newExReason').value.trim();
+    const description = modal.querySelector('#newExDesc').value.trim();
+
+    if (!reason) {
+      toast('Exemption reason is required.', 'error');
+      return;
+    }
+
+    try {
+      await api('/settings/taxes/', {
+        method: 'POST',
+        body: { new_exemption: { reason, description } }
+      });
+      toast('Tax exemption reason added.', 'success');
+      modal.remove();
+      if (typeof onSuccess === 'function') onSuccess();
+    } catch(err) {
+      toast(err.message || 'Failed to add exemption.', 'error');
+    }
+  });
 }
 
 async function renderDirectTaxesPage(container) {
   let data = {};
-  try { data = await api('/settings/taxes/'); } catch(e) {}
-  const sections = data.tds_sections || [];
-  const directTaxes = data.direct_tax_settings || {};
+  let currentSubTab = 'tds-settings';
 
-  function taxesSubNavHtml(activeItem) {
+  async function loadData() {
+    try { data = await api('/settings/taxes/'); } catch(e) { data = {}; }
+  }
+
+  await loadData();
+
+  function renderView() {
+    const tdsSections = data.tds_sections || [];
+    const tcsSections = data.tcs_sections || [];
+    const directTaxes = data.direct_tax_settings || {};
+
     const groups = [
       { group: 'TDS', items: [
         { key: 'tds-settings', label: 'Income TDS Settings' },
@@ -1871,19 +2320,19 @@ async function renderDirectTaxesPage(container) {
         { key: 'tcs-rates',    label: 'Income TCS Rates' },
       ]},
     ];
-    let html = '';
+
+    let subNavHtml = '';
     groups.forEach(grp => {
-      html += `<div class="taxes-subnav-section">${esc(grp.group)}</div>`;
+      subNavHtml += `<div class="taxes-subnav-section">${esc(grp.group)}</div>`;
       grp.items.forEach(it => {
-        html += `<button type="button" class="taxes-subnav-item${it.key === activeItem ? ' active' : ''}"
-          data-subnav="${it.key}"
-          onclick="document.querySelectorAll('.taxes-subnav-item').forEach(b=>b.classList.remove('active')); this.classList.add('active');">
+        subNavHtml += `<button type="button" class="taxes-subnav-item${it.key === currentSubTab ? ' active' : ''}"
+          data-dir-tab="${it.key}">
           ${esc(it.label)}
         </button>`;
       });
     });
-    // Attention box
-    html += `
+
+    subNavHtml += `
       <div class="attention-alert-card" style="margin:12px 10px;">
         <div class="alert-title">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="#f59e0b"><path d="M12 2L1 21h22L12 2zm0 15h.01M11 11h2v4h-2z"/></svg>
@@ -1895,13 +2344,11 @@ async function renderDirectTaxesPage(container) {
         </div>
       </div>
     `;
-    return `<nav class="taxes-subnav">${html}</nav>`;
-  }
 
-  container.innerHTML = `
-    <div style="display:flex; height:100%; min-height:0; flex:1;">
-      ${taxesSubNavHtml('tds-settings')}
-      <div class="taxes-content-panel">
+    let rightContentHtml = '';
+
+    if (currentSubTab === 'tds-settings') {
+      rightContentHtml = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
           <h2 style="font-size:18px; font-weight:700; margin:0;">Income TDS Settings</h2>
           <button type="button" class="btn-outline" style="padding:8px 14px; display:flex; align-items:center; gap:6px;">
@@ -1942,29 +2389,116 @@ async function renderDirectTaxesPage(container) {
         <div style="margin-top:20px;">
           <button type="button" class="btn-primary" id="btnSaveDirectTaxes">Save</button>
         </div>
-      </div>
-    </div>
-  `;
+      `;
+    } else if (currentSubTab === 'tds-rates') {
+      rightContentHtml = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+          <div>
+            <h2 style="font-size:18px; font-weight:700; margin:0;">Income TDS Rates</h2>
+            <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Standard TDS rate chart and threshold limits under Income Tax Act, 2025.</p>
+          </div>
+        </div>
 
-  container.querySelector('#btnSaveDirectTaxes').addEventListener('click', async () => {
-    const selectedLevel = container.querySelector('input[name="tdsLevel"]:checked')?.value || 'transaction';
-    const enableReport = container.querySelector('#cbTdsReport').checked;
+        <div class="settings-table-card">
+          <table class="settings-data-table">
+            <thead>
+              <tr>
+                <th style="width:110px;">SECTION</th>
+                <th>NATURE OF PAYMENT</th>
+                <th>RATE (%)</th>
+                <th>THRESHOLD LIMIT</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tdsSections.map(s => `
+                <tr>
+                  <td><b>${esc(s.section)}</b></td>
+                  <td>${esc(s.name)}</td>
+                  <td style="font-weight:600; color:#2563eb;">${esc(s.rate)}</td>
+                  <td>${esc(s.threshold)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (currentSubTab === 'tcs-rates') {
+      rightContentHtml = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+          <div>
+            <h2 style="font-size:18px; font-weight:700; margin:0;">Income TCS Rates</h2>
+            <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Tax Collected at Source rate chart for sellers under Section 206C.</p>
+          </div>
+        </div>
 
-    try {
-      await api('/settings/taxes/', {
-        method: 'POST',
-        body: JSON.stringify({
-          direct_tax_settings: {
-            tds_level: selectedLevel,
-            enable_tds_liabilities_report: enableReport
-          }
-        })
-      });
-      toast('Direct Tax settings saved.', 'success');
-    } catch (err) {
-      toast(err.message || 'Failed to save settings.', 'error');
+        <div class="settings-table-card">
+          <table class="settings-data-table">
+            <thead>
+              <tr>
+                <th style="width:110px;">SECTION</th>
+                <th>NATURE OF GOODS / COLLECTION</th>
+                <th>RATE (%)</th>
+                <th>THRESHOLD LIMIT</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tcsSections.map(s => `
+                <tr>
+                  <td><b>${esc(s.section)}</b></td>
+                  <td>${esc(s.name)}</td>
+                  <td style="font-weight:600; color:#2563eb;">${esc(s.rate)}</td>
+                  <td>${esc(s.threshold)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
-  });
+
+    container.innerHTML = `
+      <div style="display:flex; height:100%; min-height:0; flex:1;">
+        <nav class="taxes-subnav">${subNavHtml}</nav>
+        <div class="taxes-content-panel">
+          ${rightContentHtml}
+        </div>
+      </div>
+    `;
+
+    container.querySelectorAll('.taxes-subnav-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentSubTab = btn.getAttribute('data-dir-tab');
+        renderView();
+      });
+    });
+
+    if (currentSubTab === 'tds-settings') {
+      const btnSave = container.querySelector('#btnSaveDirectTaxes');
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const selectedLevel = container.querySelector('input[name="tdsLevel"]:checked')?.value || 'transaction';
+          const enableReport = container.querySelector('#cbTdsReport').checked;
+          try {
+            await api('/settings/taxes/', {
+              method: 'POST',
+              body: {
+                direct_tax_settings: {
+                  tds_level: selectedLevel,
+                  enable_tds_liabilities_report: enableReport
+                }
+              }
+            });
+            toast('Direct Tax settings saved successfully.', 'success');
+            await loadData();
+          } catch(err) {
+            toast(err.message || 'Failed to save settings.', 'error');
+          }
+        });
+      }
+    }
+  }
+
+  renderView();
 }
 
 // =========================================================================
@@ -2847,4 +3381,397 @@ async function renderNotificationsPage(container) {
     }
   });
 }
+
+// =========================================================================
+// 12. E-WAY BILLS, E-INVOICING, MSME & OPENING BALANCES
+// =========================================================================
+
+async function renderEwayBillsPage(container) {
+  let org = {};
+  try { org = await api('/settings/organization/'); } catch(e) { org = APP.org || {}; }
+  const gen = org.general_settings || {};
+  const ewb = gen.eway_bill || {};
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>e-Way Bills</h1>
+        <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Configure e-Way Bill thresholds, GSP portal integration, and automated generation under GST Rule 138.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnSaveEwayBill">Save Changes</button>
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">General e-Way Bill Preferences</h3>
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="ewbEnabled" ${ewb.enabled !== false ? 'checked' : ''}>
+          <span><b>Enable e-Way Bill Generation</b> (Allow generating e-way bills for applicable sales invoices, delivery challans and transfers)</span>
+        </label>
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="ewbAutoGenerate" ${ewb.auto_generate ? 'checked' : ''}>
+          <span><b>Auto-Generate on Approval</b> (Automatically generate Part-A / Part-B upon invoice authorization)</span>
+        </label>
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="ewbAutoDistance" ${ewb.auto_distance !== false ? 'checked' : ''}>
+          <span><b>Auto-calculate distance</b> based on dispatch and delivery PIN codes</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:14px;">Consignment Threshold Limits</h3>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Inter-State Threshold Limit (₹)*</label>
+          <input type="number" id="ewbInterThreshold" value="${ewb.inter_state_threshold || 50000}" class="form-control" style="max-width:320px;">
+          <small style="color:#6b7280;">Statutory mandate: ₹50,000 for inter-state movements</small>
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Intra-State Threshold Limit (₹)*</label>
+          <input type="number" id="ewbIntraThreshold" value="${ewb.intra_state_threshold || 100000}" class="form-control" style="max-width:320px;">
+          <small style="color:#6b7280;">Default is ₹1,00,000 (varies by state jurisdiction)</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-form-card">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:6px;">e-Way Bill Portal (NIC / GSP) Credentials</h3>
+      <p style="font-size:12.5px; color:#6b7280; margin-bottom:14px;">Credentials used to communicate with the Government e-Way Bill system via official GST Suvidha Provider (GSP).</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Portal Username</label>
+          <input type="text" id="ewbUsername" value="${esc(ewb.username || '')}" placeholder="GSP Portal Username" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Portal Password</label>
+          <input type="password" id="ewbPassword" value="${esc(ewb.password || '')}" placeholder="••••••••••••" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Client ID</label>
+          <input type="text" id="ewbClientId" value="${esc(ewb.client_id || '')}" placeholder="GSP Client ID" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Client Secret</label>
+          <input type="password" id="ewbClientSecret" value="${esc(ewb.client_secret || '')}" placeholder="••••••••••••" class="form-control">
+        </div>
+      </div>
+    </div>
+  `;
+
+  container.querySelector('#btnSaveEwayBill').addEventListener('click', async () => {
+    const eway_bill = {
+      enabled: container.querySelector('#ewbEnabled').checked,
+      auto_generate: container.querySelector('#ewbAutoGenerate').checked,
+      auto_distance: container.querySelector('#ewbAutoDistance').checked,
+      inter_state_threshold: parseFloat(container.querySelector('#ewbInterThreshold').value) || 50000,
+      intra_state_threshold: parseFloat(container.querySelector('#ewbIntraThreshold').value) || 100000,
+      username: container.querySelector('#ewbUsername').value.trim(),
+      password: container.querySelector('#ewbPassword').value.trim(),
+      client_id: container.querySelector('#ewbClientId').value.trim(),
+      client_secret: container.querySelector('#ewbClientSecret').value.trim(),
+    };
+    try {
+      const genUpdated = { ...(org.general_settings || {}), eway_bill };
+      await api('/settings/organization/', { method: 'POST', body: { general_settings: genUpdated } });
+      toast('e-Way Bill settings saved successfully.', 'success');
+    } catch(err) {
+      toast(err.message || 'Failed to save e-Way Bill settings.', 'error');
+    }
+  });
+}
+
+async function renderEinvoicingPage(container) {
+  let org = {};
+  try { org = await api('/settings/organization/'); } catch(e) { org = APP.org || {}; }
+  const gen = org.general_settings || {};
+  const einv = gen.einvoicing || {};
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>e-Invoicing Settings</h1>
+        <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Manage electronic invoicing, Invoice Registration Portal (IRP) connections, and IRN/Signed QR code generation.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnSaveEinvoice">Save Changes</button>
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">e-Invoicing Status & Eligibility</h3>
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="einvEnabled" ${einv.enabled ? 'checked' : ''}>
+          <span><b>Enable e-Invoicing</b> (Mandatory for businesses with annual turnover exceeding statutory threshold)</span>
+        </label>
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="einvAutoIrn" ${einv.auto_irn ? 'checked' : ''}>
+          <span><b>Auto-Generate IRN on Approval</b> (Instantly register invoices with IRP upon approval)</span>
+        </label>
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="einvEwbTogether" ${einv.ewb_together !== false ? 'checked' : ''}>
+          <span><b>Generate e-Way Bill along with e-Invoice</b> when transportation details are present</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:14px;">Statutory Threshold & Details</h3>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Aggregate Annual Turnover Threshold (₹)</label>
+          <select id="einvThreshold" class="form-control" style="max-width:320px;">
+            <option value="5cr" ${einv.threshold === '5cr' ? 'selected' : ''}>Exceeding ₹5 Crore (Mandatory Phase IV)</option>
+            <option value="10cr" ${einv.threshold === '10cr' ? 'selected' : ''}>Exceeding ₹10 Crore</option>
+            <option value="20cr" ${einv.threshold === '20cr' ? 'selected' : ''}>Exceeding ₹20 Crore</option>
+            <option value="voluntary" ${einv.threshold === 'voluntary' ? 'selected' : ''}>Voluntary Adoption</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Preferred IRP Portal</label>
+          <select id="einvPortal" class="form-control" style="max-width:320px;">
+            <option value="einvoice1" ${einv.portal === 'einvoice1' ? 'selected' : ''}>NIC IRP Portal 1 (einvoice1.gst.gov.in)</option>
+            <option value="einvoice2" ${einv.portal === 'einvoice2' ? 'selected' : ''}>NIC IRP Portal 2 (einvoice2.gst.gov.in)</option>
+            <option value="cleartax" ${einv.portal === 'cleartax' ? 'selected' : ''}>ClearTax GSP IRP</option>
+            <option value="iris" ${einv.portal === 'iris' ? 'selected' : ''}>IRIS IRP</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-form-card">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:6px;">IRP Integration Credentials</h3>
+      <p style="font-size:12.5px; color:#6b7280; margin-bottom:14px;">Direct API credentials generated from the e-Invoice system for your registered GSTIN.</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">API Username</label>
+          <input type="text" id="einvUsername" value="${esc(einv.username || '')}" placeholder="API User" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">API Password</label>
+          <input type="password" id="einvPassword" value="${esc(einv.password || '')}" placeholder="••••••••••••" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Client ID</label>
+          <input type="text" id="einvClientId" value="${esc(einv.client_id || '')}" placeholder="Client ID" class="form-control">
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Client Secret</label>
+          <input type="password" id="einvClientSecret" value="${esc(einv.client_secret || '')}" placeholder="••••••••••••" class="form-control">
+        </div>
+      </div>
+    </div>
+  `;
+
+  container.querySelector('#btnSaveEinvoice').addEventListener('click', async () => {
+    const einvoicing = {
+      enabled: container.querySelector('#einvEnabled').checked,
+      auto_irn: container.querySelector('#einvAutoIrn').checked,
+      ewb_together: container.querySelector('#einvEwbTogether').checked,
+      threshold: container.querySelector('#einvThreshold').value,
+      portal: container.querySelector('#einvPortal').value,
+      username: container.querySelector('#einvUsername').value.trim(),
+      password: container.querySelector('#einvPassword').value.trim(),
+      client_id: container.querySelector('#einvClientId').value.trim(),
+      client_secret: container.querySelector('#einvClientSecret').value.trim(),
+    };
+    try {
+      const genUpdated = { ...(org.general_settings || {}), einvoicing };
+      await api('/settings/organization/', { method: 'POST', body: { general_settings: genUpdated } });
+      toast('e-Invoicing settings saved successfully.', 'success');
+    } catch(err) {
+      toast(err.message || 'Failed to save e-Invoicing settings.', 'error');
+    }
+  });
+}
+
+async function renderMsmePage(container) {
+  let org = {};
+  try { org = await api('/settings/organization/'); } catch(e) { org = APP.org || {}; }
+  const gen = org.general_settings || {};
+  const msme = gen.msme || {};
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>MSME / Udyam Settings</h1>
+        <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Manage MSME registration, enterprise classification, and Income Tax Section 43B(h) compliance.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnSaveMsme">Save Settings</button>
+      </div>
+    </div>
+
+    <!-- Section 43B(h) Banner -->
+    <div class="attention-alert-card" style="margin-bottom:18px;">
+      <div class="alert-title">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="#f59e0b"><path d="M12 2L1 21h22L12 2zm0 15h.01M11 11h2v4h-2z"/></svg>
+        Income Tax Section 43B(h) Compliance Notice
+      </div>
+      <div style="font-size:12.5px; line-height:1.5; color:#9a3412;">
+        Payments to Micro and Small enterprises must be settled within 45 days (with written agreement) or 15 days (without agreement). Unpaid dues at year-end cannot be claimed as tax-deductible expenses until actual payment is made.
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">Organization MSME Registration</h3>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="msmeRegistered" ${msme.registered ? 'checked' : ''}>
+          <span><b>Is this organization registered under MSME / Udyam?</b></span>
+        </label>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+          <div class="form-group">
+            <label style="font-weight:600; font-size:13px;">Udyam Registration Number</label>
+            <input type="text" id="msmeUdyamNumber" value="${esc(msme.udyam_number || '')}" placeholder="UDYAM-XX-00-0000000" class="form-control">
+          </div>
+          <div class="form-group">
+            <label style="font-weight:600; font-size:13px;">Enterprise Type</label>
+            <select id="msmeEnterpriseType" class="form-control">
+              <option value="micro" ${msme.enterprise_type === 'micro' ? 'selected' : ''}>Micro Enterprise (Investment &le; ₹1 Cr, Turnover &le; ₹5 Cr)</option>
+              <option value="small" ${msme.enterprise_type === 'small' ? 'selected' : ''}>Small Enterprise (Investment &le; ₹10 Cr, Turnover &le; ₹50 Cr)</option>
+              <option value="medium" ${msme.enterprise_type === 'medium' ? 'selected' : ''}>Medium Enterprise (Investment &le; ₹50 Cr, Turnover &le; ₹250 Cr)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Major Activity</label>
+          <div style="display:flex; gap:20px; margin-top:4px;">
+            <label class="custom-radio-label">
+              <input type="radio" name="msmeActivity" value="manufacturing" ${msme.activity !== 'services' ? 'checked' : ''}>
+              <span>Manufacturing</span>
+            </label>
+            <label class="custom-radio-label">
+              <input type="radio" name="msmeActivity" value="services" ${msme.activity === 'services' ? 'checked' : ''}>
+              <span>Services</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-form-card">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">Vendor Payment Due Tracking (Section 43B(h))</h3>
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="msmeTrackDues" ${msme.track_dues !== false ? 'checked' : ''}>
+          <span><b>Enable 45-day MSME Payment Tracking</b> (Display alert flags on purchase bills from MSME registered vendors)</span>
+        </label>
+        <label class="custom-checkbox-label">
+          <input type="checkbox" id="msmeNotifyDueBills" ${msme.notify_due_bills ? 'checked' : ''}>
+          <span><b>Alert before payment due date</b> (Send reminder notifications 7 days prior to the 45-day limit)</span>
+        </label>
+      </div>
+    </div>
+  `;
+
+  container.querySelector('#btnSaveMsme').addEventListener('click', async () => {
+    const msmeData = {
+      registered: container.querySelector('#msmeRegistered').checked,
+      udyam_number: container.querySelector('#msmeUdyamNumber').value.trim(),
+      enterprise_type: container.querySelector('#msmeEnterpriseType').value,
+      activity: container.querySelector('input[name="msmeActivity"]:checked')?.value || 'manufacturing',
+      track_dues: container.querySelector('#msmeTrackDues').checked,
+      notify_due_bills: container.querySelector('#msmeNotifyDueBills').checked,
+    };
+    try {
+      const genUpdated = { ...(org.general_settings || {}), msme: msmeData };
+      await api('/settings/organization/', { method: 'POST', body: { general_settings: genUpdated } });
+      toast('MSME settings saved successfully.', 'success');
+    } catch(err) {
+      toast(err.message || 'Failed to save MSME settings.', 'error');
+    }
+  });
+}
+
+async function renderOpeningBalancesPage(container) {
+  let org = {};
+  try { org = await api('/settings/organization/'); } catch(e) { org = APP.org || {}; }
+  const gen = org.general_settings || {};
+  const ob = gen.opening_balances || {};
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>Opening Balances</h1>
+        <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Configure conversion dates, initial cash in hand, and opening balances across chart of accounts.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnSaveOpeningBalances">Save Balances</button>
+      </div>
+    </div>
+
+    <div class="settings-form-card" style="margin-bottom:18px;">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">Opening Balances Migration Date</h3>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Migration / Conversion Date*</label>
+          <input type="date" id="obDate" value="${ob.migration_date || '2026-04-01'}" class="form-control" style="max-width:280px;" required>
+          <small style="color:#6b7280;">Date from which you began entering transactions in ConvosisBooks</small>
+        </div>
+        <div class="form-group">
+          <label style="font-weight:600; font-size:13px;">Opening Cash in Hand (₹)</label>
+          <input type="number" id="obCashInHand" value="${org.opening_cash || 0}" step="0.01" class="form-control" style="max-width:280px;">
+          <small style="color:#6b7280;">Initial physical cash balance on migration date</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Links & Module Setup -->
+    <div class="settings-form-card">
+      <h3 style="font-size:15px; font-weight:600; margin-bottom:12px;">Opening Balances by Category</h3>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px;">
+        <div style="padding:16px; border:1px solid var(--bd); border-radius:8px; background:var(--bg-card);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Bank Accounts</div>
+          <p style="font-size:12px; color:#6b7280; margin-bottom:12px;">Set opening balances for checking, savings, and loan accounts.</p>
+          <a href="#/banking/accounts" class="btn-outline" style="font-size:12px; display:inline-block; text-decoration:none;">Manage Bank Accounts →</a>
+        </div>
+        <div style="padding:16px; border:1px solid var(--bd); border-radius:8px; background:var(--bg-card);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Item Opening Stock</div>
+          <p style="font-size:12px; color:#6b7280; margin-bottom:12px;">Enter opening inventory quantities and per-unit valuation.</p>
+          <a href="#/inventory/items" class="btn-outline" style="font-size:12px; display:inline-block; text-decoration:none;">Manage Items & Stock →</a>
+        </div>
+        <div style="padding:16px; border:1px solid var(--bd); border-radius:8px; background:var(--bg-card);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Customer Receivables</div>
+          <p style="font-size:12px; color:#6b7280; margin-bottom:12px;">Track outstanding balances owed by customers on migration.</p>
+          <a href="#/sales/customers" class="btn-outline" style="font-size:12px; display:inline-block; text-decoration:none;">View Customers →</a>
+        </div>
+        <div style="padding:16px; border:1px solid var(--bd); border-radius:8px; background:var(--bg-card);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Vendor Payables</div>
+          <p style="font-size:12px; color:#6b7280; margin-bottom:12px;">Configure opening bills and balances payable to suppliers.</p>
+          <a href="#/purchases/vendors" class="btn-outline" style="font-size:12px; display:inline-block; text-decoration:none;">View Vendors →</a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  container.querySelector('#btnSaveOpeningBalances').addEventListener('click', async () => {
+    const migration_date = container.querySelector('#obDate').value;
+    const opening_cash = parseFloat(container.querySelector('#obCashInHand').value) || 0;
+    try {
+      const genUpdated = { ...(org.general_settings || {}), opening_balances: { migration_date, is_locked: false } };
+      await api('/settings/organization/', { method: 'POST', body: { general_settings: genUpdated, opening_cash } });
+      toast('Opening balances configuration saved.', 'success');
+    } catch(err) {
+      toast(err.message || 'Failed to save opening balances.', 'error');
+    }
+  });
+}
+
+// Global window registration
+window.renderEwayBillsPage = renderEwayBillsPage;
+window.renderEinvoicingPage = renderEinvoicingPage;
+window.renderMsmePage = renderMsmePage;
+window.renderOpeningBalancesPage = renderOpeningBalancesPage;
+window.openAddTaxModal = openAddTaxModal;
+window.openAddExemptionModal = openAddExemptionModal;
+window.openInviteUserModal = openInviteUserModal;
+window.openAddPaymentTermModal = openAddPaymentTermModal;
+window.openAddCurrencyModal = openAddCurrencyModal;
+window.getSettingsPageRenderer = getSettingsPageRenderer;
 

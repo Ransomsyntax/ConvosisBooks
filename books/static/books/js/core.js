@@ -86,13 +86,17 @@ async function api(path, opt = {}) {
   if (opt.body !== undefined) {
     if (typeof FormData !== 'undefined' && opt.body instanceof FormData) {
       init.body = opt.body;
+    } else if (typeof opt.body === 'string') {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = opt.body;
     } else {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opt.body);
     }
   }
   let res;
-  try { res = await fetch('/api/' + path, init); } catch (e) { throw new ApiErr(0, { message: 'Network error: could not reach the server.' }); }
+  const cleanPath = (path || '').replace(/^\/+/, '');
+  try { res = await fetch('/api/' + cleanPath, init); } catch (e) { throw new ApiErr(0, { message: 'Network error: could not reach the server.' }); }
   if (res.status === 401) { location.href = '/accounts/login/?next=/'; throw new ApiErr(401, { message: 'Session expired.' }); }
   if (res.status === 204) return null;
   let data = null;

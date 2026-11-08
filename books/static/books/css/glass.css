@@ -962,8 +962,8 @@ a.btn-primary:hover:not([aria-disabled="true"]),
 input[type="submit"].btn.p:hover:not(:disabled),
 input[type="button"].btn.p:hover:not(:disabled) {
   background: #ffffff !important;
-  color: var(--primary-blue, #078BCB) !important;
-  border-color: var(--primary-blue, #078BCB) !important;
+  color: #078BCB !important;
+  border-color: #078BCB !important;
   box-shadow: 0 4px 16px rgba(7, 139, 203, 0.35), 0 0 0 1px rgba(7, 139, 203, 0.2) !important;
   transform: translateY(-1px);
   filter: none !important;
@@ -975,8 +975,8 @@ button.btn.p:hover:not(:disabled) *,
 button.btn-primary:hover:not(:disabled) *,
 a.btn.p:hover:not([aria-disabled="true"]) *,
 a.btn-primary:hover:not([aria-disabled="true"]) * {
-  color: var(--primary-blue, #078BCB) !important;
-  stroke: var(--primary-blue, #078BCB) !important;
+  color: #078BCB !important;
+  stroke: #078BCB !important;
   fill: currentColor;
 }
 

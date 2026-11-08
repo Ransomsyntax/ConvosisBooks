@@ -81,3 +81,93 @@ class SettingsAndAdjustmentTests(TestCase):
         self.assertEqual(mv.change, Decimal('5.000'))
         self.assertIn('Annual Audit', mv.notes)
 
+    def test_settings_all_overview(self):
+        resp = self.client.get('/api/settings/all/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('organization', data)
+        self.assertIn('users', data)
+        self.assertIn('roles', data)
+        self.assertIn('currencies', data)
+        self.assertIn('payment_terms', data)
+
+    def test_settings_taxes_and_direct_taxes_flow(self):
+        # 1. GET taxes
+        get_resp = self.client.get('/api/settings/taxes/')
+        self.assertEqual(get_resp.status_code, 200)
+        gdata = get_resp.json()
+        self.assertIn('taxes', gdata)
+        self.assertIn('tds_sections', gdata)
+        self.assertIn('tcs_sections', gdata)
+        self.assertIn('tax_exemptions', gdata)
+
+        # 2. POST new custom tax
+        post_tax = self.client.post('/api/settings/taxes/', data=json.dumps({
+            'new_tax': {'name': 'Flood Cess 1%', 'rate': 1.0, 'type': 'Cess', 'country': 'India'}
+        }), content_type='application/json')
+        self.assertEqual(post_tax.status_code, 200)
+        self.org.refresh_from_db()
+        custom_taxes = (self.org.tax_settings or {}).get('custom_taxes', [])
+        self.assertTrue(any(t['name'] == 'Flood Cess 1%' for t in custom_taxes))
+
+        # 3. POST direct tax settings
+        post_dts = self.client.post('/api/settings/taxes/', data=json.dumps({
+            'direct_tax_settings': {
+                'tds_level': 'line',
+                'enable_tds_liabilities_report': True
+            }
+        }), content_type='application/json')
+        self.assertEqual(post_dts.status_code, 200)
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.direct_tax_settings.get('tds_level'), 'line')
+        self.assertTrue(self.org.direct_tax_settings.get('enable_tds_liabilities_report'))
+
+    def test_settings_organization_submodules_persistence(self):
+        payload = {
+            'opening_cash': 25000.50,
+            'general_settings': {
+                'eway_bill': {'enabled': True, 'inter_state_threshold': 50000, 'username': 'ewb_user'},
+                'einvoicing': {'enabled': True, 'threshold': '5cr', 'portal': 'einvoice1'},
+                'msme': {'registered': True, 'udyam_number': 'UDYAM-MH-01-0012345', 'enterprise_type': 'small'},
+                'opening_balances': {'migration_date': '2026-04-01', 'is_locked': False}
+            }
+        }
+        resp = self.client.post('/api/settings/organization/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.opening_cash, Decimal('25000.50'))
+        gen = self.org.general_settings
+        self.assertTrue(gen.get('eway_bill', {}).get('enabled'))
+        self.assertEqual(gen.get('eway_bill', {}).get('username'), 'ewb_user')
+        self.assertTrue(gen.get('einvoicing', {}).get('enabled'))
+        self.assertEqual(gen.get('msme', {}).get('udyam_number'), 'UDYAM-MH-01-0012345')
+        self.assertEqual(gen.get('opening_balances', {}).get('migration_date'), '2026-04-01')
+
+    def test_settings_currencies_and_payment_terms_crud(self):
+        # Currency POST
+        curr_resp = self.client.post('/api/settings/currencies/', data=json.dumps({
+            'code': 'GBP',
+            'name': 'British Pound',
+            'symbol': '£',
+            'exchange_rate': '108.50'
+        }), content_type='application/json')
+        self.assertEqual(curr_resp.status_code, 201)
+        self.assertTrue(CurrencySetting.objects.filter(organization=self.org, code='GBP').exists())
+
+        # Payment Term POST
+        term_resp = self.client.post('/api/settings/payment-terms/', data=json.dumps({
+            'name': 'Net 120',
+            'days': 120,
+            'is_default': False
+        }), content_type='application/json')
+        self.assertEqual(term_resp.status_code, 201)
+        self.assertTrue(PaymentTermSetting.objects.filter(organization=self.org, name='Net 120').exists())
+
+        # Reject duplicate term
+        dup_term = self.client.post('/api/settings/payment-terms/', data=json.dumps({
+            'name': 'Net 120',
+            'days': 120
+        }), content_type='application/json')
+        self.assertEqual(dup_term.status_code, 400)
+
+

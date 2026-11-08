@@ -60,6 +60,13 @@ def j(data, status=200):
 def body(request):
     try:
         data = json.loads(request.body.decode('utf-8') or '{}')
+        if isinstance(data, str):
+            try:
+                inner = json.loads(data)
+                if isinstance(inner, dict):
+                    data = inner
+            except (ValueError, TypeError):
+                pass
     except (ValueError, UnicodeDecodeError):
         raise ApiError(400, 'Invalid JSON body.')
     if not isinstance(data, dict):
@@ -8286,6 +8293,14 @@ def settings_organization_view(request):
         ('secondary_color', lambda: c.text('secondary_color', False, 30)),
         ('app_name', lambda: c.text('app_name', False, 100)),
         ('login_branding', lambda: c.text('login_branding', False, 5000)),
+        ('opening_cash', lambda: c.number('opening_cash', lo=Decimal('-999999999'), hi=Decimal('999999999'))),
+        ('notes_default', lambda: c.text('notes_default', False, 2000)),
+        ('terms_default', lambda: c.text('terms_default', False, 2000)),
+        ('quote_prefix', lambda: c.text('quote_prefix', False, 20)),
+        ('signature_title', lambda: c.text('signature_title', False, 100)),
+        ('signature_data', lambda: c.text('signature_data', False, 2000000)),
+        ('template_theme', lambda: c.text('template_theme', False, 50)),
+        ('template_color', lambda: c.text('template_color', False, 30)),
     ]
 
     for f_name, f_getter in updatable_fields:
@@ -8382,6 +8397,8 @@ def settings_payment_terms_view(request, term_id=None):
         days = int(data.get('days', 0))
         if not name:
             raise ApiError(400, 'Term name is required.')
+        if PaymentTermSetting.objects.filter(organization=org, name__iexact=name).exists():
+            raise ApiError(400, f'Payment term "{name}" already exists.')
         p = PaymentTermSetting.objects.create(organization=org, name=name, days=days, is_default=bool(data.get('is_default')), is_active=True)
         services.log_audit(request.user, 'create', 'PaymentTermSetting', p.pk, f"Created payment term {p.name}")
         return j({'id': p.pk, 'name': p.name, 'days': p.days}, 201)
@@ -8559,20 +8576,76 @@ def settings_taxes_view(request):
         {'section': '194I', 'name': 'Rent on Land, Building, or Furniture', 'rate': '10%', 'threshold': '₹2,40,000'},
         {'section': '194H', 'name': 'Commission or Brokerage', 'rate': '5%', 'threshold': '₹15,000'},
         {'section': '194Q', 'name': 'Purchase of Goods', 'rate': '0.1%', 'threshold': '₹50,00,000'},
-        {'section': '206C(1H)', 'name': 'TCS on Sale of Goods', 'rate': '0.1%', 'threshold': '₹50,00,000'},
+        {'section': '194A', 'name': 'Interest other than Interest on Securities', 'rate': '10%', 'threshold': '₹40,000'},
     ]
+
+    tcs_sections = [
+        {'section': '206C(1H)', 'name': 'TCS on Sale of Goods', 'rate': '0.1%', 'threshold': '₹50,00,000'},
+        {'section': '206C(1)', 'name': 'TCS on Alcoholic Liquor / Timber / Minerals', 'rate': '1% - 5%', 'threshold': 'Nil'},
+        {'section': '206C(1G)', 'name': 'TCS on Foreign Remittance under LRS / Overseas Tour', 'rate': '5% / 20%', 'threshold': '₹7,00,000'},
+    ]
+
+    tax_exemptions = (org.tax_settings or {}).get('tax_exemptions', [
+        {'reason': 'Export under LUT/Bond', 'description': 'Zero rated export supplies without payment of IGST under Letter of Undertaking.'},
+        {'reason': 'SEZ Supplies with payment/LUT', 'description': 'Supplies made to Special Economic Zone units or developers.'},
+        {'reason': 'Agricultural produce exempt', 'description': 'Fresh agricultural and unprocessed food grains.'},
+        {'reason': 'Healthcare and educational services', 'description': 'Specified exempt healthcare and registered schooling services.'},
+    ])
+
+    custom_taxes = (org.tax_settings or {}).get('custom_taxes', [])
+    all_taxes = list(standard_taxes) + list(custom_taxes)
 
     if request.method == 'GET':
         return j({
-            'taxes': standard_taxes,
+            'taxes': all_taxes,
             'tds_sections': tds_sections,
+            'tcs_sections': tcs_sections,
+            'tax_exemptions': tax_exemptions,
             'tax_settings': org.tax_settings or {'default_tax_preference': 'taxable', 'gst_registered': True},
             'direct_tax_settings': org.direct_tax_settings or {'tds_level': 'transaction', 'enable_tds_liabilities_report': True}
         })
 
     data = body(request)
+    ts = org.tax_settings or {}
+
+    if 'new_tax' in data and isinstance(data['new_tax'], dict):
+        nt = data['new_tax']
+        t_name = str(nt.get('name', '')).strip()
+        if not t_name:
+            raise ApiError(400, 'Tax name is required.')
+        if any(t['name'].lower() == t_name.lower() for t in all_taxes):
+            raise ApiError(400, f'Tax "{t_name}" already exists.')
+        custom = ts.get('custom_taxes', [])
+        custom.append({
+            'name': t_name,
+            'type': str(nt.get('type', 'Tax Group')),
+            'rate': float(nt.get('rate', 0)),
+            'country': str(nt.get('country', 'India')),
+            'active': True
+        })
+        ts['custom_taxes'] = custom
+        org.tax_settings = ts
+
+    if 'delete_tax' in data:
+        t_name = str(data['delete_tax']).strip()
+        custom = [t for t in ts.get('custom_taxes', []) if t.get('name') != t_name]
+        ts['custom_taxes'] = custom
+        org.tax_settings = ts
+
+    if 'new_exemption' in data and isinstance(data['new_exemption'], dict):
+        ne = data['new_exemption']
+        reason = str(ne.get('reason', '')).strip()
+        if not reason:
+            raise ApiError(400, 'Exemption reason is required.')
+        ex_list = ts.get('tax_exemptions', list(tax_exemptions))
+        ex_list.append({
+            'reason': reason,
+            'description': str(ne.get('description', '')).strip()
+        })
+        ts['tax_exemptions'] = ex_list
+        org.tax_settings = ts
+
     if 'tax_settings' in data and isinstance(data['tax_settings'], dict):
-        ts = org.tax_settings or {}
         ts.update(data['tax_settings'])
         org.tax_settings = ts
 
@@ -8585,6 +8658,8 @@ def settings_taxes_view(request):
     services.log_audit(request.user, 'update', 'Organization', org.pk, "Updated tax and direct tax settings")
     return j({
         'status': 'ok',
+        'taxes': list(standard_taxes) + list(ts.get('custom_taxes', [])),
+        'tax_exemptions': ts.get('tax_exemptions', tax_exemptions),
         'tax_settings': org.tax_settings,
         'direct_tax_settings': org.direct_tax_settings
     })

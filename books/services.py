@@ -6051,11 +6051,16 @@ def ensure_default_settings(org=None):
         ('AED', 'UAE Dirham', 'AED', Decimal('23.5500'), False),
     ]
     for code, name, sym, rate, is_base in curr_specs:
-        CurrencySetting.objects.get_or_create(
-            organization=org,
-            code=code,
-            defaults={'name': name, 'symbol': sym, 'exchange_rate': rate, 'is_base': is_base, 'is_active': True}
-        )
+        if not CurrencySetting.objects.filter(organization=org, code=code).exists():
+            CurrencySetting.objects.create(
+                organization=org,
+                code=code,
+                name=name,
+                symbol=sym,
+                exchange_rate=rate,
+                is_base=is_base,
+                is_active=True
+            )
 
     # 2. Default Payment Terms
     term_specs = [
@@ -6066,11 +6071,14 @@ def ensure_default_settings(org=None):
         ('Net 60', 60, False),
     ]
     for name, days, is_def in term_specs:
-        PaymentTermSetting.objects.get_or_create(
-            organization=org,
-            name=name,
-            defaults={'days': days, 'is_default': is_def, 'is_active': True}
-        )
+        if not PaymentTermSetting.objects.filter(organization=org, name=name).exists():
+            PaymentTermSetting.objects.create(
+                organization=org,
+                name=name,
+                days=days,
+                is_default=is_def,
+                is_active=True
+            )
 
     # 3. Default AI, General & Reminder Settings on Organization
     save_fields = []

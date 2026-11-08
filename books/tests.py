@@ -33,35 +33,36 @@ class BaseAccountingTestCase(TestCase):
         self.org.gstin = '32AANCC9298C1ZE'
         self.org.save()
 
-        self.gl_cash = Account.objects.create(code='1010', name='Cash & Bank Equivalents', account_type='asset')
-        self.gl_ar = Account.objects.create(code='1020', name='Accounts Receivable', account_type='asset')
-        self.gl_ap = Account.objects.create(code='2010', name='Accounts Payable', account_type='liability')
-        self.gl_sales = Account.objects.create(code='4010', name='Sales Revenue', account_type='income')
-        self.gl_exp = Account.objects.create(code='5010', name='Office & Tech Expense', account_type='expense')
+        self.gl_cash = Account.objects.create(organization=self.org, code='1010', name='Cash & Bank Equivalents', account_type='asset')
+        self.gl_ar = Account.objects.create(organization=self.org, code='1020', name='Accounts Receivable', account_type='asset')
+        self.gl_ap = Account.objects.create(organization=self.org, code='2010', name='Accounts Payable', account_type='liability')
+        self.gl_sales = Account.objects.create(organization=self.org, code='4010', name='Sales Revenue', account_type='income')
+        self.gl_exp = Account.objects.create(organization=self.org, code='5010', name='Office & Tech Expense', account_type='expense')
 
         self.admin_user = User.objects.create_user(username='admin_test', password='TestPassword123!', is_staff=True, is_superuser=True)
-        self.admin_profile = UserProfile.objects.create(user=self.admin_user, role=UserProfile.ADMIN)
+        self.admin_profile = UserProfile.objects.create(user=self.admin_user, organization=self.org, role=UserProfile.ADMIN)
 
         self.accountant_user = User.objects.create_user(username='acct_test', password='TestPassword123!')
-        self.accountant_profile = UserProfile.objects.create(user=self.accountant_user, role=UserProfile.ACCOUNTANT)
+        self.accountant_profile = UserProfile.objects.create(user=self.accountant_user, organization=self.org, role=UserProfile.ACCOUNTANT)
 
         self.auditor_user = User.objects.create_user(username='auditor_test', password='TestPassword123!')
-        self.auditor_profile = UserProfile.objects.create(user=self.auditor_user, role=UserProfile.AUDITOR)
+        self.auditor_profile = UserProfile.objects.create(user=self.auditor_user, organization=self.org, role=UserProfile.AUDITOR)
 
         self.cashier_user = User.objects.create_user(username='cashier_test', password='TestPassword123!')
-        self.cashier_profile = UserProfile.objects.create(user=self.cashier_user, role=UserProfile.CASHIER)
+        self.cashier_profile = UserProfile.objects.create(user=self.cashier_user, organization=self.org, role=UserProfile.CASHIER)
 
         self.portal_user = User.objects.create_user(username='portal_test', password='TestPassword123!')
-        self.portal_profile = UserProfile.objects.create(user=self.portal_user, role=UserProfile.PORTAL)
+        self.portal_profile = UserProfile.objects.create(user=self.portal_user, organization=self.org, role=UserProfile.PORTAL)
 
         self.locked_user = User.objects.create_user(username='locked_test', password='TestPassword123!')
-        self.locked_profile = UserProfile.objects.create(user=self.locked_user, role=UserProfile.ACCOUNTANT, is_locked=True)
+        self.locked_profile = UserProfile.objects.create(user=self.locked_user, organization=self.org, role=UserProfile.ACCOUNTANT, is_locked=True)
 
-        self.customer = Customer.objects.create(name='Acme Infotech', state='Kerala', gstin='32AANCC9298C1ZE')
-        self.vendor = Vendor.objects.create(name='Cloud AWS Services', state='Karnataka')
+        self.customer = Customer.objects.create(organization=self.org, name='Acme Infotech', state='Kerala', gstin='32AANCC9298C1ZE')
+        self.vendor = Vendor.objects.create(organization=self.org, name='Cloud AWS Services', state='Karnataka')
 
-        self.cat = ItemCategory.objects.create(name='SaaS Licenses')
+        self.cat = ItemCategory.objects.create(organization=self.org, name='SaaS Licenses')
         self.item = Item.objects.create(
+            organization=self.org,
             name='Pro Subscription',
             sku='SKU-PRO-01',
             selling_price=Decimal('1000.00'),
@@ -71,6 +72,7 @@ class BaseAccountingTestCase(TestCase):
         )
 
         self.bank_hdfc = BankAccount.objects.create(
+            organization=self.org,
             name='HDFC Corporate Current A/c',
             bank_name='HDFC Bank',
             account_number='50200012345678',
@@ -80,6 +82,7 @@ class BaseAccountingTestCase(TestCase):
             gl_account=self.gl_cash
         )
         self.bank_icici = BankAccount.objects.create(
+            organization=self.org,
             name='ICICI Operating A/c',
             bank_name='ICICI Bank',
             account_number='000405001234',
@@ -539,8 +542,9 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_stock_adjustment_with_datetime_and_warehouse_code(self):
         """Stock adjustment captures date, time, and warehouse code."""
-        wh = Warehouse.objects.create(name='Secondary Depot', code='WH-SEC', is_primary=False)
+        wh = Warehouse.objects.create(organization=self.org, name='Secondary Depot', code='WH-SEC', is_primary=False)
         item = Item.objects.create(
+            organization=self.org,
             name='Test Stock Widget',
             sku='SKU-STK-001',
             selling_price=Decimal('100.00'),
@@ -571,9 +575,10 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_stock_movement_transfer(self):
         """Transfer stock between warehouses via stock-movements/move/."""
-        wh_src = Warehouse.objects.create(name='Source Storage', code='WH-SRC')
-        wh_dst = Warehouse.objects.create(name='Destination Retail', code='WH-DST')
+        wh_src = Warehouse.objects.create(organization=self.org, name='Source Storage', code='WH-SRC')
+        wh_dst = Warehouse.objects.create(organization=self.org, name='Destination Retail', code='WH-DST')
         item = Item.objects.create(
+            organization=self.org,
             name='Transfer Cable Pack',
             sku='SKU-TRF-001',
             selling_price=Decimal('50.00'),
@@ -607,8 +612,9 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_inventory_summary_report_includes_warehouse_code(self):
         """Inventory summary report returns warehouse_code for each inventory item."""
-        wh = Warehouse.objects.create(name='Logistics Yard', code='WH-YARD')
+        wh = Warehouse.objects.create(organization=self.org, name='Logistics Yard', code='WH-YARD')
         Item.objects.create(
+            organization=self.org,
             name='Warehouse Barcode Scanner',
             sku='SKU-SCAN-01',
             selling_price=Decimal('2500.00'),
@@ -626,8 +632,8 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 
     def test_item_preferred_vendor_lookup_and_persistence(self):
         """Verify Preferred Vendor selection from Vendor Master, persistence as FK, and retrieval."""
-        vendor1 = Vendor.objects.create(name='Srata Technologies', state='Kerala', active=True)
-        vendor2 = Vendor.objects.create(name='Global Components Ltd', state='Karnataka', active=True)
+        vendor1 = Vendor.objects.create(organization=self.org, name='Srata Technologies', state='Kerala', active=True)
+        vendor2 = Vendor.objects.create(organization=self.org, name='Global Components Ltd', state='Karnataka', active=True)
 
         res = self.client.post('/api/items/', data=json.dumps({
             'name': 'Precision Microcontroller',
@@ -778,6 +784,7 @@ class TestQuoteModule(BaseAccountingTestCase):
 
     def test_quote_actions_send_accept_decline(self):
         quote = Quote.objects.create(
+            organization=self.org,
             customer=self.customer,
             date='2026-10-31',
             due_date='2026-11-30',

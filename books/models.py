@@ -1416,3 +1416,149 @@ class WebhookSubscription(models.Model):
     def __str__(self):
         return f'{self.endpoint_url}'
 
+
+# ==============================================================================
+# DIGITAL PERSONAL DATA PROTECTION (DPDP ACT 2023 / RULES 2025) GOVERNANCE
+# ==============================================================================
+
+class DPDPConsentRecord(models.Model):
+    """
+    DPDP Act 2023 Section 6 - Records explicit consent from Data Principals
+    (Customers, Vendors, Employees, Contacts) with purpose limitation.
+    """
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='dpdp_consents')
+    data_principal_name = models.CharField(max_length=200)
+    data_principal_email = models.CharField(max_length=200, blank=True)
+    data_principal_phone = models.CharField(max_length=50, blank=True)
+    purpose = models.CharField(max_length=100, default='INVOICING_AND_ACCOUNTING')
+    consent_type = models.CharField(max_length=50, default='EXPLICIT')
+    notice_version = models.CharField(max_length=50, default='v1.0')
+    status = models.CharField(max_length=20, default='ACTIVE', choices=[
+        ('ACTIVE', 'Active'),
+        ('WITHDRAWN', 'Withdrawn'),
+        ('EXPIRED', 'Expired'),
+    ])
+    ip_address = models.CharField(max_length=50, blank=True)
+    user_agent = models.TextField(blank=True)
+    granted_at = models.DateTimeField(auto_now_add=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawal_reason = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-granted_at']
+
+    def __str__(self):
+        return f'{self.data_principal_name} - {self.purpose} ({self.status})'
+
+
+class DPDPDataSubjectRequest(models.Model):
+    """
+    DPDP Act 2023 Sections 11, 12, 13, 14 - Data Principal Rights:
+    Access, Correction, Erasure, Grievance Redressal, Nomination.
+    Includes statutory retention hold safeguards (Companies Act / GST Act 8-year mandatory retention).
+    """
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='dpdp_dsr_requests')
+    request_number = models.CharField(max_length=50, unique=True)
+    data_principal_name = models.CharField(max_length=200)
+    data_principal_email = models.CharField(max_length=200, blank=True)
+    data_principal_phone = models.CharField(max_length=50, blank=True)
+    request_type = models.CharField(max_length=50, choices=[
+        ('ACCESS', 'Right to Access Personal Data'),
+        ('CORRECTION', 'Right to Correction / Updating'),
+        ('ERASURE', 'Right to Erasure / Deletion'),
+        ('GRIEVANCE', 'Grievance Redressal'),
+        ('NOMINATION', 'Right to Nominate'),
+    ])
+    status = models.CharField(max_length=30, default='RECEIVED', choices=[
+        ('RECEIVED', 'Received'),
+        ('IN_REVIEW', 'In Review'),
+        ('COMPLETED', 'Completed'),
+        ('REJECTED', 'Rejected'),
+        ('STATUTORY_HOLD', 'Statutory Retention Hold'),
+    ])
+    details = models.TextField()
+    statutory_hold = models.BooleanField(default=False)
+    statutory_hold_reason = models.TextField(blank=True)
+    response_notes = models.TextField(blank=True)
+    resolution_date = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.request_number} ({self.request_type}) - {self.status}'
+
+
+class DPDPBreachIncident(models.Model):
+    """
+    DPDP Act 2023 Section 8(6) & CERT-In Mandatory Reporting:
+    Personal data breach register with prompt incident notification to DPBI and CERT-In.
+    """
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='dpdp_breaches')
+    incident_id = models.CharField(max_length=60, unique=True)
+    incident_type = models.CharField(max_length=50, choices=[
+        ('UNAUTHORIZED_ACCESS', 'Unauthorized Access'),
+        ('DATA_LEAK', 'Data Leak'),
+        ('RANSOMWARE', 'Ransomware / Malware'),
+        ('ACCIDENTAL_EXPOSURE', 'Accidental Exposure'),
+        ('CREDENTIAL_COMPROMISE', 'Credential Compromise'),
+    ])
+    severity = models.CharField(max_length=20, default='MEDIUM', choices=[
+        ('LOW', 'Low'),
+        ('MEDIUM', 'Medium'),
+        ('HIGH', 'High'),
+        ('CRITICAL', 'Critical'),
+    ])
+    affected_records_count = models.PositiveIntegerField(default=0)
+    affected_data_principals = models.TextField(blank=True)
+    description = models.TextField()
+    root_cause = models.TextField(blank=True)
+    remediation_steps = models.TextField(blank=True)
+    cert_in_notified = models.BooleanField(default=False)
+    cert_in_notified_at = models.DateTimeField(null=True, blank=True)
+    dpbi_notified = models.BooleanField(default=False)
+    dpbi_notified_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=30, default='OPEN', choices=[
+        ('OPEN', 'Open'),
+        ('INVESTIGATING', 'Investigating'),
+        ('CONTAINED', 'Contained'),
+        ('RESOLVED', 'Resolved'),
+    ])
+    detected_at = models.DateTimeField()
+    reported_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-reported_at']
+
+    def __str__(self):
+        return f'{self.incident_id} ({self.severity}) - {self.status}'
+
+
+class DPDPDataProcessor(models.Model):
+    """
+    DPDP Act 2023 Section 8(2) - Third-Party Data Processor Register:
+    Tracking data processing agreements (DPA), technical safeguards, and vendor compliance.
+    """
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='dpdp_processors')
+    vendor_name = models.CharField(max_length=200)
+    service_type = models.CharField(max_length=100)
+    contact_email = models.CharField(max_length=200, blank=True)
+    data_shared_categories = models.TextField(blank=True)
+    dpa_signed = models.BooleanField(default=True)
+    dpa_date = models.DateField(null=True, blank=True)
+    security_safeguards = models.TextField(blank=True)
+    country = models.CharField(max_length=100, default='India')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['vendor_name']
+
+    def __str__(self):
+        return f'{self.vendor_name} ({self.service_type})'
+
+

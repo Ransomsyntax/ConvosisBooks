@@ -58,6 +58,22 @@ urlpatterns = [
     path('ai/anomalies/<int:pk>/resolve/', api.ai_anomalies_resolve_view),
     path('mcp/', api.mcp_view),
 
+    # Sub-Organization Management & Hierarchy Context Switching
+    path('organization/sub-organizations/', api.sub_organizations_view),
+    path('organization/switch/', api.organization_switch_view),
+
+    # Digital Personal Data Protection (DPDP Act 2023 / Rules 2025)
+    path('dpdp/privacy-policy/', api.dpdp_privacy_policy_view),
+    path('dpdp/consent/', api.dpdp_consent_view),
+    path('dpdp/consent/<int:pk>/withdraw/', api.dpdp_consent_withdraw_view),
+    path('dpdp/requests/', api.dpdp_requests_view),
+    path('dpdp/requests/<int:pk>/resolve/', api.dpdp_request_resolve_view),
+    path('dpdp/breaches/', api.dpdp_breaches_view),
+    path('dpdp/breaches/<int:pk>/notify/', api.dpdp_breach_notify_view),
+    path('dpdp/processors/', api.dpdp_processors_view),
+    path('dpdp/processors/<int:pk>/', api.dpdp_processors_view),
+    path('dpdp/export-principal-data/', api.dpdp_export_principal_data_view),
+
     path('security/compliance-summary/', api.security_compliance_summary_view),
     path('security/audit-chain/verify/', api.security_verify_audit_chain_view),
     path('security/mfa-toggle/', api.security_mfa_toggle_view),

@@ -71,21 +71,51 @@ CASHIER_ALLOWED_RESOURCES = {
     'sales_orders', 'delivery_challans', 'price_lists', 'attachments'
 }
 
-def get_user_org(user):
+def get_user_org(user, request=None):
     if not user or not getattr(user, 'is_authenticated', False):
         return None
     profile = getattr(user, 'profile', None)
+    base_org = None
     if profile and profile.organization:
-        return profile.organization
-    if getattr(user, 'is_superuser', False):
-        return Organization.objects.first()
-    if profile and not profile.organization:
+        base_org = profile.organization
+    elif getattr(user, 'is_superuser', False):
+        base_org = Organization.objects.first()
+    elif profile and not profile.organization:
         default_org = Organization.objects.first()
         if default_org:
             profile.organization = default_org
             profile.save(update_fields=['organization'])
-            return default_org
-    return None
+            base_org = default_org
+
+    if not base_org:
+        return None
+
+    # Multi-tenant Context Switch Verification:
+    # A user can switch active organization context via HTTP Header or Session if:
+    # 1. Target org is their own base organization, OR
+    # 2. Their base organization is 'MAIN' and the target organization is a direct child sub-organization.
+    if request:
+        target_val = request.headers.get('X-Organization-Id') or (
+            request.session.get('active_org_id') if hasattr(request, 'session') else None
+        )
+        if target_val:
+            target_str = str(target_val).strip()
+            if target_str in (str(base_org.id), str(getattr(base_org, 'uuid', ''))):
+                return base_org
+            if getattr(base_org, 'org_type', 'MAIN') == 'MAIN':
+                sub_match = None
+                if target_str.isdigit():
+                    sub_match = base_org.sub_organizations.filter(id=int(target_str), status='active').first()
+                else:
+                    try:
+                        uuid.UUID(target_str)
+                        sub_match = base_org.sub_organizations.filter(uuid=target_str, status='active').first()
+                    except Exception:
+                        sub_match = None
+                if sub_match:
+                    return sub_match
+            # If context switch is unauthorized, strictly clamp to base_org
+    return base_org
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -305,10 +335,10 @@ class Resource:
     def get_object(self, pk, request=None):
         qs = self.base_qs()
         if request and hasattr(self.model, 'organization'):
-            user_org = get_user_org(request.user)
+            user_org = get_user_org(request.user, request)
             if user_org:
-                qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-            elif request.user.is_authenticated and not request.user.is_superuser:
+                qs = qs.filter(organization=user_org)
+            else:
                 qs = qs.none()
         obj = qs.filter(pk=pk).first()
         if obj is None:
@@ -330,10 +360,10 @@ class Resource:
     def queryset(self, request):
         qs = self.filter_qs(self.base_qs(), request)
         if hasattr(self.model, 'organization'):
-            user_org = get_user_org(request.user)
+            user_org = get_user_org(request.user, request)
             if user_org:
-                qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-            elif request.user.is_authenticated and not request.user.is_superuser:
+                qs = qs.filter(organization=user_org)
+            else:
                 qs = qs.none()
         q = request.GET.get('q', '').strip()
         if q and self.search_fields:
@@ -1451,14 +1481,14 @@ class ItemResource(Resource):
         if wid is None:
             wid = c.integer('warehouse', required=False)
         user_org = get_user_org(user) if user else (getattr(instance, 'organization', None) if instance else None)
-        wh = Warehouse.objects.filter(Q(pk=wid), Q(organization=user_org) | Q(organization__isnull=True)).first() if wid else None
+        wh = Warehouse.objects.filter(pk=wid, organization=user_org).first() if (wid and user_org) else None
         out['warehouse_id'] = wh.pk if wh else None
         out['warehouse_code'] = wh.code if wh else (c.text('warehouse_code', max_len=30) or '')
 
         vid = c.integer('preferred_vendor_id', required=False)
         if vid is None:
             vid = c.integer('preferred_vendor', required=False)
-        v_exists = Vendor.objects.filter(Q(pk=vid), Q(organization=user_org) | Q(organization__isnull=True)).exists() if vid else False
+        v_exists = Vendor.objects.filter(pk=vid, organization=user_org).exists() if (vid and user_org) else False
         out['preferred_vendor_id'] = vid if v_exists else None
 
         if out['hsn_sac']:
@@ -1527,10 +1557,10 @@ def parse_lines(raw, org=None):
         if iid:
             iqs = Item.objects.filter(pk=iid)
             if org:
-                iqs = iqs.filter(Q(organization=org) | Q(organization__isnull=True))
+                iqs = iqs.filter(organization=org)
             item = iqs.first()
             if item is None:
-                c.err('item', 'Item not found.')
+                c.err('item', 'Item not found in your organization.')
         desc = c.text('description', max_len=500) or (item.name if item else '')
         if not desc:
             c.err('description', 'Description is required.')
@@ -1658,7 +1688,9 @@ class DocResource(Resource):
         if item_val:
             iqs = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip()))
             if user_org:
-                iqs = iqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                iqs = iqs.filter(organization=user_org)
+            else:
+                iqs = iqs.none()
             it = iqs.first()
 
         if not desc:
@@ -1685,7 +1717,9 @@ class DocResource(Resource):
             p_str = str(party_val).strip()
             pqs = self.Party.objects.filter(Q(name__iexact=p_str) | Q(company__iexact=p_str) | Q(email__iexact=p_str))
             if user_org:
-                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                pqs = pqs.filter(organization=user_org)
+            else:
+                pqs = pqs.none()
             p = pqs.first()
             if not p:
                 p = self.Party.objects.create(name=p_str, active=True, state=user_org.state if user_org else '', organization=user_org)
@@ -1693,7 +1727,9 @@ class DocResource(Resource):
         elif not party_val:
             pqs = self.Party.objects.all()
             if user_org:
-                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                pqs = pqs.filter(organization=user_org)
+            else:
+                pqs = pqs.none()
             first_p = pqs.first()
             if first_p:
                 rec[self.party_attr] = first_p.pk
@@ -1917,10 +1953,12 @@ class DocResource(Resource):
         if pid:
             pqs = self.Party.objects.filter(pk=pid)
             if user_org:
-                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                pqs = pqs.filter(organization=user_org)
+            else:
+                pqs = pqs.none()
             party = pqs.first()
         if pid and party is None:
-            c.err(self.party_attr, 'Not found.')
+            c.err(self.party_attr, f'{self.party_attr.title()} not found in your organization.')
         date_ = c.date('date', required=True)
         due = c.date('due_date') or c.date('expiry_date')
         if party and not party.active:
@@ -2228,8 +2266,9 @@ class QuoteResource(DocResource):
             if obj.status == 'declined':
                 raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
             inv = Invoice.objects.create(
+                organization=obj.organization,
                 customer=obj.customer,
-                number=next_number('INV'),
+                number=next_number('INV', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 place_of_supply=obj.place_of_supply,
@@ -2274,8 +2313,9 @@ class QuoteResource(DocResource):
             if obj.status == 'declined':
                 raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
             so = SalesOrder.objects.create(
+                organization=obj.organization,
                 customer=obj.customer,
-                number=next_number('SO'),
+                number=next_number('SO', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 expected_shipment_date=obj.expiry_date or timezone.localdate() + timedelta(days=7),
@@ -2468,10 +2508,12 @@ class PaymentResource(Resource):
         if pid:
             pqs = self.Party.objects.filter(pk=pid)
             if user_org:
-                pqs = pqs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                pqs = pqs.filter(organization=user_org)
+            else:
+                pqs = pqs.none()
             party = pqs.first()
         if pid and party is None:
-            c.err(self.party_attr, 'Not found.')
+            c.err(self.party_attr, f'{self.party_attr.title()} not found in your organization.')
 
         bank_acc_id = c.integer('bank_account_id', lo=1) or c.integer('bank_account', lo=1)
         bank_acc = None
@@ -2725,9 +2767,9 @@ class StockAdjustmentResource(StockMovementResource):
                 wid_int = int(wid)
                 wh_qs = Warehouse.objects.filter(pk=wid_int)
                 if user_org:
-                    wh = wh_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+                    wh = wh_qs.filter(organization=user_org).first()
                 else:
-                    wh = wh_qs.first()
+                    wh = None
             except (ValueError, TypeError):
                 wh = None
         wh_code = wh.code if wh else (str(data.get('warehouse_code') or '').strip()[:30])
@@ -2760,9 +2802,9 @@ class StockAdjustmentResource(StockMovementResource):
 
                 item_qs = Item.objects.select_for_update().filter(pk=iid_int, item_type='goods', track_inventory=True)
                 if user_org:
-                    item = item_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+                    item = item_qs.filter(organization=user_org).first()
                 else:
-                    item = item_qs.first()
+                    item = None
 
                 if not item:
                     continue
@@ -2830,9 +2872,9 @@ class StockAdjustmentResource(StockMovementResource):
             new = c.number('new_quantity', True, lo=Decimal('0'), hi=Decimal('99999999'), places=3)
             item_qs = Item.objects.select_for_update().filter(pk=iid, item_type='goods', track_inventory=True)
             if user_org:
-                item = item_qs.filter(Q(organization=user_org) | Q(organization__isnull=True)).first()
+                item = item_qs.filter(organization=user_org).first()
             else:
-                item = item_qs.first()
+                item = None
 
             if iid and item is None:
                 c.err('item', 'Select an inventory-tracked goods item.')
@@ -2917,14 +2959,15 @@ def stock_move_action_view(request):
     notes = c.text('notes', max_len=1000)
     c.done()
 
-    user_org = get_user_org(request.user)
-    if user_org:
-        if not Item.objects.filter(Q(pk=iid), Q(organization=user_org) | Q(organization__isnull=True)).exists():
-            raise ApiError(404, 'Item not found in your organization.')
-        if not Warehouse.objects.filter(Q(pk=from_wh_id), Q(organization=user_org) | Q(organization__isnull=True)).exists():
-            raise ApiError(404, 'Source warehouse not found in your organization.')
-        if not Warehouse.objects.filter(Q(pk=to_wh_id), Q(organization=user_org) | Q(organization__isnull=True)).exists():
-            raise ApiError(404, 'Destination warehouse not found in your organization.')
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+    if not Item.objects.filter(pk=iid, organization=user_org).exists():
+        raise ApiError(404, 'Item not found in your organization.')
+    if not Warehouse.objects.filter(pk=from_wh_id, organization=user_org).exists():
+        raise ApiError(404, 'Source warehouse not found in your organization.')
+    if not Warehouse.objects.filter(pk=to_wh_id, organization=user_org).exists():
+        raise ApiError(404, 'Destination warehouse not found in your organization.')
 
     adjusted_at = None
     if on_date:
@@ -3148,10 +3191,10 @@ class AuditLogResource(Resource):
     ]
 
     def filter_qs(self, qs, request):
-        user_org = get_user_org(request.user)
+        user_org = get_user_org(request.user, request)
         if user_org:
-            qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
-        elif request.user.is_authenticated and not request.user.is_superuser:
+            qs = qs.filter(organization=user_org)
+        else:
             qs = qs.none()
         act = request.GET.get('action')
         if act:
@@ -3908,11 +3951,12 @@ class SalesOrderResource(Resource):
         return r
 
     def create(self, data, user):
+        user_org = get_user_org(user)
         c = Cleaner(data)
         cust_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
         if not cust_id:
             c.err('customer', REQUIRED)
-        cust = Customer.objects.filter(pk=cust_id).first() if cust_id else None
+        cust = Customer.objects.filter(pk=cust_id, organization=user_org).first() if (cust_id and user_org) else Customer.objects.filter(pk=cust_id).first()
         if not cust:
             raise ApiError(404, 'Customer not found.')
         dt = c.date('date', required=True)
@@ -3921,31 +3965,35 @@ class SalesOrderResource(Resource):
         terms = c.text('terms', max_len=2000) or ''
         notes = c.text('notes', max_len=2000) or ''
         order_num = c.text('order_number', max_len=60) or ''
-        pos = c.text('place_of_supply', max_len=60) or cust.state or Organization.get().state
+        pos = c.text('place_of_supply', max_len=60) or cust.state or (user_org.state if user_org else Organization.get().state)
         status = c.choice('status', ['draft', 'confirmed'], default='confirmed')
         c.done()
 
         num = (data.get('number') or '').strip()
-        if not num or SalesOrder.objects.filter(number=num).exists():
-            num = next_number('SO')
+        num_exists = SalesOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (SalesOrder.objects.filter(number=num).exists() if num else False)
+        if not num or num_exists:
+            num = next_number('SO', org=user_org)
         else:
             import re
             m = re.match(r'^SO-(\d+)$', num)
             if m:
                 val = int(m.group(1))
-                seq, _ = Sequence.objects.get_or_create(key='SO')
+                fy = services.get_financial_year(dt)
+                seq_key = f"{user_org.pk}_SO_{fy}" if user_org else f"SO_{fy}"
+                seq, _ = Sequence.objects.get_or_create(key=seq_key)
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
 
         so = SalesOrder.objects.create(
+            organization=user_org,
             number=num, customer=cust, date=dt, due_date=due_dt,
             place_of_supply=pos,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
             order_number=order_num, status=status
         )
-        lines = parse_lines(data.get('lines', []))
-        intra = is_intra_state(so.place_of_supply, Organization.get().state)
+        lines = parse_lines(data.get('lines', []), org=user_org)
+        intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
         comp, tot = compute(lines, intra)
         for k, v in tot.items():
             setattr(so, k, v)
@@ -4031,8 +4079,9 @@ class SalesOrderResource(Resource):
             if obj.status == 'closed':
                 raise ApiError(400, f'Sales order {obj.number} has already been converted to an invoice.')
             inv = Invoice.objects.create(
+                organization=obj.organization,
                 customer=obj.customer,
-                number=next_number('INV'),
+                number=next_number('INV', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=getattr(obj.customer, 'payment_terms', 30) or 30),
                 place_of_supply=obj.place_of_supply,
@@ -5851,10 +5900,12 @@ def organization(request):
 
 @api_view
 def attachments_view(request, pk=None):
-    user_org = get_user_org(request.user)
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
     if request.method == 'GET':
         if pk:
-            att = Attachment.objects.filter(pk=pk, organization=user_org).first() if user_org else (Attachment.objects.filter(pk=pk).first() if request.user.is_superuser else None)
+            att = Attachment.objects.filter(pk=pk, organization=user_org).first()
             if not att:
                 raise ApiError(404, 'Attachment not found.')
             return j({'id': att.pk, 'entity_type': att.entity_type, 'entity_id': att.entity_id,
@@ -5863,7 +5914,7 @@ def attachments_view(request, pk=None):
                       'created_at': att.created_at})
         etype = request.GET.get('entity_type', '').strip()
         eid = request.GET.get('entity_id', '').strip()
-        qs = Attachment.objects.filter(organization=user_org) if user_org else (Attachment.objects.all() if request.user.is_superuser else Attachment.objects.none())
+        qs = Attachment.objects.filter(organization=user_org)
         if etype:
             qs = qs.filter(entity_type=etype)
         if eid and eid.isdigit():
@@ -5909,26 +5960,26 @@ def attachments_view(request, pk=None):
     if request.method == 'DELETE':
         if not pk:
             raise ApiError(400, 'Attachment ID required.')
-        att = Attachment.objects.filter(pk=pk, organization=user_org).first() if user_org else (Attachment.objects.filter(pk=pk).first() if request.user.is_superuser else None)
-        if att:
-            if att.file:
-                try:
-                    att.file.delete(save=False)
-                except Exception:
-                    pass
-            att.delete()
+        att = Attachment.objects.filter(pk=pk, organization=user_org).first()
+        if not att:
+            raise ApiError(404, 'Attachment not found.')
+        if att.file:
+            try:
+                att.file.delete(save=False)
+            except Exception:
+                pass
+        att.delete()
         return HttpResponse(status=204)
     raise ApiError(405, 'Method not allowed.')
 
 @api_view
 def lookup(request, name):
-    user_org = get_user_org(request.user)
+    user_org = get_user_org(request.user, request)
     def org_filter(qs):
         if hasattr(qs.model, 'organization'):
             if user_org:
                 return qs.filter(organization=user_org)
-            if request.user.is_authenticated and not request.user.is_superuser:
-                return qs.none()
+            return qs.none()
         return qs
 
     if name == 'customers':
@@ -5967,7 +6018,7 @@ def lookup(request, name):
         if not item_id or not wh_id:
             raise ApiError(400, 'item_id and warehouse_id are required.')
         avail = services.get_item_warehouse_stock(item_id, wh_id, org=user_org)
-        item = Item.objects.filter(pk=item_id).first()
+        item = Item.objects.filter(pk=item_id, organization=user_org).first() if user_org else None
         data = {'available_stock': float(avail), 'unit': item.unit if item else 'nos'}
     elif name == 'warehouses':
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'is_primary': o.is_primary,
@@ -6116,7 +6167,7 @@ def invoice_sequence_view(request):
 
 def dashboard_view(request):
     start, end = parse_range(request)
-    org = get_user_org(request.user)
+    org = get_user_org(request.user, request)
     return j(services.dashboard(start, end, org=org))
 
 @api_view
@@ -6125,20 +6176,20 @@ def activity_view(request):
         limit = min(max(int(request.GET.get('limit', 30)), 1), 100)
     except ValueError:
         limit = 30
-    return j(services.recent_activity(limit))
+    org = get_user_org(request.user, request)
+    return j(services.recent_activity(limit, org=org))
 
 @api_view
 def search_view(request):
     q = request.GET.get('q', '').strip()
     if len(q) < 2:
         return j([])
-    user_org = get_user_org(request.user)
+    user_org = get_user_org(request.user, request)
     def org_filter(qs):
         if hasattr(qs.model, 'organization'):
             if user_org:
                 return qs.filter(organization=user_org)
-            if request.user.is_authenticated and not request.user.is_superuser:
-                return qs.none()
+            return qs.none()
         return qs
     out = []
     for o in org_filter(Customer.objects.filter(Q(name__icontains=q) | Q(company__icontains=q) | Q(email__icontains=q)))[:5]:
@@ -6154,7 +6205,7 @@ def search_view(request):
     doc_qs = ManagedDocument.objects.filter(is_deleted=False)
     if user_org:
         doc_qs = doc_qs.filter(organization=user_org)
-    elif request.user.is_authenticated and not request.user.is_superuser:
+    else:
         doc_qs = doc_qs.none()
     for o in doc_qs.filter(Q(title__icontains=q) | Q(filename__icontains=q))[:5]:
         out.append({'type': 'document', 'id': o.pk, 'label': o.title, 'sub': f'Document · {o.category}'})
@@ -6253,7 +6304,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:
@@ -6316,7 +6367,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:
@@ -6350,7 +6401,7 @@ def reports_view(request, name):
         wh = request.GET.get('warehouse')
         i_id = request.GET.get('item')
         item_id = int(i_id) if i_id and i_id.isdigit() else None
-        items_qs = Item.objects.filter(Q(organization=user_org) | Q(organization__isnull=True), item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.filter(item_type='goods', track_inventory=True, active=True)
+        items_qs = Item.objects.filter(organization=user_org, item_type='goods', track_inventory=True, active=True) if user_org else Item.objects.none()
         if item_id:
             items_qs = items_qs.filter(pk=item_id)
         if wh:
@@ -8537,6 +8588,783 @@ def settings_taxes_view(request):
         'tax_settings': org.tax_settings,
         'direct_tax_settings': org.direct_tax_settings
     })
+
+
+# ==============================================================================
+# SUB-ORGANIZATION MANAGEMENT & HIERARCHICAL CONTEXT SWITCHING
+# ==============================================================================
+
+@api_view
+def sub_organizations_view(request):
+    """
+    Manage child sub-organizations under a Main Organization.
+    Strictly isolated: only MAIN organization admins can view/create sub-organizations.
+    """
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    if getattr(user_org, 'org_type', 'MAIN') != 'MAIN':
+        raise ApiError(403, 'Only primary main organizations can manage sub-organizations.')
+
+    if request.method == 'GET':
+        subs = user_org.sub_organizations.all().order_by('name')
+        return j([
+            {
+                'id': s.id,
+                'uuid': str(s.uuid),
+                'name': s.name,
+                'code': s.code,
+                'legal_name': s.legal_name,
+                'company_id': s.company_id,
+                'gstin': s.gstin,
+                'state': s.state,
+                'city': s.city,
+                'email': s.email,
+                'phone': s.phone,
+                'status': s.status,
+                'org_type': s.org_type,
+                'created_at': s.created_at.isoformat() if s.created_at else ''
+            } for s in subs
+        ])
+
+    if request.method == 'POST':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN])
+        d = body(request)
+        c = Cleaner(d)
+        name = c.text('name', required=True, max_len=200)
+        code = c.text('code', max_len=20, upper=True)
+        legal_name = c.text('legal_name', max_len=200) or name
+        company_id = c.text('company_id', max_len=100)
+        gstin = c.text('gstin', max_len=15, upper=True)
+        state = c.text('state', max_len=60, default=user_org.state)
+        address = c.text('address', max_len=1000)
+        city = c.text('city', max_len=100)
+        pincode = c.text('pincode', max_len=20)
+        email = c.text('email', max_len=254)
+        phone = c.text('phone', max_len=50)
+        c.done()
+
+        sub_code = code or services.next_document_number('ORG', org=user_org)[:6]
+        sub_org = Organization.objects.create(
+            name=name,
+            code=sub_code,
+            legal_name=legal_name,
+            org_type='SUB',
+            parent=user_org,
+            company_id=company_id,
+            gstin=gstin,
+            state=state,
+            address=address,
+            city=city,
+            pincode=pincode,
+            email=email,
+            phone=phone,
+            status='active'
+        )
+        services.ensure_default_accounts(sub_org)
+        services.log_audit(
+            request.user, 'create', 'Organization', sub_org.id,
+            f"Created sub-organization: {sub_org.name} ({sub_org.code})",
+            org=user_org, module='settings', submodule='organizations'
+        )
+        return j({
+            'id': sub_org.id,
+            'uuid': str(sub_org.uuid),
+            'name': sub_org.name,
+            'code': sub_org.code,
+            'org_type': sub_org.org_type,
+            'parent_id': user_org.id,
+            'status': sub_org.status,
+            'message': 'Sub-organization created successfully.'
+        }, 201)
+
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def organization_switch_view(request):
+    """
+    Context-switching between Main Org and authorized Sub-Orgs.
+    Strictly verifies parent-child hierarchy to prevent unauthorized cross-tenant switching.
+    """
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    profile = getattr(request.user, 'profile', None)
+    base_org = profile.organization if profile else None
+    if not base_org:
+        raise ApiError(403, 'No organization assigned to your user account.')
+
+    d = body(request)
+    target_id = d.get('organization_id') or d.get('target_org_id')
+    if not target_id:
+        raise ApiError(400, 'organization_id is required.')
+
+    target_str = str(target_id).strip()
+
+    # 1. Switching back to user's primary base organization is always allowed
+    if target_str in (str(base_org.id), str(getattr(base_org, 'uuid', ''))):
+        if hasattr(request, 'session'):
+            request.session['active_org_id'] = base_org.id
+        return j({
+            'status': 'switched',
+            'organization': org_json(base_org),
+            'active_org_id': base_org.id,
+            'message': f'Switched to {base_org.name}.'
+        })
+
+    # 2. Main Org can switch into any of its own direct sub-organizations
+    if base_org.org_type == 'MAIN':
+        sub_org = None
+        if target_str.isdigit():
+            sub_org = base_org.sub_organizations.filter(id=int(target_str), status='active').first()
+        else:
+            try:
+                uuid.UUID(target_str)
+                sub_org = base_org.sub_organizations.filter(uuid=target_str, status='active').first()
+            except Exception:
+                sub_org = None
+        if sub_org:
+            if hasattr(request, 'session'):
+                request.session['active_org_id'] = sub_org.id
+            return j({
+                'status': 'switched',
+                'organization': org_json(sub_org),
+                'active_org_id': sub_org.id,
+                'message': f'Switched to sub-organization {sub_org.name}.'
+            })
+
+    # 3. Any other switch is strictly forbidden (sub-org user switching, or switching to unrelated org)
+    raise ApiError(403, 'Access denied: You do not have permission to access the requested organization.')
+
+
+# ==============================================================================
+# DIGITAL PERSONAL DATA PROTECTION (DPDP ACT 2023 / RULES 2025) VIEWS
+# ==============================================================================
+
+@api_view
+def dpdp_privacy_policy_view(request):
+    """
+    DPDP Act 2023 Section 5 Notice & Section 6 Consent Framework.
+    """
+    user_org = get_user_org(request.user, request) or Organization.get()
+    return j({
+        'framework': 'Digital Personal Data Protection Act, 2023 (DPDPA 2023) & DPDP Rules 2025',
+        'jurisdiction': 'Republic of India',
+        'data_fiduciary': {
+            'organization_name': user_org.name,
+            'legal_name': getattr(user_org, 'legal_name', user_org.name),
+            'registration_cin': user_org.company_id,
+            'gstin': user_org.gstin,
+            'registered_office': user_org.address,
+            'contact_email': user_org.email,
+            'contact_phone': user_org.phone,
+        },
+        'data_protection_officer': {
+            'name': 'Grievance Redressal Officer / DPO',
+            'designation': 'Data Protection Officer',
+            'email': 'dpo@convosis.com',
+            'phone': '+91-9847017737',
+            'redressal_timeframe': 'Grievances acknowledged within 24 hours, resolved within 30 days.'
+        },
+        'specified_purposes': [
+            {
+                'purpose_code': 'INVOICING_AND_ACCOUNTING',
+                'description': 'Maintenance of books of accounts, ledger entries, and general financial recording under Section 128 of the Companies Act, 2013.',
+                'lawful_basis': 'Legitimate Use (Section 7) and Explicit Consent (Section 6).'
+            },
+            {
+                'purpose_code': 'GST_AND_TAX_COMPLIANCE',
+                'description': 'Generating tax invoices, filing GSTR-1 and GSTR-3B returns, generating e-Way Bills and e-Invoices in compliance with the Central Goods and Services Tax Act, 2017.',
+                'lawful_basis': 'Statutory Legal Obligation (Section 7).'
+            },
+            {
+                'purpose_code': 'BANKING_AND_PAYMENTS',
+                'description': 'Processing outgoing vendor disbursements, receiving customer receipts, and executing bank reconciliation.',
+                'lawful_basis': 'Performance of Contract & Explicit Consent.'
+            },
+            {
+                'purpose_code': 'AUDIT_TRAIL_INTEGRITY',
+                'description': 'Preserving tamper-evident audit logs and access histories as required by the Ministry of Corporate Affairs (MCA) Audit Trail rules.',
+                'lawful_basis': 'Legal Obligation under Companies (Accounts) Rules.'
+            }
+        ],
+        'data_principal_rights': [
+            {'right': 'Right to Access', 'section': 'Section 11', 'description': 'Summary of personal data being processed and processing identities.'},
+            {'right': 'Right to Correction and Erasure', 'section': 'Section 12', 'description': 'Correction of inaccurate data and erasure subject to statutory retention limits.'},
+            {'right': 'Right of Grievance Redressal', 'section': 'Section 13', 'description': 'Expeditious redressal of privacy complaints through our designated DPO.'},
+            {'right': 'Right to Nominate', 'section': 'Section 14', 'description': 'Right to nominate another individual in the event of death or incapacity.'}
+        ],
+        'statutory_retention_policy': {
+            'rule': 'Financial records, invoices, vouchers, and ledger transactions must be preserved for eight (8) financial years immediately preceding the current financial year pursuant to Section 128(5) of the Companies Act, 2013 and Section 36 of the CGST Act, 2017.',
+            'erasure_effect': 'Erasure requests for Data Principals with active financial records place personal identifiers on statutory hold; non-statutory processing and marketing channels are immediately withdrawn.'
+        },
+        'data_storage_and_security': {
+            'data_residency': 'India (Mumbai AWS ap-south-1)',
+            'encryption_at_rest': 'AES-256',
+            'encryption_in_transit': 'TLS 1.3',
+            'cert_in_reporting_mandate': 'Security incidents evaluated and reported to CERT-In within 6 hours.'
+        }
+    })
+
+
+@api_view
+def dpdp_consent_view(request):
+    """
+    DPDP Act 2023 Sec 6 Consent Management Register.
+    """
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPConsentRecord
+
+    if request.method == 'GET':
+        status_filter = request.GET.get('status')
+        qs = DPDPConsentRecord.objects.filter(organization=user_org)
+        if status_filter:
+            qs = qs.filter(status=status_filter.upper())
+        q = request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(Q(data_principal_name__icontains=q) | Q(data_principal_email__icontains=q))
+        return j([
+            {
+                'id': c.id,
+                'data_principal_name': c.data_principal_name,
+                'data_principal_email': c.data_principal_email,
+                'data_principal_phone': c.data_principal_phone,
+                'purpose': c.purpose,
+                'consent_type': c.consent_type,
+                'notice_version': c.notice_version,
+                'status': c.status,
+                'ip_address': c.ip_address,
+                'granted_at': c.granted_at.isoformat() if c.granted_at else '',
+                'withdrawn_at': c.withdrawn_at.isoformat() if c.withdrawn_at else '',
+                'withdrawal_reason': c.withdrawal_reason
+            } for c in qs[:100]
+        ])
+
+    if request.method == 'POST':
+        d = body(request)
+        c = Cleaner(d)
+        name = c.text('data_principal_name', required=True, max_len=200)
+        email = c.text('data_principal_email', max_len=200)
+        phone = c.text('data_principal_phone', max_len=50)
+        purpose = c.text('purpose', default='INVOICING_AND_ACCOUNTING', max_len=100)
+        consent_type = c.choice('consent_type', ['EXPLICIT', 'OPT_IN', 'STATUTORY'], default='EXPLICIT')
+        notice_ver = c.text('notice_version', default='v1.0', max_len=50)
+        c.done()
+
+        rec = DPDPConsentRecord.objects.create(
+            organization=user_org,
+            data_principal_name=name,
+            data_principal_email=email,
+            data_principal_phone=phone,
+            purpose=purpose,
+            consent_type=consent_type,
+            notice_version=notice_ver,
+            status='ACTIVE',
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
+        )
+        services.log_audit(
+            request.user, 'create', 'DPDPConsentRecord', rec.id,
+            f"Recorded DPDP consent for {name} ({purpose})",
+            org=user_org, module='compliance', submodule='dpdp_consent'
+        )
+        return j({
+            'id': rec.id,
+            'data_principal_name': rec.data_principal_name,
+            'purpose': rec.purpose,
+            'status': rec.status,
+            'granted_at': rec.granted_at.isoformat(),
+            'message': 'Consent record registered successfully.'
+        }, 201)
+
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def dpdp_consent_withdraw_view(request, pk):
+    """
+    DPDP Act 2023 Sec 6(4) - Right to Withdraw Consent.
+    """
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPConsentRecord
+    rec = DPDPConsentRecord.objects.filter(pk=pk, organization=user_org).first()
+    if not rec:
+        raise ApiError(404, 'Consent record not found in your organization.')
+
+    d = body(request)
+    reason = (d.get('reason') or d.get('withdrawal_reason') or 'User initiated consent withdrawal').strip()
+
+    rec.status = 'WITHDRAWN'
+    rec.withdrawn_at = timezone.now()
+    rec.withdrawal_reason = reason
+    rec.save(update_fields=['status', 'withdrawn_at', 'withdrawal_reason'])
+
+    services.log_audit(
+        request.user, 'update', 'DPDPConsentRecord', rec.id,
+        f"Withdrew DPDP consent for {rec.data_principal_name}: {reason}",
+        org=user_org, module='compliance', submodule='dpdp_consent'
+    )
+    return j({
+        'id': rec.id,
+        'status': rec.status,
+        'withdrawn_at': rec.withdrawn_at.isoformat(),
+        'message': 'Consent successfully withdrawn.'
+    })
+
+
+@api_view
+def dpdp_requests_view(request):
+    """
+    DPDP Act 2023 Sec 11, 12, 13 - Data Principal Rights Request Register.
+    """
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPDataSubjectRequest
+
+    if request.method == 'GET':
+        req_type = request.GET.get('type')
+        status = request.GET.get('status')
+        qs = DPDPDataSubjectRequest.objects.filter(organization=user_org)
+        if req_type:
+            qs = qs.filter(request_type=req_type.upper())
+        if status:
+            qs = qs.filter(status=status.upper())
+        return j([
+            {
+                'id': r.id,
+                'request_number': r.request_number,
+                'data_principal_name': r.data_principal_name,
+                'data_principal_email': r.data_principal_email,
+                'data_principal_phone': r.data_principal_phone,
+                'request_type': r.request_type,
+                'status': r.status,
+                'details': r.details,
+                'statutory_hold': r.statutory_hold,
+                'statutory_hold_reason': r.statutory_hold_reason,
+                'response_notes': r.response_notes,
+                'resolution_date': r.resolution_date.isoformat() if r.resolution_date else '',
+                'created_at': r.created_at.isoformat() if r.created_at else ''
+            } for r in qs
+        ])
+
+    if request.method == 'POST':
+        d = body(request)
+        c = Cleaner(d)
+        name = c.text('data_principal_name', required=True, max_len=200)
+        email = c.text('data_principal_email', max_len=200)
+        phone = c.text('data_principal_phone', max_len=50)
+        req_type = c.choice('request_type', ['ACCESS', 'CORRECTION', 'ERASURE', 'GRIEVANCE', 'NOMINATION'], default='ACCESS')
+        details = c.text('details', required=True, max_len=2000)
+        c.done()
+
+        req_num = f"DSR-{timezone.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
+
+        # Statutory Retention Hold Verification:
+        # If an erasure request is received, check whether active statutory financial transactions exist
+        # under the Companies Act 2013 (Sec 128) and CGST Act 2017 (Sec 36) requiring 8 years retention.
+        statutory_hold = False
+        statutory_reason = ''
+        status = 'RECEIVED'
+
+        if req_type == 'ERASURE':
+            has_invoices = False
+            if email:
+                has_invoices = Invoice.objects.filter(organization=user_org, customer__email__iexact=email).exists() or Bill.objects.filter(organization=user_org, vendor__email__iexact=email).exists()
+            if not has_invoices and name:
+                has_invoices = Invoice.objects.filter(organization=user_org, customer__name__iexact=name).exists() or Bill.objects.filter(organization=user_org, vendor__name__iexact=name).exists()
+
+            if has_invoices:
+                statutory_hold = True
+                status = 'STATUTORY_HOLD'
+                statutory_reason = (
+                    "Statutory Hold Applied: Under Section 128 of the Companies Act, 2013 and Section 36 of the "
+                    "Central Goods and Services Tax Act, 2017, books of account, tax invoices, and financial records "
+                    "must be preserved for eight (8) financial years. Financial transaction data is protected from "
+                    "erasure, while non-statutory communication channels have been suppressed."
+                )
+
+        dsr = DPDPDataSubjectRequest.objects.create(
+            organization=user_org,
+            request_number=req_num,
+            data_principal_name=name,
+            data_principal_email=email,
+            data_principal_phone=phone,
+            request_type=req_type,
+            details=details,
+            status=status,
+            statutory_hold=statutory_hold,
+            statutory_hold_reason=statutory_reason
+        )
+        services.log_audit(
+            request.user, 'create', 'DPDPDataSubjectRequest', dsr.id,
+            f"Submitted DPDP {req_type} request {req_num} for {name}",
+            org=user_org, module='compliance', submodule='dpdp_requests'
+        )
+        return j({
+            'id': dsr.id,
+            'request_number': dsr.request_number,
+            'request_type': dsr.request_type,
+            'status': dsr.status,
+            'statutory_hold': dsr.statutory_hold,
+            'statutory_hold_reason': dsr.statutory_hold_reason,
+            'created_at': dsr.created_at.isoformat(),
+            'message': 'Data Principal Request submitted successfully.'
+        }, 201)
+
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def dpdp_request_resolve_view(request, pk):
+    """
+    Resolve or update a DPDP Data Subject Request.
+    """
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPDataSubjectRequest
+    dsr = DPDPDataSubjectRequest.objects.filter(pk=pk, organization=user_org).first()
+    if not dsr:
+        raise ApiError(404, 'DSR Request not found in your organization.')
+
+    d = body(request)
+    c = Cleaner(d)
+    status = c.choice('status', ['IN_REVIEW', 'COMPLETED', 'REJECTED', 'STATUTORY_HOLD'], default='COMPLETED')
+    notes = c.text('response_notes', max_len=2000)
+    c.done()
+
+    dsr.status = status
+    dsr.response_notes = notes
+    if status in ('COMPLETED', 'REJECTED'):
+        dsr.resolution_date = timezone.now()
+    dsr.save(update_fields=['status', 'response_notes', 'resolution_date', 'updated_at'])
+
+    services.log_audit(
+        request.user, 'update', 'DPDPDataSubjectRequest', dsr.id,
+        f"Resolved DSR {dsr.request_number}: status={status}",
+        org=user_org, module='compliance', submodule='dpdp_requests'
+    )
+    return j({
+        'id': dsr.id,
+        'request_number': dsr.request_number,
+        'status': dsr.status,
+        'resolution_date': dsr.resolution_date.isoformat() if dsr.resolution_date else '',
+        'response_notes': dsr.response_notes,
+        'message': f'DSR request {dsr.request_number} updated to {status}.'
+    })
+
+
+@api_view
+def dpdp_breaches_view(request):
+    """
+    DPDP Act 2023 Sec 8(6) & CERT-In 6-hour Mandatory Breach Register.
+    """
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPBreachIncident
+
+    if request.method == 'GET':
+        qs = DPDPBreachIncident.objects.filter(organization=user_org)
+        return j([
+            {
+                'id': b.id,
+                'incident_id': b.incident_id,
+                'incident_type': b.incident_type,
+                'severity': b.severity,
+                'affected_records_count': b.affected_records_count,
+                'affected_data_principals': b.affected_data_principals,
+                'description': b.description,
+                'root_cause': b.root_cause,
+                'remediation_steps': b.remediation_steps,
+                'cert_in_notified': b.cert_in_notified,
+                'cert_in_notified_at': b.cert_in_notified_at.isoformat() if b.cert_in_notified_at else '',
+                'dpbi_notified': b.dpbi_notified,
+                'dpbi_notified_at': b.dpbi_notified_at.isoformat() if b.dpbi_notified_at else '',
+                'status': b.status,
+                'detected_at': b.detected_at.isoformat() if b.detected_at else '',
+                'reported_at': b.reported_at.isoformat() if b.reported_at else '',
+                'resolved_at': b.resolved_at.isoformat() if b.resolved_at else ''
+            } for b in qs
+        ])
+
+    if request.method == 'POST':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN])
+        d = body(request)
+        c = Cleaner(d)
+        itype = c.choice('incident_type', ['UNAUTHORIZED_ACCESS', 'DATA_LEAK', 'RANSOMWARE', 'ACCIDENTAL_EXPOSURE', 'CREDENTIAL_COMPROMISE'], default='UNAUTHORIZED_ACCESS')
+        sev = c.choice('severity', ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'], default='MEDIUM')
+        count = c.integer('affected_records_count', lo=0, default=0)
+        desc = c.text('description', required=True, max_len=3000)
+        root = c.text('root_cause', max_len=2000)
+        remed = c.text('remediation_steps', max_len=2000)
+        principals = c.text('affected_data_principals', max_len=1000)
+        c.done()
+
+        inc_id = f"INC-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+        incident = DPDPBreachIncident.objects.create(
+            organization=user_org,
+            incident_id=inc_id,
+            incident_type=itype,
+            severity=sev,
+            affected_records_count=count,
+            affected_data_principals=principals,
+            description=desc,
+            root_cause=root,
+            remediation_steps=remed,
+            status='OPEN',
+            detected_at=timezone.now()
+        )
+        services.log_audit(
+            request.user, 'create', 'DPDPBreachIncident', incident.id,
+            f"Logged Security Incident {inc_id} ({itype}, Severity: {sev})",
+            org=user_org, module='security', submodule='breach_management'
+        )
+        return j({
+            'id': incident.id,
+            'incident_id': incident.incident_id,
+            'severity': incident.severity,
+            'status': incident.status,
+            'cert_in_deadline': (incident.detected_at + timedelta(hours=6)).isoformat(),
+            'message': 'Incident logged. Prepare CERT-In notification within 6 hours.'
+        }, 201)
+
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def dpdp_breach_notify_view(request, pk):
+    """
+    Record statutory notifications to CERT-In (Cyber Security Incident) and DPBI.
+    """
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPBreachIncident
+    inc = DPDPBreachIncident.objects.filter(pk=pk, organization=user_org).first()
+    if not inc:
+        raise ApiError(404, 'Breach incident not found in your organization.')
+
+    d = body(request)
+    now = timezone.now()
+
+    if d.get('cert_in', True):
+        inc.cert_in_notified = True
+        inc.cert_in_notified_at = now
+    if d.get('dpbi', True):
+        inc.dpbi_notified = True
+        inc.dpbi_notified_at = now
+    if d.get('status'):
+        inc.status = str(d['status']).upper()
+        if inc.status == 'RESOLVED':
+            inc.resolved_at = now
+
+    inc.save()
+    services.log_audit(
+        request.user, 'update', 'DPDPBreachIncident', inc.id,
+        f"Updated breach notification status for {inc.incident_id}",
+        org=user_org, module='security', submodule='breach_management'
+    )
+    return j({
+        'id': inc.id,
+        'incident_id': inc.incident_id,
+        'cert_in_notified': inc.cert_in_notified,
+        'cert_in_notified_at': inc.cert_in_notified_at.isoformat() if inc.cert_in_notified_at else '',
+        'dpbi_notified': inc.dpbi_notified,
+        'dpbi_notified_at': inc.dpbi_notified_at.isoformat() if inc.dpbi_notified_at else '',
+        'status': inc.status,
+        'message': 'Statutory notifications updated.'
+    })
+
+
+@api_view
+def dpdp_processors_view(request, pk=None):
+    """
+    DPDP Act 2023 Sec 8(2) - Third-Party Data Processor Register.
+    """
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    from .models import DPDPDataProcessor
+
+    if request.method == 'GET':
+        qs = DPDPDataProcessor.objects.filter(organization=user_org)
+        return j([
+            {
+                'id': p.id,
+                'vendor_name': p.vendor_name,
+                'service_type': p.service_type,
+                'contact_email': p.contact_email,
+                'data_shared_categories': p.data_shared_categories,
+                'dpa_signed': p.dpa_signed,
+                'dpa_date': p.dpa_date.isoformat() if p.dpa_date else '',
+                'security_safeguards': p.security_safeguards,
+                'country': p.country,
+                'is_active': p.is_active,
+                'created_at': p.created_at.isoformat() if p.created_at else ''
+            } for p in qs
+        ])
+
+    if request.method == 'POST':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN])
+        d = body(request)
+        c = Cleaner(d)
+        name = c.text('vendor_name', required=True, max_len=200)
+        stype = c.text('service_type', required=True, max_len=100)
+        email = c.text('contact_email', max_len=200)
+        cats = c.text('data_shared_categories', max_len=1000)
+        dpa_signed = c.boolean('dpa_signed', default=True)
+        dpa_date = c.date('dpa_date')
+        safeguards = c.text('security_safeguards', default='TLS 1.3 in-transit, AES-256 at-rest, ISO 27001 compliant', max_len=1000)
+        country = c.text('country', default='India', max_len=100)
+        c.done()
+
+        proc = DPDPDataProcessor.objects.create(
+            organization=user_org,
+            vendor_name=name,
+            service_type=stype,
+            contact_email=email,
+            data_shared_categories=cats,
+            dpa_signed=dpa_signed,
+            dpa_date=dpa_date,
+            security_safeguards=safeguards,
+            country=country,
+            is_active=True
+        )
+        services.log_audit(
+            request.user, 'create', 'DPDPDataProcessor', proc.id,
+            f"Registered data processor: {name} ({stype})",
+            org=user_org, module='compliance', submodule='data_processors'
+        )
+        return j({
+            'id': proc.id,
+            'vendor_name': proc.vendor_name,
+            'service_type': proc.service_type,
+            'dpa_signed': proc.dpa_signed,
+            'message': 'Data processor registered successfully.'
+        }, 201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not pk:
+            raise ApiError(400, 'Processor ID required.')
+        proc = DPDPDataProcessor.objects.filter(pk=pk, organization=user_org).first()
+        if not proc:
+            raise ApiError(404, 'Data processor not found.')
+        d = body(request)
+        c = Cleaner(d)
+        if 'vendor_name' in d:
+            proc.vendor_name = c.text('vendor_name', max_len=200)
+        if 'service_type' in d:
+            proc.service_type = c.text('service_type', max_len=100)
+        if 'contact_email' in d:
+            proc.contact_email = c.text('contact_email', max_len=200)
+        if 'data_shared_categories' in d:
+            proc.data_shared_categories = c.text('data_shared_categories', max_len=1000)
+        if 'dpa_signed' in d:
+            proc.dpa_signed = c.boolean('dpa_signed')
+        if 'dpa_date' in d:
+            proc.dpa_date = c.date('dpa_date')
+        if 'security_safeguards' in d:
+            proc.security_safeguards = c.text('security_safeguards', max_len=1000)
+        if 'is_active' in d:
+            proc.is_active = c.boolean('is_active')
+        c.done()
+        proc.save()
+        return j({'id': proc.id, 'vendor_name': proc.vendor_name, 'message': 'Processor updated successfully.'})
+
+    raise ApiError(405, 'Method not allowed.')
+
+
+@api_view
+def dpdp_export_principal_data_view(request):
+    """
+    DPDP Act 2023 Sec 11 - Right to Access:
+    Generates a consolidated portability package of all personal and transactional
+    records for a given Data Principal within the current organization.
+    """
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    user_org = get_user_org(request.user, request)
+    if not user_org:
+        raise ApiError(403, 'Organization required.')
+
+    d = body(request)
+    identifier = (d.get('identifier') or d.get('email') or d.get('phone') or d.get('name') or '').strip()
+    if not identifier:
+        raise ApiError(400, 'Data Principal email, phone, or name is required.')
+
+    # Retrieve matching customers and vendors
+    custs = Customer.objects.filter(
+        organization=user_org
+    ).filter(
+        Q(email__iexact=identifier) | Q(phone__iexact=identifier) | Q(name__iexact=identifier)
+    )
+    vends = Vendor.objects.filter(
+        organization=user_org
+    ).filter(
+        Q(email__iexact=identifier) | Q(phone__iexact=identifier) | Q(name__iexact=identifier)
+    )
+
+    cust_ids = list(custs.values_list('id', flat=True))
+    vend_ids = list(vends.values_list('id', flat=True))
+
+    invoices = list(Invoice.objects.filter(organization=user_org, customer_id__in=cust_ids).values('id', 'number', 'date', 'total', 'status'))
+    bills = list(Bill.objects.filter(organization=user_org, vendor_id__in=vend_ids).values('id', 'number', 'date', 'total', 'status'))
+    payments_rec = list(PaymentReceived.objects.filter(organization=user_org, customer_id__in=cust_ids).values('id', 'number', 'date', 'amount', 'mode'))
+    payments_made = list(PaymentMade.objects.filter(organization=user_org, vendor_id__in=vend_ids).values('id', 'number', 'date', 'amount', 'mode'))
+
+    export_pkg = {
+        'export_metadata': {
+            'organization': user_org.name,
+            'generated_at': timezone.now().isoformat(),
+            'requested_identifier': identifier,
+            'compliance': 'DPDP Act 2023 Section 11 Right to Access'
+        },
+        'customer_profiles': [
+            {
+                'id': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone,
+                'company': c.company, 'gstin': c.gstin, 'billing_address': c.billing_address
+            } for c in custs
+        ],
+        'vendor_profiles': [
+            {
+                'id': v.id, 'name': v.name, 'email': v.email, 'phone': v.phone,
+                'company': v.company, 'gstin': v.gstin, 'billing_address': v.billing_address
+            } for v in vends
+        ],
+        'invoices': invoices,
+        'bills': bills,
+        'payments_received': payments_rec,
+        'payments_made': payments_made,
+    }
+
+    services.log_audit(
+        request.user, 'export', 'DataPrincipal', identifier,
+        f"Exported DPDP Personal Data Access Package for {identifier}",
+        org=user_org, module='compliance', submodule='dpdp_access'
+    )
+    return j(export_pkg)
+
 
 
 

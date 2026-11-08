@@ -4871,10 +4871,7 @@ def get_tenant_admin_summary(org=None):
         org = Organization.objects.first()
     users_qs = User.objects.all()
     if org:
-        if org.pk == 1:
-            users_qs = users_qs.filter(Q(profile__organization=org) | Q(profile__organization__isnull=True))
-        else:
-            users_qs = users_qs.filter(profile__organization=org)
+        users_qs = users_qs.filter(profile__organization=org)
 
     users = []
     for u in users_qs.order_by('username'):
@@ -4896,12 +4893,8 @@ def get_tenant_admin_summary(org=None):
     inv_qs = Invoice.objects.all()
     jrnl_qs = Journal.objects.all()
     if org:
-        if org.pk == 1:
-            audit_qs = audit_qs.filter(Q(organization=org) | Q(organization__isnull=True))
-            inv_qs = inv_qs.filter(Q(organization=org) | Q(organization__isnull=True))
-        else:
-            audit_qs = audit_qs.filter(organization=org)
-            inv_qs = inv_qs.filter(organization=org)
+        audit_qs = audit_qs.filter(organization=org)
+        inv_qs = inv_qs.filter(organization=org)
 
     return {
         'organization': {
@@ -6244,8 +6237,8 @@ def create_stock_transfer(data, user):
     if str(src_id) == str(dst_id):
         raise ApiError(400, 'Source and destination warehouses must be different.')
 
-    src_wh = Warehouse.objects.filter(Q(pk=src_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
-    dst_wh = Warehouse.objects.filter(Q(pk=dst_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+    src_wh = Warehouse.objects.filter(pk=src_id, organization=user_org, active=True).first() if user_org else None
+    dst_wh = Warehouse.objects.filter(pk=dst_id, organization=user_org, active=True).first() if user_org else None
 
     if not src_wh:
         raise ApiError(400, 'Source warehouse is invalid or inactive.')
@@ -6280,7 +6273,7 @@ def create_stock_transfer(data, user):
         item_id = l.get('item') or l.get('item_id')
         if not item_id:
             raise ApiError(400, f'Line {idx}: Item is required.')
-        item = Item.objects.filter(Q(pk=item_id), Q(organization=user_org) | Q(organization__isnull=True)).first()
+        item = Item.objects.filter(pk=item_id, organization=user_org).first() if user_org else None
         if not item:
             raise ApiError(400, f'Line {idx}: Item not found.')
         if item.item_type != Item.GOODS or not item.track_inventory:
@@ -6347,8 +6340,8 @@ def update_stock_transfer(transfer, data, user):
         if str(src_id) == str(dst_id):
             raise ApiError(400, 'Source and destination warehouses must be different.')
 
-        src_wh = Warehouse.objects.filter(Q(pk=src_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
-        dst_wh = Warehouse.objects.filter(Q(pk=dst_id), Q(organization=user_org) | Q(organization__isnull=True), active=True).first()
+        src_wh = Warehouse.objects.filter(pk=src_id, organization=user_org, active=True).first() if user_org else None
+        dst_wh = Warehouse.objects.filter(pk=dst_id, organization=user_org, active=True).first() if user_org else None
         if not src_wh:
             raise ApiError(400, 'Source warehouse is invalid or inactive.')
         if not dst_wh:
@@ -6374,7 +6367,7 @@ def update_stock_transfer(transfer, data, user):
             item_id = l.get('item') or l.get('item_id')
             if not item_id:
                 raise ApiError(400, f'Line {idx}: Item is required.')
-            item = Item.objects.filter(Q(pk=item_id), Q(organization=user_org) | Q(organization__isnull=True)).first()
+            item = Item.objects.filter(pk=item_id, organization=user_org).first() if user_org else None
             if not item:
                 raise ApiError(400, f'Line {idx}: Item not found.')
             if item.item_type != Item.GOODS or not item.track_inventory:

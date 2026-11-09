@@ -6253,222 +6253,350 @@ async function ewayBillModal() {
   });
 }
 
-async function recurringInvoiceModal(id, initialData) {
-  const custs = await api('lookup/customers/').catch(() => []);
-  const items = await api('lookup/items/').catch(() => []);
-  const o = id ? await api(`recurring-invoices/${id}/`) : (initialData || { profile_name: '', customer: '', frequency: 'monthly', repeat_every: 1, start_date: APP.today, next_date: APP.today, end_date: '', total: '15000.00', status: 'active', payment_terms: 30, auto_send: false, lines: [] });
+async function recurringInvoiceForm(id, targetEl, onDone) {
+  if (typeof targetEl === 'function') {
+    onDone = targetEl;
+    targetEl = null;
+  }
+  const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
 
-  const custOpts = [
-    ['', 'Select Customer…'],
-    ['__new_customer__', '+ Add New Customer…'],
-    ...custs.map(c => [c.id, c.name])
-  ];
-  const freqOpts = [
-    ['daily', 'Daily'],
-    ['weekly', 'Weekly'],
-    ['monthly', 'Monthly'],
-    ['quarterly', 'Quarterly'],
-    ['half_yearly', 'Half-Yearly'],
-    ['yearly', 'Yearly'],
-    ['custom', 'Custom Interval']
-  ];
-  const statusOpts = [
-    ['active', 'Active'],
-    ['paused', 'Paused'],
-    ['completed', 'Completed'],
-    ['cancelled', 'Cancelled']
-  ];
-  const itemOpts = [
-    ['', '— Custom line —'],
-    ['__new_item__', '+ Add New Item…'],
-    ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])
-  ];
-  const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
+  let initialData = null;
+  if (id && typeof id === 'object') {
+    initialData = id;
+    id = null;
+  }
 
-  const existingLines = o.lines && o.lines.length ? o.lines : [{ description: o.profile_name || 'Service Retainer', quantity: 1, rate: o.total || '15000.00', discount_percent: 0, gst_rate: 18 }];
+  const [parties, items, rec] = await Promise.all([
+    api('lookup/customers/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData)
+  ]);
 
-  const lineRow = (l = {}) => `
-    <tr class="ln">
-      <td>
-        <select class="in l-item" style="margin-bottom:4px;" aria-label="Item">${opts(itemOpts, l.item)}</select>
-        <input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}">
+  const rProfileName = rec ? (rec.profile_name || rec.name || '') : '';
+  const rCustomer = rec ? (rec.customer_id || rec.customer) : '';
+  const rFrequency = rec ? (rec.frequency || 'monthly') : 'monthly';
+  const rStartDate = rec ? (rec.start_date || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10))) : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const rNextDate = rec ? (rec.next_date || rStartDate) : rStartDate;
+  const rEndDate = rec ? (rec.end_date || '') : '';
+  const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : true;
+  const rPaymentTerms = rec ? (rec.payment_terms != null ? Number(rec.payment_terms) : 30) : 30;
+  const rStatus = rec ? (rec.status || 'active') : 'active';
+  const rAutoSend = rec ? !!rec.auto_send : false;
+  const rNotes = rec ? (rec.notes || '') : '';
+  const rTerms = rec ? (rec.terms || '') : '';
+  const rLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ description: rProfileName || 'Service Retainer', quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-rec" style="border-bottom:1px solid var(--bd);">
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+        </div>
       </td>
-      <td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td>
-      <td><input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || 1)}" style="width:70px;"></td>
-      <td><input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '' : l.rate)}" style="width:90px;"></td>
-      <td><input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="width:65px;"></td>
-      <td><select class="in l-gst" style="width:80px;">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td>
-      <td class="r l-amt" style="font-weight:600;min-width:85px;">—</td>
-      <td><button type="button" class="btn ic" data-rm title="Remove line">×</button></td>
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      <td style="width:90px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
+      </td>
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+          <option value="0">Select a Tax</option>
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </td>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
+      </td>
     </tr>
   `;
 
-  const m = formModal({
-    title: id ? 'Edit Recurring Invoice Profile' : 'New Recurring Invoice Profile',
-    wide: true,
-    body: `<div class="g form-grid-aligned">
-      ${fld({ name: 'profile_name', label: 'Profile Name', req: true, value: o.profile_name, col: 's6', ph: 'e.g. Monthly Retainer Support' })}
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: custOpts, value: o.customer_id || o.customer || '', req: true, col: 's6' })}
-      ${fld({ name: 'frequency', label: 'Frequency', type: 'select', opts: freqOpts, value: o.frequency || 'monthly', col: 's3' })}
-      ${fld({ name: 'repeat_every', label: 'Repeat Every', type: 'number', value: o.repeat_every || 1, attrs: 'min="1" max="365"', col: 's3', help: 'e.g. 1 month, 2 weeks' })}
-      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', req: true, value: o.start_date || APP.today, col: 's3' })}
-      ${fld({ name: 'next_date', label: 'Next Invoice Date', type: 'date', req: true, value: o.next_date || APP.today, col: 's3' })}
-      ${fld({ name: 'end_date', label: 'End Date (Optional)', type: 'date', value: o.end_date || '', col: 's3', help: 'Leave blank for unlimited duration' })}
-      ${fld({ name: 'payment_terms', label: 'Payment Terms (Days)', type: 'number', value: o.payment_terms != null ? o.payment_terms : 30, attrs: 'min="0" max="365"', col: 's3' })}
-      ${fld({ name: 'status', label: 'Status', type: 'select', opts: statusOpts, value: o.status || 'active', col: 's3' })}
-      <div class="fld s3" style="display:flex;align-items:center;margin-top:22px;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-          <input type="checkbox" name="auto_send" id="rec-auto-send" ${o.auto_send ? 'checked' : ''}>
-          <span>Auto-send invoice by email</span>
-        </label>
+  target.innerHTML = `
+    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-solid fa-rotate" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Recurring Invoice' : 'New Recurring Invoice'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-rec-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
       </div>
-    </div>
 
-    <div style="margin:20px 0 8px;display:flex;justify-content:space-between;align-items:center;">
-      <h4 style="font-size:13px;font-weight:700;margin:0;color:var(--tx);">Line Items & Rates</h4>
-      <button type="button" class="btn" id="btn-rec-add-line" style="font-size:12px;padding:4px 10px;">+ Add line</button>
-    </div>
-    <div class="tw" style="border:1px solid var(--bd-glass);border-radius:6px;overflow:hidden;margin-bottom:12px;">
-      <table class="lt" id="rec-lines-table">
-        <thead>
-          <tr>
-            <th style="min-width:200px;">Item / Description</th>
-            <th>HSN/SAC</th>
-            <th>Qty</th>
-            <th>Rate (₹)</th>
-            <th>Disc %</th>
-            <th>GST</th>
-            <th class="r">Amount</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="rec-lines-body">
-          ${existingLines.map(lineRow).join('')}
-        </tbody>
-      </table>
-    </div>
+      <form id="recurring-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
 
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:14px;padding-top:12px;border-top:1px solid var(--bd-glass);">
-      <div style="font-size:12px;color:var(--sub);max-width:320px;">
-        Scheduled invoices will be automatically generated with these items, taxes, discounts, and payment terms.
-      </div>
-      <div class="tot" style="margin:0;min-width:260px;">
-        <div><span>Subtotal</span><b id="rec-tot-sub">₹0.00</b></div>
-        <div><span>Tax</span><b id="rec-tot-tax">₹0.00</b></div>
-        <div class="gt"><span>Total (₹)</span><b id="rec-tot-grand">₹0.00</b></div>
-        <input type="hidden" name="total" id="rec-total-hidden" value="${o.total || '0.00'}">
-      </div>
-    </div>`,
-    onSubmit: async d => {
-      const pName = (d.profile_name || '').trim();
-      if (!pName) throw new ApiErr(400, { profile_name: 'Profile Name is required.' }, 'Profile Name is required.');
-      if (/[#@!$%^*+=~`<>?[\]\\{}]/.test(pName)) throw new ApiErr(400, { profile_name: 'Profile Name contains invalid special characters.' }, 'Profile Name contains invalid special characters.');
-      if (!d.customer || d.customer === '__new_customer__') throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Profile Name*</label>
+            <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Retainer Support" style="max-width:440px;width:100%;">
+          </div>
 
-      d.customer = Number(d.customer);
-      if (d.start_date && d.next_date && new Date(d.next_date) < new Date(d.start_date)) {
-        throw new ApiErr(400, { next_date: 'Next Invoice Date cannot be earlier than Start Date.' }, 'Next Invoice Date cannot be earlier than Start Date.');
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="rec-customer" name="customer" required style="flex:1;">
+                <option value="">Select or add a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Frequency*</label>
+            <select class="in" id="rec-frequency" name="frequency" style="width:260px;">
+              <option value="daily" ${rFrequency === 'daily' ? 'selected' : ''}>Daily</option>
+              <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Weekly</option>
+              <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Monthly</option>
+              <option value="quarterly" ${rFrequency === 'quarterly' ? 'selected' : ''}>Quarterly</option>
+              <option value="half_yearly" ${rFrequency === 'half_yearly' ? 'selected' : ''}>Half-Yearly</option>
+              <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Yearly</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Start Date*</label>
+            <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:260px;">
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Next Invoice Date*</label>
+            <input class="in" type="date" id="rec-next-date" name="next_date" value="${rNextDate}" required style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">End Date</label>
+            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:260px;${rNeverEnds ? 'opacity:0.5;' : ''}" ${rNeverEnds ? 'disabled' : ''}>
+            <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--tx);cursor:pointer;margin-left:14px;">
+              <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+              Never Ends
+            </label>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Payment Terms</label>
+            <select class="in" id="rec-payment-terms" name="payment_terms" style="width:260px;">
+              <option value="0" ${rPaymentTerms === 0 ? 'selected' : ''}>Due on Receipt</option>
+              <option value="15" ${rPaymentTerms === 15 ? 'selected' : ''}>Net 15</option>
+              <option value="30" ${rPaymentTerms === 30 ? 'selected' : ''}>Net 30</option>
+              <option value="45" ${rPaymentTerms === 45 ? 'selected' : ''}>Net 45</option>
+              <option value="60" ${rPaymentTerms === 60 ? 'selected' : ''}>Net 60</option>
+            </select>
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Status</label>
+            <select class="in" id="rec-status" name="status" style="width:180px;">
+              <option value="active" ${rStatus === 'active' ? 'selected' : ''}>Active</option>
+              <option value="paused" ${rStatus === 'paused' ? 'selected' : ''}>Paused</option>
+              <option value="completed" ${rStatus === 'completed' ? 'selected' : ''}>Completed</option>
+              <option value="cancelled" ${rStatus === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;margin-top:4px;">
+            <label style="width:150px;"></label>
+            <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--tx);">
+              <input type="checkbox" id="rec-auto-send" ${rAutoSend ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+              Auto-send invoice by email to customer upon generation
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-rec-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-rec-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
+                  <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
+                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="recurring-line-tbody">
+                ${rLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-rec-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
+            </button>
+            <button type="button" class="btn" id="btn-rec-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
+            </button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
+          <div>
+            <div class="fg" style="margin-bottom:16px;">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="rec-notes" name="notes" rows="3" style="width:100%;" placeholder="Notes will be copied to generated invoices">${esc(rNotes)}</textarea>
+            </div>
+            <div class="fg">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
+              <textarea class="in" id="rec-terms" name="terms" rows="3" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;">${esc(rTerms)}</textarea>
+            </div>
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:10px;padding:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);">Sub Total</span>
+              <span id="rec-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);">Tax Amount</span>
+              <span id="rec-tax-val" style="font-size:16px;font-weight:700;">0.00</span>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
+              <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
+              <span id="rec-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button type="button" class="btn p" id="btn-rec-save" style="font-weight:600;cursor:pointer;">Save Profile</button>
+            <button type="button" class="btn" id="btn-rec-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
+            <button type="button" class="btn" id="btn-rec-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
+            <span>Total Amount: <span id="rec-bar-total-amount">₹ 0.00</span></span>
+            <span>Total Quantity: <span id="rec-bar-total-qty">0.00</span></span>
+          </div>
+        </div>
+      </form>
+    </div>
+  `;
+
+  const form = $('#recurring-form-element', target);
+  const tbody = $('#recurring-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+
+  const neverEndsCb = $('#rec-never-ends', form);
+  const endDateIn = $('#rec-end-date', form);
+  if (neverEndsCb && endDateIn) {
+    neverEndsCb.addEventListener('change', () => {
+      if (neverEndsCb.checked) {
+        endDateIn.value = '';
+        endDateIn.disabled = true;
+        endDateIn.style.opacity = '0.5';
+      } else {
+        endDateIn.disabled = false;
+        endDateIn.style.opacity = '1';
+        if (!endDateIn.value) {
+          const sd = $('#rec-start-date', form).value;
+          endDateIn.value = sd || '';
+        }
       }
-      if (d.start_date && d.end_date && new Date(d.end_date) < new Date(d.start_date)) {
-        throw new ApiErr(400, { end_date: 'End Date cannot be earlier than Start Date.' }, 'End Date cannot be earlier than Start Date.');
-      }
-
-      d.repeat_every = Math.max(1, Number(d.repeat_every) || 1);
-      d.payment_terms = Math.max(0, Number(d.payment_terms) || 30);
-      d.auto_send = !!(m.el.querySelector('#rec-auto-send') && m.el.querySelector('#rec-auto-send').checked);
-
-      const lines = [];
-      const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
-      trs.forEach(tr => {
-        const itemVal = (tr.querySelector('.l-item') || {}).value;
-        const desc = (tr.querySelector('.l-desc') || {}).value;
-        const hsn = (tr.querySelector('.l-hsn') || {}).value;
-        const q = num((tr.querySelector('.l-qty') || {}).value) || 1;
-        const r = num((tr.querySelector('.l-rate') || {}).value) || 0;
-        const disc = num((tr.querySelector('.l-disc') || {}).value) || 0;
-        const gst = num((tr.querySelector('.l-gst') || {}).value) || 0;
-        const taxable = r2(q * r * (100 - disc) / 100);
-        const ltot = r2(taxable * (1 + gst / 100));
-        lines.push({
-          item: (itemVal && itemVal !== '__new_item__') ? Number(itemVal) : null,
-          description: desc || 'Line item',
-          hsn_sac: hsn || '',
-          quantity: q,
-          rate: r,
-          discount_percent: disc,
-          gst_rate: gst,
-          line_total: ltot
-        });
-      });
-      d.lines = lines;
-
-      const calcTotal = num((m.el.querySelector('#rec-total-hidden') || {}).value);
-      d.total = calcTotal > 0 ? calcTotal : (num(d.total) || 100);
-
-      if (id) await api(`recurring-invoices/${id}/`, { method: 'PUT', body: d });
-      else await api('recurring-invoices/', { method: 'POST', body: d });
-      toast('Recurring profile saved', 'ok');
-      refresh();
-    }
-  });
-
-  const calcRecTotals = () => {
-    let sub = 0, tax = 0;
-    const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
-    trs.forEach(tr => {
-      const q = num((tr.querySelector('.l-qty') || {}).value) || 0;
-      const r = num((tr.querySelector('.l-rate') || {}).value) || 0;
-      const disc = num((tr.querySelector('.l-disc') || {}).value) || 0;
-      const gst = num((tr.querySelector('.l-gst') || {}).value) || 0;
-      const taxable = r2(q * r * (100 - disc) / 100);
-      const t = r2(taxable * gst / 100);
-      sub += taxable;
-      tax += t;
-      const amtEl = tr.querySelector('.l-amt');
-      if (amtEl) amtEl.textContent = inr(taxable + t);
     });
-    const grand = r2(sub + tax);
-    const subEl = m.el.querySelector('#rec-tot-sub');
-    const taxEl = m.el.querySelector('#rec-tot-tax');
-    const grandEl = m.el.querySelector('#rec-tot-grand');
-    const hiddenTot = m.el.querySelector('#rec-total-hidden');
-    if (subEl) subEl.textContent = inr(sub);
-    if (taxEl) taxEl.textContent = inr(tax);
-    if (grandEl) grandEl.textContent = inr(grand);
-    if (hiddenTot) hiddenTot.value = grand.toFixed(2);
-  };
+  }
 
-  calcRecTotals();
+  function calcRecTotals() {
+    let subtotal = 0;
+    let totalTax = 0;
+    let totalQty = 0;
+    $$('.ln-rec', tbody).forEach(tr => {
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value || 'percent';
+      const gst = num($('.l-gst', tr).value) || 0;
 
-  m.el.addEventListener('input', e => {
+      totalQty += q;
+      let taxable = q * r;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - discVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - discVal);
+      }
+      taxable = r2(taxable);
+      const taxAmt = r2(taxable * (gst / 100));
+      const lineTot = r2(taxable + taxAmt);
+
+      subtotal += taxable;
+      totalTax += taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    });
+
+    const totalGrand = r2(subtotal + totalTax);
+
+    const subEl = $('#rec-subtotal-val', form);
+    const taxEl = $('#rec-tax-val', form);
+    const grandEl = $('#rec-grandtotal-val', form);
+    const barTot = $('#rec-bar-total-amount', form);
+    const barQty = $('#rec-bar-total-qty', form);
+
+    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
+    if (taxEl) taxEl.textContent = inr(totalTax).replace('₹', '').trim();
+    if (grandEl) grandEl.textContent = inr(totalGrand).replace('₹', '').trim();
+    if (barTot) barTot.textContent = inr(totalGrand);
+    if (barQty) barQty.textContent = totalQty.toFixed(2);
+
+    return { subtotal, totalTax, totalGrand, totalQty };
+  }
+
+  tbody.addEventListener('input', e => {
     if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcRecTotals();
   });
 
-  m.el.addEventListener('change', e => {
-    if (e.target.name === 'customer' && e.target.value === '__new_customer__') {
-      handleQuickCreateSelect(e.target, newCust => {
-        custs.push(newCust);
-        const opt = document.createElement('option');
-        opt.value = newCust.id;
-        opt.textContent = newCust.name;
-        opt.selected = true;
-        e.target.appendChild(opt);
-        e.target.value = newCust.id;
-      });
-      return;
-    }
+  tbody.addEventListener('change', e => {
     if (e.target.classList.contains('l-item')) {
       if (e.target.value === '__new_item__') {
         handleQuickCreateSelect(e.target, newItem => {
           items.push(newItem);
           byId[String(newItem.id)] = newItem;
-          const tr = e.target.closest('tr');
-          if (tr) {
-            tr.querySelector('.l-desc').value = newItem.name;
-            tr.querySelector('.l-hsn').value = newItem.hsn_sac || '';
-            tr.querySelector('.l-rate').value = newItem.selling_price || 0;
-            tr.querySelector('.l-gst').value = String(num(newItem.gst_rate) || 18);
-          }
           calcRecTotals();
         });
         return;
@@ -6476,36 +6604,218 @@ async function recurringInvoiceModal(id, initialData) {
       const it = byId[e.target.value];
       const tr = e.target.closest('tr');
       if (it && tr) {
-        tr.querySelector('.l-desc').value = it.name;
-        tr.querySelector('.l-hsn').value = it.hsn_sac || '';
-        tr.querySelector('.l-rate').value = it.selling_price || 0;
-        tr.querySelector('.l-gst').value = String(num(it.gst_rate) || 18);
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
       }
       calcRecTotals();
     }
-    if (e.target.classList.contains('l-gst')) calcRecTotals();
+    if (e.target.matches('.l-gst, .l-disc-type')) calcRecTotals();
   });
 
-  m.el.addEventListener('click', e => {
-    if (e.target.closest('#btn-rec-add-line')) {
-      const tb = m.el.querySelector('#rec-lines-body');
-      if (tb) {
-        tb.insertAdjacentHTML('beforeend', lineRow({}));
-        calcRecTotals();
-      }
-    }
-    const rmBtn = e.target.closest('[data-rm]');
-    if (rmBtn) {
-      const trs = m.el.querySelectorAll('#rec-lines-body tr.ln');
-      if (trs.length > 1) {
-        rmBtn.closest('tr').remove();
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      if ($$('.ln-rec', tbody).length > 1) {
+        rm.closest('tr').remove();
         calcRecTotals();
       } else {
         toast('At least one line item is required.', 'err');
       }
     }
   });
+
+  $('#btn-rec-add-row', form)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    calcRecTotals();
+  });
+
+  $('#btn-rec-bulk-items', form)?.addEventListener('click', () => {
+    openBulkItemModal(items, selectedItems => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.id,
+          description: it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: 1,
+          rate: it.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
+      });
+      calcRecTotals();
+    });
+  });
+
+  $('#btn-rec-cust-lookup', form)?.addEventListener('click', () => {
+    handleQuickCreateSelect($('#rec-customer', form), newCust => {
+      parties.push(newCust);
+      const opt = document.createElement('option');
+      opt.value = newCust.id;
+      opt.textContent = newCust.name;
+      opt.selected = true;
+      $('#rec-customer', form).appendChild(opt);
+      $('#rec-customer', form).value = newCust.id;
+    });
+  });
+
+  $('#rec-customer', form)?.addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        e.target.appendChild(opt);
+        e.target.value = newCust.id;
+      });
+    }
+  });
+
+  const handleClose = () => {
+    if (onDone) onDone();
+    else {
+      location.hash = '#/sales/recurring-invoices';
+      if (typeof route === 'function') route();
+    }
+  };
+
+  $('#btn-rec-close-x', target)?.addEventListener('click', handleClose);
+  $('#btn-rec-cancel', target)?.addEventListener('click', handleClose);
+
+  async function saveRecurring(isDraft = false) {
+    const pName = ($('#rec-profile-name', form).value || '').trim();
+    if (!pName) {
+      toast('Profile Name is required.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+    if (/[#@!$%^*+=~`<>?[\]\{}]/.test(pName)) {
+      toast('Profile Name contains invalid special characters.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+
+    const custId = $('#rec-customer', form).value;
+    if (!custId || custId === '__new_customer__') {
+      toast('Please select a customer.', 'err');
+      $('#rec-customer', form).focus();
+      return;
+    }
+
+    const sDateVal = $('#rec-start-date', form).value;
+    if (!sDateVal) {
+      toast('Please enter a start date.', 'err');
+      $('#rec-start-date', form).focus();
+      return;
+    }
+
+    const nextDateVal = $('#rec-next-date', form).value || sDateVal;
+    if (sDateVal && nextDateVal && new Date(nextDateVal) < new Date(sDateVal)) {
+      toast('Next Invoice Date cannot be earlier than Start Date.', 'err');
+      $('#rec-next-date', form).focus();
+      return;
+    }
+
+    const neverEnds = !!(neverEndsCb && neverEndsCb.checked);
+    const edVal = neverEnds ? null : ($('#rec-end-date', form).value || null);
+    if (!neverEnds && edVal && sDateVal && new Date(edVal) < new Date(sDateVal)) {
+      toast('End Date cannot be earlier than Start Date.', 'err');
+      $('#rec-end-date', form).focus();
+      return;
+    }
+
+    const lines = [];
+    $$('.ln-rec', tbody).forEach((tr, idx) => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qVal = num($('.l-qty', tr).value) || 1;
+      const rVal = num($('.l-rate', tr).value) || 0;
+      const dVal = num($('.l-disc', tr).value) || 0;
+      const gVal = num($('.l-gst', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value || 'percent';
+
+      let taxable = qVal * rVal;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - dVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - dVal);
+      }
+      taxable = r2(taxable);
+      const lTot = r2(taxable * (1 + gVal / 100));
+
+      lines.push({
+        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qVal,
+        rate: rVal,
+        discount_percent: dVal,
+        gst_rate: gVal,
+        line_total: lTot,
+        position: idx
+      });
+    });
+
+    if (!lines.length) {
+      toast('At least one line item is required.', 'err');
+      return;
+    }
+
+    const totals = calcRecTotals();
+
+    const payload = {
+      profile_name: pName,
+      customer: Number(custId),
+      frequency: $('#rec-frequency', form).value,
+      start_date: sDateVal,
+      next_date: nextDateVal,
+      end_date: edVal,
+      never_ends: neverEnds,
+      payment_terms: Number($('#rec-payment-terms', form).value) || 0,
+      status: isDraft ? 'paused' : ($('#rec-status', form).value || 'active'),
+      auto_send: !!($('#rec-auto-send', form) && $('#rec-auto-send', form).checked),
+      notes: $('#rec-notes', form).value.trim(),
+      terms: $('#rec-terms', form).value.trim(),
+      lines: lines,
+      total: totals.totalGrand.toFixed(2)
+    };
+
+    const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
+    actionBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
+        toast('Recurring profile updated successfully!', 'ok');
+      } else {
+        saved = await api('recurring-invoices/', { method: 'POST', body: payload });
+        toast('Recurring profile created successfully!', 'ok');
+      }
+
+      if (onDone) onDone(saved);
+      else {
+        location.hash = '#/sales/recurring-invoices';
+        if (typeof route === 'function') route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      actionBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  }
+
+  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurring(false));
+  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurring(true));
+
+  calcRecTotals();
 }
+window.recurringInvoiceForm = recurringInvoiceForm;
+window.recurringInvoiceModal = recurringInvoiceForm;
+
 
 async function viewDocumentOcrModal(doc) {
   const ocr = doc.ocr_data || {};
@@ -7195,7 +7505,13 @@ function bulkItemPickerModal(items, onSelect) {
   renderList();
 }
 
-async function quoteForm(id, onDone) {
+async function quoteForm(id, targetEl, onDone) {
+  if (typeof targetEl === 'function') {
+    onDone = targetEl;
+    targetEl = null;
+  }
+  const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
+
   const [parties, items, projects, salespersons, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
@@ -7207,14 +7523,14 @@ async function quoteForm(id, onDone) {
 
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
-  const qDate = rec ? rec.date : APP.today;
+  const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
   const qRef = rec ? (rec.reference_number || '') : '';
   const qSalesperson = rec ? (rec.salesperson || '') : '';
   const qProject = rec ? (rec.project_name || '') : '';
   const qSubject = rec ? (rec.subject || '') : '';
-  const qNotes = rec ? (rec.notes || '') : 'Looking forward for your business.';
-  const qTerms = rec ? (rec.terms || '') : (APP.org.terms_default || '');
+  const qNotes = rec ? (rec.notes != null ? rec.notes : 'Looking forward for your business.') : 'Looking forward for your business.';
+  const qTerms = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const qTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
   const qTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
   const qAdj = rec ? num(rec.adjustment || 0) : 0;
@@ -7224,415 +7540,365 @@ async function quoteForm(id, onDone) {
 
   const rowHtml = (l = {}) => `
     <tr class="ln-quote" style="border-bottom:1px solid var(--bd);">
-      <td style="width:30px;text-align:center;color:var(--tx-muted);cursor:grab;padding:10px 4px;">
-        <i class="fa-solid fa-grip-vertical"></i>
-      </td>
-      <td style="min-width:280px;padding:10px 8px;">
-        <div style="display:flex;align-items:flex-start;gap:10px;">
-          <div style="width:44px;height:44px;border-radius:6px;background:var(--surface-glass-subtle);border:1px dashed var(--bd);display:grid;place-items:center;color:var(--tx-muted);flex-shrink:0;">
-            <i class="fa-regular fa-image" style="font-size:18px;"></i>
-          </div>
-          <div style="flex:1;">
-            <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
-              <option value="">Type or click to select an item.</option>
-              <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-              ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
-            </select>
-            <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
-            <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
-          </div>
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
         </div>
       </td>
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      <td style="width:90px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
+      </td>
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" aria-label="Quantity" value="${esc(l.quantity || '1.00')}" style="text-align:right;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:130px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;">
-      </td>
-      <td style="width:130px;padding:10px 8px;vertical-align:top;">
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
         <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
           <select class="in l-disc-type" style="width:48px;padding:4px;">
             <option value="percent">%</option>
             <option value="amount">₹</option>
           </select>
         </div>
       </td>
-      <td style="width:150px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="Tax rate">
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
           <option value="0">Select a Tax</option>
           <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
           <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
           <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
-          <option value="18" ${num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
-      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
-        ${inr(l.line_total || 0)}
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
-      <td style="width:40px;text-align:center;vertical-align:top;padding-top:14px;">
-        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;" title="Remove row">×</button>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
       </td>
     </tr>
   `;
 
-  const m = Modal.open({
-    title: id ? `Edit Quote ${qNumber}` : 'New Quote',
-    dialog: true,
-    wide: true,
-    body: `
-      <form id="quote-form-element" style="padding:4px 0;" novalidate>
-        <div style="display:flex;flex-direction:column;gap:14px;background:var(--surface-glass-subtle);padding:20px;border-radius:10px;border:1px solid var(--bd);">
-          
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Name<span style="color:#ef4444;">*</span></label>
-            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
+  target.innerHTML = `
+    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Quote' : 'New Quote'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-quote-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <form id="quote-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
               <select class="in" id="q-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
-              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;border-radius:6px;">
+              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote Number<span style="color:#ef4444;">*</span></label>
-            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
-              <input type="text" class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;">
-              <button type="button" class="btn ic" id="btn-quote-gear" title="Configure Quote Number Sequence" style="color:#3b82f6;border-radius:6px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:260px;">
+              <button type="button" class="btn ic" id="btn-quote-num-pref" title="Quote preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference Number</label>
-            <div style="flex:1;max-width:440px;">
-              <input type="text" class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="" style="width:100%;">
-            </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Reference#</label>
+            <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" style="width:260px;">
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Quote Date<span style="color:#ef4444;">*</span></label>
-            <div style="flex:1;max-width:440px;">
-              <input type="date" class="in" id="q-date" name="date" value="${esc(qDate)}" required style="width:100%;">
-            </div>
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote Date*</label>
+            <input class="in" type="date" id="q-date" name="date" value="${qDate}" required style="width:260px;">
+
+            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Expiry Date*</label>
+            <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:260px;">
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Expiry Date<span style="color:#ef4444;">*</span></label>
-            <div style="flex:1;max-width:440px;">
-              <input type="date" class="in" id="q-expiry" name="expiry_date" value="${esc(qExpiry)}" required style="width:100%;">
-            </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
+            <select class="in" id="q-salesperson" name="salesperson" style="width:260px;">
+              <option value="">Select or Add Salesperson</option>
+              ${salespersons.map(s => `<option value="${esc(s.name)}" ${qSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            </select>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div style="flex:1;max-width:440px;">
-              <select class="in" id="q-salesperson" name="salesperson">
-                <option value="">Select or Add Salesperson</option>
-                ${salespersons.map(s => `<option value="${esc(s.name)}" ${qSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-                <option value="__new_salesperson__">+ Add New Salesperson…</option>
-              </select>
-            </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Project Name</label>
+            <select class="in" id="q-project" name="project_name" style="width:260px;">
+              <option value="">Select a Project</option>
+              ${projects.map(pj => `<option value="${esc(pj.name)}" data-cust="${pj.customer_id}" ${qProject === pj.name ? 'selected' : ''}>${esc(pj.name)}</option>`).join('')}
+            </select>
           </div>
 
-          <div style="display:flex;align-items:flex-start;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);margin-top:6px;">Project Name</label>
-            <div style="flex:1;max-width:440px;">
-              <select class="in" id="q-project" name="project_name">
-                <option value="">Select a project</option>
-                ${projects.map(p => `<option value="${esc(p.name)}" data-cust="${p.customer_id || ''}" ${qProject === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                <option value="__new_project__">+ Add New Project…</option>
-              </select>
-              <div class="sub" id="q-project-hint" style="font-size:11.5px;color:var(--tx-muted);margin-top:4px;">Select a customer to associate a project.</div>
-            </div>
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="q-subject" name="subject" rows="2" placeholder="Let your customer know what this Quote is for" style="width:260px;font-size:12px;">${esc(qSubject)}</textarea>
           </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;" title="Let your customer know what this Quote is for"></i></label>
-            <div style="flex:1;max-width:440px;">
-              <input type="text" class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for">
-            </div>
-          </div>
-
         </div>
 
-        <h3 style="font-size:15px;font-weight:700;margin:24px 0 10px;color:var(--tx);">Item Table</h3>
-        <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead>
-              <tr style="background:var(--surface-glass-subtle);border-bottom:1px solid var(--bd);">
-                <th style="width:30px;"></th>
-                <th>ITEM DETAILS</th>
-                <th style="width:110px;" class="r">QUANTITY</th>
-                <th style="width:130px;" class="r">RATE <i class="fa-solid fa-table-cells" style="color:var(--tx-muted);font-size:12px;"></i></th>
-                <th style="width:130px;">DISCOUNT</th>
-                <th style="width:150px;">TAX <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;" title="GST rate"></i></th>
-                <th style="width:120px;" class="r">AMOUNT</th>
-                <th style="width:40px;"></th>
-              </tr>
-            </thead>
-            <tbody id="quote-line-tbody">
-              ${qLines.map(rowHtml).join('')}
-            </tbody>
-          </table>
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-quote-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-quote-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
+                  <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
+                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="quote-line-tbody">
+                ${qLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-quote-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
+            </button>
+            <button type="button" class="btn" id="btn-quote-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
+            </button>
+          </div>
         </div>
 
-        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
-          <button type="button" class="btn" id="btn-quote-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
-            <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
-          </button>
-          <button type="button" class="btn" id="btn-quote-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
-            <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
-          </button>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
           <div>
             <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;">Customer Notes</label>
-              <textarea class="in" id="q-notes" name="notes" rows="3">${esc(qNotes)}</textarea>
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="q-notes" name="notes" rows="3" style="width:100%;">${esc(qNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the quotation</span>
             </div>
             <div class="fg">
-              <label style="font-weight:600;font-size:13px;">Terms & Conditions</label>
-              <textarea class="in" id="q-terms" name="terms" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction">${esc(qTerms)}</textarea>
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
+              <textarea class="in" id="q-terms" name="terms" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;">${esc(qTerms)}</textarea>
             </div>
           </div>
 
-          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:18px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
-              <span style="font-weight:600;">Sub Total</span>
-              <span id="q-subtotal-val" style="font-size:16px;font-weight:700;">₹0.00</span>
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:10px;padding:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);">Sub Total</span>
+              <span id="q-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
             </div>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-              <div style="display:flex;align-items:center;gap:12px;">
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <div style="display:flex;align-items:center;gap:14px;">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
                   <input type="radio" name="tax_type" value="tds" ${qTaxType === 'tds' ? 'checked' : ''}> TDS
                 </label>
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
                   <input type="radio" name="tax_type" value="tcs" ${qTaxType === 'tcs' ? 'checked' : ''}> TCS
                 </label>
               </div>
-              <select class="in" id="q-tds-tax" name="tds_tcs_tax" style="width:160px;">
-                <option value="0">Select a Tax</option>
-                <option value="1" ${qTdsTax === 1 ? 'selected' : ''}>1%</option>
-                <option value="2" ${qTdsTax === 2 ? 'selected' : ''}>2%</option>
-                <option value="5" ${qTdsTax === 5 ? 'selected' : ''}>5%</option>
-                <option value="10" ${qTdsTax === 10 ? 'selected' : ''}>10%</option>
-              </select>
-            </div>
-
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <input type="text" class="in" id="q-adj-label" name="adjustment_label" value="${esc(qAdjLabel)}" style="width:110px;">
-                <i class="fa-regular fa-circle-question" style="color:var(--tx-muted);cursor:help;" title="Add or deduct custom adjustments from the total"></i>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <select class="in" id="q-tds-tax" name="tds_tcs_tax" style="width:150px;">
+                  <option value="0">Select a Tax</option>
+                  <option value="1" ${qTdsTax === 1 ? 'selected' : ''}>1%</option>
+                  <option value="2" ${qTdsTax === 2 ? 'selected' : ''}>2%</option>
+                  <option value="5" ${qTdsTax === 5 ? 'selected' : ''}>5%</option>
+                  <option value="10" ${qTdsTax === 10 ? 'selected' : ''}>10%</option>
+                </select>
+                <span id="q-tds-amt" style="font-weight:600;min-width:60px;text-align:right;">- 0.00</span>
               </div>
-              <input type="number" step="0.01" class="in" id="q-adj-val" name="adjustment" value="${qAdj}" style="width:160px;text-align:right;">
             </div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:2px solid var(--bd);margin-top:14px;">
-              <span style="font-size:16px;font-weight:700;">Total ( ₹ )</span>
-              <span id="q-grandtotal-val" style="font-size:22px;font-weight:800;color:var(--accent);">₹0.00</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <input class="in" id="q-adj-label" value="${esc(qAdjLabel)}" style="width:90px;font-size:12px;padding:3px 6px;">
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;" title="Add or subtract adjustment amount"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="number" step="0.01" class="in" id="q-adj-val" name="adjustment" value="${qAdj}" style="width:110px;text-align:right;">
+                <span id="q-adj-display" style="font-weight:600;min-width:60px;text-align:right;">0.00</span>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
+              <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
+              <span id="q-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
             </div>
           </div>
         </div>
 
-        <div style="margin-top:24px;padding:16px;background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;">
+        <div style="margin-top:28px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div>
-              <div style="font-weight:600;font-size:13px;color:var(--tx);">Attach File(s) to Quote</div>
-              <div class="sub" style="font-size:11.5px;">You can upload a maximum of 5 files, 10MB each</div>
+              <div style="font-weight:600;font-size:13px;color:#0f172a;">Attach File(s) to Quote</div>
+              <div style="font-size:11.5px;color:#64748b;margin-top:2px;">You can upload a maximum of 10 files, 10MB each</div>
             </div>
             <input type="file" id="q-file-input" multiple style="display:none;">
-            <button type="button" class="btn" id="btn-quote-upload" style="font-size:12px;">
+            <button type="button" class="btn" id="btn-quote-upload" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
               <i class="fa-solid fa-upload"></i> Upload File ▾
             </button>
           </div>
           <div id="q-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
         </div>
 
-        <div style="margin-top:20px;padding:16px;background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+        <div style="margin-top:20px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:20px;">
           <div>
-            <div style="font-weight:600;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:6px;">
+            <div style="font-weight:600;font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
             </div>
-            <div class="sub" style="font-size:11.5px;margin-top:2px;" id="q-sig-desc">
-              ${rec && rec.signature_data ? 'Quote has an attached digital signature.' : (APP.org && APP.org.signature_data ? 'Using company default signature.' : 'No signature attached.')}
+            <div style="font-size:11.5px;color:#64748b;margin-top:2px;" id="q-sig-desc">
+              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (window.APP && window.APP.org && window.APP.org.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this quote.')}
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="q-sig-preview-box" style="height:44px;min-width:90px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:2px 8px;">
+              <img id="q-sig-preview" src="${esc((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data) || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'block' : 'none'};">
+              <span id="q-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'none' : 'inline'};">None</span>
+            </div>
             <input type="hidden" id="q-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
             <input type="hidden" id="q-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
             <input type="hidden" id="q-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
-            <button type="button" class="btn" id="btn-quote-sign"><i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (APP.org && APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}</button>
+            <button type="button" class="btn" id="btn-quote-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}
+            </button>
           </div>
         </div>
 
-        <div class="sub" style="margin-top:20px;font-size:12px;color:var(--tx-muted);">
-          <b>Additional Fields:</b> Start adding custom fields for your quotes by going to <i>Settings ➡ Sales ➡ Quotes</i>.
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button type="button" class="btn" id="btn-q-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
+            <button type="button" class="btn p" id="btn-q-save-send" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              Save and Send <i class="fa-solid fa-caret-up" style="font-size:10px;"></i>
+            </button>
+            <button type="button" class="btn" id="btn-q-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
+            <span>Total Amount: <span id="quote-bar-total-amount">₹ 0.00</span></span>
+            <span>Total Quantity: <span id="quote-bar-total-qty">1.00</span></span>
+          </div>
         </div>
       </form>
-    `,
-    footer: `
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;width:100%;">
-        <button type="button" class="btn" data-close>Cancel</button>
-        <button type="button" class="btn" id="btn-q-save-draft">Save as Draft</button>
-        <button type="button" class="btn p" id="btn-q-save-send">${id ? 'Update Quote' : 'Save and Send'}</button>
-      </div>
-    `
-  });
+    </div>
+  `;
 
-  const form = $('#quote-form-element', m.el);
+  const form = $('#quote-form-element', target);
   const tbody = $('#quote-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
 
   function updateProjectFilter() {
     const custId = $('#q-customer', form).value;
     const projSel = $('#q-project', form);
-    const hint = $('#q-project-hint', form);
-    if (!custId) {
-      if (hint) hint.textContent = 'Select a customer to associate a project.';
-      return;
-    }
-    const customerProjects = projects.filter(p => !p.customer_id || String(p.customer_id) === String(custId));
-    if (hint) {
-      hint.textContent = customerProjects.length ? `${customerProjects.length} project(s) available for this customer.` : 'No projects associated with this customer.';
-    }
+    if (!projSel) return;
+    Array.from(projSel.options).forEach(opt => {
+      if (!opt.value) return;
+      const cId = opt.dataset.cust;
+      opt.style.display = (!custId || !cId || String(cId) === String(custId)) ? '' : 'none';
+    });
   }
 
   function calcQuote() {
     let subtotal = 0;
     let totalTax = 0;
+    let totalQty = 0;
+
     $$('.ln-quote', tbody).forEach(tr => {
-      const qty = num($('.l-qty', tr).value) || 0;
-      const rate = num($('.l-rate', tr).value) || 0;
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
       const discVal = num($('.l-disc', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value;
-      const gross = qty * rate;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
-      const taxable = Math.max(0, gross - disc);
-      const gstRate = num($('.l-gst', tr).value) || 0;
-      const tax = taxable * gstRate / 100;
-      const lineTot = taxable + tax;
-      $('.l-amt', tr).textContent = inr(lineTot);
+      const discType = $('.l-disc-type', tr).value || 'percent';
+      const gst = num($('.l-gst', tr).value) || 0;
+
+      totalQty += q;
+      let taxable = q * r;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - discVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - discVal);
+      }
+      taxable = r2(taxable);
+      const taxAmt = r2(taxable * (gst / 100));
+      const lineTot = r2(taxable + taxAmt);
+
       subtotal += taxable;
-      totalTax += tax;
+      totalTax += taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
     const taxType = form.querySelector('input[name="tax_type"]:checked')?.value || 'tds';
     const tdsRate = num($('#q-tds-tax', form).value) || 0;
-    const tdsAmt = subtotal * tdsRate / 100;
-    const adj = num($('#q-adj-val', form).value) || 0;
+    const tdsAmt = r2(subtotal * (tdsRate / 100));
+    const tdsDisplay = $('#q-tds-amt', form);
+    if (tdsDisplay) tdsDisplay.textContent = (taxType === 'tds' ? '- ' : '+ ') + inr(tdsAmt).replace('₹', '').trim();
+
+    const adjVal = num($('#q-adj-val', form).value) || 0;
+    const adjDisplay = $('#q-adj-display', form);
+    if (adjDisplay) adjDisplay.textContent = adjVal.toFixed(2);
 
     let grand = subtotal + totalTax;
-    if (taxType === 'tds') {
-      grand -= tdsAmt;
-    } else {
-      grand += tdsAmt;
-    }
-    grand = Math.max(0, grand + adj);
+    if (taxType === 'tds') grand -= tdsAmt;
+    else grand += tdsAmt;
+    grand += adjVal;
+    grand = Math.max(0, r2(grand));
 
-    $('#q-subtotal-val', form).textContent = inr(subtotal);
-    $('#q-grandtotal-val', form).textContent = inr(grand);
+    const subEl = $('#q-subtotal-val', form);
+    const grandEl = $('#q-grandtotal-val', form);
+    const barTot = $('#quote-bar-total-amount', form);
+    const barQty = $('#quote-bar-total-qty', form);
+
+    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
+    if (grandEl) grandEl.textContent = inr(grand).replace('₹', '').trim();
+    if (barTot) barTot.textContent = inr(grand);
+    if (barQty) barQty.textContent = totalQty.toFixed(2);
+
+    return { subtotal, totalTax, grand, totalQty };
   }
 
-  function renderAttach() {
-    const box = $('#q-attach-badges', form);
-    let h = '';
-    if (rec && rec.attachments && rec.attachments.length) {
-      h += rec.attachments.map(a => `
-        <div class="attach-file-badge">
-          <span>📎 ${esc(a.filename)} (${fmtBytes(a.file_size)})</span>
-          <button type="button" data-del-att="${a.id}">×</button>
-        </div>
-      `).join('');
-    }
-    h += pendingFiles.map((f, i) => `
-      <div class="attach-file-badge" style="border-style:dashed;">
-        <span>📎 ${esc(f.name)} (${fmtBytes(f.size)}) <small style="color:var(--accent);">new</small></span>
-        <button type="button" data-rem-pen="${i}">×</button>
-      </div>
-    `).join('');
-    if (!h) h = '<span class="sub" style="font-size:12px;">No files attached yet.</span>';
-    box.innerHTML = h;
-  }
-
-  $('#btn-quote-cust-lookup', form).addEventListener('click', () => {
-    partyForm('customers', null, (newCust) => {
-      if (newCust && newCust.id) {
-        parties.push(newCust);
-        const opt = document.createElement('option');
-        opt.value = newCust.id;
-        opt.textContent = newCust.name;
-        opt.selected = true;
-        $('#q-customer', form).appendChild(opt);
-        $('#q-customer', form).value = newCust.id;
-        $('#q-customer', form).dispatchEvent(new Event('change', { bubbles: true }));
-        updateProjectFilter();
-      }
-    });
-  });
-
-  $('#btn-quote-gear', form).addEventListener('click', async () => {
-    let currentConfig = { prefix: 'QT', next_sequence: 1 };
-    try {
-      currentConfig = await api('quotes/sequence/');
-    } catch (_) {}
-
-    Modal.open({
-      title: 'Configure Quote Number Sequence',
-      dialog: true,
-      body: `
-        <div style="padding:10px 0;">
-          <p class="sub" style="margin-bottom:12px;">Specify the prefix and sequence format for your sales quotes. Serial numbers will auto-increment from this setting.</p>
-          <div class="fg">
-            <label>Prefix</label>
-            <input class="in" id="q-prefix-input" value="${esc(currentConfig.prefix || 'QT')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. QT or EST">
-          </div>
-          <div class="fg" style="margin-top:12px;">
-            <label>Next Sequence Number</label>
-            <input class="in" id="q-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
-          </div>
-        </div>
-      `,
-      footer: `
-        <button class="btn" data-close>Cancel</button>
-        <button class="btn p" id="btn-save-q-seq">Save Sequence</button>
-      `
-    });
-
-    $('#btn-save-q-seq').addEventListener('click', async () => {
-      const pfx = ($('#q-prefix-input').value || '').trim().toUpperCase() || 'QT';
-      const seq = Math.max(1, parseInt($('#q-next-seq-input').value, 10) || 1);
-      try {
-        const res = await api('quotes/sequence/', {
-          method: 'POST',
-          body: { prefix: pfx, next_sequence: seq }
-        });
-        $('#q-number', form).value = res.formatted;
-        Modal.close();
-        toast(`Quote sequence updated to ${res.formatted}`, 'ok');
-      } catch (err) {
-        toast(err.message, 'err');
-      }
-    });
-  });
-
-  $('#q-customer', form).addEventListener('change', e => {
-    if (e.target.value === '__new_customer__') {
-      handleQuickCreateSelect(e.target, newCust => {
-        parties.push(newCust);
-        updateProjectFilter();
-      });
-      return;
-    }
-    updateProjectFilter();
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcQuote();
   });
 
   tbody.addEventListener('change', e => {
@@ -7651,27 +7917,11 @@ async function quoteForm(id, onDone) {
         $('.l-desc', tr).value = it.name;
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
-        $('.l-gst', tr).value = String(num(it.gst_rate) || 0);
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
       }
       calcQuote();
     }
-  });
-
-  form.addEventListener('input', () => calcQuote());
-  form.addEventListener('change', () => calcQuote());
-
-  $('#btn-quote-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
-    calcQuote();
-  });
-
-  $('#btn-quote-bulk-items', form).addEventListener('click', () => {
-    bulkItemPickerModal(items, (selectedItems) => {
-      selectedItems.forEach(it => {
-        tbody.insertAdjacentHTML('beforeend', rowHtml(it));
-      });
-      calcQuote();
-    });
+    if (e.target.matches('.l-gst, .l-disc-type')) calcQuote();
   });
 
   tbody.addEventListener('click', e => {
@@ -7681,17 +7931,98 @@ async function quoteForm(id, onDone) {
         rm.closest('tr').remove();
         calcQuote();
       } else {
-        toast('At least one item line is required.', 'err');
+        toast('At least one line item is required.', 'err');
       }
     }
   });
 
-  const fileInput = $('#q-file-input', form);
-  $('#btn-quote-upload', form).addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => {
-    Array.from(fileInput.files).forEach(f => {
-      if (pendingFiles.length >= 5) {
-        toast('Maximum 5 files can be attached.', 'err');
+  $('#btn-quote-add-row', form)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    calcQuote();
+  });
+
+  $('#btn-quote-bulk-items', form)?.addEventListener('click', () => {
+    openBulkItemModal(items, selectedItems => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.id,
+          description: it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: 1,
+          rate: it.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
+      });
+      calcQuote();
+    });
+  });
+
+  $('#q-tds-tax', form)?.addEventListener('change', calcQuote);
+  form.querySelectorAll('input[name="tax_type"]').forEach(r => r.addEventListener('change', calcQuote));
+  $('#q-adj-val', form)?.addEventListener('input', calcQuote);
+
+  $('#btn-quote-cust-lookup', form)?.addEventListener('click', () => {
+    handleQuickCreateSelect($('#q-customer', form), newCust => {
+      parties.push(newCust);
+      const opt = document.createElement('option');
+      opt.value = newCust.id;
+      opt.textContent = newCust.name;
+      opt.selected = true;
+      $('#q-customer', form).appendChild(opt);
+      $('#q-customer', form).value = newCust.id;
+      updateProjectFilter();
+    });
+  });
+
+  $('#q-customer', form)?.addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        e.target.appendChild(opt);
+        e.target.value = newCust.id;
+        updateProjectFilter();
+      });
+      return;
+    }
+    updateProjectFilter();
+  });
+
+  function renderAttach() {
+    const box = $('#q-attach-badges', form);
+    if (!box) return;
+    const existing = (rec && rec.attachments) ? rec.attachments.map(a => `
+      <div style="background:#fff;border:1px solid var(--bd);border-radius:4px;padding:4px 8px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+        <i class="fa-regular fa-file" style="color:#64748b;"></i>
+        <span>${esc(a.filename)}</span>
+        <button type="button" data-del-att="${a.id}" style="border:none;background:none;color:#ef4444;cursor:pointer;">×</button>
+      </div>
+    `).join('') : '';
+
+    const pend = pendingFiles.map((pf, idx) => `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;padding:4px 8px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+        <i class="fa-solid fa-paperclip" style="color:#2563eb;"></i>
+        <span>${esc(pf.name)}</span>
+        <button type="button" data-rem-pen="${idx}" style="border:none;background:none;color:#ef4444;cursor:pointer;">×</button>
+      </div>
+    `).join('');
+
+    box.innerHTML = existing + pend;
+  }
+
+  $('#btn-quote-upload', form)?.addEventListener('click', () => {
+    $('#q-file-input', form).click();
+  });
+
+  $('#q-file-input', form)?.addEventListener('change', e => {
+    const files = Array.from(e.target.files);
+    files.forEach(f => {
+      if (pendingFiles.length >= 10) {
+        toast('Maximum 10 files can be attached.', 'err');
         return;
       }
       const reader = new FileReader();
@@ -7701,118 +8032,173 @@ async function quoteForm(id, onDone) {
       };
       reader.readAsDataURL(f);
     });
-    fileInput.value = '';
+    e.target.value = '';
   });
 
-  $('#btn-quote-sign', form)?.addEventListener('click', () => {
-    openSignatureModal({
-      signature_data: $('#q-signature-data', form)?.value || '',
-      signed_by: $('#q-signed-by', form)?.value || '',
-      signature_title: $('#q-signature-title', form)?.value || '',
-      number: qNumber
-    }, 'quotes', updated => {
-      if ($('#q-signature-data', form)) $('#q-signature-data', form).value = updated.signature_data || '';
-      if ($('#q-signed-by', form)) $('#q-signed-by', form).value = updated.signed_by || '';
-      if ($('#q-signature-title', form)) $('#q-signature-title', form).value = updated.signature_title || '';
-      const desc = $('#q-sig-desc', form);
-      const btn = $('#btn-quote-sign', form);
-      if (updated.signature_data) {
-        if (desc) desc.textContent = 'Custom digital signature attached.';
-        if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
-      } else {
-        if (desc) desc.textContent = 'No custom signature attached.';
-        if (btn) btn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Quote';
-      }
-    });
-  });
-
-  $('#q-attach-badges', form).addEventListener('click', async e => {
-    const del = e.target.closest('[data-del-att]');
-    if (del) {
-      const attId = del.dataset.delAtt;
+  $('#q-attach-badges', form)?.addEventListener('click', async e => {
+    const delBtn = e.target.closest('[data-del-att]');
+    if (delBtn) {
+      const attId = delBtn.dataset.delAtt;
+      if (!(await confirmBox({ title: 'Delete attachment?', message: 'This file will be permanently removed.', okText: 'Delete', danger: true }))) return;
       try {
         await api(`attachments/${attId}/`, { method: 'DELETE' });
         rec.attachments = (rec.attachments || []).filter(a => String(a.id) !== String(attId));
         renderAttach();
-        toast('Attachment removed');
+        toast('Attachment deleted', 'ok');
       } catch (err) { toast(err.message, 'err'); }
       return;
     }
-    const rem = e.target.closest('[data-rem-pen]');
-    if (rem) {
-      pendingFiles.splice(Number(rem.dataset.remPen), 1);
+    const remBtn = e.target.closest('[data-rem-pen]');
+    if (remBtn) {
+      pendingFiles.splice(Number(remBtn.dataset.remPen), 1);
       renderAttach();
     }
   });
 
+  $('#btn-quote-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#q-signature-data', form)?.value || '',
+      signed_by: $('#q-signed-by', form)?.value || '',
+      signature_title: $('#q-signature-title', form)?.value || '',
+      number: qNumber
+    };
+    openSignatureModal(curSigObj, 'quotes', updated => {
+      if ($('#q-signature-data', form)) $('#q-signature-data', form).value = updated.signature_data || '';
+      if ($('#q-signed-by', form)) $('#q-signed-by', form).value = updated.signed_by || '';
+      if ($('#q-signature-title', form)) $('#q-signature-title', form).value = updated.signature_title || '';
+      const previewImg = $('#q-sig-preview', form);
+      const noneSpan = $('#q-sig-none', form);
+      const descEl = $('#q-sig-desc', form);
+      const signBtn = $('#btn-quote-sign', form);
+      if (updated.signature_data) {
+        if (previewImg) { previewImg.src = updated.signature_data; previewImg.style.display = 'block'; }
+        if (noneSpan) noneSpan.style.display = 'none';
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (previewImg) previewImg.style.display = 'none';
+        if (noneSpan) noneSpan.style.display = 'inline';
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Quote';
+      }
+    });
+  });
+
+  const handleClose = () => {
+    if (onDone) onDone();
+    else {
+      location.hash = '#/sales/quotes';
+      if (typeof route === 'function') route();
+    }
+  };
+
+  $('#btn-quote-close-x', target)?.addEventListener('click', handleClose);
+  $('#btn-q-cancel', target)?.addEventListener('click', handleClose);
+
   async function saveQuote(isSend = false) {
     const custId = $('#q-customer', form).value;
-    if (!custId) {
+    if (!custId || custId === '__new_customer__') {
       toast('Please select a customer.', 'err');
       $('#q-customer', form).focus();
       return;
     }
-    const dateVal = $('#q-date', form).value;
-    if (!dateVal) {
-      toast('Please enter a quote date.', 'err');
+    const numVal = ($('#q-number', form).value || '').trim();
+    if (!numVal) {
+      toast('Please enter a quote number.', 'err');
+      $('#q-number', form).focus();
+      return;
+    }
+    const dt = $('#q-date', form).value;
+    if (!dt) {
+      toast('Please enter quote date.', 'err');
       $('#q-date', form).focus();
       return;
     }
-    const expiryVal = $('#q-expiry', form).value;
-    if (!expiryVal) {
+    const expVal = $('#q-expiry', form).value;
+    if (!expVal) {
       toast('Please enter an expiry date.', 'err');
       $('#q-expiry', form).focus();
       return;
     }
-    if (new Date(expiryVal) < new Date(dateVal)) {
+    if (new Date(expVal) < new Date(dt)) {
       toast('Expiry Date cannot be earlier than Quote Date.', 'err');
       $('#q-expiry', form).focus();
       return;
     }
 
-    const lines = $$('.ln-quote', tbody).map((tr, idx) => ({
-      item: $('.l-item', tr).value || null,
-      description: $('.l-desc', tr).value.trim() || 'Item',
-      hsn_sac: $('.l-hsn', tr).value.trim(),
-      quantity: num($('.l-qty', tr).value) || 1,
-      rate: num($('.l-rate', tr).value) || 0,
-      discount_percent: $('.l-disc-type', tr).value === 'percent' ? (num($('.l-disc', tr).value) || 0) : 0,
-      gst_rate: num($('.l-gst', tr).value) || 0,
-      position: idx
-    }));
+    const lines = [];
+    $$('.ln-quote', tbody).forEach((tr, idx) => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qVal = num($('.l-qty', tr).value) || 1;
+      const rVal = num($('.l-rate', tr).value) || 0;
+      const dVal = num($('.l-disc', tr).value) || 0;
+      const gVal = num($('.l-gst', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value || 'percent';
 
+      let taxable = qVal * rVal;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - dVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - dVal);
+      }
+      taxable = r2(taxable);
+      const lTot = r2(taxable * (1 + gVal / 100));
+
+      lines.push({
+        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qVal,
+        rate: rVal,
+        discount_percent: dVal,
+        gst_rate: gVal,
+        line_total: lTot,
+        position: idx
+      });
+    });
+
+    if (!lines.length) {
+      toast('At least one line item is required.', 'err');
+      return;
+    }
+
+    const totals = calcQuote();
     const custObj = parties.find(p => String(p.id) === String(custId));
+
     const payload = {
       customer: Number(custId),
-      number: $('#q-number', form).value.trim() || qNumber,
-      reference_number: $('#q-reference', form).value.trim(),
-      date: dateVal,
-      expiry_date: $('#q-expiry', form).value || null,
+      number: numVal,
+      reference_number: ($('#q-reference', form)?.value || '').trim(),
+      date: dt,
+      expiry_date: expVal,
       place_of_supply: (custObj && custObj.state) ? custObj.state : APP.org.state,
       salesperson: $('#q-salesperson', form).value,
       project_name: $('#q-project', form).value,
-      subject: $('#q-subject', form).value.trim(),
+      subject: ($('#q-subject', form)?.value || '').trim(),
       notes: $('#q-notes', form).value.trim(),
       terms: $('#q-terms', form).value.trim(),
       tax_type: form.querySelector('input[name="tax_type"]:checked')?.value || 'tds',
       tds_tcs_tax: num($('#q-tds-tax', form).value) || 0,
       adjustment: num($('#q-adj-val', form).value) || 0,
-      adjustment_label: $('#q-adj-label', form).value.trim() || 'Adjustment',
+      adjustment_label: ($('#q-adj-label', form)?.value || 'Adjustment').trim(),
       signature_data: $('#q-signature-data', form)?.value || '',
       signed_by: $('#q-signed-by', form)?.value || '',
       signature_title: $('#q-signature-title', form)?.value || '',
-      lines,
+      lines: lines,
       force: true
     };
 
-    const saveBtns = $$('#btn-q-save-draft, #btn-q-save-send', m.el);
-    saveBtns.forEach(b => { b.disabled = true; });
+    const actionBtns = [$('#btn-q-save-draft', target), $('#btn-q-save-send', target)];
+    actionBtns.forEach(b => { if (b) b.disabled = true; });
 
     try {
-      const saved = await api(id ? `quotes/${id}/` : 'quotes/', {
-        method: id ? 'PUT' : 'POST',
-        body: payload
-      });
+      let saved;
+      if (id) {
+        saved = await api(`quotes/${id}/`, { method: 'PUT', body: payload });
+      } else {
+        saved = await api('quotes/', { method: 'POST', body: payload });
+      }
 
       for (const pf of pendingFiles) {
         try {
@@ -7833,33 +8219,34 @@ async function quoteForm(id, onDone) {
       if (isSend) {
         try {
           await api(`quotes/${saved.id}/send/`, { method: 'POST', body: {} });
-          toast(`Quote ${saved.number} saved and sent to client!`);
+          toast(`Quote ${saved.number} saved and sent to client!`, 'ok');
         } catch (e) {
           toast(`Quote saved, but error sending: ${e.message}`, 'err');
         }
       } else {
-        toast(`Quote ${saved.number} saved as draft!`);
+        toast(`Quote ${saved.number} saved as draft!`, 'ok');
       }
 
-      m.close();
       if (onDone) onDone(saved);
-      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
-      else refresh();
+      else {
+        location.hash = '#/sales/quotes';
+        if (typeof route === 'function') route();
+      }
     } catch (err) {
       toast(err.message, 'err');
     } finally {
-      saveBtns.forEach(b => { b.disabled = false; });
+      actionBtns.forEach(b => { if (b) b.disabled = false; });
     }
   }
 
-  $('#btn-q-save-draft', m.el).addEventListener('click', () => saveQuote(false));
-  $('#btn-q-save-send', m.el).addEventListener('click', () => saveQuote(true));
+  $('#btn-q-save-draft', target)?.addEventListener('click', () => saveQuote(false));
+  $('#btn-q-save-send', target)?.addEventListener('click', () => saveQuote(true));
 
   updateProjectFilter();
   renderAttach();
-  setupSearchableSelect($('#q-customer', form), { placeholder: 'Type or click to select customer…' });
   calcQuote();
 }
+window.quoteForm = quoteForm;
 
 
 async function salesOrderForm(id, onDone) {
@@ -9226,9 +9613,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
           <div style="display:flex;align-items:flex-start;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+              Purpose <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
             </label>
-            <textarea class="in" id="ret-subject" name="subject" rows="2" placeholder="Let your customer know what this Retainer Invoice is for" style="width:260px;font-size:12px;">${esc(retSubject)}</textarea>
+            <textarea class="in" id="ret-purpose" name="purpose" rows="2" placeholder="Enter purpose of this retainer invoice (e.g. Project advance or service retainer)" style="width:260px;font-size:12px;">${esc(retSubject)}</textarea>
           </div>
 
           <input type="hidden" id="ret-place-of-supply" name="place_of_supply" value="${esc(retPlaceOfSupply)}">
@@ -9757,7 +10144,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       due_date: $('#ret-due-date', form).value || dt,
       terms: $('#ret-terms', form).value,
       salesperson: $('#ret-salesperson', form).value,
-      subject: ($('#ret-subject', form)?.value || '').trim(),
+      purpose: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
+      subject: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       place_of_supply: $('#ret-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
       notes: $('#ret-notes', form).value.trim(),
       signature_data: $('#ret-signature-data', form)?.value || '',
@@ -9819,6 +10207,16 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
   $('#btn-ret-save-draft', target).addEventListener('click', () => saveRetainerInvoice(true));
   $('#btn-ret-save-send', target).addEventListener('click', () => saveRetainerInvoice(false));
+
+  const handleRetClose = () => {
+    if (onDone) onDone();
+    else {
+      location.hash = '#/sales/retainer-invoices';
+      if (typeof route === 'function') route();
+    }
+  };
+  $('#btn-ret-close-x', target)?.addEventListener('click', handleRetClose);
+  $('#btn-ret-cancel', target)?.addEventListener('click', handleRetClose);
 
   renderAttach();
   calcRetainer();

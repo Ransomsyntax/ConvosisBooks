@@ -1593,7 +1593,7 @@ const LISTS = {
   },
   quotes: {
     api: 'quotes', title: 'Quotes', bc: 'Sales', newLabel: 'New Quote',
-    onNew: () => quoteForm(), ordering: '-date', empty: 'No quotes yet. Click + New Quote to create your first sales quotation.',
+    onNew: () => quoteForm(null, $('#pg'), () => { location.hash = '#/sales/quotes'; if (typeof route === 'function') route(); }), ordering: '-date', empty: 'No quotes yet. Click + New Quote to create your first sales quotation.',
     filters: [
       { name: 'status', label: 'Status', opts: [['', 'All Quotes'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['ordered', 'Sales Order Created'], ['invoiced', 'Invoiced']] }
     ],
@@ -1637,7 +1637,7 @@ const LISTS = {
     },
     onAction: async (a, r) => {
       if (a === 'view') viewQuoteDetail(r.id);
-      else if (a === 'edit') quoteForm(r.id);
+      else if (a === 'edit') quoteForm(r.id, $('#pg'), () => { location.hash = '#/sales/quotes'; if (typeof route === 'function') route(); });
       else if (a === 'sign') openSignatureModal(r, 'quotes', () => refresh());
       else if (a === 'send') {
         try {
@@ -1730,7 +1730,7 @@ const LISTS = {
     }
   },
   'recurring-invoices': {
-    api: 'recurring-invoices', title: 'Recurring Invoices', bc: 'Sales', newLabel: 'New recurring profile', onNew: () => recurringInvoiceModal(), ordering: '-created_at', empty: 'No recurring profiles yet.',
+    api: 'recurring-invoices', title: 'Recurring Invoices', bc: 'Sales', newLabel: 'New recurring profile', onNew: () => recurringInvoiceForm(null, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; if (typeof route === 'function') route(); }), ordering: '-created_at', empty: 'No recurring profiles yet.',
     cols: [
       { h: 'Profile Name', s: 'profile_name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.profile_name)}</button>` },
       { h: 'Customer', f: r => esc(r.customer_name) },
@@ -1763,7 +1763,7 @@ const LISTS = {
           if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
           else refresh();
         } catch (e) { toast(e.message, 'err'); }
-      } else if (a === 'edit') recurringInvoiceModal(r.id);
+      } else if (a === 'edit') recurringInvoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; if (typeof route === 'function') route(); });
       else if (a === 'delete') deleteRecord('recurring-invoices', r, 'recurring profile');
     },
   },
@@ -1779,6 +1779,7 @@ const LISTS = {
       { h: 'Date', s: 'date', f: r => fd(r.date) },
       { h: 'Retainer#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>${r.attachment_count ? ' <span title="Has attachments">📎</span>' : ''}` },
       { h: 'Customer', f: r => esc(r.party) },
+      { h: 'Purpose', f: r => esc(r.purpose || r.subject || r.notes || '—') },
       { h: 'Status', f: r => badge(r.status) },
       { h: 'Total', s: 'total', ...money(r => inr(r.total)) },
       { h: 'Balance Due', ...money(r => inr(r.balance)) },
@@ -2086,6 +2087,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
+            ${(isRetainer && (d.purpose || d.subject || d.notes)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject || d.notes)}</b></td></tr>` : ''}
             ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
           </table>
 
@@ -2900,8 +2902,8 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId);
 
   function openForm(editId) {
-    if (kind === 'invoices' || kind === 'retainer-invoices') {
-      const formFn = kind === 'retainer-invoices' ? retainerInvoiceForm : invoiceForm;
+    if (kind === 'invoices' || kind === 'retainer-invoices' || kind === 'quotes') {
+      const formFn = kind === 'retainer-invoices' ? retainerInvoiceForm : (kind === 'quotes' ? quoteForm : invoiceForm);
       formFn(editId, $('#pg'), (savedDoc) => {
         if (savedDoc) {
           docMasterDetail($('#pg'), kind, savedDoc.id);
@@ -4207,10 +4209,9 @@ async function viewRecurringInvoiceModal(id) {
       ['Customer', esc(d.customer_name || '—')],
       ['Profile Name', esc(d.name || '—')],
       ['Frequency', esc(d.frequency_label || d.frequency || 'Monthly')],
-      ['Repeat Every', `${d.repeat_every || 1} ${d.frequency || ''}`],
       ['Start Date', fd(d.start_date)],
       ['Next Invoice Date', fd(d.next_date)],
-      ['End Date', d.end_date ? fd(d.end_date) : 'Never (Unlimited)'],
+      ['End Date', d.end_date ? fd(d.end_date) : 'Never Ends'],
       ['Status', badge(d.status_label || d.status)],
       ['Subtotal', inr(d.subtotal || 0)],
       ['Tax Amount', inr(d.tax_amount || 0)],
@@ -4385,7 +4386,7 @@ async function viewRecurringInvoiceModal(id) {
         }
       } else if (e.target.id === 'm-rec-edit-btn') {
         m.close();
-        recurringInvoiceModal(id);
+        recurringInvoiceForm(id, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; if (typeof route === 'function') route(); });
       }
     });
   } catch (err) {
@@ -9446,7 +9447,7 @@ async function viewQuoteDetail(id) {
 
     $('#btn-view-edit-q')?.addEventListener('click', () => {
       Modal.close();
-      quoteForm(q.id);
+      quoteForm(q.id, $('#pg'), () => { location.hash = '#/sales/quotes'; if (typeof route === 'function') route(); });
     });
     $('#btn-q-mark-sent')?.addEventListener('click', async () => {
       try {

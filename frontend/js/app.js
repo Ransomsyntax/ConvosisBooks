@@ -215,10 +215,10 @@ const NAV_NEW_ACTIONS = {
   'reports/stock-transfer-report': () => stockMoveModal(),
   'inventory/warehouses': () => warehouseModal(),
   'sales/customers': () => partyForm('customers'),
-  'sales/quotes': () => quoteForm(),
+  'sales/quotes': () => quoteForm(null, $('#pg'), () => { location.hash = '#/sales/quotes'; route(); }),
   'sales/sales-orders': () => salesOrderForm(),
   'sales/invoices': () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }),
-  'sales/recurring-invoices': () => recurringInvoiceModal(),
+  'sales/recurring-invoices': () => recurringInvoiceForm(null, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; route(); }),
   'sales/retainer-invoices': () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
     if (savedDoc) docMasterDetail($('#pg'), 'retainer-invoices', savedDoc.id);
     else { location.hash = '#/sales/retainer-invoices'; route(); }

@@ -1842,6 +1842,8 @@ class DocResource(Resource):
             r['available_balance'] = max(Z, paid - applied)
             r['customer_id'] = o.customer_id
             r['customer_name'] = o.customer.name
+            r['purpose'] = getattr(o, 'notes', '') or ''
+            r['subject'] = getattr(o, 'notes', '') or ''
         elif isinstance(o, Quote):
             r['customer_id'] = o.customer_id
             r['customer_name'] = o.customer.name
@@ -2242,14 +2244,21 @@ class RetainerInvoiceResource(DocResource):
                 ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
 
     def extra_clean(self, c):
-        return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
+        res = {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
+        purpose = c.text('purpose', max_len=500) or c.text('subject', max_len=500)
+        if purpose:
+            res['notes'] = purpose
+        return res
 
     def extra_detail(self, o):
         paid = q2(getattr(o, 'paid_sum', o.paid_amount))
         applied = q2(getattr(o, 'applied_sum', o.applied_amount))
+        purpose_val = getattr(o, 'notes', '') or ''
         return {
             'terms': getattr(o, 'terms', ''),
             'order_number': o.order_number,
+            'purpose': purpose_val,
+            'subject': purpose_val,
             'paid': paid,
             'applied_amount': applied,
             'available_balance': max(Z, paid - applied)
@@ -4984,6 +4993,7 @@ class RecurringInvoiceResource(Resource):
             'frequency_label': freq_disp,
             'repeat_every': repeat_every,
             'start_date': o.start_date, 'end_date': o.end_date, 'next_date': o.next_date,
+            'never_ends': not bool(o.end_date),
             'status': o.status, 'status_label': o.status.replace('_', ' ').capitalize(),
             'total': o.total, 'total_amount': o.total, 'subtotal': o.subtotal,
             'tax_amount': max(Decimal('0.00'), (o.total or Decimal('0.00')) - (o.subtotal or Decimal('0.00'))),
@@ -5048,11 +5058,12 @@ class RecurringInvoiceResource(Resource):
         freq = c.choice('frequency', self.FREQUENCIES, default='monthly')
         repeat_every = c.integer('repeat_every', lo=1, default=1)
         sdate = c.date('start_date', required=True)
-        edate = c.date('end_date')
+        never_ends = c.boolean('never_ends', default=False)
+        edate = None if never_ends else c.date('end_date')
         next_d = c.date('next_date', default=sdate)
         if sdate and next_d and next_d < sdate:
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
-        if sdate and edate and edate < sdate:
+        if not never_ends and sdate and edate and edate < sdate:
             c.err('end_date', 'End date cannot be earlier than start date.')
         tot = c.number('total', lo=Decimal('0.01'), default=Decimal('0.00'))
         status_val = c.choice('status', self.STATUSES, default='active')
@@ -5133,8 +5144,14 @@ class RecurringInvoiceResource(Resource):
             obj.frequency = c.choice('frequency', self.FREQUENCIES, default=obj.frequency)
         if 'start_date' in data:
             obj.start_date = c.date('start_date', required=True)
-        if 'end_date' in data:
-            obj.end_date = c.date('end_date')
+        if 'never_ends' in data or 'end_date' in data:
+            never_ends = c.boolean('never_ends', default=False) if 'never_ends' in data else False
+            if never_ends:
+                obj.end_date = None
+            else:
+                obj.end_date = c.date('end_date')
+                if obj.start_date and obj.end_date and obj.end_date < obj.start_date:
+                    c.err('end_date', 'End date cannot be earlier than start date.')
         if 'next_date' in data:
             obj.next_date = c.date('next_date', default=obj.start_date)
         if obj.start_date and obj.next_date and obj.next_date < obj.start_date:

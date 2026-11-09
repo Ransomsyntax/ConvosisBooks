@@ -91,6 +91,7 @@ def login_view(request, tab=None):
             if signup_error:
                 if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.content_type == 'application/json':
                     return JsonResponse({'error': signup_error, 'message': signup_error}, status=400)
+                status_code = 400 if 'already exists' in signup_error else 200
                 return render(request, 'registration/login.html', {
                     'tab': active_tab,
                     'signin_error': signin_error,
@@ -100,7 +101,7 @@ def login_view(request, tab=None):
                     'signup_email': raw_email,
                     'signup_org': org_name,
                     'next': request.GET.get('next') or request.POST.get('next') or '/',
-                }, status=400)
+                }, status=status_code)
         else:
             active_tab = 'signin'
             username_or_email = request.POST.get('username', '').strip()

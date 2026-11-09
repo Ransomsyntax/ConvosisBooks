@@ -3895,6 +3895,11 @@ async function docForm(kind, id, targetEl, onDone) {
   const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
   const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
+  const docTaxPricing = r.tax_pricing_type || 'tax_exclusive';
+  const defaultPartyType = inv ? 'b2b' : 'registered';
+  const docPartyType = r.customer_type || defaultPartyType;
+  const initialParty = parties.find(p => String(p.id) === String(partyId));
+  const initialGstin = (rec && rec.party_details && rec.party_details.gstin) || (initialParty ? initialParty.gstin : '') || 'Not provided';
 
   const docTitle = isRetainer ? 'Retainer Invoice' :
                    (isCN ? 'Credit Note' :
@@ -3922,6 +3927,20 @@ async function docForm(kind, id, targetEl, onDone) {
           <div class="zb-form-wrap">
             ${[
               fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], [inv ? '__new_customer__' : '__new_vendor__', inv ? '+ Add New Customer…' : '+ Add New Vendor…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
+              fld({
+                name: 'customer_type',
+                label: inv ? 'Customer Type' : 'Supplier Type',
+                type: 'select',
+                opts: inv ? [
+                  ['b2b', 'B2B - Business to Business'],
+                  ['b2c', 'B2C - Business to Consumer']
+                ] : [
+                  ['registered', 'Registered Business'],
+                  ['unregistered', 'Unregistered Supplier']
+                ],
+                value: docPartyType,
+                help: `GSTIN: <span id="doc-party-gstin" style="font-weight:600;">${esc(initialGstin)}</span>`
+              }),
               fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
               fld({ name: 'date', label: 'Date', type: 'date', req: 1, value: r.date }),
               fld({ name: 'due_date', label: 'Due date', type: 'date', value: due0 }),
@@ -3930,9 +3949,18 @@ async function docForm(kind, id, targetEl, onDone) {
             ].join('')}
           </div>
 
-          <h3 style="margin:24px 0 8px; font-size:14px; font-weight:700; color:var(--tx); display:flex; align-items:center; gap:8px;">
-            <span>Line items</span>
-          </h3>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin:24px 0 8px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="font-size:14px; font-weight:700; color:var(--tx);">Line items</span>
+              <select class="in" id="doc-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${docTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${docTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="${kind}" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
+            </div>
+          </div>
           <div class="tw" style="border:1px solid var(--bd-glass); border-radius:8px; overflow:hidden;">
             <table class="lt">
               <thead>
@@ -4010,13 +4038,36 @@ async function docForm(kind, id, targetEl, onDone) {
 
     const calc = () => {
       const intra = norm(form.elements.place_of_supply.value) === norm(APP.org.state);
+      const isTaxInclusive = ($('#doc-tax-pricing', form)?.value === 'tax_inclusive');
       const t = { sub: 0, cgst: 0, sgst: 0, igst: 0 };
       $$('tr.ln', form).forEach(tr => {
-        const taxable = r2(num($('.l-qty', tr).value) * num($('.l-rate', tr).value) * (100 - num($('.l-disc', tr).value)) / 100);
-        const tax = taxable * num($('.l-gst', tr).value) / 100;
-        const cg = intra ? r2(tax / 2) : 0, ig = intra ? 0 : r2(tax);
-        t.sub += taxable; t.cgst += cg; t.sgst += cg; t.igst += ig;
-        $('.l-amt', tr).textContent = inr(taxable + cg * 2 + ig);
+        const qtyVal = num($('.l-qty', tr).value) || 0;
+        const rateVal = num($('.l-rate', tr).value) || 0;
+        const discVal = num($('.l-disc', tr).value) || 0;
+        const gstVal = num($('.l-gst', tr).value) || 0;
+
+        const gross = qtyVal * rateVal;
+        const net = Math.max(0, gross * (1 - discVal / 100));
+        let taxable = net;
+        let taxAmt = 0;
+        let lineTot = net;
+
+        if (isTaxInclusive && gstVal > 0) {
+          taxable = Math.round((net / (1 + gstVal / 100)) * 100) / 100;
+          taxAmt = Math.round((net - taxable) * 100) / 100;
+          lineTot = net;
+        } else {
+          taxable = Math.round(net * 100) / 100;
+          taxAmt = Math.round((taxable * (gstVal / 100)) * 100) / 100;
+          lineTot = taxable + taxAmt;
+        }
+
+        const cg = intra ? Math.round((taxAmt / 2) * 100) / 100 : 0;
+        const sg = intra ? Math.round((taxAmt - cg) * 100) / 100 : 0;
+        const ig = intra ? 0 : taxAmt;
+
+        t.sub += taxable; t.cgst += cg; t.sgst += sg; t.igst += ig;
+        $('.l-amt', tr).textContent = inr(lineTot);
       });
       $$('[data-t]', form).forEach(el => { const k = el.dataset.t; el.textContent = inr(k === 'total' ? t.sub + t.cgst + t.sgst + t.igst : t[k]); });
       $('[data-t-row=cgst]', form).style.display = $('[data-t-row=sgst]', form).style.display = intra ? '' : 'none';
@@ -4058,6 +4109,18 @@ async function docForm(kind, id, targetEl, onDone) {
           handleQuickCreateSelect(e.target, newParty => {
             parties.push(newParty);
             if (newParty.state) form.elements.place_of_supply.value = newParty.state;
+            const gstinEl = $('#doc-party-gstin', form);
+            const partyTypeEl = form.elements.customer_type;
+            if (gstinEl) gstinEl.textContent = newParty.gstin || 'Not provided';
+            if (partyTypeEl) {
+              if (inv) {
+                if (newParty.gstin && newParty.gstin.trim()) partyTypeEl.value = 'b2b';
+                else if (newParty.customer_type === 'individual') partyTypeEl.value = 'b2c';
+              } else {
+                if (newParty.gstin && newParty.gstin.trim()) partyTypeEl.value = 'registered';
+                else partyTypeEl.value = 'unregistered';
+              }
+            }
             setDue();
             calc();
           });
@@ -4065,6 +4128,20 @@ async function docForm(kind, id, targetEl, onDone) {
         }
         const p = parties.find(x => String(x.id) === e.target.value);
         if (p && p.state) form.elements.place_of_supply.value = p.state;
+        const gstinEl = $('#doc-party-gstin', form);
+        const partyTypeEl = form.elements.customer_type;
+        if (p) {
+          if (gstinEl) gstinEl.textContent = p.gstin || 'Not provided';
+          if (partyTypeEl) {
+            if (inv) {
+              if (p.gstin && p.gstin.trim()) partyTypeEl.value = 'b2b';
+              else if (p.customer_type === 'individual') partyTypeEl.value = 'b2c';
+            } else {
+              if (p.gstin && p.gstin.trim()) partyTypeEl.value = 'registered';
+              else partyTypeEl.value = 'unregistered';
+            }
+          }
+        }
         setDue();
       }
       calc();
@@ -4174,6 +4251,9 @@ async function docForm(kind, id, targetEl, onDone) {
       try {
         const d = readForm(form);
         d.force = true;
+        d.tax_pricing_type = (form.elements.tax_pricing_type ? form.elements.tax_pricing_type.value : 'tax_exclusive') || 'tax_exclusive';
+        d.customer_type = (form.elements.customer_type ? form.elements.customer_type.value : (inv ? 'b2b' : 'registered')) || (inv ? 'b2b' : 'registered');
+        d.is_tax_inclusive = (d.tax_pricing_type === 'tax_inclusive');
         d.lines = $$('tr.ln', form).map(tr => ({
           item: $('.l-item', tr).value || null,
           description: $('.l-desc', tr).value,
@@ -6790,6 +6870,8 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   const rNextDate = rec ? (rec.next_date || rStartDate) : rStartDate;
   const rEndDate = rec ? (rec.end_date || '') : '';
   const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : true;
+  const rTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const rCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const rPaymentTerms = rec ? (rec.payment_terms != null ? Number(rec.payment_terms) : 30) : 30;
   const rStatus = rec ? (rec.status || 'active') : 'active';
   const rAutoSend = rec ? !!rec.auto_send : false;
@@ -6812,6 +6894,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
       <td style="width:90px;padding:10px 8px;vertical-align:top;">
@@ -6885,6 +6968,20 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="rec-customer-type" name="customer_type" style="width:260px;">
+                <option value="b2b" ${rCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${rCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="rec-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="rec-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(rCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Frequency*</label>
             <select class="in" id="rec-frequency" name="frequency" style="width:260px;">
               <option value="daily" ${rFrequency === 'daily' ? 'selected' : ''}>Daily</option>
@@ -6945,8 +7042,12 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="rec-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${rTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${rTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
               <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="recurring-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+                <i class="fa-solid fa-circle-info"></i> Guide
               </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
@@ -7058,6 +7159,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   }
 
   function calcRecTotals() {
+    const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
     let totalQty = 0;
@@ -7069,15 +7171,22 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       const gst = num($('.l-gst', tr).value) || 0;
 
       totalQty += q;
-      let taxable = q * r;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - discVal) / 100;
+      const gross = q * r;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const net = Math.max(0, gross - disc);
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gst > 0) {
+        taxable = r2(net / (1 + gst / 100));
+        taxAmt = r2(net - taxable);
+        lineTot = net;
       } else {
-        taxable = Math.max(0, taxable - discVal);
+        taxable = r2(net);
+        taxAmt = r2(taxable * (gst / 100));
+        lineTot = r2(taxable + taxAmt);
       }
-      taxable = r2(taxable);
-      const taxAmt = r2(taxable * (gst / 100));
-      const lineTot = r2(taxable + taxAmt);
 
       subtotal += taxable;
       totalTax += taxAmt;
@@ -7124,6 +7233,15 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        const badge = $('.l-stock-badge', tr);
+        if (badge) {
+          if (it.track_inventory && it.stock != null) {
+            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
+            badge.style.display = 'block';
+          } else {
+            badge.style.display = 'none';
+          }
+        }
       }
       calcRecTotals();
     }
@@ -7187,8 +7305,24 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         e.target.appendChild(opt);
         e.target.value = newCust.id;
       });
+      return;
+    }
+    const cId = $('#rec-customer', form).value;
+    const cObj = parties.find(p => String(p.id) === String(cId));
+    if (cObj) {
+      const gstinEl = $('#rec-customer-gstin', form);
+      const custTypeEl = $('#rec-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cObj.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cObj.gstin && cObj.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cObj.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
     }
   });
+  $('#rec-tax-pricing', form)?.addEventListener('change', calcRecTotals);
 
   const handleClose = () => {
     if (onDone) onDone();
@@ -7286,6 +7420,8 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       profile_name: pName,
       customer: Number(custId),
       frequency: $('#rec-frequency', form).value,
+      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
       start_date: sDateVal,
       next_date: nextDateVal,
       end_date: edVal,
@@ -8048,6 +8184,8 @@ async function quoteForm(id, targetEl, onDone) {
   const qNotes = rec ? (rec.notes != null ? rec.notes : 'Looking forward for your business.') : 'Looking forward for your business.';
   const qTerms = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const qTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const qTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const qCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const qTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
   const qAdj = rec ? num(rec.adjustment || 0) : 0;
   const qAdjLabel = rec ? (rec.adjustment_label || 'Adjustment') : 'Adjustment';
@@ -8069,6 +8207,7 @@ async function quoteForm(id, targetEl, onDone) {
           ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
       <td style="width:90px;padding:10px 8px;vertical-align:top;">
@@ -8137,6 +8276,20 @@ async function quoteForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="q-customer-type" name="customer_type" style="width:260px;">
+                <option value="b2b" ${qCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${qCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="q-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="q-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:260px;">
@@ -8188,8 +8341,12 @@ async function quoteForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="q-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${qTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${qTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
               <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+                <i class="fa-solid fa-circle-info"></i> Guide
               </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
@@ -8360,6 +8517,7 @@ async function quoteForm(id, targetEl, onDone) {
   }
 
   function calcQuote() {
+    const isTaxInclusive = ($('#q-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
     let totalQty = 0;
@@ -8372,15 +8530,22 @@ async function quoteForm(id, targetEl, onDone) {
       const gst = num($('.l-gst', tr).value) || 0;
 
       totalQty += q;
-      let taxable = q * r;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - discVal) / 100;
+      const gross = q * r;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const net = Math.max(0, gross - disc);
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gst > 0) {
+        taxable = r2(net / (1 + gst / 100));
+        taxAmt = r2(net - taxable);
+        lineTot = net;
       } else {
-        taxable = Math.max(0, taxable - discVal);
+        taxable = r2(net);
+        taxAmt = r2(taxable * (gst / 100));
+        lineTot = r2(taxable + taxAmt);
       }
-      taxable = r2(taxable);
-      const taxAmt = r2(taxable * (gst / 100));
-      const lineTot = r2(taxable + taxAmt);
 
       subtotal += taxable;
       totalTax += taxAmt;
@@ -8439,6 +8604,15 @@ async function quoteForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        const badge = $('.l-stock-badge', tr);
+        if (badge) {
+          if (it.track_inventory && it.stock != null) {
+            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
+            badge.style.display = 'block';
+          } else {
+            badge.style.display = 'none';
+          }
+        }
       }
       calcQuote();
     }
@@ -8480,6 +8654,7 @@ async function quoteForm(id, targetEl, onDone) {
   });
 
   $('#q-tds-tax', form)?.addEventListener('change', calcQuote);
+  $('#q-tax-pricing', form)?.addEventListener('change', calcQuote);
   form.querySelectorAll('input[name="tax_type"]').forEach(r => r.addEventListener('change', calcQuote));
   $('#q-adj-val', form)?.addEventListener('input', calcQuote);
 
@@ -8509,6 +8684,20 @@ async function quoteForm(id, targetEl, onDone) {
         updateProjectFilter();
       });
       return;
+    }
+    const cId = $('#q-customer', form).value;
+    const cObj = parties.find(p => String(p.id) === String(cId));
+    if (cObj) {
+      const gstinEl = $('#q-customer-gstin', form);
+      const custTypeEl = $('#q-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cObj.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cObj.gstin && cObj.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cObj.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
     }
     updateProjectFilter();
   });
@@ -8693,6 +8882,8 @@ async function quoteForm(id, targetEl, onDone) {
       reference_number: ($('#q-reference', form)?.value || '').trim(),
       date: dt,
       expiry_date: expVal,
+      tax_pricing_type: $('#q-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#q-customer-type', form)?.value || 'b2b',
       place_of_supply: (custObj && custObj.state) ? custObj.state : APP.org.state,
       salesperson: $('#q-salesperson', form).value,
       project_name: $('#q-project', form).value,
@@ -8787,6 +8978,8 @@ async function salesOrderForm(id, onDone) {
   const soStatus = rec ? (rec.status || 'confirmed') : 'confirmed';
   const soNotes = rec ? (rec.notes || '') : (APP.org.notes_default || 'Thank you for your order.');
   const soTerms = rec ? (rec.terms || '') : (APP.org.terms_default || 'Payment within 30 days.');
+  const soTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const soCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const soLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
 
   const rowHtml = (l = {}) => `
@@ -8860,6 +9053,20 @@ async function salesOrderForm(id, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:1;max-width:440px;">
+              <select class="in" id="so-customer-type" name="customer_type" style="width:200px;">
+                <option value="b2b" ${soCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${soCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="so-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="so-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
             <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order#<span style="color:#ef4444;">*</span></label>
             <div style="flex:1;max-width:440px;">
               <input type="text" class="in" id="so-number" name="number" value="${esc(soNumber)}" required>
@@ -8913,8 +9120,12 @@ async function salesOrderForm(id, onDone) {
         <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px;">
           <div style="display:flex;align-items:center;gap:12px;">
             <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--tx);">Item Table</h3>
+            <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
             <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+              <i class="fa-solid fa-circle-info"></i> Guide
             </button>
           </div>
         </div>
@@ -8984,6 +9195,7 @@ async function salesOrderForm(id, onDone) {
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
 
   function calcSo() {
+    const isTaxInclusive = ($('#so-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
     $$('.ln-so', tbody).forEach(tr => {
@@ -8992,9 +9204,21 @@ async function salesOrderForm(id, onDone) {
       const discVal = num($('.l-disc', tr).value) || 0;
       const gstVal = num($('.l-gst', tr).value) || 0;
 
-      const taxable = Math.max(0, qtyVal * rateVal * (1 - discVal / 100));
-      const taxAmt = taxable * (gstVal / 100);
-      const lineTot = taxable + taxAmt;
+      const gross = qtyVal * rateVal;
+      const net = Math.max(0, gross * (1 - discVal / 100));
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gstVal > 0) {
+        taxable = Math.round((net / (1 + gstVal / 100)) * 100) / 100;
+        taxAmt = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        taxAmt = Math.round((taxable * (gstVal / 100)) * 100) / 100;
+        lineTot = taxable + taxAmt;
+      }
 
       const amtEl = $('.l-amt', tr);
       if (amtEl) amtEl.textContent = inr(lineTot);
@@ -9112,12 +9336,23 @@ async function salesOrderForm(id, onDone) {
       return;
     }
     const cust = parties.find(p => String(p.id) === String(e.target.value));
-    if (cust && cust.state) {
-      $('#so-pos', form).value = cust.state;
+    if (cust) {
+      if (cust.state) $('#so-pos', form).value = cust.state;
+      const gstinEl = $('#so-customer-gstin', form);
+      const custTypeEl = $('#so-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cust.gstin && cust.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cust.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
       calcSo();
     }
   });
   $('#so-pos', form).addEventListener('change', () => calcSo());
+  $('#so-tax-pricing', form)?.addEventListener('change', () => calcSo());
 
   async function saveSo(isDraft) {
     const custId = $('#so-customer', form).value;
@@ -9164,6 +9399,8 @@ async function salesOrderForm(id, onDone) {
       order_number: $('#so-reference', form).value.trim(),
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
+      tax_pricing_type: $('#so-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#so-customer-type', form)?.value || 'b2b',
       place_of_supply: $('#so-pos', form).value || APP.org.state,
       status: isDraft ? 'draft' : ($('#so-status', form).value || 'confirmed'),
       notes: $('#so-notes', form).value.trim(),
@@ -9226,6 +9463,8 @@ async function invoiceForm(id, targetEl, onDone) {
   const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : 'Thanks for your business.';
   const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const invTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const invCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const invTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
   const invAdj = rec ? num(rec.adjustment || 0) : 0;
   const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
@@ -9246,6 +9485,7 @@ async function invoiceForm(id, targetEl, onDone) {
           ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
       <td style="width:90px;padding:10px 8px;vertical-align:top;">
@@ -9314,6 +9554,20 @@ async function invoiceForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="inv-customer-type" name="customer_type" style="width:260px;">
+                <option value="b2b" ${invCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${invCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="inv-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="inv-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(invCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Invoice#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <input class="in" id="inv-number" name="number" value="${invNum}" required style="width:260px;">
@@ -9369,8 +9623,12 @@ async function invoiceForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="inv-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${invTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${invTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
               <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+                <i class="fa-solid fa-circle-info"></i> Guide
               </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
@@ -9558,6 +9816,7 @@ async function invoiceForm(id, targetEl, onDone) {
   }
 
   function calcInvoice() {
+    const isTaxInclusive = ($('#inv-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
     let totalQty = 0;
@@ -9568,10 +9827,20 @@ async function invoiceForm(id, targetEl, onDone) {
       const discType = $('.l-disc-type', tr).value;
       const gross = qty * rate;
       const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
-      const taxable = Math.max(0, gross - disc);
+      const net = Math.max(0, gross - disc);
       const gstRate = num($('.l-gst', tr).value) || 0;
-      const tax = taxable * gstRate / 100;
-      const lineTot = taxable + tax;
+      let taxable = net;
+      let tax = 0;
+      let lineTot = net;
+      if (isTaxInclusive && gstRate > 0) {
+        taxable = Math.round((net / (1 + gstRate / 100)) * 100) / 100;
+        tax = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        tax = Math.round((taxable * gstRate / 100) * 100) / 100;
+        lineTot = taxable + tax;
+      }
       $('.l-amt', tr).textContent = (lineTot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       subtotal += taxable;
       totalTax += tax;
@@ -9665,6 +9934,16 @@ async function invoiceForm(id, targetEl, onDone) {
     const cust = parties.find(p => String(p.id) === String(custId));
     if (cust) {
       if (cust.state) $('#inv-place-of-supply', form).value = cust.state;
+      const gstinEl = $('#inv-customer-gstin', form);
+      const custTypeEl = $('#inv-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cust.gstin && cust.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cust.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
       if (cust.payment_terms) {
         const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
         if (termsMap[cust.payment_terms]) {
@@ -9769,6 +10048,15 @@ async function invoiceForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        const badge = $('.l-stock-badge', tr);
+        if (badge) {
+          if (it.track_inventory && it.stock != null) {
+            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
+            badge.style.display = 'block';
+          } else {
+            badge.style.display = 'none';
+          }
+        }
       }
       calcInvoice();
     }
@@ -9923,6 +10211,8 @@ async function invoiceForm(id, targetEl, onDone) {
       order_number: $('#inv-order-number', form).value.trim(),
       date: dt,
       due_date: $('#inv-due-date', form).value || dt,
+      tax_pricing_type: $('#inv-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#inv-customer-type', form)?.value || 'b2b',
       terms: $('#inv-terms', form).value,
       salesperson: $('#inv-salesperson', form).value,
       subject: $('#inv-subject', form).value.trim(),
@@ -10015,6 +10305,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const retNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : 'Thanks for your business.';
   const retTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const retTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const retTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const retCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const retTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
   const retAdj = rec ? num(rec.adjustment || 0) : 0;
   const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
@@ -10035,6 +10327,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
       <td style="width:90px;padding:10px 8px;vertical-align:top;">
@@ -10103,6 +10396,20 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="ret-customer-type" name="customer_type" style="width:260px;">
+                <option value="b2b" ${retCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${retCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="ret-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="ret-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(retCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:260px;">
@@ -10158,8 +10465,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="ret-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${retTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${retTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
               <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="retainer-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+                <i class="fa-solid fa-circle-info"></i> Guide
               </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
@@ -10344,6 +10655,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   }
 
   function calcRetainer() {
+    const isTaxInclusive = ($('#ret-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
     let totalQty = 0;
@@ -10354,10 +10666,23 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       const discType = $('.l-disc-type', tr).value;
       const gross = qty * rate;
       const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
-      const taxable = Math.max(0, gross - disc);
+      const net = Math.max(0, gross - disc);
       const gstRate = num($('.l-gst', tr).value) || 0;
-      const tax = taxable * gstRate / 100;
-      const lineTot = taxable + tax;
+
+      let taxable = net;
+      let tax = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gstRate > 0) {
+        taxable = Math.round((net / (1 + gstRate / 100)) * 100) / 100;
+        tax = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        tax = Math.round((taxable * (gstRate / 100)) * 100) / 100;
+        lineTot = taxable + tax;
+      }
+
       $('.l-amt', tr).textContent = (lineTot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       subtotal += taxable;
       totalTax += tax;
@@ -10451,6 +10776,16 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     const cust = parties.find(p => String(p.id) === String(custId));
     if (cust) {
       if (cust.state) $('#ret-place-of-supply', form).value = cust.state;
+      const gstinEl = $('#ret-customer-gstin', form);
+      const custTypeEl = $('#ret-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cust.gstin && cust.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cust.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
       if (cust.payment_terms) {
         const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
         if (termsMap[cust.payment_terms]) {
@@ -10680,6 +11015,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       order_number: ($('#ret-order-number', form)?.value || '').trim(),
       date: dt,
       due_date: $('#ret-due-date', form).value || dt,
+      tax_pricing_type: $('#ret-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#ret-customer-type', form)?.value || 'b2b',
       terms: $('#ret-terms', form).value,
       salesperson: $('#ret-salesperson', form).value,
       purpose: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),

@@ -1149,7 +1149,8 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
             'position': 1
         })
 
-    comp, tot = compute(parsed_lines, intra)
+    is_tax_inclusive = (getattr(profile, 'tax_pricing_type', 'tax_exclusive') == 'tax_inclusive')
+    comp, tot = compute(parsed_lines, intra, is_tax_inclusive=is_tax_inclusive)
     inv_num = next_document_number('INV', org=org, date=target_date)
 
     inv = Invoice.objects.create(
@@ -1160,6 +1161,8 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         due_date=due_date,
         place_of_supply=pos,
         order_number=rec_order_no,
+        tax_pricing_type=getattr(profile, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+        customer_type=getattr(profile, 'customer_type', 'b2b') or 'b2b',
         notes=meta.get('notes') or f"Generated automatically from recurring profile: {profile.profile_name}",
         terms=meta.get('terms') or getattr(org, 'terms_default', 'Due on Receipt'),
         subtotal=tot['subtotal'],

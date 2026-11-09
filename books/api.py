@@ -1829,6 +1829,8 @@ class DocResource(Resource):
              'customer_name': self.party(o).name if self.party(o) else '',
              'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
+             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
              'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
              'balance': max(Z, o.total - paid) if o.status != 'void' else Z,
@@ -1991,7 +1993,11 @@ class DocResource(Resource):
         if date_ and due and due < date_:
             c.err('due_date', 'Due date cannot be before the document date.')
         pos = c.text('place_of_supply', max_len=60) or (party.state if party and party.state else (org.state if org else ''))
+        default_cust_type = 'b2b' if self.party_attr == 'customer' else 'registered'
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        cust_type = str(data.get('customer_type') or default_cust_type).strip().lower()
         head = {self.party_attr: party, 'date': date_, 'due_date': due, 'place_of_supply': pos,
+                'tax_pricing_type': tax_pricing, 'customer_type': cust_type,
                 'notes': c.text('notes', max_len=2000)}
         if 'signature_data' in data:
             head['signature_data'] = str(data.get('signature_data') or '')
@@ -2007,7 +2013,8 @@ class DocResource(Resource):
         user_org = get_user_org(user) if user else getattr(obj, 'organization', None)
         org_state = user_org.state if user_org else (Organization.get().state if Organization.get() else '')
         intra = is_intra_state(head['place_of_supply'], org_state)
-        comp, tot = compute(lines, intra)
+        is_tax_inclusive = (head.get('tax_pricing_type') or getattr(obj, 'tax_pricing_type', 'tax_exclusive')) == 'tax_inclusive'
+        comp, tot = compute(lines, intra, is_tax_inclusive=is_tax_inclusive)
         for k, v in head.items():
             setattr(obj, k, v)
         for k, v in tot.items():
@@ -2425,6 +2432,8 @@ class QuoteResource(DocResource):
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 place_of_supply=obj.place_of_supply,
+                tax_pricing_type=getattr(obj, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+                customer_type=getattr(obj, 'customer_type', 'b2b') or 'b2b',
                 status='draft',
                 subtotal=obj.subtotal,
                 cgst=obj.cgst,
@@ -2473,6 +2482,8 @@ class QuoteResource(DocResource):
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 expected_shipment_date=obj.expiry_date or timezone.localdate() + timedelta(days=7),
                 place_of_supply=obj.place_of_supply,
+                tax_pricing_type=getattr(obj, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+                customer_type=getattr(obj, 'customer_type', 'b2b') or 'b2b',
                 status='draft',
                 subtotal=obj.subtotal,
                 cgst=obj.cgst,
@@ -4056,6 +4067,8 @@ class SalesOrderResource(Resource):
             'customer_name': o.customer.name, 'party': o.customer.name,
             'date': o.date, 'due_date': o.due_date,
             'expected_shipment_date': o.expected_shipment_date,
+            'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+            'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
             'status': o.status, 'subtotal': o.subtotal, 'total': o.total,
             'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst,
             'order_number': o.order_number or '',
@@ -4138,16 +4151,19 @@ class SalesOrderResource(Resource):
                     seq.value = val
                     seq.save(update_fields=['value'])
 
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
         so = SalesOrder.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, due_date=due_dt,
             place_of_supply=pos,
+            tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
             order_number=order_num, status=status
         )
         lines = parse_lines(data.get('lines', []), org=user_org)
         intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(so.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(so, k, v)
         so.save()
@@ -4189,12 +4205,16 @@ class SalesOrderResource(Resource):
             obj.order_number = c.text('order_number', max_len=60) or ''
         if 'status' in data and data['status']:
             obj.status = c.choice('status', ['draft', 'confirmed', 'closed', 'void'], default=obj.status)
+        if 'tax_pricing_type' in data:
+            obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        if 'customer_type' in data:
+            obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
         c.done()
 
         if 'lines' in data:
             lines = parse_lines(data.get('lines', []))
             intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-            comp, tot = compute(lines, intra)
+            comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
             for k, v in tot.items():
                 setattr(obj, k, v)
             obj.save()
@@ -4361,6 +4381,8 @@ class PurchaseOrderResource(Resource):
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'delivery_date': o.delivery_date, 'status': o.status,
+            'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+            'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
@@ -4405,15 +4427,18 @@ class PurchaseOrderResource(Resource):
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         po = PurchaseOrder.objects.create(
             organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
-            delivery_date=deliv, status='draft'
+            delivery_date=deliv, status='draft',
+            tax_pricing_type=tax_pricing, customer_type=cust_type
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(po.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(po.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(po, k, v)
         po.save()
@@ -4439,9 +4464,13 @@ class PurchaseOrderResource(Resource):
         obj.date = dt
         obj.delivery_date = deliv or dt
         obj.place_of_supply = ven.state or Organization.get().state
+        if 'tax_pricing_type' in data:
+            obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        if 'customer_type' in data:
+            obj.customer_type = str(data.get('customer_type') or 'registered').strip().lower()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(obj, k, v)
         obj.save()
@@ -4665,6 +4694,8 @@ class CreditNoteResource(Resource):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'party': o.customer.name, 'date': o.date,
+            'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+            'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
             'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
             'signature_data': getattr(o, 'signature_data', '') or '',
@@ -4702,15 +4733,18 @@ class CreditNoteResource(Resource):
         num_exists = CreditNote.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (CreditNote.objects.filter(number=num).exists() if num else False)
         if not num or num_exists:
             num = services.next_document_number('CN', org=user_org, date=dt)
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
         cn = CreditNote.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, due_date=dt,
             place_of_supply=cust.state or (user_org.state if user_org else Organization.get().state),
-            reason=reason, status='open'
+            reason=reason, status='open',
+            tax_pricing_type=tax_pricing, customer_type=cust_type
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(cn.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(cn.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(cn, k, v)
         cn.save()
@@ -4737,9 +4771,13 @@ class CreditNoteResource(Resource):
         obj.due_date = dt
         obj.reason = reason
         obj.place_of_supply = cust.state or Organization.get().state
+        if 'tax_pricing_type' in data:
+            obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        if 'customer_type' in data:
+            obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(obj, k, v)
         obj.save()
@@ -4843,6 +4881,8 @@ class VendorCreditResource(Resource):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
+            'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+            'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'bill_id': o.bill_id, 'bill_number': o.bill.number if o.bill else '',
             'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
             'signature_data': getattr(o, 'signature_data', '') or '',
@@ -4880,15 +4920,18 @@ class VendorCreditResource(Resource):
         num_exists = VendorCredit.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (VendorCredit.objects.filter(number=num).exists() if num else False)
         if not num or num_exists:
             num = services.next_document_number('DN', org=user_org, date=dt)
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         vc = VendorCredit.objects.create(
             organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
-            reason=reason, status='open'
+            reason=reason, status='open',
+            tax_pricing_type=tax_pricing, customer_type=cust_type
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(vc.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(vc.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(vc, k, v)
         vc.save()
@@ -4915,9 +4958,13 @@ class VendorCreditResource(Resource):
         obj.due_date = dt
         obj.reason = reason
         obj.place_of_supply = ven.state or Organization.get().state
+        if 'tax_pricing_type' in data:
+            obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        if 'customer_type' in data:
+            obj.customer_type = str(data.get('customer_type') or 'registered').strip().lower()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra)
+        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
             setattr(obj, k, v)
         obj.save()
@@ -4991,6 +5038,8 @@ class RecurringInvoiceResource(Resource):
             'id': o.pk, 'profile_name': o.profile_name, 'name': o.profile_name, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'frequency': o.frequency,
             'frequency_label': freq_disp,
+            'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+            'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
             'repeat_every': repeat_every,
             'start_date': o.start_date, 'end_date': o.end_date, 'next_date': o.next_date,
             'never_ends': not bool(o.end_date),
@@ -5119,6 +5168,8 @@ class RecurringInvoiceResource(Resource):
             end_date=edate,
             next_date=next_d,
             status=status_val,
+            tax_pricing_type=str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower(),
+            customer_type=str(data.get('customer_type') or 'b2b').strip().lower(),
             total=tot,
             subtotal=tot,
             lines_data=meta_dict
@@ -5158,6 +5209,10 @@ class RecurringInvoiceResource(Resource):
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
         if 'status' in data:
             obj.status = c.choice('status', self.STATUSES, default=obj.status)
+        if 'tax_pricing_type' in data:
+            obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        if 'customer_type' in data:
+            obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
         if 'total' in data:
             tot = c.number('total', required=True, lo=Decimal('0.01'))
             obj.total = tot
@@ -6307,10 +6362,16 @@ def lookup(request, name):
         return qs
 
     if name == 'customers':
-        data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms}
+        data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms,
+                 'company': o.company, 'gstin': o.gstin, 'gst_treatment': o.gst_treatment,
+                 'customer_type': getattr(o, 'customer_type', 'business'),
+                 'billing_address': o.billing_address, 'shipping_address': getattr(o, 'shipping_address', ''),
+                 'place_of_supply': getattr(o, 'place_of_supply', '') or o.state}
                 for o in org_filter(Customer.objects.filter(active=True)).order_by('name')]
     elif name == 'vendors':
-        data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms}
+        data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms,
+                 'company': o.company, 'gstin': o.gstin, 'gst_treatment': o.gst_treatment,
+                 'billing_address': o.billing_address}
                 for o in org_filter(Vendor.objects.filter(active=True)).order_by('name')]
     elif name == 'items':
         data = [{'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,

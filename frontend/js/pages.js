@@ -2052,6 +2052,13 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
   const orderNum = d.order_number || d.vendor_ref || '';
   const isDarkHead = theme === 'modern' || (!inv && theme !== 'convosis');
+  const taxPricingLabel = d.tax_pricing_type === 'tax_inclusive' ? 'Tax Inclusive' : 'Tax Exclusive';
+  const partyTypeLabel = d.customer_type ? (
+    d.customer_type === 'b2b' ? 'B2B (Registered)' :
+    d.customer_type === 'b2c' ? 'B2C (Consumer)' :
+    d.customer_type === 'registered' ? 'Registered Supplier' :
+    d.customer_type === 'unregistered' ? 'Unregistered Supplier' : esc(d.customer_type)
+  ) : (party.gstin ? (isBill ? 'Registered Supplier' : 'B2B (Registered)') : (isBill ? 'Unregistered Supplier' : 'B2C (Consumer)'));
 
   return `
     <div class="doc-sheet theme-${theme}" style="--theme-color:${color};position:relative;">
@@ -2089,6 +2096,8 @@ function renderDocSheet(d, kind, customOpts = {}) {
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${(isRetainer && (d.purpose || d.subject || d.notes)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject || d.notes)}</b></td></tr>` : ''}
             ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
+            <tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
+            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
           </table>
 
         </div>
@@ -2160,12 +2169,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
           <div class="doc-totals-box">
             <div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
               <a href="javascript:void(0)" class="btn-tax-pricing-info" data-doc-kind="${kind}" style="color:#2563eb;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-weight:600;" title="View GST Pricing & B2B/B2C Rules Guide">
-                <i class="fa-solid fa-circle-info"></i> Tax &amp; Billing Guide (B2B/B2C, Tax Exclusive)
+                <i class="fa-solid fa-circle-info"></i> Tax &amp; Billing (${partyTypeLabel} · ${taxPricingLabel})
               </a>
             </div>
             ${!hideAmounts ? `
               <div class="doc-totals-row">
-                <span>Sub Total</span>
+                <span>Taxable Amount (${taxPricingLabel})</span>
                 <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
               </div>
               ${d.intra_state ? `

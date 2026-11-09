@@ -180,22 +180,22 @@
 
       <div class="login-field-group">
         <label for="id_signup_name" class="login-label">Full Name</label>
-        <input class="login-input in" type="text" name="signup_name" id="id_signup_name" placeholder="e.g. John Doe">
+        <input class="login-input in" type="text" name="signup_name" id="id_signup_name" placeholder="e.g. John Doe" value="{{ signup_name|default:'' }}">
       </div>
 
       <div class="login-field-group">
         <label for="id_signup_org" class="login-label">Organization / Business Name</label>
-        <input class="login-input in" type="text" name="signup_org" id="id_signup_org" placeholder="e.g. Acme Global Corp">
+        <input class="login-input in" type="text" name="signup_org" id="id_signup_org" placeholder="e.g. Acme Global Corp" value="{{ signup_org|default:'' }}">
       </div>
 
       <div class="login-field-group">
         <label for="id_signup_username" class="login-label">Choose Username<span class="rq" style="color:#ef4444;">*</span></label>
-        <input class="login-input in" type="text" name="signup_username" id="id_signup_username" placeholder="Enter username…" required>
+        <input class="login-input in" type="text" name="signup_username" id="id_signup_username" placeholder="Enter username…" required value="{{ signup_username|default:'' }}">
       </div>
 
       <div class="login-field-group">
-        <label for="id_signup_email" class="login-label">Work Email</label>
-        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com">
+        <label for="id_signup_email" class="login-label">Work Email<span class="rq" style="color:#ef4444;">*</span></label>
+        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com" required value="{{ signup_email|default:'' }}">
       </div>
 
       <div class="login-field-group">

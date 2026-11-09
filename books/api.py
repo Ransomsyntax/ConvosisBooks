@@ -8478,6 +8478,9 @@ def settings_users_view(request, user_id=None):
         if not email:
             raise ApiError(400, 'Email address is required.', {'email': 'Email is required.'})
 
+        if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
+            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+
         username = (data.get('username') or email.split('@')[0]).strip()
         if User.objects.filter(username=username).exists():
             username = f"{username}_{uuid.uuid4().hex[:4]}"
@@ -8506,6 +8509,7 @@ def settings_users_view(request, user_id=None):
             role=(r_obj.name.lower() if r_obj else 'staff'),
             custom_role=r_obj,
             status=status_val,
+            normalized_email=email,
             phone=str(data.get('phone', '')).strip()
         )
         services.log_audit(request.user, 'create', 'User', u.pk, f"Added user {u.email} with role {r_obj.name if r_obj else 'Staff'}")
@@ -8524,12 +8528,19 @@ def settings_users_view(request, user_id=None):
             u.first_name = parts[0]
             u.last_name = parts[1] if len(parts) > 1 else ''
         if 'email' in data:
-            u.email = str(data['email']).strip().lower()
+            new_email = str(data['email']).strip().lower()
+            if new_email and new_email != u.email:
+                if User.objects.filter(email__iexact=new_email).exclude(pk=u.pk).exists() or UserProfile.objects.filter(normalized_email=new_email).exclude(user=u).exists():
+                    raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+                u.email = new_email
         u.save()
 
         prof = getattr(u, 'profile', None)
         if not prof:
-            prof = UserProfile.objects.create(user=u, organization=org)
+            prof = UserProfile.objects.create(user=u, organization=org, normalized_email=u.email)
+        else:
+            prof.normalized_email = u.email
+            prof.save(update_fields=['normalized_email'])
 
         if 'role_id' in data:
             r_obj = Role.objects.filter(organization=org, pk=data['role_id']).first()
@@ -9850,6 +9861,79 @@ def dpdp_export_principal_data_view(request):
         org=user_org, module='compliance', submodule='dpdp_access'
     )
     return j(export_pkg)
+
+def api_register_view(request):
+    """
+    Public registration API endpoint with strict duplicate-email prevention.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        data = body(request)
+        email = (data.get('email') or data.get('signup_email') or '').strip().lower()
+        username = (data.get('username') or data.get('signup_username') or '').strip()
+        password = data.get('password') or data.get('signup_password') or ''
+        name = (data.get('name') or data.get('signup_name') or '').strip()
+        org_name = (data.get('org_name') or data.get('signup_org') or '').strip()
+
+        if not email:
+            raise ApiError(400, 'Email address is required.', {'email': 'Email address is required.'})
+        if '@' not in email or '.' not in email.split('@')[-1]:
+            raise ApiError(400, 'Please enter a valid email address.', {'email': 'Please enter a valid email address.'})
+        if not username or not password:
+            raise ApiError(400, 'Username and password are required.')
+        if len(username) < 3:
+            raise ApiError(400, 'Username must be at least 3 characters long.')
+        if len(password) < 4:
+            raise ApiError(400, 'Password must be at least 4 characters long.')
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
+            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+
+        if User.objects.filter(username__iexact=username).exists():
+            raise ApiError(400, f'Username "{username}" is already registered. Please sign in.', {'username': f'Username "{username}" is already registered. Please sign in.'})
+
+        try:
+            with transaction.atomic():
+                if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
+                    raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    first_name=name
+                )
+                company_title = org_name or (f"{name}'s Company" if name else f"{username}'s Company")
+                org = Organization.objects.create(
+                    name=company_title,
+                    owner=user,
+                    email=email,
+                    state='Kerala'
+                )
+                UserProfile.objects.create(
+                    user=user,
+                    role=UserProfile.ADMIN,
+                    organization=org,
+                    normalized_email=email
+                )
+                services.ensure_default_accounts(org)
+                services.log_audit(user, 'signup', 'organization', org.pk, f'User {username} registered company {org.name} via API')
+                return j({
+                    'status': 'ok',
+                    'message': 'Account registered successfully.',
+                    'user': {'id': user.id, 'username': user.username, 'email': user.email},
+                    'organization': {'id': org.id, 'name': org.name}
+                }, 201)
+        except (IntegrityError, ValidationError, OperationalError):
+            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+    except ApiError as e:
+        return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
+    except Exception as e:
+        return j({'error': str(e), 'message': str(e)}, 400)
 
 
 

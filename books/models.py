@@ -1230,6 +1230,27 @@ class UserProfile(models.Model):
             models.UniqueConstraint(fields=['normalized_email'], condition=~models.Q(normalized_email=''), name='unique_user_normalized_email')
         ]
 
+    def clean(self):
+        super().clean()
+        if self.user and self.user.email:
+            self.normalized_email = self.user.email.strip().lower()
+        elif self.normalized_email:
+            self.normalized_email = self.normalized_email.strip().lower()
+        if self.normalized_email:
+            qs = UserProfile.objects.filter(normalized_email=self.normalized_email)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                from django.core.exceptions import ValidationError
+                raise ValidationError({"normalized_email": "An account with this email address already exists. Please log in instead."})
+
+    def save(self, *args, **kwargs):
+        if self.user and self.user.email:
+            self.normalized_email = self.user.email.strip().lower()
+        elif self.normalized_email:
+            self.normalized_email = self.normalized_email.strip().lower()
+        super().save(*args, **kwargs)
+
     def get_role_display(self):
         if self.custom_role:
             return self.custom_role.name
@@ -1634,5 +1655,31 @@ class DPDPDataProcessor(models.Model):
 
     def __str__(self):
         return f'{self.vendor_name} ({self.service_type})'
+
+
+from django.db.models.signals import pre_save, post_save
+from django.dispatch import receiver
+from django.contrib.auth import get_user_model
+
+@receiver(pre_save, sender=settings.AUTH_USER_MODEL)
+def enforce_user_email_uniqueness_and_normalization(sender, instance, **kwargs):
+    if instance.email:
+        norm = instance.email.strip().lower()
+        instance.email = norm
+        User = get_user_model()
+        qs = User.objects.filter(email__iexact=norm)
+        if instance.pk:
+            qs = qs.exclude(pk=instance.pk)
+        if qs.exists():
+            from django.core.exceptions import ValidationError
+            raise ValidationError("An account with this email address already exists. Please log in instead.")
+
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def sync_user_profile_normalized_email(sender, instance, created, **kwargs):
+    if hasattr(instance, 'profile') and instance.profile:
+        norm = (instance.email or '').strip().lower()
+        if instance.profile.normalized_email != norm:
+            instance.profile.normalized_email = norm
+            instance.profile.save(update_fields=['normalized_email'])
 
 

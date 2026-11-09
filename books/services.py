@@ -6028,6 +6028,11 @@ def invite_tenant_user(username, email, role='accountant', phone='', full_name='
     from django.contrib.auth import get_user_model
     User = get_user_model()
     check_subscription_limits(org, 'user')
+    if email:
+        norm = email.strip().lower()
+        from .models import UserProfile
+        if User.objects.filter(email__iexact=norm).exists() or UserProfile.objects.filter(normalized_email=norm).exists():
+            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
     if User.objects.filter(username=username).exists():
         raise ApiError(400, f'Username "{username}" already exists.')
 

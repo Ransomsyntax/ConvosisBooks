@@ -385,24 +385,39 @@ def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjuste
 
 def stock_totals(doc):
     agg = {}
-    for ln in doc.lines.select_related('item'):
+    for ln in doc.lines.select_related('item', 'warehouse'):
         it = ln.item
         if it and it.item_type == Item.GOODS and it.track_inventory:
-            agg[it.pk] = agg.get(it.pk, Decimal('0')) + ln.quantity
+            wh = ln.warehouse or it.warehouse
+            wh_id = wh.pk if wh else None
+            wh_code = ln.warehouse_code or (wh.code if wh else it.warehouse_code)
+            key = (it.pk, wh_id, wh_code)
+            agg[key] = agg.get(key, Decimal('0')) + ln.quantity
     return agg
 
 def apply_stock(doc, sign, kind, user):
-    for item_id, qty in sorted(stock_totals(doc).items()):
+    for (item_id, wh_id, wh_code), qty in sorted(stock_totals(doc).items()):
         it = Item.objects.filter(pk=item_id).first()
-        wh = it.warehouse if it else None
-        wh_code = it.warehouse_code if it else ''
-        move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wh_code)
+        wh = Warehouse.objects.filter(pk=wh_id).first() if wh_id else (it.warehouse if it else None)
+        wcode = wh_code or (wh.code if wh else (it.warehouse_code if it else ''))
+        move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wcode)
 
 @transaction.atomic
 def send_invoice(inv, user):
     check_transaction_lock(inv.date)
     if inv.status != 'draft':
         raise ApiError(409, 'Only draft invoices can be sent.')
+    org = inv.organization or (inv.customer.organization if inv.customer else None)
+    if org and not getattr(org, 'allow_negative_stock', False):
+        for (item_id, wh_id, wh_code), qty in stock_totals(inv).items():
+            avail = get_item_warehouse_stock(item_id, wh_id or wh_code, org=org)
+            if qty > avail:
+                it = Item.objects.filter(pk=item_id).first()
+                wh = Warehouse.objects.filter(pk=wh_id).first() if wh_id else (it.warehouse if it else None)
+                wh_name = wh.name if wh else (wh_code or 'Warehouse')
+                item_name = it.name if it else 'Item'
+                unit_str = f" {it.unit}" if it and it.unit else " Nos"
+                raise ApiError(400, f"Insufficient Stock for {item_name}. Available quantity in {wh_name}: {fmt_qty(avail)}{unit_str}. Requested quantity: {fmt_qty(qty)}{unit_str}.")
     apply_stock(inv, -1, 'sale', user)
     inv.status = 'sent'
     inv.sent_at = timezone.now()

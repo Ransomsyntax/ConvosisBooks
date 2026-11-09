@@ -6861,6 +6861,174 @@ async function ewayBillModal() {
   });
 }
 
+function renderStockQuantityCell(l = {}, items = [], whList = []) {
+  const curItemId = l.item || l.item_id || '';
+  const curItem = items.find(it => String(it.id) === String(curItemId));
+  const hasTrack = curItem ? (curItem.track_inventory && curItem.type === 'goods') : false;
+  const curUnit = curItem ? (curItem.unit || 'Nos') : (l.unit || 'Nos');
+  const curWhId = l.warehouse_id || (curItem ? curItem.warehouse_id : null) || (whList[0] ? whList[0].id : '');
+  const curWh = whList.find(w => String(w.id) === String(curWhId)) || whList[0] || { id: '', name: 'HO Kottayam', code: 'WH-MAIN' };
+  const stockVal = curItem && curItem.available_stock != null ? curItem.available_stock : (curItem && curItem.stock != null ? curItem.stock : 0);
+
+  return `
+    <td style="width:140px;min-width:130px;padding:10px 8px;vertical-align:top;">
+      <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;font-weight:600;">
+      <div class="l-stock-info-box" style="margin-top:4px;display:flex;flex-direction:column;gap:3px;font-size:11px;">
+        <div class="l-unit-badge" style="color:#64748b;font-weight:500;text-align:right;font-size:11px;">${esc(curUnit)}</div>
+        <div class="l-wh-wrap" style="display:${hasTrack ? 'flex' : 'none'};justify-content:flex-end;">
+          <div class="l-wh-pill" style="position:relative;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:#2563eb;background:#eff6ff;padding:2px 7px;border-radius:4px;border:1px solid #bfdbfe;cursor:pointer;max-width:100%;" title="Click to select warehouse">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 21v-4h6v4M7 3h10l2 4H5l2-4z"/></svg>
+            <span class="l-wh-label" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:85px;">${esc(curWh.name || curWh.code || 'HO Kottayam')}</span>
+            <span style="font-size:8px;color:#2563eb;">▼</span>
+            <select class="in l-wh-select" aria-label="Select Warehouse" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;">
+              ${whList.map(w => `<option value="${w.id}" data-code="${esc(w.code)}" ${String(curWh.id) === String(w.id) ? 'selected' : ''}>${esc(w.name)} (${esc(w.code)})</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="l-stock-avail" style="display:${hasTrack ? 'block' : 'none'};font-size:10.5px;font-weight:600;color:#059669;text-align:right;" title="Available stock in selected warehouse">
+          Avail: ${stockVal} ${esc(curUnit)}
+        </div>
+        <div class="l-stock-warn" style="display:none;font-size:10px;line-height:1.2;font-weight:600;color:#dc2626;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;padding:3px 5px;text-align:left;margin-top:2px;"></div>
+      </div>
+      <input type="hidden" class="l-wh-id" value="${esc(curWh.id || '')}">
+      <input type="hidden" class="l-wh-code" value="${esc(curWh.code || '')}">
+    </td>
+  `;
+}
+
+function initItemTableStockTracker(tbody, items, whList, onCalc) {
+  const stockCache = {};
+
+  async function fetchStock(itemId, whId) {
+    const k = `${itemId}_${whId}`;
+    if (stockCache[k] !== undefined) return stockCache[k];
+    try {
+      const res = await api(`lookup/warehouse-stock/?item_id=${itemId}&warehouse_id=${whId}`);
+      stockCache[k] = res && res.available_stock !== undefined ? res.available_stock : 0;
+    } catch (_) {
+      const it = items.find(x => String(x.id) === String(itemId));
+      stockCache[k] = it && it.available_stock != null ? it.available_stock : (it && it.stock != null ? it.stock : 0);
+    }
+    return stockCache[k];
+  }
+
+  async function updateRow(tr, forceRefresh = false) {
+    const itVal = $('.l-item', tr)?.value;
+    const it = items.find(x => String(x.id) === String(itVal));
+    const whWrap = $('.l-wh-wrap', tr);
+    const whSelect = $('.l-wh-select', tr);
+    const whLabel = $('.l-wh-label', tr);
+    const whIdIn = $('.l-wh-id', tr);
+    const whCodeIn = $('.l-wh-code', tr);
+    const unitBadge = $('.l-unit-badge', tr);
+    const availBadge = $('.l-stock-avail', tr);
+    const warnBox = $('.l-stock-warn', tr);
+    const qtyInput = $('.l-qty', tr);
+
+    if (!it || it.type !== 'goods' || !it.track_inventory) {
+      if (whWrap) whWrap.style.display = 'none';
+      if (availBadge) availBadge.style.display = 'none';
+      if (warnBox) warnBox.style.display = 'none';
+      if (unitBadge) unitBadge.textContent = it ? (it.unit || 'Nos') : '';
+      if (qtyInput) {
+        qtyInput.style.borderColor = '';
+        qtyInput.style.backgroundColor = '';
+      }
+      return;
+    }
+
+    if (unitBadge) unitBadge.textContent = it.unit || 'Nos';
+    if (whWrap) whWrap.style.display = 'flex';
+    if (availBadge) availBadge.style.display = 'block';
+
+    let whId = whSelect?.value;
+    if (!whId && it.warehouse_id) {
+      whId = it.warehouse_id;
+      if (whSelect) whSelect.value = whId;
+    }
+    if (!whId && whList[0]) {
+      whId = whList[0].id;
+      if (whSelect) whSelect.value = whId;
+    }
+
+    const whObj = whList.find(w => String(w.id) === String(whId)) || whList[0] || { id: whId, name: 'HO Kottayam', code: 'WH-MAIN' };
+    if (whLabel) whLabel.textContent = whObj.name || whObj.code || 'Warehouse';
+    if (whIdIn) whIdIn.value = whObj.id || '';
+    if (whCodeIn) whCodeIn.value = whObj.code || '';
+
+    if (forceRefresh) {
+      delete stockCache[`${it.id}_${whObj.id}`];
+    }
+    const avail = await fetchStock(it.id, whObj.id);
+    if (availBadge) {
+      availBadge.textContent = `Avail: ${avail} ${it.unit || 'Nos'}`;
+    }
+
+    const enteredQty = num(qtyInput?.value) || 0;
+    if (enteredQty > avail) {
+      if (warnBox) {
+        warnBox.textContent = `Insufficient Stock. Available quantity in ${whObj.name || 'selected warehouse'}: ${avail} ${it.unit || 'Nos'}. Requested quantity: ${enteredQty} ${it.unit || 'Nos'}.`;
+        warnBox.style.display = 'block';
+      }
+      if (qtyInput) {
+        qtyInput.style.borderColor = '#ef4444';
+        qtyInput.style.backgroundColor = '#fef2f2';
+      }
+    } else {
+      if (warnBox) warnBox.style.display = 'none';
+      if (qtyInput) {
+        qtyInput.style.borderColor = '';
+        qtyInput.style.backgroundColor = '';
+      }
+    }
+  }
+
+  tbody.addEventListener('change', async e => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    if (e.target.classList.contains('l-item')) {
+      const itVal = e.target.value;
+      const it = items.find(x => String(x.id) === String(itVal));
+      if (it) {
+        const whSelect = $('.l-wh-select', tr);
+        if (whSelect && it.warehouse_id) {
+          whSelect.value = it.warehouse_id;
+        }
+      }
+      await updateRow(tr, true);
+      if (onCalc) onCalc();
+    } else if (e.target.classList.contains('l-wh-select')) {
+      await updateRow(tr, true);
+      if (onCalc) onCalc();
+    }
+  });
+
+  tbody.addEventListener('input', e => {
+    if (e.target.classList.contains('l-qty')) {
+      const tr = e.target.closest('tr');
+      if (tr) updateRow(tr, false);
+    }
+  });
+
+  setTimeout(() => {
+    $$('tr', tbody).forEach(tr => updateRow(tr, false));
+  }, 10);
+
+  return {
+    updateRow,
+    validate: () => {
+      let firstError = null;
+      $$('tr', tbody).forEach(tr => {
+        const warnBox = $('.l-stock-warn', tr);
+        if (warnBox && warnBox.style.display !== 'none' && warnBox.textContent.trim()) {
+          if (!firstError) firstError = warnBox.textContent.trim();
+        }
+      });
+      return { valid: !firstError, error: firstError };
+    }
+  };
+}
+
 async function recurringInvoiceForm(id, targetEl, onDone) {
   if (typeof targetEl === 'function') {
     onDone = targetEl;
@@ -6874,9 +7042,10 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     id = null;
   }
 
-  const [parties, items, rec] = await Promise.all([
+  const [parties, items, whList, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
     id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData)
   ]);
 
@@ -6914,9 +7083,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
-      <td style="width:90px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
-      </td>
+${renderStockQuantityCell(l, items, whList)}
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
@@ -7083,7 +7250,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                 <tr>
                   <th style="width:50px;"></th>
                   <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
-                  <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th class="th-tax-explainer" data-doc-kind="recurring-invoices" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
@@ -7155,6 +7322,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   const form = $('#recurring-form-element', target);
   const tbody = $('#recurring-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRecTotals());
 
   const neverEndsCb = $('#rec-never-ends', form);
   const endDateIn = $('#rec-end-date', form);
@@ -7250,15 +7418,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
-        const badge = $('.l-stock-badge', tr);
-        if (badge) {
-          if (it.track_inventory && it.stock != null) {
-            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
-            badge.style.display = 'block';
-          } else {
-            badge.style.display = 'none';
-          }
-        }
+        stockTracker.updateRow(tr, true);
       }
       calcRecTotals();
     }
@@ -7279,6 +7439,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
 
   $('#btn-rec-add-row', form)?.addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
     calcRecTotals();
   });
 
@@ -7415,6 +7576,9 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
 
       lines.push({
         item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
         description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qVal,
@@ -8181,11 +8345,12 @@ async function quoteForm(id, targetEl, onDone) {
   }
   const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
 
-  const [parties, items, projects, salespersons, nextNum, rec] = await Promise.all([
+  const [parties, items, projects, salespersons, whList, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/projects/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
     id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
@@ -8227,9 +8392,7 @@ async function quoteForm(id, targetEl, onDone) {
         <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
-      <td style="width:90px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
-      </td>
+${renderStockQuantityCell(l, items, whList)}
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
@@ -8382,7 +8545,7 @@ async function quoteForm(id, targetEl, onDone) {
                 <tr>
                   <th style="width:50px;"></th>
                   <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
-                  <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th class="th-tax-explainer" data-doc-kind="quotes" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
@@ -8521,6 +8684,7 @@ async function quoteForm(id, targetEl, onDone) {
   const form = $('#quote-form-element', target);
   const tbody = $('#quote-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcQuote());
 
   function updateProjectFilter() {
     const custId = $('#q-customer', form).value;
@@ -8621,15 +8785,7 @@ async function quoteForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
-        const badge = $('.l-stock-badge', tr);
-        if (badge) {
-          if (it.track_inventory && it.stock != null) {
-            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
-            badge.style.display = 'block';
-          } else {
-            badge.style.display = 'none';
-          }
-        }
+        stockTracker.updateRow(tr, true);
       }
       calcQuote();
     }
@@ -8650,6 +8806,7 @@ async function quoteForm(id, targetEl, onDone) {
 
   $('#btn-quote-add-row', form)?.addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
     calcQuote();
   });
 
@@ -8874,6 +9031,9 @@ async function quoteForm(id, targetEl, onDone) {
 
       lines.push({
         item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
         description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qVal,
@@ -8979,9 +9139,10 @@ window.quoteForm = quoteForm;
 
 
 async function salesOrderForm(id, onDone) {
-  const [parties, items, nextNum, rec] = await Promise.all([
+  const [parties, items, whList, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
     id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
@@ -9020,9 +9181,7 @@ async function salesOrderForm(id, onDone) {
           </div>
         </div>
       </td>
-      <td style="width:110px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" aria-label="Quantity" value="${esc(l.quantity || '1.00')}" style="text-align:right;">
-      </td>
+${renderStockQuantityCell(l, items, whList)}
       <td style="width:130px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;">
       </td>
@@ -9152,7 +9311,7 @@ async function salesOrderForm(id, onDone) {
               <tr style="background:var(--surface-glass-subtle);border-bottom:1px solid var(--bd);">
                 <th style="width:30px;"></th>
                 <th>ITEM DETAILS</th>
-                <th style="width:110px;" class="r">QUANTITY</th>
+                <th style="width:140px;min-width:130px;" class="r">QUANTITY</th>
                 <th style="width:130px;" class="r">RATE</th>
                 <th style="width:120px;">DISCOUNT %</th>
                 <th class="th-tax-explainer" data-doc-kind="sales-orders" style="width:140px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
@@ -9210,6 +9369,7 @@ async function salesOrderForm(id, onDone) {
   const form = $('#so-form-element', m.el);
   const tbody = $('#so-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcSo());
 
   function calcSo() {
     const isTaxInclusive = ($('#so-tax-pricing', form)?.value === 'tax_inclusive');
@@ -9318,6 +9478,7 @@ async function salesOrderForm(id, onDone) {
         if (it.description && !$('.l-desc', tr).value) $('.l-desc', tr).value = it.description;
         if (it.hsn_sac) $('.l-hsn', tr).value = it.hsn_sac;
         if (it.gst_rate != null) $('.l-gst', tr).value = String(num(it.gst_rate));
+        stockTracker.updateRow(tr, true);
       }
       calcSo();
     }
@@ -9338,6 +9499,7 @@ async function salesOrderForm(id, onDone) {
 
   $('#btn-so-add-row', form).addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
     calcSo();
   });
 
@@ -9393,6 +9555,9 @@ async function salesOrderForm(id, onDone) {
         lines.push({
           item: itId || null,
           item_id: itId || null,
+          warehouse: $('.l-wh-select', tr)?.value || null,
+          warehouse_id: $('.l-wh-select', tr)?.value || null,
+          warehouse_code: $('.l-wh-code', tr)?.value || '',
           description: desc || (itId && byId[itId] ? byId[itId].name : 'Line item'),
           hsn_sac: hsn,
           quantity: qVal,
@@ -9460,14 +9625,16 @@ window.importStatementModal = importStatementModal;
 
 async function invoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, items, salespersons, nextNum, rec] = await Promise.all([
+  const [parties, items, salespersons, nextNum, rec, warehouses] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-invoice-number/').catch(() => ({ next_number: 'INV-000001' })),
-    id ? api(`invoices/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`invoices/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/warehouses/').catch(() => [])
   ]);
 
+  const whList = (warehouses && warehouses.length) ? warehouses : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const invNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'INV-000001');
   const invCustomer = rec ? (rec.customer_id || rec.party_id) : '';
   const invDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -9499,15 +9666,12 @@ async function invoiceForm(id, targetEl, onDone) {
         <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
           <option value="">Type or click to select an item.</option>
           <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+          ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
-        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
-      <td style="width:90px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
-      </td>
+      ${renderStockQuantityCell(l, items, whList)}
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
@@ -9664,7 +9828,7 @@ async function invoiceForm(id, targetEl, onDone) {
                 <tr>
                   <th style="width:50px;"></th>
                   <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
-                  <th style="width:90px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
                   <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
                   <th class="th-tax-explainer" data-doc-kind="invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
@@ -9806,6 +9970,7 @@ async function invoiceForm(id, targetEl, onDone) {
   const form = $('#invoice-form-element', target);
   const tbody = $('#invoice-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcInvoice());
 
   function updateDueDate() {
     const dVal = $('#inv-date', form).value;
@@ -10054,6 +10219,7 @@ async function invoiceForm(id, targetEl, onDone) {
         handleQuickCreateSelect(e.target, newItem => {
           items.push(newItem);
           byId[String(newItem.id)] = newItem;
+          stockTracker.updateRow(e.target.closest('tr'), true);
           calcInvoice();
         });
         return;
@@ -10065,15 +10231,7 @@ async function invoiceForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
-        const badge = $('.l-stock-badge', tr);
-        if (badge) {
-          if (it.track_inventory && it.stock != null) {
-            badge.innerHTML = `<i class="fa-solid fa-warehouse"></i> ${esc(it.warehouse_code || 'HO')}: <strong>${it.stock}</strong> ${esc(it.unit || 'units')} available`;
-            badge.style.display = 'block';
-          } else {
-            badge.style.display = 'none';
-          }
-        }
+        stockTracker.updateRow(tr, true);
       }
       calcInvoice();
     }
@@ -10084,6 +10242,7 @@ async function invoiceForm(id, targetEl, onDone) {
 
   $('#btn-inv-add-row', form).addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
     calcInvoice();
   });
 
@@ -10091,6 +10250,7 @@ async function invoiceForm(id, targetEl, onDone) {
     bulkItemPickerModal(items, (selectedItems) => {
       selectedItems.forEach(it => {
         tbody.insertAdjacentHTML('beforeend', rowHtml(it));
+        stockTracker.updateRow(tbody.lastElementChild, true);
       });
       calcInvoice();
     });
@@ -10207,6 +10367,9 @@ async function invoiceForm(id, targetEl, onDone) {
       }
       lines.push({
         item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
         description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
@@ -10219,6 +10382,14 @@ async function invoiceForm(id, targetEl, onDone) {
     if (lineErr || !lines.length) {
       toast('Please enter a description or select an item for each row.', 'err');
       return;
+    }
+
+    if (!isDraft && !(APP.org && APP.org.allow_negative_stock)) {
+      const stockCheck = stockTracker.validate();
+      if (!stockCheck.valid) {
+        toast(stockCheck.error, 'err');
+        return;
+      }
     }
 
     const payload = {
@@ -10302,10 +10473,11 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, items, salespersons, nextNum, rec] = await Promise.all([
+  const [parties, items, salespersons, whList, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
     id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
@@ -10347,9 +10519,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
-      <td style="width:90px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
-      </td>
+${renderStockQuantityCell(l, items, whList)}
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
@@ -10506,7 +10676,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
                 <tr>
                   <th style="width:50px;"></th>
                   <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
-                  <th style="width:90px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
                   <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
                   <th class="th-tax-explainer" data-doc-kind="retainer-invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
@@ -10645,6 +10815,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const form = $('#retainer-form-element', target);
   const tbody = $('#retainer-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRetainer());
 
   function updateDueDate() {
     const dVal = $('#ret-date', form).value;
@@ -10907,6 +11078,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         $('.l-hsn', tr).value = it.hsn_sac || '';
         $('.l-rate', tr).value = it.selling_price || 0;
         $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        stockTracker.updateRow(tr, true);
       }
       calcRetainer();
     }
@@ -10917,6 +11089,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
   $('#btn-ret-add-row', form).addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
     calcRetainer();
   });
 
@@ -11011,6 +11184,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       }
       lines.push({
         item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
         description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
@@ -11023,6 +11199,14 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     if (lineErr || !lines.length) {
       toast('Please enter a description or select an item for each row.', 'err');
       return;
+    }
+
+    if (!isDraft && !(APP.org && APP.org.allow_negative_stock)) {
+      const stockCheck = stockTracker.validate();
+      if (!stockCheck.valid) {
+        toast(stockCheck.error, 'err');
+        return;
+      }
     }
 
     const payload = {

@@ -1589,10 +1589,29 @@ def parse_lines(raw, org=None):
             gst = c.number('tax_rate', default=Decimal('0'))
         if gst < Decimal('0') or gst > Decimal('100'):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
+        wh_id = c.integer('warehouse_id', lo=1, default=None)
+        if not wh_id:
+            wh_id = c.integer('warehouse', lo=1, default=None)
+        wh_code = c.text('warehouse_code', max_len=30)
+        warehouse = None
+        if wh_id:
+            wqs = Warehouse.objects.filter(pk=wh_id)
+            if org:
+                wqs = wqs.filter(organization=org)
+            warehouse = wqs.first()
+            if warehouse:
+                wh_code = warehouse.code
+        elif wh_code and org:
+            warehouse = Warehouse.objects.filter(organization=org, code__iexact=wh_code).first()
+        elif item and item.warehouse:
+            warehouse = item.warehouse
+            wh_code = warehouse.code
+
         if c.errors:
             errors.append(f'Line {i}: ' + '; '.join(f'{k} - {m}' for k, m in c.errors.items()))
         else:
-            out.append({'item': item, 'description': desc, 'hsn_sac': hsn, 'quantity': qty, 'rate': rate,
+            out.append({'item': item, 'warehouse': warehouse, 'warehouse_code': wh_code,
+                        'description': desc, 'hsn_sac': hsn, 'quantity': qty, 'rate': rate,
                         'discount_percent': disc, 'gst_rate': gst, 'position': i})
     if errors:
         raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
@@ -1959,7 +1978,11 @@ class DocResource(Resource):
                   'lines': [{'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
                              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
                              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
-                             'line_total': l.line_total} for l in o.lines.all()],
+                             'line_total': l.line_total,
+                             'warehouse_id': getattr(l, 'warehouse_id', None) or (l.item.warehouse_id if l.item else None),
+                             'warehouse_code': getattr(l, 'warehouse_code', '') or (l.item.warehouse_code if l.item else ''),
+                             'warehouse_name': l.warehouse.name if getattr(l, 'warehouse', None) else (l.item.warehouse.name if l.item and l.item.warehouse else ''),
+                             'unit': l.item.unit if l.item else 'nos'} for l in o.lines.select_related('item', 'warehouse', 'item__warehouse')],
                   'payments': payments,
                   'allocations': allocations})
         r.update(self.extra_detail(o))
@@ -2031,7 +2054,10 @@ class DocResource(Resource):
             obj.total = max(Decimal('0.00'), obj.total + adj)
         obj.save()
         obj.lines.all().delete()
-        self.Line.objects.bulk_create([self.Line(**{self.line_fk: obj}, item=l['item'], description=l['description'],
+        self.Line.objects.bulk_create([self.Line(**{self.line_fk: obj}, item=l['item'],
+                                                 warehouse=l.get('warehouse'),
+                                                 warehouse_code=l.get('warehouse_code', ''),
+                                                 description=l['description'],
                                                  hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                                                  discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
                                                  taxable=l['taxable'], tax_amount=l['tax_amount'],
@@ -6384,11 +6410,25 @@ def lookup(request, name):
                  'billing_address': o.billing_address}
                 for o in org_filter(Vendor.objects.filter(active=True)).order_by('name')]
     elif name == 'items':
-        data = [{'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,
-                 'selling_price': o.selling_price, 'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate,
-                 'warehouse_id': o.warehouse_id, 'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
-                 'track_inventory': o.item_type == 'goods' and o.track_inventory, 'stock': format_qty(o.stock), 'unit': o.unit}
-                for o in org_filter(Item.objects.filter(active=True)).select_related('warehouse', 'preferred_vendor').order_by('name')]
+        item_objs = list(org_filter(Item.objects.filter(active=True)).select_related('warehouse', 'preferred_vendor').order_by('name'))
+        tracked = [o for o in item_objs if o.item_type == 'goods' and o.track_inventory]
+        stock_map = services.get_stock_movement_summary(tracked, org=user_org) if tracked else {}
+        data = []
+        for o in item_objs:
+            sum_entry = stock_map.get(o.pk)
+            avail_stock = sum_entry['available_stock'] if sum_entry else o.stock
+            wh_name = o.warehouse.name if o.warehouse else (o.warehouse_code or 'HO Kottayam')
+            data.append({
+                'id': o.pk, 'name': o.name, 'sku': o.sku, 'type': o.item_type, 'hsn_sac': o.hsn_sac, 'category': o.category,
+                'selling_price': o.selling_price, 'purchase_price': o.purchase_price, 'gst_rate': o.gst_rate,
+                'warehouse_id': o.warehouse_id,
+                'warehouse_code': o.warehouse_code or (o.warehouse.code if o.warehouse else 'WH-MAIN'),
+                'warehouse_name': wh_name,
+                'track_inventory': o.item_type == 'goods' and o.track_inventory,
+                'stock': format_qty(avail_stock) if (o.item_type == 'goods' and o.track_inventory) else None,
+                'available_stock': float(avail_stock) if (o.item_type == 'goods' and o.track_inventory) else 0.0,
+                'unit': o.unit or 'Nos'
+            })
     elif name == 'accounts':
         services.ensure_default_accounts(user_org)
         data = [{'id': o.pk, 'code': o.code, 'name': o.name, 'type': o.account_type, 'sub_type': o.sub_type}
@@ -6410,18 +6450,61 @@ def lookup(request, name):
     elif name == 'warehouse-stock':
         item_id = request.GET.get('item_id')
         wh_id = request.GET.get('warehouse_id')
-        if not item_id or not wh_id:
-            raise ApiError(400, 'item_id and warehouse_id are required.')
-        avail = services.get_item_warehouse_stock(item_id, wh_id, org=user_org)
-        item = Item.objects.filter(pk=item_id, organization=user_org).first() if user_org else None
-        data = {'available_stock': float(avail), 'unit': item.unit if item else 'nos'}
+        if not item_id:
+            raise ApiError(400, 'item_id is required.')
+        item = Item.objects.filter(pk=item_id, organization=user_org).first() if user_org else Item.objects.filter(pk=item_id).first()
+        if not item:
+            raise ApiError(404, 'Item not found.')
+        warehouses_list = list(org_filter(Warehouse.objects.filter(active=True)).order_by('name'))
+        if wh_id:
+            wh = Warehouse.objects.filter(pk=wh_id).first()
+            wh_target = wh.code if wh else wh_id
+            avail = services.get_item_warehouse_stock(item, wh_target, org=user_org)
+            data = {
+                'item_id': item.pk,
+                'warehouse_id': wh.pk if wh else None,
+                'warehouse_code': wh.code if wh else str(wh_id),
+                'warehouse_name': wh.name if wh else str(wh_id),
+                'available_stock': float(avail),
+                'unit': item.unit or 'Nos'
+            }
+        else:
+            stocks = []
+            for wh in warehouses_list:
+                avail = services.get_item_warehouse_stock(item, wh.code, org=user_org)
+                stocks.append({
+                    'warehouse_id': wh.pk,
+                    'warehouse_code': wh.code,
+                    'warehouse_name': wh.name,
+                    'available_stock': float(avail),
+                    'unit': item.unit or 'Nos'
+                })
+            sum_entry = services.get_stock_movement_summary([item], org=user_org).get(item.pk, {})
+            tot_avail = sum_entry.get('available_stock', item.stock)
+            data = {
+                'item_id': item.pk,
+                'overall_available_stock': float(tot_avail),
+                'unit': item.unit or 'Nos',
+                'warehouses': stocks
+            }
     elif name == 'warehouses':
+        wh_qs = org_filter(Warehouse.objects.filter(active=True)).select_related('parent').order_by('name')
+        if user_org and not wh_qs.exists():
+            Warehouse.objects.create(
+                organization=user_org,
+                name='HO Kottayam',
+                code='WH-MAIN',
+                is_primary=True,
+                shared_database=True,
+                active=True
+            )
+            wh_qs = org_filter(Warehouse.objects.filter(active=True)).select_related('parent').order_by('name')
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'is_primary': o.is_primary,
                  'is_sub_warehouse': bool(o.parent_id), 'parent_id': o.parent_id,
                  'parent_code': o.parent.code if o.parent else '',
                  'parent_name': o.parent.name if o.parent else '',
                  'shared_database': o.shared_database}
-                for o in org_filter(Warehouse.objects.filter(active=True)).select_related('parent').order_by('name')]
+                for o in wh_qs]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
                 for o in org_filter(PriceList.objects.filter(active=True)).order_by('name')]

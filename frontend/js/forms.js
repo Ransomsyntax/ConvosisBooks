@@ -842,6 +842,517 @@ const TDS_OPTIONS = [
   ['194H', '194H - Commission or Brokerage (5%)']
 ];
 
+
+/**
+ * Professional Educational Explainer Modal:
+ * Tax Exclusive vs Inclusive Pricing, B2B vs B2C Billing, and Module-Specific GST Guidance.
+ */
+function openGstPricingExplainerModal(contextKind = 'invoices') {
+  const titles = {
+    'quotes': 'Estimates & Quotations',
+    'sales-orders': 'Sales Orders',
+    'invoices': 'Tax Invoices',
+    'recurring-invoices': 'Recurring Invoices',
+    'retainer-invoices': 'Retainer Invoices',
+    'credit-notes': 'Credit Notes (Sales Adjustments)',
+    'debit-notes': 'Debit Notes (Supplementary Billing)',
+    'bills': 'Purchase Bills (Vendor Invoices)',
+    'purchase-orders': 'Purchase Orders',
+    'vendor-credits': 'Vendor Credits (Purchase Debit Notes)',
+    'delivery-challans': 'Delivery Challans (Rule 55 Movement)',
+    'payments-received': 'Payments Received (Receipt Vouchers)'
+  };
+  const docTitle = titles[contextKind] || 'Invoices & Billing';
+
+  const moduleSpecificContent = {
+    'quotes': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-invoice"></i> Module Context: Estimates & Quotations
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Quotations and estimates provide prospective buyers with agreed prices and anticipated GST before a commitment or supply takes place.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Non-Tax Document:</b> A quotation is an offer to supply, not a tax invoice. It does not create output tax liability for the supplier or allow the buyer to claim Input Tax Credit (ITC).</li>
+        <li><b>Tax Exclusive Estimation:</b> Quotations typically specify item rates on a tax-exclusive basis, clearly showing the applicable GST rate (e.g. 18%) and estimated tax amount so customers understand the pre-tax and total cost breakdown.</li>
+        <li><b>Conversion to Tax Invoice:</b> Once approved or accepted, the quotation is converted into a formal Tax Invoice or Sales Order, at which point the official time of supply and GST liability arise under Section 12 or 13 of the CGST Act.</li>
+      </ul>
+    `,
+    'sales-orders': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-cart-shopping"></i> Module Context: Sales Orders
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          A Sales Order confirms a customer's order and establishes contractual commercial terms prior to shipment and billing.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Internal Booking:</b> Sales orders confirm agreed quantities, delivery schedules, and price agreements before actual supply.</li>
+        <li><b>Agreed Valuation:</b> Line item rates are entered on a pre-tax (tax-exclusive) basis with estimated GST according to the customer's delivery state (Place of Supply).</li>
+        <li><b>Downstream Supply:</b> Delivery Challans and Tax Invoices are generated directly from the Sales Order, ensuring complete traceability and consistent HSN/SAC codes.</li>
+      </ul>
+    `,
+    'invoices': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-lines"></i> Module Context: Tax Invoices (Customer Billing)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          A Tax Invoice is the primary legal document issued under Section 31 of the CGST Act for outward taxable supplies of goods or services.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>B2B Invoicing:</b> Requires the recipient's verified 15-digit GSTIN, legal name, billing and shipping address, Place of Supply, HSN/SAC code, and distinct line-item tax breakdown (CGST+SGST or IGST). It acts as the legal basis for the buyer to claim Input Tax Credit (ITC) under Section 16.</li>
+        <li><b>B2C Invoicing:</b> Issued to end consumers. Can be tax-inclusive or tax-exclusive. If the value exceeds ₹50,000 for inter-state supplies, customer name, address, and state must be recorded.</li>
+        <li><b>E-Invoicing & Compliance:</b> Businesses meeting notified turnover thresholds must upload B2B invoices to the Invoice Registration Portal (IRP) to generate an IRN and QR code before issuing.</li>
+      </ul>
+    `,
+    'recurring-invoices': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-rotate"></i> Module Context: Recurring Invoices
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Recurring invoices automate continuous or periodic supplies such as monthly retainers, software licenses, maintenance contracts, or rent.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Continuous Supply of Services (Section 31(5)):</b> Where services are provided continuously under a contract with periodic payments, invoices are issued on or before each scheduled payment due date.</li>
+        <li><b>Automated Tax Calculation:</b> On each scheduled invoice generation run, the system applies the current active GST rates and intra/inter-state logic without altering past historical invoices.</li>
+        <li><b>Indefinite vs Fixed Duration:</b> Recurring schedules can run indefinitely ("Never Ends") or until a specified end date, preventing missed billing cycles.</li>
+      </ul>
+    `,
+    'retainer-invoices': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-hand-holding-dollar"></i> Module Context: Retainer Invoices & Advances
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Retainer invoices document customer advance deposits received before goods or services are delivered.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>GST on Advances:</b> Under Section 31(3)(d), advances received for services attract GST at the time of receipt. For goods, small and standard businesses are generally exempt from advance GST under Notification No. 66/2017-Central Tax until the tax invoice is issued.</li>
+        <li><b>Purpose Specification:</b> Clearly recording the purpose of the retainer (e.g. project mobilization advance) ensures accurate accounting and contract traceability.</li>
+        <li><b>Subsequent Application:</b> When services are performed and the final regular Tax Invoice is issued, the available retainer credit is applied against the invoice, adjusting accounts receivable seamlessly.</li>
+      </ul>
+    `,
+    'credit-notes': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-invoice-dollar"></i> Module Context: Credit Notes (Section 34)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          A Credit Note is issued by a supplier to reduce the taxable value or tax liability of an earlier issued invoice.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Grounds for Issuance:</b> Issued when goods are returned, when agreed post-sale discounts are granted, or when excess taxable value or tax was charged on the original invoice.</li>
+        <li><b>Tax Liability Adjustment:</b> When issued in compliance with Section 34 of the CGST Act, the supplier's output tax liability is reduced, provided the recipient correspondingly reverses their Input Tax Credit (ITC).</li>
+        <li><b>Linking to Original Invoice:</b> Must clearly reference the original invoice number and date, and must be declared in GSTR-1 on or before 30th November following the end of the financial year.</li>
+      </ul>
+    `,
+    'debit-notes': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-circle-plus"></i> Module Context: Debit Notes (Section 34)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          A Debit Note is issued by a supplier when taxable value or tax in the original invoice was understated.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Supplementary Invoicing:</b> Acts like a supplementary invoice when prices are revised upward, extra quantities are billed, or higher tax rates apply.</li>
+        <li><b>Output Tax Increase:</b> The supplier pays additional tax on the differential amount, and the recipient is entitled to claim additional Input Tax Credit (ITC) based on the debit note.</li>
+      </ul>
+    `,
+    'bills': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-invoice"></i> Module Context: Purchase Bills (Inward Supplies)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Purchase bills record tax invoices received from vendors and suppliers for inward procurement.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Input Tax Credit (ITC) Verification:</b> To claim ITC under Section 16, your business must possess a valid tax invoice, have received the goods/services, ensure tax has been paid to the government, and have the invoice reflected in GSTR-2B.</li>
+        <li><b>Blocked Credit (Section 17(5)):</b> Certain inward expenses (e.g. motor vehicles for personal use, club memberships, food and beverages) are ineligible for ITC and must be expensed as gross cost.</li>
+        <li><b>Vendor GSTIN & Place of Supply:</b> Recording the correct vendor GSTIN and Place of Supply ensures accurate classification of inward CGST+SGST or IGST in GSTR-3B.</li>
+      </ul>
+    `,
+    'purchase-orders': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-clipboard-list"></i> Module Context: Purchase Orders
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Purchase Orders represent procurement commitments issued to vendors before delivery and billing.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Pre-Tax Procurement:</b> Vendor prices are typically negotiated and recorded on a tax-exclusive basis with expected GST rates.</li>
+        <li><b>Bill Matching:</b> When the supplier delivers goods and issues a tax invoice, it is matched with the Purchase Order to verify quantities, rates, and tax amounts before payment.</li>
+      </ul>
+    `,
+    'vendor-credits': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-file-circle-minus"></i> Module Context: Vendor Credits (Purchase Returns)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Vendor credits record purchase returns or rate reductions received from suppliers.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Mandatory ITC Reversal:</b> When goods are returned or supplier credit notes are received, the corresponding Input Tax Credit previously claimed must be reversed in Table 4(B) of GSTR-3B.</li>
+        <li><b>Payable Reduction:</b> Reduces outstanding liabilities owed to the supplier.</li>
+      </ul>
+    `,
+    'delivery-challans': `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px;margin-bottom:18px;">
+        <h4 style="font-size:14px;font-weight:700;color:#1e3a8a;margin:0 0 6px 0;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-truck"></i> Module Context: Delivery Challans (Rule 55)
+        </h4>
+        <p style="font-size:12.5px;color:#1e40af;line-height:1.6;margin:0;">
+          Delivery Challans document the physical transportation of goods without an immediate sale or transfer of title under Rule 55 of CGST Rules.
+        </p>
+      </div>
+      <ul style="font-size:13px;line-height:1.7;color:#334155;padding-left:20px;margin-bottom:16px;">
+        <li><b>Permitted Use Cases:</b> Transportation for job work, supply of liquid gas, goods sent on approval or sale-or-return basis, and consignment transfers.</li>
+        <li><b>Non-Tax Movement:</b> No GST is payable on a delivery challan. A formal Tax Invoice must be issued when the goods are ultimately sold or the approval period expires.</li>
+      </ul>
+    `
+  };
+
+  const currentModHtml = moduleSpecificContent[contextKind] || moduleSpecificContent['invoices'];
+
+  const m = Modal.open({
+    title: `GST & Pricing Guide: Tax Exclusive, Tax Inclusive, B2B & B2C Billing`,
+    dialog: true,
+    wide: true,
+    body: `
+      <div class="gst-explainer-modal-container" style="color:#1e293b;font-size:13px;line-height:1.6;">
+        <!-- Tab Navigation Bar -->
+        <div style="display:flex;gap:8px;border-bottom:2px solid #e2e8f0;padding-bottom:10px;margin-bottom:20px;flex-wrap:wrap;">
+          <button type="button" class="btn gst-tab-btn active" data-tab="tab-pricing" style="font-weight:600;font-size:12.5px;padding:6px 14px;border-radius:6px;cursor:pointer;">
+            <i class="fa-solid fa-calculator" style="margin-right:6px;color:#2563eb;"></i> Tax Exclusive vs Inclusive
+          </button>
+          <button type="button" class="btn gst-tab-btn" data-tab="tab-b2b-b2c" style="font-weight:600;font-size:12.5px;padding:6px 14px;border-radius:6px;cursor:pointer;">
+            <i class="fa-solid fa-building" style="margin-right:6px;color:#10b981;"></i> B2B vs B2C Billing
+          </button>
+          <button type="button" class="btn gst-tab-btn" data-tab="tab-context" style="font-weight:600;font-size:12.5px;padding:6px 14px;border-radius:6px;cursor:pointer;">
+            <i class="fa-solid fa-bookmark" style="margin-right:6px;color:#f59e0b;"></i> ${docTitle} Guide
+          </button>
+          <button type="button" class="btn gst-tab-btn" data-tab="tab-rates" style="font-weight:600;font-size:12.5px;padding:6px 14px;border-radius:6px;cursor:pointer;">
+            <i class="fa-solid fa-scale-balanced" style="margin-right:6px;color:#8b5cf6;"></i> GST Rates & Compliance
+          </button>
+        </div>
+
+        <!-- TAB 1: Tax Exclusive vs Inclusive -->
+        <div id="tab-pricing" class="gst-tab-pane">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+            <!-- Tax Exclusive Box -->
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="background:#dbeafe;color:#1e40af;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;">Method 1</span>
+                <h3 style="font-size:15px;font-weight:700;color:#0f172a;margin:0;">Tax Exclusive Pricing</h3>
+              </div>
+              <p style="margin:0 0 12px 0;color:#475569;font-size:12.5px;">
+                The entered item price <b>does not include GST</b>. GST is calculated separately and added to the item price to determine the final invoice amount.
+              </p>
+
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;margin-bottom:12px;">
+                <div style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Example (GST 18%):</div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:4px 0;color:#475569;">Item Price:</td><td style="padding:4px 0;text-align:right;font-weight:600;">₹1,000.00</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:4px 0;color:#475569;">GST (18%):</td><td style="padding:4px 0;text-align:right;font-weight:600;color:#2563eb;">₹180.00</td></tr>
+                  <tr style="font-weight:700;color:#0f172a;"><td style="padding:6px 0;">Final Total:</td><td style="padding:6px 0;text-align:right;font-size:13px;color:#16a34a;">₹1,180.00</td></tr>
+                </table>
+              </div>
+
+              <div style="font-size:12px;margin-bottom:10px;">
+                <b style="color:#0f172a;">Key Benefits:</b>
+                <ul style="margin:4px 0 0 0;padding-left:18px;color:#475569;line-height:1.5;">
+                  <li>Clearly separates product/service price and GST.</li>
+                  <li>Makes tax amounts transparent to customers.</li>
+                  <li>Useful for B2B transactions and businesses quoting prices before GST.</li>
+                  <li>Helps businesses understand their taxable value and tax liability.</li>
+                </ul>
+              </div>
+
+              <div style="background:#eff6ff;border-left:3px solid #2563eb;padding:8px 12px;border-radius:4px;font-size:11.5px;color:#1e40af;">
+                <b>When to Use:</b> Use Tax Exclusive when your quoted or entered prices do not include GST and tax needs to be added on top.
+              </div>
+            </div>
+
+            <!-- Tax Inclusive Box -->
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;">Method 2</span>
+                <h3 style="font-size:15px;font-weight:700;color:#0f172a;margin:0;">Tax Inclusive Pricing</h3>
+              </div>
+              <p style="margin:0 0 12px 0;color:#475569;font-size:12.5px;">
+                The entered item price <b>already includes GST</b>. GST is extracted from the entered price to calculate taxable value and GST amount instead of adding GST on top.
+              </p>
+
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;margin-bottom:12px;">
+                <div style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:6px;">Example (GST 18%):</div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:4px 0;color:#475569;">Entered / Final Price:</td><td style="padding:4px 0;text-align:right;font-weight:600;">₹1,000.00</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:4px 0;color:#475569;">Taxable Value (Base):</td><td style="padding:4px 0;text-align:right;font-weight:600;">₹847.46</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:4px 0;color:#475569;">GST Included (18%):</td><td style="padding:4px 0;text-align:right;font-weight:600;color:#2563eb;">₹152.54</td></tr>
+                  <tr style="font-weight:700;color:#0f172a;"><td style="padding:6px 0;">Final Total:</td><td style="padding:6px 0;text-align:right;font-size:13px;color:#16a34a;">₹1,000.00</td></tr>
+                </table>
+                <div style="font-size:11px;color:#64748b;margin-top:6px;padding-top:6px;border-top:1px dashed #e2e8f0;">
+                  <code>Taxable Value = Total Price ÷ (1 + GST Rate) = ₹1,000 ÷ 1.18 = ₹847.46</code><br>
+                  <code>GST Amount = Total Price − Taxable Value = ₹1,000 − ₹847.46 = ₹152.54</code>
+                </div>
+              </div>
+
+              <div style="font-size:12px;margin-bottom:10px;">
+                <b style="color:#0f172a;">Key Benefits:</b>
+                <ul style="margin:4px 0 0 0;padding-left:18px;color:#475569;line-height:1.5;">
+                  <li>Displays the final payable price customers need to pay upfront.</li>
+                  <li>Makes pricing easier for retail customers and consumers.</li>
+                  <li>Avoids unexpected GST additions at checkout or billing.</li>
+                  <li>Commonly used in FMCG, retail, hospitality, and direct-to-consumer services.</li>
+                </ul>
+              </div>
+
+              <div style="background:#fef3c7;border-left:3px solid #d97706;padding:8px 12px;border-radius:4px;font-size:11.5px;color:#92400e;">
+                <b>When to Use:</b> Use Tax Inclusive when entered prices already include GST.
+              </div>
+            </div>
+          </div>
+
+          <!-- Difference Table -->
+          <div style="margin-top:14px;">
+            <h4 style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">Difference Between Tax Exclusive and Tax Inclusive</h4>
+            <div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
+              <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                <thead style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                  <tr>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">Feature</th>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">Tax Exclusive</th>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">Tax Inclusive</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Entered price</td><td style="padding:8px 12px;">Before GST</td><td style="padding:8px 12px;">Including GST</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">GST calculation</td><td style="padding:8px 12px;">Added separately</td><td style="padding:8px 12px;">Extracted from price</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Final invoice amount</td><td style="padding:8px 12px;">Price + GST</td><td style="padding:8px 12px;">Entered price</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Typical use case</td><td style="padding:8px 12px;">B2B quotations and commercial billing</td><td style="padding:8px 12px;">B2C retail and consumer billing</td></tr>
+                  <tr><td style="padding:8px 12px;font-weight:600;">What the customer sees</td><td style="padding:8px 12px;">Base price + tax breakdown</td><td style="padding:8px 12px;">Final tax-inclusive price</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11.5px;color:#64748b;margin-top:8px;font-style:italic;">
+              Clarification Note: The choice between tax exclusive and tax inclusive pricing does not alter the legal classification of an invoice as B2B or B2C. Both pricing methods are permitted in both types of transactions under GST laws. While B2B transactions commonly use tax-exclusive pricing and retail transactions often use tax-inclusive pricing, these are commercial practices rather than statutory requirements.
+            </p>
+          </div>
+        </div>
+
+        <!-- TAB 2: B2B vs B2C Billing -->
+        <div id="tab-b2b-b2c" class="gst-tab-pane" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+            <!-- B2B Section -->
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;">Category 1</span>
+                <h3 style="font-size:15px;font-weight:700;color:#0f172a;margin:0;">B2B – Business to Business</h3>
+              </div>
+              <p style="margin:0 0 10px 0;color:#475569;font-size:12.5px;">
+                B2B refers to transactions between two registered or business entities.
+              </p>
+
+              <div style="font-size:12px;color:#334155;margin-bottom:12px;">
+                <b style="color:#0f172a;">Essential B2B Invoicing Requirements:</b>
+                <ul style="margin:4px 0 0 0;padding-left:18px;color:#475569;line-height:1.5;">
+                  <li><b>Supplier & Customer Business Details:</b> Legal name, trade name, and registered business address.</li>
+                  <li><b>Customer GSTIN:</b> 15-character GSTIN verified and active on the common GST portal.</li>
+                  <li><b>Billing & Shipping Addresses:</b> Explicit addresses to establish Place of Supply and physical movement.</li>
+                  <li><b>Place of Supply (PoS):</b> Key legal determinant under IGST Act to apply CGST+SGST vs IGST.</li>
+                  <li><b>HSN / SAC Codes:</b> Mandatory 4, 6 or 8-digit tariff classification based on turnover.</li>
+                  <li><b>Itemized Tax Breakdown:</b> Explicit lines for Taxable Value, CGST, SGST, IGST, and applicable Cess.</li>
+                  <li><b>Reverse Charge Mechanism (RCM):</b> Explicit indication of whether tax is payable on reverse charge.</li>
+                  <li><b>Credit & Debit Notes:</b> Formal Section 34 vouchers adjusting original invoice value or tax.</li>
+                  <li><b>E-Invoicing & E-Way Bills:</b> Mandatory IRN / QR code generation on IRP for eligible turnover; E-way bills for consignments &gt; ₹50,000.</li>
+                </ul>
+              </div>
+
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+                <div style="font-size:11.5px;font-weight:700;color:#1e3a8a;margin-bottom:6px;">Practical B2B Examples:</div>
+                <div style="font-size:11.5px;color:#475569;margin-bottom:8px;">
+                  <b>1. Intra-State (Kerala Supplier → Kerala Customer):</b><br>
+                  Goods worth ₹10,000 (before GST) at 18%:<br>
+                  Taxable Value: ₹10,000.00 · CGST (9%): ₹900.00 · SGST (9%): ₹900.00<br>
+                  <b>Total Invoice: ₹11,800.00</b>
+                </div>
+                <div style="font-size:11.5px;color:#475569;">
+                  <b>2. Inter-State (Kerala Supplier → Karnataka Customer):</b><br>
+                  Goods worth ₹10,000 (before GST) at 18%:<br>
+                  Taxable Value: ₹10,000.00 · IGST (18%): ₹1,800.00<br>
+                  <b>Total Invoice: ₹11,800.00</b>
+                </div>
+              </div>
+            </div>
+
+            <!-- B2C Section -->
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:18px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="background:#f3e8ff;color:#7e22ce;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;">Category 2</span>
+                <h3 style="font-size:15px;font-weight:700;color:#0f172a;margin:0;">B2C – Business to Consumer</h3>
+              </div>
+              <p style="margin:0 0 10px 0;color:#475569;font-size:12.5px;">
+                B2C refers to transactions where a business sells goods or services to an end consumer.
+              </p>
+
+              <div style="font-size:12px;color:#334155;margin-bottom:12px;">
+                <b style="color:#0f172a;">Essential B2C Invoicing Requirements:</b>
+                <ul style="margin:4px 0 0 0;padding-left:18px;color:#475569;line-height:1.5;">
+                  <li><b>Consumer Details:</b> Name & contact recorded (mandatory if invoice value exceeds ₹50,000).</li>
+                  <li><b>Billing Address:</b> Mandatory to record address if invoice value exceeds ₹50,000.</li>
+                  <li><b>Place of Supply:</b> Established by location of recipient or delivery destination.</li>
+                  <li><b>Intra vs Inter-State:</b> CGST+SGST for local consumer sales; IGST for out-of-state consumer sales.</li>
+                  <li><b>Tax-Inclusive / Exclusive:</b> Retail environments commonly quote final consumer prices (MRP).</li>
+                  <li><b>HSN / SAC:</b> Disclosed at line level or invoice summary level.</li>
+                  <li><b>Invoice vs Bill of Supply:</b> Tax invoice issued for taxable goods; Bill of Supply for exempt goods or composition dealers.</li>
+                  <li><b>Consumer Compliance:</b> Reported in Table 7 (B2C Others) or Table 5 (B2C Large &gt; ₹2.5 Lakhs inter-state) of GSTR-1.</li>
+                </ul>
+              </div>
+
+              <div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+                <div style="font-size:11.5px;font-weight:700;color:#15803d;margin-bottom:6px;">Practical B2C Example:</div>
+                <div style="font-size:11.5px;color:#475569;">
+                  <b>Kerala Retail Shop Sale (Tax Inclusive at 18%):</b><br>
+                  Final Selling Price: ₹1,000.00<br>
+                  Taxable Value: ₹847.46<br>
+                  CGST (9%): ₹76.27 · SGST (9%): ₹76.27 (Total GST: ₹152.54)<br>
+                  <b>Final Customer Payment: ₹1,000.00</b>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- B2B vs B2C Comparison Table -->
+          <div>
+            <h4 style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px;">B2B and B2C – Important Differences</h4>
+            <div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
+              <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                <thead style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                  <tr>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">Feature</th>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">B2B (Business to Business)</th>
+                    <th style="padding:8px 12px;text-align:left;color:#475569;">B2C (Business to Consumer)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Customer type</td><td style="padding:8px 12px;">Registered Business / Enterprise</td><td style="padding:8px 12px;">End Consumer / Unregistered Person</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">GSTIN requirement</td><td style="padding:8px 12px;">Mandatory and validated on portal</td><td style="padding:8px 12px;">Not required / Unregistered</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Invoice type</td><td style="padding:8px 12px;">Detailed Section 31 Tax Invoice</td><td style="padding:8px 12px;">Retail Consumer Invoice / Bill of Supply</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Input Tax Credit (ITC)</td><td style="padding:8px 12px;">Eligible recipient can claim ITC under Section 16</td><td style="padding:8px 12px;">Unregistered consumers cannot claim ITC</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">Place of Supply rules</td><td style="padding:8px 12px;">Statutory rules based on delivery & recipient registration</td><td style="padding:8px 12px;">Location of recipient or delivery destination</td></tr>
+                  <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;font-weight:600;">GST calculation</td><td style="padding:8px 12px;">Intra-state (CGST+SGST) or Inter-state (IGST)</td><td style="padding:8px 12px;">Intra-state (CGST+SGST) or Inter-state (IGST)</td></tr>
+                  <tr><td style="padding:8px 12px;font-weight:600;">E-Invoicing requirements</td><td style="padding:8px 12px;">Mandatory for businesses meeting turnover threshold</td><td style="padding:8px 12px;">Excluded from B2C e-invoicing</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11.5px;color:#64748b;margin-top:8px;font-style:italic;">
+              Clarification Note: An invoice issued to an unregistered person or consumer cannot be converted into an input tax credit claim by that customer. However, businesses purchasing goods or services for business use may still request a B2B invoice with their GSTIN even for small purchases. Furthermore, a B2B transaction does not automatically guarantee that the recipient will take or be eligible for Input Tax Credit (e.g. if credit is blocked under Section 17(5)), nor does B2C imply that the consumer is prohibited from operating a business outside the scope of this transaction.
+            </p>
+          </div>
+        </div>
+
+        <!-- TAB 3: Module Specific Guide -->
+        <div id="tab-context" class="gst-tab-pane" style="display:none;">
+          ${currentModHtml}
+        </div>
+
+        <!-- TAB 4: GST Rates & Compliance -->
+        <div id="tab-rates" class="gst-tab-pane" style="display:none;">
+          <h4 style="font-size:14px;font-weight:700;color:#0f172a;margin:0 0 10px 0;">Applicable Indian GST Slabs & Classification</h4>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-bottom:18px;">
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+              <span style="font-size:15px;font-weight:800;color:#16a34a;">0%</span>
+              <div style="font-weight:600;font-size:12px;margin:2px 0;">Nil-Rated / Exempt</div>
+              <div style="font-size:11px;color:#64748b;">Basic fresh foods, unbranded grains, milk, salt, healthcare, education.</div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+              <span style="font-size:15px;font-weight:800;color:#2563eb;">5%</span>
+              <div style="font-weight:600;font-size:12px;margin:2px 0;">Essential Supplies</div>
+              <div style="font-size:11px;color:#64748b;">Packaged food items, medicines, domestic LPG, rail freight, basic apparel.</div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+              <span style="font-size:15px;font-weight:800;color:#d97706;">12%</span>
+              <div style="font-weight:600;font-size:12px;margin:2px 0;">Standard Tier I</div>
+              <div style="font-size:11px;color:#64748b;">Processed foods, computer hardware, pharmaceuticals, business work contracts.</div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+              <span style="font-size:15px;font-weight:800;color:#7c3aed;">18%</span>
+              <div style="font-weight:600;font-size:12px;margin:2px 0;">Standard Tier II</div>
+              <div style="font-size:11px;color:#64748b;">Most commercial goods, IT services, consulting, software, banking, hospitality.</div>
+            </div>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">
+              <span style="font-size:15px;font-weight:800;color:#dc2626;">28%</span>
+              <div style="font-weight:600;font-size:12px;margin:2px 0;">Luxury & Demerit</div>
+              <div style="font-size:11px;color:#64748b;">Automobiles, luxury goods, aerated beverages, air conditioners, pan masala.</div>
+            </div>
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:14px;font-size:12px;color:#334155;">
+            <b style="color:#0f172a;">Statutory Place of Supply & Rounding Rules:</b>
+            <ul style="margin:4px 0 0 0;padding-left:18px;color:#475569;line-height:1.5;">
+              <li><b>Intra-State Supply:</b> Supplier State == Place of Supply State → Tax divided equally into <b>CGST</b> (50%) and <b>SGST/UTGST</b> (50%).</li>
+              <li><b>Inter-State Supply:</b> Supplier State != Place of Supply State → Tax collected as <b>IGST</b> (100%).</li>
+              <li><b>Section 170 Rounding:</b> Under Section 170 of the Central Goods and Services Tax (CGST) Act, 2017, the final amount of tax, interest, penalty, fine, or any other sum payable is rounded off to the nearest whole rupee (fractions of 50 paise or more rounded up, less than 50 paise disregarded).</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
+        <span style="font-size:12px;color:#64748b;"><i class="fa-solid fa-circle-check" style="color:#10b981;margin-right:4px;"></i> In compliance with Central Goods and Services Tax (CGST) & Integrated Goods and Services Tax (IGST) Acts.</span>
+        <button class="btn p" data-close>Got it, close</button>
+      </div>
+    `
+  });
+
+  // Wire Tab Switching inside the modal
+  if (m && m.el) {
+    const tabBtns = m.el.querySelectorAll('.gst-tab-btn');
+    const tabPanes = m.el.querySelectorAll('.gst-tab-pane');
+
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabBtns.forEach(b => b.classList.remove('active'));
+        tabPanes.forEach(p => p.style.display = 'none');
+
+        btn.classList.add('active');
+        const targetTab = m.el.querySelector('#' + btn.dataset.tab);
+        if (targetTab) targetTab.style.display = 'block';
+      });
+    });
+  }
+}
+window.openGstPricingExplainerModal = openGstPricingExplainerModal;
+
+// Document-level event listener for all tax & pricing explainer triggers across forms and pages
+document.addEventListener('click', e => {
+  const trigger = e.target.closest('.btn-tax-pricing-info, .th-tax-explainer, .b2b-b2c-explainer-link');
+  if (trigger) {
+    e.preventDefault();
+    e.stopPropagation();
+    const kind = trigger.dataset.docKind || 'invoices';
+    openGstPricingExplainerModal(kind);
+  }
+});
+
+
 function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
   const currentSig = doc.signature_data || '';
   const currentTitle = doc.signature_title || (window.APP && window.APP.org && window.APP.org.signature_title) || 'Authorized Signatory';
@@ -3431,7 +3942,7 @@ async function docForm(kind, id, targetEl, onDone) {
                   <th>Qty</th>
                   <th>Rate (₹)</th>
                   <th>Disc %</th>
-                  <th>GST</th>
+                  <th class="th-tax-explainer" data-doc-kind="${kind}" style="cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">GST <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th class="r">Amount</th>
                   <th></th>
                 </tr>
@@ -3754,7 +4265,7 @@ async function docForm(kind, id, targetEl, onDone) {
       inv ? '' : fld({ name: 'vendor_ref', label: 'Vendor reference', value: r.vendor_ref }),
     ].join('')}</div>
     <h3 style="margin:16px 0 6px;font-size:14px">Line items</h3>
-    <div class="tw"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th>GST</th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
+    <div class="tw"><table class="lt"><thead><tr><th style="min-width:230px">Item / description</th><th>HSN/SAC</th><th>Qty</th><th>Rate (₹)</th><th>Disc %</th><th class="th-tax-explainer" data-doc-kind="${kind}" style="cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">GST <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th><th class="r">Amount</th><th></th></tr></thead><tbody id="lines">${r.lines.map(row).join('')}</tbody></table></div>
     <div class="er" data-err="lines" role="alert"></div>
     <button type="button" class="btn" data-add style="margin-top:8px">+ Add line</button>
     <div class="tot" aria-live="polite"><div><span>Taxable value</span><b data-t="sub">₹0.00</b></div><div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div><div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div><div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div><div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div></div>
@@ -6432,7 +6943,12 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
 
         <div style="margin-top:32px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="recurring-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+              </button>
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-rec-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
@@ -6452,7 +6968,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                   <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
-                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th class="th-tax-explainer" data-doc-kind="recurring-invoices" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -7670,7 +8186,12 @@ async function quoteForm(id, targetEl, onDone) {
 
         <div style="margin-top:32px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+              </button>
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-quote-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
@@ -7690,7 +8211,7 @@ async function quoteForm(id, targetEl, onDone) {
                   <th style="width:90px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
-                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th class="th-tax-explainer" data-doc-kind="quotes" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -8389,7 +8910,14 @@ async function salesOrderForm(id, onDone) {
 
         </div>
 
-        <h3 style="font-size:15px;font-weight:700;margin:24px 0 10px;color:var(--tx);">Item Table</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--tx);">Item Table</h3>
+            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+            </button>
+          </div>
+        </div>
         <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;">
             <thead>
@@ -8399,7 +8927,7 @@ async function salesOrderForm(id, onDone) {
                 <th style="width:110px;" class="r">QUANTITY</th>
                 <th style="width:130px;" class="r">RATE</th>
                 <th style="width:120px;">DISCOUNT %</th>
-                <th style="width:140px;">TAX</th>
+                <th class="th-tax-explainer" data-doc-kind="sales-orders" style="width:140px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                 <th style="width:120px;" class="r">AMOUNT</th>
                 <th style="width:40px;"></th>
               </tr>
@@ -8839,7 +9367,12 @@ async function invoiceForm(id, targetEl, onDone) {
 
         <div style="margin-top:32px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+              </button>
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-inv-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
@@ -8859,7 +9392,7 @@ async function invoiceForm(id, targetEl, onDone) {
                   <th style="width:90px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
                   <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
-                  <th style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#94a3b8;"></i></th>
+                  <th class="th-tax-explainer" data-doc-kind="invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th style="width:100px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -9623,7 +10156,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
         <div style="margin-top:32px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="retainer-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Rates: Tax Exclusive (GST added) · Guide
+              </button>
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-ret-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
@@ -9643,7 +10181,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
                   <th style="width:90px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
                   <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
                   <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
-                  <th style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#94a3b8;"></i></th>
+                  <th class="th-tax-explainer" data-doc-kind="retainer-invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th style="width:100px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>

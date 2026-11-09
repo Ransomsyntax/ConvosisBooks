@@ -2158,6 +2158,11 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
         <div class="doc-bottom-right">
           <div class="doc-totals-box">
+            <div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
+              <a href="javascript:void(0)" class="btn-tax-pricing-info" data-doc-kind="${kind}" style="color:#2563eb;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-weight:600;" title="View GST Pricing & B2B/B2C Rules Guide">
+                <i class="fa-solid fa-circle-info"></i> Tax &amp; Billing Guide (B2B/B2C, Tax Exclusive)
+              </a>
+            </div>
             ${!hideAmounts ? `
               <div class="doc-totals-row">
                 <span>Sub Total</span>

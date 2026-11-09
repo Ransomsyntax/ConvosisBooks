@@ -329,7 +329,16 @@ function applyOrg() {
   $('#orgfy').textContent = `FY ${fy}-${String((fy + 1) % 100).padStart(2, '0')}`;
   $('#um').textContent = (APP.user.name || 'A')[0].toUpperCase();
   const rDisp = APP.user.role_display || (APP.user.role ? APP.user.role.toUpperCase() : 'Administrator');
-  $('#who').textContent = 'Signed in as ' + (APP.user.username || '') + (rDisp ? ' (' + rDisp + ')' : '');
+  const who = $('#who');
+  if (who) who.textContent = 'Signed in as ' + (APP.user.username || '') + (rDisp ? ' (' + rDisp + ')' : '');
+  const ucn = $('#userCardName');
+  if (ucn) ucn.textContent = APP.user.name || APP.user.username || 'User';
+  const uce = $('#userCardEmail');
+  if (uce) uce.textContent = APP.user.email || '';
+  const ucUid = $('#userCardUserId');
+  if (ucUid) ucUid.textContent = APP.user.user_id || '-';
+  const ucOid = $('#userCardOrgId');
+  if (ucOid) ucOid.textContent = (APP.org && APP.org.organization_id) || '-';
   const av = $('#sidebarUserAvatar'); if (av) av.textContent = (APP.user.name || 'A')[0].toUpperCase();
   const un = $('#sidebarUserName'); if (un) un.textContent = APP.user.name || APP.user.username || 'Admin';
   const ur = $('#sidebarUserRole'); if (ur) ur.textContent = rDisp;
@@ -497,6 +506,7 @@ document.addEventListener('click', async e => {
     }
     return true;
   };
+  if (t.closest('#btnCloseUserCard')) { closePops(); return; }
   if (tog('#notifBtn', '#notifPop')) { NotificationCenter.fetch(); return; }
   if (tog('#qc', '#qcm') || tog('#um', '#umm')) return;
 

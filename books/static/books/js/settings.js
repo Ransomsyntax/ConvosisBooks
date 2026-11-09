@@ -1644,11 +1644,12 @@ async function renderBrandingPage(container) {
           <label style="font-weight:600; display:block; margin-bottom:6px;">Company Logo</label>
           <div style="display:flex; align-items:center; gap:16px;">
             <div id="brandingLogoPreview" style="width:120px; height:60px; border:1px solid var(--bd); border-radius:8px; display:flex; align-items:center; justify-content:center; background:#fff; overflow:hidden;">
-              <img src="${org.logo_data || '/static/books/img/convosis-logo.png'}" style="max-width:100%; max-height:100%; object-fit:contain;">
+              ${org.logo_data ? `<img src="${org.logo_data}" style="max-width:100%; max-height:100%; object-fit:contain;">` : `<span style="font-size:11px; color:var(--tx-dim);">No Logo</span>`}
             </div>
             <div>
               <input type="file" id="logoUploadInput" accept="image/*" style="display:none;">
               <button type="button" class="btn-outline" onclick="$('#logoUploadInput').click()">Upload Logo</button>
+              ${org.logo_data ? `<button type="button" class="btn-outline" id="btnRemoveLogo" style="margin-left:6px;">Remove</button>` : `<button type="button" class="btn-outline" id="btnRemoveLogo" style="margin-left:6px; display:none;">Remove</button>`}
               <div style="font-size:11px; color:var(--tx-dim); margin-top:4px;">Recommended: 240x80 PNG/SVG</div>
             </div>
           </div>
@@ -1698,6 +1699,9 @@ async function renderBrandingPage(container) {
   let faviconBase64 = org.favicon_data || '';
 
   const logoInput = container.querySelector('#logoUploadInput');
+  const btnRemoveLogo = container.querySelector('#btnRemoveLogo');
+  const logoPreviewBox = container.querySelector('#brandingLogoPreview');
+
   if (logoInput) {
     logoInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -1705,9 +1709,23 @@ async function renderBrandingPage(container) {
       const reader = new FileReader();
       reader.onload = (ev) => {
         logoBase64 = ev.target.result;
-        container.querySelector('#brandingLogoPreview img').src = logoBase64;
+        if (logoPreviewBox) {
+          logoPreviewBox.innerHTML = `<img src="${logoBase64}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+        }
+        if (btnRemoveLogo) btnRemoveLogo.style.display = 'inline-block';
       };
       reader.readAsDataURL(file);
+    });
+  }
+
+  if (btnRemoveLogo) {
+    btnRemoveLogo.addEventListener('click', () => {
+      logoBase64 = '';
+      if (logoInput) logoInput.value = '';
+      if (logoPreviewBox) {
+        logoPreviewBox.innerHTML = `<span style="font-size:11px; color:var(--tx-dim);">No Logo</span>`;
+      }
+      btnRemoveLogo.style.display = 'none';
     });
   }
 

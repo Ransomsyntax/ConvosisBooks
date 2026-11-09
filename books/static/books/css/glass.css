@@ -1312,11 +1312,11 @@ tr:hover td {
 
 #umm.pop, .user-dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 10px);
   right: 0;
-  min-width: 250px;
+  min-width: 290px;
   width: max-content;
-  max-width: 320px;
+  max-width: 360px;
   padding: 7px;
   display: flex !important;
   flex-direction: column !important;
@@ -1348,6 +1348,20 @@ tr:hover td {
   right: 0;
   height: 16px;
   background: transparent;
+}
+
+#umm.pop::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 14px;
+  width: 11px;
+  height: 11px;
+  background: #ffffff;
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  transform: rotate(45deg);
+  pointer-events: none;
 }
 
 @media (hover: hover) and (pointer: fine) {

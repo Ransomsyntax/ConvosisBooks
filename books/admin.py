@@ -13,14 +13,15 @@ class UserProfileInline(admin.StackedInline):
     can_delete = False
     verbose_name_plural = 'Tenant Profile & Role'
     fk_name = 'user'
-    fields = ('organization', 'role', 'phone', 'is_locked', 'mfa_enabled')
+    fields = ('user_id_code', 'organization', 'role', 'phone', 'is_locked', 'mfa_enabled')
+    readonly_fields = ('user_id_code',)
     extra = 0
 
 class CustomUserAdmin(DefaultUserAdmin):
     inlines = (UserProfileInline,)
-    list_display = ('username', 'email', 'first_name', 'last_name', 'get_role', 'get_organization', 'is_active', 'is_staff', 'is_superuser')
+    list_display = ('get_user_id', 'username', 'email', 'get_organization_name', 'get_organization_id', 'get_role', 'is_active', 'is_staff', 'is_superuser')
     list_filter = ('is_active', 'is_staff', 'is_superuser', 'profile__role', 'profile__organization')
-    search_fields = ('username', 'email', 'first_name', 'last_name')
+    search_fields = ('username', 'email', 'first_name', 'last_name', 'profile__user_id_code', 'profile__organization__organization_id', 'profile__organization__name')
     actions = ('activate_users', 'deactivate_users')
 
     def get_inline_instances(self, request, obj=None):
@@ -39,15 +40,25 @@ class CustomUserAdmin(DefaultUserAdmin):
                 defaults={'organization': org, 'role': role}
             )
 
+    @admin.display(description='User ID')
+    def get_user_id(self, obj):
+        profile = getattr(obj, 'profile', None)
+        return profile.user_id_code if (profile and profile.user_id_code) else f"USR-{obj.pk:08d}"
+
     @admin.display(description='Role')
     def get_role(self, obj):
         profile = getattr(obj, 'profile', None)
         return profile.get_role_display() if profile else '—'
 
-    @admin.display(description='Organization / Tenant')
-    def get_organization(self, obj):
+    @admin.display(description='Organization Name')
+    def get_organization_name(self, obj):
         profile = getattr(obj, 'profile', None)
         return profile.organization.name if (profile and profile.organization) else '—'
+
+    @admin.display(description='Organization ID')
+    def get_organization_id(self, obj):
+        profile = getattr(obj, 'profile', None)
+        return profile.organization.organization_id if (profile and profile.organization) else '—'
 
     @admin.action(description='Activate selected user accounts')
     def activate_users(self, request, queryset):
@@ -72,17 +83,30 @@ admin.site.register(User, CustomUserAdmin)
 
 @admin.register(models.Organization)
 class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'code', 'org_type', 'parent', 'company_id', 'gstin', 'state', 'phone', 'email', 'status', 'is_active')
+    list_display = ('organization_id', 'name', 'code', 'org_type', 'parent', 'company_id', 'gstin', 'phone', 'email', 'website', 'get_users_count', 'get_subscription_plan', 'status', 'is_active')
     list_filter = ('org_type', 'status', 'is_active', 'state')
-    search_fields = ('name', 'code', 'company_id', 'gstin', 'email')
+    search_fields = ('organization_id', 'name', 'code', 'company_id', 'gstin', 'email', 'phone')
     ordering = ('id',)
+    readonly_fields = ('organization_id',)
+
+    @admin.display(description='Users Count')
+    def get_users_count(self, obj):
+        return obj.members.count()
+
+    @admin.display(description='Purchased Plan')
+    def get_subscription_plan(self, obj):
+        sub = getattr(obj, 'subscription', None)
+        if sub and getattr(sub, 'plan', None):
+            return sub.plan.name
+        return 'Free Plan'
 
 
 @admin.register(models.UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'organization', 'role', 'phone', 'is_locked', 'mfa_enabled', 'created_at')
+    list_display = ('user_id_code', 'user', 'organization', 'role', 'phone', 'is_locked', 'mfa_enabled', 'created_at')
     list_filter = ('role', 'is_locked', 'mfa_enabled', 'organization')
-    search_fields = ('user__username', 'user__email', 'organization__name', 'phone')
+    search_fields = ('user_id_code', 'user__username', 'user__email', 'organization__organization_id', 'organization__name', 'phone')
+    readonly_fields = ('user_id_code',)
 
 
 @admin.register(models.Role)

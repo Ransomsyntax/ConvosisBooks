@@ -11,32 +11,33 @@ MONEY = {'max_digits': 14, 'decimal_places': 2}
 QTY = {'max_digits': 14, 'decimal_places': 3}
 
 class Organization(models.Model):
-    """Single-tenant company profile (always pk=1)."""
+    """Company profile (multi-tenant)."""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
+    organization_id = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique Organization ID (e.g. ORG-000001)')
     code = models.CharField(max_length=20, blank=True, default='', help_text='Organization short code for document numbering (e.g. ABC)')
-    name = models.CharField(max_length=200, default='Convosis Technologies Pvt Ltd')
+    name = models.CharField(max_length=200, blank=True, default='')
     display_name = models.CharField(max_length=200, blank=True, default='')
     org_type = models.CharField(max_length=10, choices=[('MAIN', 'Main Organization'), ('SUB', 'Sub-Organization')], default='MAIN')
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_organizations')
     status = models.CharField(max_length=20, choices=[('active', 'Active'), ('inactive', 'Inactive')], default='active')
-    company_id = models.CharField(max_length=100, blank=True, default='U62090KL2026PTC103900', help_text='CIN / Registration number')
-    gstin = models.CharField(max_length=15, blank=True, default='32AANCC9298C1ZE')
+    company_id = models.CharField(max_length=100, blank=True, default='', help_text='CIN / Registration number')
+    gstin = models.CharField(max_length=15, blank=True, default='')
     state = models.CharField(max_length=60, default='Kerala', help_text='Home state; drives CGST/SGST vs IGST.')
-    address = models.TextField(blank=True, default='Technolodge Phase II\nKMC 24/222, Anugraha Medical Complex Building')
-    city = models.CharField(max_length=100, blank=True, default='Kottayam')
-    pincode = models.CharField(max_length=20, blank=True, default='686003')
-    country = models.CharField(max_length=100, blank=True, default='India')
-    phone = models.CharField(max_length=50, blank=True, default='91-9847017737')
-    email = models.EmailField(blank=True, default='admin@convosis.com')
-    website = models.CharField(max_length=200, blank=True, default='www.convosis.com')
+    address = models.TextField(blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    pincode = models.CharField(max_length=20, blank=True, default='')
+    country = models.CharField(max_length=100, blank=True, default='')
+    phone = models.CharField(max_length=50, blank=True, default='')
+    email = models.EmailField(blank=True, default='')
+    website = models.CharField(max_length=200, blank=True, default='')
     legal_name = models.CharField(max_length=200, blank=True, default='')
-    business_type = models.CharField(max_length=100, blank=True, default='Private Limited Company')
+    business_type = models.CharField(max_length=100, blank=True, default='')
     pan = models.CharField(max_length=20, blank=True, default='')
     financial_year = models.CharField(max_length=50, blank=True, default='Apr - Mar')
     base_currency = models.CharField(max_length=10, blank=True, default='INR')
     time_zone = models.CharField(max_length=80, blank=True, default='(GMT+5:30) India Standard Time (Asia/Kolkata)')
     date_format = models.CharField(max_length=30, blank=True, default='dd/MM/yyyy')
-    logo_data = models.TextField(blank=True, default='/static/books/img/convosis-logo.png')
+    logo_data = models.TextField(blank=True, default='')
     favicon_data = models.TextField(blank=True, default='')
     primary_color = models.CharField(max_length=30, blank=True, default='#1877f2')
     secondary_color = models.CharField(max_length=30, blank=True, default='#0ea5e9')
@@ -66,6 +67,8 @@ class Organization(models.Model):
     is_active = models.BooleanField(default=True)
 
     def save(self, *args, **kwargs):
+        if not self.organization_id:
+            self.organization_id = generate_unique_organization_id()
         super().save(*args, **kwargs)
 
     def get_code(self):
@@ -99,6 +102,61 @@ class Organization(models.Model):
 class Sequence(models.Model):
     key = models.CharField(max_length=100, primary_key=True)
     value = models.PositiveIntegerField(default=0)
+
+def generate_unique_organization_id():
+    """Generates an atomic, collision-free permanent Organization ID (e.g. ORG-000001)."""
+    from django.db import transaction
+    with transaction.atomic():
+        seq, _ = Sequence.objects.select_for_update().get_or_create(key='organization_id')
+        if seq.value == 0:
+            existing = Organization.objects.filter(organization_id__startswith='ORG-').values_list('organization_id', flat=True)
+            max_num = 0
+            for oid in existing:
+                try:
+                    num_part = int(str(oid).replace('ORG-', ''))
+                    if num_part > max_num:
+                        max_num = num_part
+                except Exception:
+                    pass
+            max_pk = Organization.objects.aggregate(models.Max('id'))['id__max'] or 0
+            seq.value = max(max_num, max_pk)
+        seq.value += 1
+        seq.save(update_fields=['value'])
+        candidate = f"ORG-{seq.value:06d}"
+        while Organization.objects.filter(organization_id=candidate).exists():
+            seq.value += 1
+            seq.save(update_fields=['value'])
+            candidate = f"ORG-{seq.value:06d}"
+        return candidate
+
+def generate_unique_user_id():
+    """Generates an atomic, collision-free permanent User ID (e.g. USR-00000001)."""
+    from django.db import transaction
+    from django.contrib.auth import get_user_model
+    with transaction.atomic():
+        seq, _ = Sequence.objects.select_for_update().get_or_create(key='user_id_code')
+        if seq.value == 0:
+            existing = UserProfile.objects.filter(user_id_code__startswith='USR-').values_list('user_id_code', flat=True)
+            max_num = 0
+            for uid in existing:
+                try:
+                    num_part = int(str(uid).replace('USR-', ''))
+                    if num_part > max_num:
+                        max_num = num_part
+                except Exception:
+                    pass
+            User = get_user_model()
+            max_user_pk = User.objects.aggregate(models.Max('id'))['id__max'] or 0
+            max_prof_pk = UserProfile.objects.aggregate(models.Max('id'))['id__max'] or 0
+            seq.value = max(max_num, max_user_pk, max_prof_pk)
+        seq.value += 1
+        seq.save(update_fields=['value'])
+        candidate = f"USR-{seq.value:08d}"
+        while UserProfile.objects.filter(user_id_code=candidate).exists():
+            seq.value += 1
+            seq.save(update_fields=['value'])
+            candidate = f"USR-{seq.value:08d}"
+        return candidate
 
 class Party(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
@@ -1215,6 +1273,7 @@ class UserProfile(models.Model):
     ]
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
+    user_id_code = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique User ID (e.g. USR-00000001)')
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(max_length=50, choices=ROLES, default=ADMIN)
     custom_role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name='assigned_profiles')
@@ -1249,6 +1308,8 @@ class UserProfile(models.Model):
                 raise ValidationError({"normalized_email": "An account with this email address already exists. Please log in instead."})
 
     def save(self, *args, **kwargs):
+        if not self.user_id_code:
+            self.user_id_code = generate_unique_user_id()
         if self.user and self.user.email:
             self.normalized_email = self.user.email.strip().lower()
         elif self.normalized_email:

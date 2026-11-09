@@ -86,13 +86,20 @@ def get_user_org(user, request=None):
     if profile and profile.organization:
         base_org = profile.organization
     elif getattr(user, 'is_superuser', False):
+        if request:
+            target_val = request.headers.get('X-Organization-Id') or (
+                request.session.get('active_org_id') if hasattr(request, 'session') else None
+            )
+            if target_val:
+                target_str = str(target_val).strip()
+                if target_str.isdigit():
+                    return Organization.objects.filter(id=int(target_str)).first()
+                try:
+                    uuid.UUID(target_str)
+                    return Organization.objects.filter(uuid=target_str).first()
+                except Exception:
+                    pass
         base_org = Organization.objects.first()
-    elif profile and not profile.organization:
-        default_org = Organization.objects.first()
-        if default_org:
-            profile.organization = default_org
-            profile.save(update_fields=['organization'])
-            base_org = default_org
 
     if not base_org:
         return None
@@ -6146,26 +6153,28 @@ def action(request, name, pk, act):
 
 def org_json(o):
     return {
+        'id': o.id,
+        'organization_id': getattr(o, 'organization_id', '') or f"ORG-{o.id:06d}",
         'name': o.name,
         'code': o.get_code(),
         'legal_name': getattr(o, 'legal_name', '') or o.name,
-        'business_type': getattr(o, 'business_type', 'Private Limited Company'),
-        'company_id': o.company_id,
-        'gstin': o.gstin,
+        'business_type': getattr(o, 'business_type', '') or '',
+        'company_id': o.company_id or '',
+        'gstin': o.gstin or '',
         'pan': getattr(o, 'pan', '') or '',
-        'state': o.state,
-        'address': o.address,
-        'city': o.city,
-        'pincode': o.pincode,
-        'country': o.country,
-        'phone': o.phone,
-        'email': o.email,
-        'website': o.website,
+        'state': o.state or '',
+        'address': o.address or '',
+        'city': o.city or '',
+        'pincode': o.pincode or '',
+        'country': o.country or 'India',
+        'phone': o.phone or '',
+        'email': o.email or '',
+        'website': o.website or '',
         'financial_year': getattr(o, 'financial_year', 'Apr - Mar'),
         'base_currency': getattr(o, 'base_currency', 'INR'),
         'time_zone': getattr(o, 'time_zone', '(GMT+5:30) India Standard Time (Asia/Kolkata)'),
         'date_format': getattr(o, 'date_format', 'dd/MM/yyyy'),
-        'logo_data': o.logo_data or '/static/books/img/convosis-logo.png',
+        'logo_data': getattr(o, 'logo_data', '') or '',
         'favicon_data': getattr(o, 'favicon_data', '') or '',
         'primary_color': getattr(o, 'primary_color', '#1877f2') or '#1877f2',
         'secondary_color': getattr(o, 'secondary_color', '#0ea5e9') or '#0ea5e9',
@@ -6196,10 +6205,11 @@ def me(request):
     u = request.user
     role = get_user_role(u)
     profile = getattr(u, 'profile', None)
-    user_org = get_user_org(u)
+    user_org = get_user_org(u, request)
     return j({
         'user': {
             'id': u.pk,
+            'user_id': profile.user_id_code if profile and profile.user_id_code else f"USR-{u.pk:08d}",
             'username': u.get_username(),
             'name': u.get_full_name() or u.get_username(),
             'email': u.email,
@@ -6219,7 +6229,7 @@ def me(request):
                 'is_read_only': role == UserProfile.AUDITOR,
             }
         },
-        'organization': org_json(user_org) if user_org else (org_json(Organization.get()) if Organization.get() else None),
+        'organization': org_json(user_org) if user_org else None,
         'today': timezone.localdate(),
         'counts': {
             'customers': (Customer.objects.filter(organization=user_org) if user_org else Customer.objects.none()).count(),
@@ -8321,6 +8331,7 @@ def serialize_user_entry(u, org):
     status = getattr(prof, 'status', 'active') if prof else ('active' if u.is_active else 'inactive')
     return {
         'id': u.pk,
+        'user_id': prof.user_id_code if prof and prof.user_id_code else f"USR-{u.pk:08d}",
         'username': u.username,
         'name': u.get_full_name() or u.username,
         'email': u.email,
@@ -8328,8 +8339,6 @@ def serialize_user_entry(u, org):
         'role_id': c_role.pk if c_role else None,
         'status': status,
         'is_active': u.is_active and status != 'inactive',
-        'is_staff': u.is_staff,
-        'is_superuser': u.is_superuser,
         'phone': prof.phone if prof else '',
         'last_login': u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else 'Never',
         'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else ''
@@ -8521,22 +8530,24 @@ def settings_role_duplicate_view(request, role_id):
 def settings_users_view(request, user_id=None):
     """User management: list, add, edit, deactivate, delete."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = get_user_org(request.user, request)
+    if not org:
+        raise ApiError(403, 'Organization required.')
 
     from django.contrib.auth import get_user_model
     User = get_user_model()
 
     if request.method == 'GET':
         if user_id:
-            u = User.objects.filter(pk=user_id).first()
+            u = User.objects.filter(pk=user_id, profile__organization=org, is_superuser=False).first()
             if not u:
                 raise ApiError(404, 'User not found.')
             return j(serialize_user_entry(u, org))
 
-        qs = User.objects.filter(Q(profile__organization=org) | Q(is_superuser=True)).distinct().order_by('id')
+        qs = User.objects.filter(profile__organization=org, is_superuser=False).distinct().order_by('id')
         q = request.GET.get('q', '').strip()
         if q:
-            qs = qs.filter(Q(username__icontains=q) | Q(email__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q))
+            qs = qs.filter(Q(username__icontains=q) | Q(email__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(profile__user_id_code__icontains=q))
 
         role_filter = request.GET.get('role', '').strip()
         if role_filter:
@@ -8596,7 +8607,7 @@ def settings_users_view(request, user_id=None):
     if request.method in ('PUT', 'PATCH'):
         if not user_id:
             raise ApiError(400, 'User ID required.')
-        u = User.objects.filter(pk=user_id).first()
+        u = User.objects.filter(pk=user_id, profile__organization=org, is_superuser=False).first()
         if not u:
             raise ApiError(404, 'User not found.')
 
@@ -8611,6 +8622,11 @@ def settings_users_view(request, user_id=None):
                 if User.objects.filter(email__iexact=new_email).exclude(pk=u.pk).exists() or UserProfile.objects.filter(normalized_email=new_email).exclude(user=u).exists():
                     raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
                 u.email = new_email
+        if 'password' in data and data['password']:
+            pwd = str(data['password']).strip()
+            if len(pwd) < 4:
+                raise ApiError(400, 'Password must be at least 4 characters long.')
+            u.set_password(pwd)
         u.save()
 
         prof = getattr(u, 'profile', None)
@@ -8642,7 +8658,7 @@ def settings_users_view(request, user_id=None):
         if user_id == request.user.pk:
             raise ApiError(400, 'You cannot delete or deactivate your own account.')
 
-        u = User.objects.filter(pk=user_id).first()
+        u = User.objects.filter(pk=user_id, profile__organization=org, is_superuser=False).first()
         if not u:
             raise ApiError(404, 'User not found.')
 
@@ -9181,6 +9197,7 @@ def sub_organizations_view(request):
         return j([
             {
                 'id': s.id,
+                'organization_id': s.organization_id or f"ORG-{s.id:06d}",
                 'uuid': str(s.uuid),
                 'name': s.name,
                 'code': s.code,
@@ -9239,6 +9256,7 @@ def sub_organizations_view(request):
         )
         return j({
             'id': sub_org.id,
+            'organization_id': sub_org.organization_id or f"ORG-{sub_org.id:06d}",
             'uuid': str(sub_org.uuid),
             'name': sub_org.name,
             'code': sub_org.code,
@@ -10003,8 +10021,17 @@ def api_register_view(request):
                 return j({
                     'status': 'ok',
                     'message': 'Account registered successfully.',
-                    'user': {'id': user.id, 'username': user.username, 'email': user.email},
-                    'organization': {'id': org.id, 'name': org.name}
+                    'user': {
+                        'id': user.id,
+                        'user_id': user.profile.user_id_code,
+                        'username': user.username,
+                        'email': user.email
+                    },
+                    'organization': {
+                        'id': org.id,
+                        'organization_id': org.organization_id,
+                        'name': org.name
+                    }
                 }, 201)
         except (IntegrityError, ValidationError, OperationalError):
             raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})

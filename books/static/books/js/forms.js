@@ -5365,31 +5365,33 @@ function orgForm() {
     </div>
     <div id="otab-general" class="otab-pane">
       <div class="fgrid">
-        ${fld({ name: 'name', label: 'Company / Organization Name', req: 1, value: o.name, col: 'c2' })}
+        ${fld({ name: 'organization_id', label: 'Organization ID', value: o.organization_id || '', attrs: 'readonly style="background:#f1f5f9;color:#475569;cursor:not-allowed;"', help: 'Permanent Unique Organization ID' })}
+        ${fld({ name: 'name', label: 'Company / Organization Name', req: 1, value: o.name || '' })}
         ${fld({ name: 'code', label: 'Organization Short Code / Prefix', value: o.code || '', ph: 'e.g. ABC', help: 'Prefix used for all unique document numbers (e.g. ABC/INV/26-27/00001)' })}
-        ${fld({ name: 'company_id', label: 'Company ID / CIN', value: o.company_id || '', ph: 'e.g. U62090KL2026PTC103900' })}
-        ${fld({ name: 'gstin', label: 'GSTIN', value: o.gstin || '', ph: '32AANCC9298C1ZE' })}
-        ${fld({ name: 'state', label: 'Home State', type: 'select', req: 1, opts: STATES, value: o.state })}
-        ${fld({ name: 'address', label: 'Address / Building / Street', type: 'textarea', value: o.address, col: 'c2' })}
-        ${fld({ name: 'city', label: 'City', value: o.city || 'Kottayam' })}
-        ${fld({ name: 'pincode', label: 'Pincode', value: o.pincode || '686003' })}
+        ${fld({ name: 'company_id', label: 'Company ID / CIN', value: o.company_id || '', ph: 'Enter CIN or Registration Number' })}
+        ${fld({ name: 'gstin', label: 'GSTIN', value: o.gstin || '', ph: 'Enter 15-character GSTIN' })}
+        ${fld({ name: 'state', label: 'Home State', type: 'select', req: 1, opts: STATES, value: o.state || 'Kerala' })}
+        ${fld({ name: 'address', label: 'Address / Building / Street', type: 'textarea', value: o.address || '', ph: 'Enter building, street address', col: 'c2' })}
+        ${fld({ name: 'city', label: 'City', value: o.city || '', ph: 'Enter city' })}
+        ${fld({ name: 'pincode', label: 'Pincode', value: o.pincode || '', ph: 'Enter postal code' })}
         ${fld({ name: 'country', label: 'Country', value: o.country || 'India' })}
-        ${fld({ name: 'phone', label: 'Phone', value: o.phone || '91-9847017737' })}
-        ${fld({ name: 'email', label: 'Email', type: 'email', value: o.email || 'admin@convosis.com' })}
-        ${fld({ name: 'website', label: 'Website', value: o.website || 'www.convosis.com' })}
-        ${fld({ name: 'opening_cash', label: 'Opening Cash & Bank Balance (₹)', type: 'number', value: o.opening_cash, attrs: 'step="0.01"' })}
+        ${fld({ name: 'phone', label: 'Phone', value: o.phone || '', ph: 'Enter business phone' })}
+        ${fld({ name: 'email', label: 'Email', type: 'email', value: o.email || '', ph: 'Enter business email' })}
+        ${fld({ name: 'website', label: 'Website', value: o.website || '', ph: 'e.g. www.mycompany.com' })}
+        ${fld({ name: 'opening_cash', label: 'Opening Cash & Bank Balance (₹)', type: 'number', value: o.opening_cash || 0, attrs: 'step="0.01"' })}
       </div>
       <div style="margin-top:14px;padding:14px;border:1px solid var(--bd-glass);border-radius:8px;display:flex;align-items:center;gap:18px;">
         <div style="width:72px;height:72px;border-radius:8px;border:1px solid var(--bd-glass);background:#fff;display:grid;place-items:center;overflow:hidden;padding:4px;">
-          <img id="org-logo-preview" src="${esc(o.logo_data || '/static/books/img/convosis-logo.png')}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain;">
+          <img id="org-logo-preview" src="${esc(o.logo_data || '')}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain;display:${o.logo_data ? 'block' : 'none'};">
+          <span id="org-logo-empty" style="font-size:11px;color:var(--tx-muted);display:${o.logo_data ? 'none' : 'inline'};">No Logo</span>
         </div>
         <div style="flex:1;">
           <label style="font-weight:600;font-size:13px;display:block;margin-bottom:4px;">Company Logo</label>
           <input type="file" id="org-logo-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
-          <input type="hidden" name="logo_data" id="org-logo-input" value="${esc(o.logo_data || '/static/books/img/convosis-logo.png')}">
+          <input type="hidden" name="logo_data" id="org-logo-input" value="${esc(o.logo_data || '')}">
           <button type="button" class="btn" onclick="this.previousElementSibling.previousElementSibling.click()">Upload Logo</button>
-          <button type="button" class="btn" id="reset-logo-btn" style="margin-left:6px;">Reset to Default</button>
-          <div class="hp" style="margin-top:4px;">Recommended size: 240x80px PNG or JPG with transparent/white background.</div>
+          <button type="button" class="btn" id="reset-logo-btn" style="margin-left:6px;display:${o.logo_data ? 'inline-block' : 'none'};">Remove Logo</button>
+          <div class="hp" style="margin-top:4px;">Recommended size: 240x80px PNG or JPG with transparent/white background. Optional.</div>
         </div>
       </div>
     </div>
@@ -5426,23 +5428,38 @@ function orgForm() {
         });
       });
       const fIn = $('#org-logo-file', form);
+      const prev = $('#org-logo-preview', form);
+      const empty = $('#org-logo-empty', form);
+      const resBtn = $('#reset-logo-btn', form);
+      const input = $('#org-logo-input', form);
+
       if (fIn) {
         fIn.addEventListener('change', () => {
           const file = fIn.files[0];
           if (!file) return;
           const reader = new FileReader();
           reader.onload = e => {
-            $('#org-logo-preview', form).src = e.target.result;
-            $('#org-logo-input', form).value = e.target.result;
+            if (prev) {
+              prev.src = e.target.result;
+              prev.style.display = 'block';
+            }
+            if (empty) empty.style.display = 'none';
+            if (input) input.value = e.target.result;
+            if (resBtn) resBtn.style.display = 'inline-block';
           };
           reader.readAsDataURL(file);
         });
       }
-      const resBtn = $('#reset-logo-btn', form);
       if (resBtn) {
         resBtn.addEventListener('click', () => {
-          $('#org-logo-preview', form).src = '/static/books/img/convosis-logo.png';
-          $('#org-logo-input', form).value = '/static/books/img/convosis-logo.png';
+          if (prev) {
+            prev.src = '';
+            prev.style.display = 'none';
+          }
+          if (empty) empty.style.display = 'inline';
+          if (input) input.value = '';
+          if (fIn) fIn.value = '';
+          resBtn.style.display = 'none';
         });
       }
       $('#org-edit-sig-btn', form)?.addEventListener('click', () => {
@@ -7666,7 +7683,7 @@ async function fileGstrReturnModal(returnType = 'GSTR1') {
           </div>
           <div>
             <div class="sub" style="font-size:11px;text-transform:uppercase;">Taxpayer GSTIN</div>
-            <div style="font-size:16px;font-weight:700;color:var(--accent);">${esc(preview.gstin || Organization.get ? Organization.get().gstin : '32AANCC9298C1ZE')}</div>
+            <div style="font-size:16px;font-weight:700;color:var(--accent);">${esc(preview.gstin || (APP.org && APP.org.gstin) || (typeof Organization !== 'undefined' && Organization.get && Organization.get() ? Organization.get().gstin : '') || '—')}</div>
           </div>
           <div>
             <div class="sub" style="font-size:11px;text-transform:uppercase;">Validation Status</div>

@@ -2040,15 +2040,17 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const partyGstin = party.gstin ? `<div style="margin-top:2px;">GSTIN <b>${esc(party.gstin)}</b></div>` : '';
   const partyState = party.state ? `<div>State: ${esc(party.state)}</div>` : '';
 
-  const companyIdLine = org.company_id ? `<div>Company ID : <b>${esc(org.company_id)}</b></div>` : '<div>Company ID : U62090KL2026PTC103900</div>';
-  const orgAddrHtml = (org.address || 'Technolodge Phase II\nKMC 24/222, Anugraha Medical Complex Building').split('\n').map(l => `<div>${esc(l)}</div>`).join('');
-  const orgCityState = `<div>${esc(org.city || 'Kottayam')} ${esc(org.state || 'Keralam')} ${esc(org.pincode || '686003')}</div>`;
-  const orgCountry = `<div>${esc(org.country || 'India')}</div>`;
-  const orgGstin = org.gstin ? `<div>GSTIN <b>${esc(org.gstin)}</b></div>` : '<div>GSTIN 32AANCC9298C1ZE</div>';
-  const orgPhone = org.phone ? `<div>${esc(org.phone)}</div>` : '<div>91-9847017737</div>';
-  const orgEmail = org.email ? `<div>${esc(org.email)}</div>` : '<div>admin@convosis.com</div>';
-  const orgWeb = org.website ? `<div>${esc(org.website)}</div>` : '<div>www.convosis.com</div>';
-  const logoSrc = org.logo_data || '/static/books/img/convosis-logo.png';
+  const companyIdLine = org.company_id ? `<div>Company ID : <b>${esc(org.company_id)}</b></div>` : '';
+  const orgAddrHtml = org.address ? org.address.split('\n').map(l => `<div>${esc(l)}</div>`).join('') : '';
+  const cityStateParts = [org.city, org.state, org.pincode].filter(Boolean).map(esc).join(' ');
+  const orgCityState = cityStateParts ? `<div>${cityStateParts}</div>` : '';
+  const orgCountry = org.country ? `<div>${esc(org.country)}</div>` : '';
+  const orgGstin = org.gstin ? `<div>GSTIN <b>${esc(org.gstin)}</b></div>` : '';
+  const orgPhone = org.phone ? `<div>${esc(org.phone)}</div>` : '';
+  const orgEmail = org.email ? `<div>${esc(org.email)}</div>` : '';
+  const orgWeb = org.website ? `<div>${esc(org.website)}</div>` : '';
+  const logoSrc = org.logo_data || '';
+  const hasLogo = showLogo && Boolean(logoSrc);
 
   const orderNum = d.order_number || d.vendor_ref || '';
   const isDarkHead = theme === 'modern' || (!inv && theme !== 'convosis');
@@ -2066,8 +2068,8 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
       <div class="doc-sheet-header">
         <div class="doc-company-box">
-          ${showLogo ? `<img class="doc-company-logo" src="${esc(logoSrc)}" alt="${esc(org.name || 'Convosis')}">` : ''}
-          <div class="doc-company-name">${esc(org.name || 'Convosis Technologies Pvt Ltd')}</div>
+          ${hasLogo ? `<img class="doc-company-logo" src="${esc(logoSrc)}" alt="${esc(org.name || '')}">` : ''}
+          <div class="doc-company-name">${esc(org.name || '')}</div>
           <div class="doc-company-detail">
             ${companyIdLine}
             ${orgAddrHtml}
@@ -2344,11 +2346,11 @@ function openTemplateCustomizer(doc, kind, onUpdate) {
         ], value: currentColor })}
 
         ${fld({ name: 'signature_title', label: 'Signature Line Title', value: org.signature_title || 'Authorized Signature' })}
-        ${fld({ name: 'company_id', label: 'Company ID / CIN', value: org.company_id || 'U62090KL2026PTC103900' })}
-        ${fld({ name: 'phone', label: 'Company Phone', value: org.phone || '91-9847017737' })}
-        ${fld({ name: 'email', label: 'Company Email', value: org.email || 'admin@convosis.com' })}
-        ${fld({ name: 'website', label: 'Company Website', value: org.website || 'www.convosis.com' })}
-        ${fld({ name: 'address', label: 'Company Address', type: 'textarea', value: org.address || 'Technolodge Phase II\nKMC 24/222, Anugraha Medical Complex Building', col: 'c2' })}
+        ${fld({ name: 'company_id', label: 'Company ID / CIN', value: org.company_id || '' })}
+        ${fld({ name: 'phone', label: 'Company Phone', value: org.phone || '' })}
+        ${fld({ name: 'email', label: 'Company Email', value: org.email || '' })}
+        ${fld({ name: 'website', label: 'Company Website', value: org.website || '' })}
+        ${fld({ name: 'address', label: 'Company Address', type: 'textarea', value: org.address || '', col: 'c2' })}
         ${fld({ name: 'terms_default', label: 'Default Terms', type: 'textarea', value: org.terms_default || 'Due on Receipt', col: 'c2' })}
         ${fld({ name: 'notes_default', label: 'Default Notes', type: 'textarea', value: org.notes_default || 'Thanks for your business.', col: 'c2' })}
       </div>

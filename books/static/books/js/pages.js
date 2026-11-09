@@ -1769,7 +1769,11 @@ const LISTS = {
   },
   'retainer-invoices': {
     api: 'retainer-invoices', title: 'Retainer Invoices', bc: 'Sales', newLabel: 'New retainer invoice',
-    onNew: () => docMasterDetail($('#pg'), 'retainer-invoices', 'new'), ordering: '-date', empty: 'No retainer invoices yet.',
+    onNew: () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
+      if (savedDoc) docMasterDetail($('#pg'), 'retainer-invoices', savedDoc.id);
+      else docMasterDetail($('#pg'), 'retainer-invoices');
+    }),
+    ordering: '-date', empty: 'No retainer invoices yet.',
     filters: docStatusFilters('Sent'),
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
@@ -1781,7 +1785,9 @@ const LISTS = {
       { h: 'Available Credit', ...money(r => inr(r.available_balance || 0)) },
     ],
     actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id) : a === 'edit' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id, true) : null,
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'retainer-invoices', r.id) : a === 'edit' ? retainerInvoiceForm(r.id, $('#pg'), (savedDoc) => {
+      docMasterDetail($('#pg'), 'retainer-invoices', savedDoc ? savedDoc.id : r.id);
+    }) : null,
   },
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
@@ -2894,12 +2900,13 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId);
 
   function openForm(editId) {
-    if (kind === 'invoices') {
-      invoiceForm(editId, $('#pg'), (savedDoc) => {
+    if (kind === 'invoices' || kind === 'retainer-invoices') {
+      const formFn = kind === 'retainer-invoices' ? retainerInvoiceForm : invoiceForm;
+      formFn(editId, $('#pg'), (savedDoc) => {
         if (savedDoc) {
-          docMasterDetail($('#pg'), 'invoices', savedDoc.id);
+          docMasterDetail($('#pg'), kind, savedDoc.id);
         } else {
-          docMasterDetail($('#pg'), 'invoices', editId || (curDoc ? curDoc.id : null));
+          docMasterDetail($('#pg'), kind, editId || (curDoc ? curDoc.id : null));
         }
       });
       return;

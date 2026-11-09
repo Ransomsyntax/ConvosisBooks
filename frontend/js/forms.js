@@ -3339,6 +3339,9 @@ async function docForm(kind, id, targetEl, onDone) {
   if (kind === 'invoices') {
     return invoiceForm(id, targetEl, onDone);
   }
+  if (kind === 'retainer-invoices') {
+    return retainerInvoiceForm(id, targetEl, onDone);
+  }
   const isRetainer = kind === 'retainer-invoices';
   const isPO = kind === 'purchase-orders';
   const isCN = kind === 'credit-notes';
@@ -9069,6 +9072,758 @@ async function invoiceForm(id, targetEl, onDone) {
   calcInvoice();
 }
 window.invoiceForm = invoiceForm;
+
+async function retainerInvoiceForm(id, targetEl, onDone) {
+  const target = targetEl || document.getElementById('pg') || document.body;
+  const [parties, items, salespersons, nextNum, rec] = await Promise.all([
+    api('lookup/customers/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    api('lookup/salespersons/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
+    id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
+  const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
+  const retDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const retDueDate = rec ? (rec.due_date || '') : retDate;
+  const retTerms = rec ? (rec.terms || 'Due on Receipt') : 'Due on Receipt';
+  const retOrderNum = rec ? (rec.order_number || '') : '';
+  const retSalesperson = rec ? (rec.salesperson || '') : '';
+  const retSubject = rec ? (rec.subject || '') : '';
+  const retPlaceOfSupply = rec ? (rec.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala');
+  const retNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : 'Thanks for your business.';
+  const retTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
+  const retTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const retTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
+  const retAdj = rec ? num(rec.adjustment || 0) : 0;
+  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+  const pendingFiles = [];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-retainer-invoice" style="border-bottom:1px solid var(--bd);">
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+        </div>
+      </td>
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      <td style="width:90px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
+      </td>
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+          <option value="0">Select a Tax</option>
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </td>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  target.innerHTML = `
+    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Retainer Invoice' : 'New Retainer Invoice'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-ret-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <form id="retainer-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="ret-customer" name="customer" required style="flex:1;">
+                <option value="">Select or add a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:260px;">
+              <button type="button" class="btn ic" id="btn-ret-num-pref" title="Retainer invoice preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
+            <input class="in" id="ret-order-number" name="order_number" value="${esc(retOrderNum)}" style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Date*</label>
+            <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:260px;">
+            
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Terms</label>
+            <select class="in" id="ret-terms" name="terms" style="width:180px;">
+              <option value="Due on Receipt" ${retTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
+              <option value="Net 15" ${retTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
+              <option value="Net 30" ${retTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
+              <option value="Net 45" ${retTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
+              <option value="Net 60" ${retTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
+              <option value="Due end of the month" ${retTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
+            </select>
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
+            <input class="in" type="date" id="ret-due-date" name="due_date" value="${retDueDate}" style="width:160px;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
+            <select class="in" id="ret-salesperson" name="salesperson" style="width:260px;">
+              <option value="">Select or Add Salesperson</option>
+              ${salespersons.map(s => `<option value="${esc(s.name)}" ${retSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="ret-subject" name="subject" rows="2" placeholder="Let your customer know what this Retainer Invoice is for" style="width:260px;font-size:12px;">${esc(retSubject)}</textarea>
+          </div>
+
+          <input type="hidden" id="ret-place-of-supply" name="place_of_supply" value="${esc(retPlaceOfSupply)}">
+        </div>
+
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-ret-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-ret-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
+                  <th style="width:90px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
+                  <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#94a3b8;"></i></th>
+                  <th style="width:100px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="retainer-line-tbody">
+                ${retLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-ret-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
+            </button>
+            <button type="button" class="btn" id="btn-ret-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
+            </button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
+          <div>
+            <div class="fg" style="margin-bottom:16px;">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="ret-notes" name="notes" rows="3" style="width:100%;">${esc(retNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the retainer invoice</span>
+            </div>
+            <div class="fg">
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
+              <textarea class="in" id="ret-terms-text" name="terms_conditions" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;">${esc(retTermsText)}</textarea>
+            </div>
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:10px;padding:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);">Sub Total</span>
+              <span id="ret-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <div style="display:flex;align-items:center;gap:14px;">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
+                  <input type="radio" name="ret_tax_type" value="tds" ${retTaxType === 'tds' ? 'checked' : ''}> TDS
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
+                  <input type="radio" name="ret_tax_type" value="tcs" ${retTaxType === 'tcs' ? 'checked' : ''}> TCS
+                </label>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <select class="in" id="ret-tds-tax" name="tds_tcs_tax" style="width:150px;">
+                  <option value="0">Select a Tax</option>
+                  <option value="1" ${retTdsTax === 1 ? 'selected' : ''}>1%</option>
+                  <option value="2" ${retTdsTax === 2 ? 'selected' : ''}>2%</option>
+                  <option value="5" ${retTdsTax === 5 ? 'selected' : ''}>5%</option>
+                  <option value="10" ${retTdsTax === 10 ? 'selected' : ''}>10%</option>
+                </select>
+                <span id="ret-tds-amt" style="font-weight:600;min-width:60px;text-align:right;">- 0.00</span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <div style="border:1px dashed var(--bd);border-radius:4px;padding:4px 10px;font-size:12px;font-weight:500;color:var(--tx);">Adjustment</div>
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;" title="Add or subtract adjustment amount"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="number" step="0.01" class="in" id="ret-adj-val" name="adjustment" value="${retAdj}" style="width:110px;text-align:right;">
+                <span id="ret-adj-display" style="font-weight:600;min-width:60px;text-align:right;">0.00</span>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
+              <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
+              <span id="ret-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:28px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div>
+              <div style="font-weight:600;font-size:13px;color:#0f172a;">Attach File(s) to Retainer Invoice</div>
+              <div style="font-size:11.5px;color:#64748b;margin-top:2px;">You can upload a maximum of 10 files, 10MB each</div>
+            </div>
+            <input type="file" id="ret-file-input" multiple style="display:none;">
+            <button type="button" class="btn" id="btn-ret-upload" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-upload"></i> Upload File ▾
+            </button>
+          </div>
+          <div id="ret-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+        </div>
+
+        <div style="margin-top:20px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:20px;">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
+            </div>
+            <div style="font-size:11.5px;color:#64748b;margin-top:2px;" id="ret-sig-desc">
+              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (window.APP && window.APP.org && window.APP.org.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this retainer invoice.')}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="ret-sig-preview-box" style="height:44px;min-width:90px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:2px 8px;">
+              <img id="ret-sig-preview" src="${esc((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data) || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'block' : 'none'};">
+              <span id="ret-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'none' : 'inline'};">None</span>
+            </div>
+            <input type="hidden" id="ret-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
+            <input type="hidden" id="ret-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
+            <input type="hidden" id="ret-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
+            <button type="button" class="btn" id="btn-ret-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Retainer Invoice'}
+            </button>
+          </div>
+        </div>
+
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
+            <button type="button" class="btn p" id="btn-ret-save-send" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              Save and Send <i class="fa-solid fa-caret-up" style="font-size:10px;"></i>
+            </button>
+            <button type="button" class="btn" id="btn-ret-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
+            <span>Total Amount: <span id="ret-bar-total-amount">₹ 0.00</span></span>
+            <span>Total Quantity: <span id="ret-bar-total-qty">0</span></span>
+          </div>
+        </div>
+      </form>
+    </div>
+  `;
+
+  const form = $('#retainer-form-element', target);
+  const tbody = $('#retainer-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+
+  function updateDueDate() {
+    const dVal = $('#ret-date', form).value;
+    if (!dVal) return;
+    const termsVal = $('#ret-terms', form).value;
+    const d = new Date(dVal + 'T00:00:00');
+    if (termsVal === 'Due on Receipt') {
+      $('#ret-due-date', form).value = dVal;
+    } else if (termsVal === 'Net 15') {
+      d.setDate(d.getDate() + 15);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 30') {
+      d.setDate(d.getDate() + 30);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 45') {
+      d.setDate(d.getDate() + 45);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 60') {
+      d.setDate(d.getDate() + 60);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Due end of the month') {
+      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      $('#ret-due-date', form).value = endOfMonth.toISOString().slice(0, 10);
+    }
+  }
+
+  function calcRetainer() {
+    let subtotal = 0;
+    let totalTax = 0;
+    let totalQty = 0;
+    $$('.ln-retainer-invoice', tbody).forEach(tr => {
+      const qty = num($('.l-qty', tr).value) || 0;
+      const rate = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value;
+      const gross = qty * rate;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const taxable = Math.max(0, gross - disc);
+      const gstRate = num($('.l-gst', tr).value) || 0;
+      const tax = taxable * gstRate / 100;
+      const lineTot = taxable + tax;
+      $('.l-amt', tr).textContent = (lineTot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      subtotal += taxable;
+      totalTax += tax;
+      totalQty += qty;
+    });
+
+    const taxType = form.querySelector('input[name="ret_tax_type"]:checked')?.value || 'tds';
+    const tdsRate = num($('#ret-tds-tax', form).value) || 0;
+    const tdsAmt = subtotal * tdsRate / 100;
+    const adj = num($('#ret-adj-val', form).value) || 0;
+
+    $('#ret-tds-amt', form).textContent = `${taxType === 'tds' ? '-' : '+'} ${tdsAmt.toFixed(2)}`;
+    $('#ret-adj-display', form).textContent = adj.toFixed(2);
+
+    let grand = subtotal + totalTax;
+    if (taxType === 'tds') {
+      grand -= tdsAmt;
+    } else {
+      grand += tdsAmt;
+    }
+    grand = Math.max(0, grand + adj);
+
+    $('#ret-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-grandtotal-val', form).textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-bar-total-amount', form).textContent = inr(grand);
+    $('#ret-bar-total-qty', form).textContent = totalQty;
+  }
+
+  function renderAttach() {
+    const box = $('#ret-attach-badges', form);
+    let h = '';
+    if (rec && rec.attachments && rec.attachments.length) {
+      h += rec.attachments.map(a => `
+        <div class="attach-file-badge">
+          <span>📎 ${esc(a.filename)} (${fmtBytes(a.file_size)})</span>
+          <button type="button" data-del-att="${a.id}">×</button>
+        </div>
+      `).join('');
+    }
+    h += pendingFiles.map((f, i) => `
+      <div class="attach-file-badge" style="border-style:dashed;">
+        <span>📎 ${esc(f.name)} (${fmtBytes(f.size)}) <small style="color:var(--accent);">new</small></span>
+        <button type="button" data-rem-pen="${i}">×</button>
+      </div>
+    `).join('');
+    if (!h) h = '<span class="sub" style="font-size:12px;">No files attached yet.</span>';
+    box.innerHTML = h;
+  }
+
+  const closeForm = () => {
+    if (onDone) onDone(null);
+    else {
+      location.hash = '#/sales/retainer-invoices';
+      route();
+    }
+  };
+
+  const closeX = $('#btn-ret-close-x', target);
+  if (closeX) closeX.addEventListener('click', closeForm);
+  const cancelBtn = $('#btn-ret-cancel', target);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeForm);
+
+  $('#btn-ret-cust-lookup', form).addEventListener('click', () => {
+    partyForm('customers', null, (newCust) => {
+      if (newCust && newCust.id) {
+        parties.push(newCust);
+        const sel = $('#ret-customer', form);
+        sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
+        sel.value = newCust.id;
+        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+      }
+    });
+  });
+
+  $('#ret-customer', form).addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
+        parties.push(newCust);
+        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) {
+            $('#ret-terms', form).value = termsMap[newCust.payment_terms];
+            updateDueDate();
+          }
+        }
+      });
+      return;
+    }
+    const custId = $('#ret-customer', form).value;
+    const cust = parties.find(p => String(p.id) === String(custId));
+    if (cust) {
+      if (cust.state) $('#ret-place-of-supply', form).value = cust.state;
+      if (cust.payment_terms) {
+        const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+        if (termsMap[cust.payment_terms]) {
+          $('#ret-terms', form).value = termsMap[cust.payment_terms];
+          updateDueDate();
+        }
+      }
+    }
+  });
+
+  $('#ret-date', form).addEventListener('change', updateDueDate);
+  $('#ret-terms', form).addEventListener('change', updateDueDate);
+
+  $('#btn-ret-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#ret-signature-data', form)?.value || '',
+      signed_by: $('#ret-signed-by', form)?.value || '',
+      signature_title: $('#ret-signature-title', form)?.value || '',
+      number: retNum
+    };
+    openSignatureModal(curSigObj, 'retainer-invoices', updated => {
+      if ($('#ret-signature-data', form)) $('#ret-signature-data', form).value = updated.signature_data || '';
+      if ($('#ret-signed-by', form)) $('#ret-signed-by', form).value = updated.signed_by || '';
+      if ($('#ret-signature-title', form)) $('#ret-signature-title', form).value = updated.signature_title || '';
+      const previewImg = $('#ret-sig-preview', form);
+      const noneSpan = $('#ret-sig-none', form);
+      const descEl = $('#ret-sig-desc', form);
+      const signBtn = $('#btn-ret-sign', form);
+      if (updated.signature_data) {
+        if (previewImg) { previewImg.src = updated.signature_data; previewImg.style.display = 'block'; }
+        if (noneSpan) noneSpan.style.display = 'none';
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (previewImg) previewImg.style.display = 'none';
+        if (noneSpan) noneSpan.style.display = 'inline';
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Retainer Invoice';
+      }
+    });
+  });
+
+  $('#btn-ret-num-pref', form)?.addEventListener('click', async () => {
+    let currentConfig = { prefix: 'RET', next_sequence: 1, formatted: retNum };
+    try {
+      currentConfig = await api('retainer-invoices/sequence/');
+    } catch (_) {}
+
+    Modal.open({
+      title: 'Configure Retainer Invoice Number Sequence',
+      dialog: true,
+      body: `
+        <div style="padding:10px 0;">
+          <p class="sub" style="margin-bottom:14px;font-size:13px;line-height:1.5;">Specify the prefix and next sequential counter for your retainer invoices. Document numbers follow <code>ORG/PREFIX/FY/SEQUENCE</code>.</p>
+          <div class="fg">
+            <label style="font-weight:600;font-size:12px;">Prefix</label>
+            <input class="in" id="ret-prefix-input" value="${esc(currentConfig.prefix || 'RET')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. RET">
+          </div>
+          <div class="fg" style="margin-top:14px;">
+            <label style="font-weight:600;font-size:12px;">Next Sequence Number</label>
+            <input class="in" id="ret-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close>Cancel</button>
+        <button class="btn p" id="btn-save-ret-seq">Save Sequence</button>
+      `
+    });
+
+    $('#btn-save-ret-seq')?.addEventListener('click', async () => {
+      const pfx = ($('#ret-prefix-input').value || '').trim().toUpperCase() || 'RET';
+      const seq = Math.max(1, parseInt($('#ret-next-seq-input').value, 10) || 1);
+      try {
+        const res = await api('retainer-invoices/sequence/', {
+          method: 'POST',
+          body: { prefix: pfx, next_sequence: seq }
+        });
+        $('#ret-number', form).value = res.formatted;
+        Modal.close();
+        toast(`Retainer invoice sequence updated to ${res.formatted}`, 'ok');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+  });
+
+  tbody.addEventListener('change', e => {
+    if (e.target.classList.contains('l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcRetainer();
+        });
+        return;
+      }
+      const it = byId[e.target.value];
+      const tr = e.target.closest('tr');
+      if (it && tr) {
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+      }
+      calcRetainer();
+    }
+  });
+
+  form.addEventListener('input', () => calcRetainer());
+  form.addEventListener('change', () => calcRetainer());
+
+  $('#btn-ret-add-row', form).addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    calcRetainer();
+  });
+
+  $('#btn-ret-bulk-items', form).addEventListener('click', () => {
+    bulkItemPickerModal(items, (selectedItems) => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml(it));
+      });
+      calcRetainer();
+    });
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      if ($$('.ln-retainer-invoice', tbody).length > 1) {
+        rm.closest('tr').remove();
+        calcRetainer();
+      } else {
+        toast('At least one item line is required.', 'err');
+      }
+    }
+  });
+
+  const fileInput = $('#ret-file-input', form);
+  $('#btn-ret-upload', form).addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    Array.from(fileInput.files).forEach(f => {
+      if (pendingFiles.length >= 10) {
+        toast('Maximum 10 files can be attached.', 'err');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        pendingFiles.push({ name: f.name, size: f.size, type: f.type, data: ev.target.result });
+        renderAttach();
+      };
+      reader.readAsDataURL(f);
+    });
+    fileInput.value = '';
+  });
+
+  $('#ret-attach-badges', form).addEventListener('click', async e => {
+    const delBtn = e.target.closest('[data-del-att]');
+    if (delBtn) {
+      const attId = delBtn.dataset.delAtt;
+      if (!(await confirmBox({ title: 'Delete attachment?', message: 'This file will be permanently removed.', okText: 'Delete', danger: true }))) return;
+      try {
+        await api(`attachments/${attId}/`, { method: 'DELETE' });
+        rec.attachments = (rec.attachments || []).filter(a => String(a.id) !== String(attId));
+        renderAttach();
+        toast('Attachment deleted', 'ok');
+      } catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    const remBtn = e.target.closest('[data-rem-pen]');
+    if (remBtn) {
+      pendingFiles.splice(Number(remBtn.dataset.remPen), 1);
+      renderAttach();
+    }
+  });
+
+  const saveRetainerInvoice = async (isDraft) => {
+    const custId = $('#ret-customer', form).value;
+    if (!custId) {
+      toast('Please select a customer.', 'err');
+      $('#ret-customer', form).focus();
+      return;
+    }
+    const numVal = $('#ret-number', form).value.trim();
+    if (!numVal) {
+      toast('Please enter a retainer invoice number.', 'err');
+      $('#ret-number', form).focus();
+      return;
+    }
+    const dt = $('#ret-date', form).value;
+    if (!dt) {
+      toast('Please enter a retainer date.', 'err');
+      return;
+    }
+
+    const lines = [];
+    let lineErr = false;
+    $$('.ln-retainer-invoice', tbody).forEach(tr => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal) {
+        lineErr = true;
+        return;
+      }
+      lines.push({
+        item: itVal || null,
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qtyVal || 1,
+        rate: rateVal,
+        discount_percent: num($('.l-disc', tr).value) || 0,
+        gst_rate: num($('.l-gst', tr).value) || 0
+      });
+    });
+
+    if (lineErr || !lines.length) {
+      toast('Please enter a description or select an item for each row.', 'err');
+      return;
+    }
+
+    const payload = {
+      customer: custId,
+      customer_id: custId,
+      number: numVal,
+      order_number: ($('#ret-order-number', form)?.value || '').trim(),
+      date: dt,
+      due_date: $('#ret-due-date', form).value || dt,
+      terms: $('#ret-terms', form).value,
+      salesperson: $('#ret-salesperson', form).value,
+      subject: ($('#ret-subject', form)?.value || '').trim(),
+      place_of_supply: $('#ret-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
+      notes: $('#ret-notes', form).value.trim(),
+      signature_data: $('#ret-signature-data', form)?.value || '',
+      signed_by: $('#ret-signed-by', form)?.value || '',
+      signature_title: $('#ret-signature-title', form)?.value || '',
+      lines: lines,
+      force: true
+    };
+
+    const actionBtns = [$('#btn-ret-save-draft', target), $('#btn-ret-save-send', target)];
+    actionBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`retainer-invoices/${id}/`, { method: 'PUT', body: payload });
+      } else {
+        saved = await api('retainer-invoices/', { method: 'POST', body: payload });
+      }
+
+      for (const pf of pendingFiles) {
+        try {
+          await api('attachments/', {
+            method: 'POST',
+            body: {
+              entity_type: 'retainer_invoice',
+              entity_id: saved.id,
+              filename: pf.name,
+              file_size: pf.size,
+              mime_type: pf.type,
+              file_data: pf.data
+            }
+          });
+        } catch (e) { console.error('Attachment upload error:', e); }
+      }
+
+      if (!isDraft) {
+        try {
+          await api(`retainer-invoices/${saved.id}/send/`, { method: 'POST', body: {} });
+          toast(`${saved.number} saved and sent successfully!`, 'ok');
+        } catch (e) {
+          toast(`${saved.number} saved as draft, but could not be sent: ${e.message}`, 'err');
+        }
+      } else {
+        toast(`${saved.number} ${id ? 'updated' : 'saved as draft'} successfully!`, 'ok');
+      }
+
+      if (onDone) onDone(saved);
+      else {
+        location.hash = '#/sales/retainer-invoices';
+        route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      actionBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  };
+
+  $('#btn-ret-save-draft', target).addEventListener('click', () => saveRetainerInvoice(true));
+  $('#btn-ret-save-send', target).addEventListener('click', () => saveRetainerInvoice(false));
+
+  renderAttach();
+  calcRetainer();
+}
+window.retainerInvoiceForm = retainerInvoiceForm;
 
 
 

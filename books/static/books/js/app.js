@@ -219,7 +219,10 @@ const NAV_NEW_ACTIONS = {
   'sales/sales-orders': () => salesOrderForm(),
   'sales/invoices': () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }),
   'sales/recurring-invoices': () => recurringInvoiceModal(),
-  'sales/retainer-invoices': () => { location.hash = '#/sales/retainer-invoices'; return docMasterDetail($('#pg'), 'retainer-invoices', 'new'); },
+  'sales/retainer-invoices': () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
+    if (savedDoc) docMasterDetail($('#pg'), 'retainer-invoices', savedDoc.id);
+    else { location.hash = '#/sales/retainer-invoices'; route(); }
+  }),
   'sales/delivery-challans': () => challanModal(),
   'sales/payments-received': () => paymentForm('payments-received'),
   'sales/credit-notes': () => docForm('credit-notes'),

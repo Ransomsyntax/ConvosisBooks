@@ -6357,6 +6357,9 @@ def lookup(request, name):
     elif name in ('next-invoice-number', 'next-inv-number'):
         org = user_org or Organization.get()
         data = services.preview_document_number('INV', org=org)
+    elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number('RET', org=org)
     elif name in ('next-bill-number',):
         org = user_org or Organization.get()
         data = services.preview_document_number('BILL', org=org)
@@ -6453,6 +6456,40 @@ def invoice_sequence_view(request):
         except Exception:
             raise ApiError(400, 'Invalid JSON body.')
         new_pfx = (body_data.get('prefix') or 'INV').strip().upper()
+        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
+            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
+        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
+        try:
+            next_seq = int(next_seq)
+            if next_seq < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Next sequence number must be a positive integer.')
+
+        fy = services.get_financial_year()
+        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
+        seq, _ = Sequence.objects.get_or_create(key=new_key)
+        seq.value = max(0, next_seq - 1)
+        seq.save(update_fields=['value'])
+
+        prev = services.preview_document_number(new_pfx, org=org)
+        return j(prev)
+
+@api_view
+def retainer_sequence_view(request):
+    user_org = get_user_org(request.user)
+    org = user_org or Organization.get()
+    pfx = 'RET'
+    if request.method == 'GET':
+        prev = services.preview_document_number(pfx, org=org)
+        return j(prev)
+    elif request.method == 'POST':
+        import json, re
+        try:
+            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
+        except Exception:
+            raise ApiError(400, 'Invalid JSON body.')
+        new_pfx = (body_data.get('prefix') or 'RET').strip().upper()
         if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
             raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
         next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1

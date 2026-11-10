@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -11,9 +11,9 @@
 <script>try{var a=JSON.parse(localStorage.getItem('convosis_appearance_v1')||'null');var m=(a&&a.mode)||'light';if(m==='auto')m=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',m)}catch(e){}</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/glass.css">
-<link rel="stylesheet" href="css/app.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/glass.css?v=2.2.0">
+<link rel="stylesheet" href="css/app.css?v=2.2.0">
 <style>
 .login-tab-switcher {
   display: flex;
@@ -83,20 +83,20 @@
 
 <div id="wallpaper" class="wallpaper" aria-hidden="true"><div class="wp-image"></div><div class="wp-image"></div><div class="wp-dim"></div></div>
 
-<div style="position:fixed; top:18px; right:20px; z-index:10; display:flex; gap:10px;">
-  <button class="theme-toggle-btn" id="themeToggleBtn" type="button" onclick="ThemeEngine.toggleMode()" title="Toggle Dark / Light Theme">
+<div class="login-top-actions">
+  <button class="theme-toggle-btn" id="themeToggleBtn" type="button" onclick="ThemeEngine.toggleMode()" title="Toggle Dark / Light Theme" aria-label="Toggle Dark / Light Theme">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
     <span>Theme</span>
   </button>
-  <button class="icon-btn" type="button" title="Appearance & Wallpaper" onclick="ThemeEngine.toggleDrawer()">
+  <button class="icon-btn" type="button" title="Appearance &amp; Wallpaper" aria-label="Appearance &amp; Wallpaper" onclick="ThemeEngine.toggleDrawer()">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1.2"/><circle cx="17.5" cy="10.5" r="1.2"/><circle cx="8.5" cy="7.5" r="1.2"/><circle cx="6.5" cy="12.5" r="1.2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.8-1.7 1.7-1.7H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.4-10-8.4z"/></svg>
   </button>
 </div>
 
 <div class="lcard">
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
-    <img src="img/convosis-logo.png" alt="Convosis" class="llogo" style="margin-bottom:0;">
-    <span class="app" style="font-size:20px;font-weight:700;">Books</span>
+  <div class="login-brand-header">
+    <img src="img/convosis-logo.png" alt="Convosis" class="llogo">
+    <span class="app">Books</span>
   </div>
 
   <div class="login-tab-switcher" role="tablist">
@@ -112,9 +112,9 @@
 
   <!-- SIGN IN PANE -->
   <div id="paneSignIn" style="display:block;">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-      <h1 style="margin:0; font-size:20px;">Sign in to Workspace</h1>
-      <button type="button" class="login-prefill-btn" id="btnPrefillSignIn" title="Prefill form">
+    <div class="login-pane-header">
+      <h1 class="login-pane-title">Sign in to Workspace</h1>
+      <button type="button" class="login-prefill-btn" id="btnPrefillSignIn" title="Prefill form" aria-label="Prefill Sign In form">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
         <span>Prefill</span>
       </button>
@@ -147,9 +147,9 @@
 
   <!-- SIGN UP PANE -->
   <div id="paneSignUp" style="display:none;">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-      <h1 style="margin:0; font-size:20px;">Create Your Account</h1>
-      <button type="button" class="login-prefill-btn" id="btnPrefillSignUp" title="Prefill form">
+    <div class="login-pane-header">
+      <h1 class="login-pane-title">Create Your Account</h1>
+      <button type="button" class="login-prefill-btn" id="btnPrefillSignUp" title="Prefill form" aria-label="Prefill Sign Up form">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
         <span>Prefill</span>
       </button>
@@ -158,28 +158,28 @@
     <form action="index.html" method="get" id="formSignUp" novalidate>
       <div class="login-field-group">
         <label for="id_signup_name" class="login-label">Full Name</label>
-        <input class="login-input in" type="text" name="signup_name" id="id_signup_name" placeholder="e.g. John Doe">
+        <input class="login-input in" type="text" name="signup_name" id="id_signup_name" placeholder="e.g. John Doe" autocomplete="name">
       </div>
 
       <div class="login-field-group">
         <label for="id_signup_org" class="login-label">Organization / Business Name</label>
-        <input class="login-input in" type="text" name="signup_org" id="id_signup_org" placeholder="e.g. Acme Global Corp">
+        <input class="login-input in" type="text" name="signup_org" id="id_signup_org" placeholder="e.g. Acme Global Corp" autocomplete="organization">
       </div>
 
       <div class="login-field-group">
-        <label for="id_signup_username" class="login-label">Choose Username<span class="rq" style="color:#ef4444;">*</span></label>
-        <input class="login-input in" type="text" name="signup_username" id="id_signup_username" placeholder="Enter username…" required>
+        <label for="id_signup_username" class="login-label">Choose Username<span class="rq">*</span></label>
+        <input class="login-input in" type="text" name="signup_username" id="id_signup_username" placeholder="Enter username…" autocomplete="username" required>
       </div>
 
       <div class="login-field-group">
         <label for="id_signup_email" class="login-label">Work Email</label>
-        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com">
+        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com" autocomplete="email">
       </div>
 
       <div class="login-field-group">
-        <label for="id_signup_password" class="login-label">Password<span class="rq" style="color:#ef4444;">*</span></label>
+        <label for="id_signup_password" class="login-label">Password<span class="rq">*</span></label>
         <div class="login-password-wrapper">
-          <input class="login-input in" type="password" name="signup_password" id="id_signup_password" placeholder="Minimum 4 characters" required>
+          <input class="login-input in" type="password" name="signup_password" id="id_signup_password" placeholder="Minimum 4 characters" autocomplete="new-password" required>
           <button type="button" id="toggleSignupPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z"></path>
@@ -190,8 +190,8 @@
       </div>
 
       <div class="login-field-group">
-        <label for="id_signup_confirm_password" class="login-label">Confirm Password<span class="rq" style="color:#ef4444;">*</span></label>
-        <input class="login-input in" type="password" name="signup_confirm_password" id="id_signup_confirm_password" placeholder="Re-enter password" required>
+        <label for="id_signup_confirm_password" class="login-label">Confirm Password<span class="rq">*</span></label>
+        <input class="login-input in" type="password" name="signup_confirm_password" id="id_signup_confirm_password" placeholder="Re-enter password" autocomplete="new-password" required>
       </div>
 
       <button class="btn p login-btn-submit" id="submitSignupBtn" type="submit">

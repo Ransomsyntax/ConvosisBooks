@@ -50,7 +50,7 @@ class Command(BaseCommand):
 
         if dry_run:
             for p in qs:
-                self.stdout.write(f"[DRY-RUN] Would generate invoice for profile '{p.profile_name}' ({p.customer.name}) on {p.next_date} for total ₹{p.total}")
+                self.stdout.write(f"[DRY-RUN] Would generate invoice for profile '{p.profile_name}' ({p.customer.name}) on {p.next_date} for total INR {p.total}")
             return
 
         generated_count = 0
@@ -58,7 +58,7 @@ class Command(BaseCommand):
         for profile in qs.select_related('customer', 'organization'):
             try:
                 inv = services.generate_invoice_from_recurring_profile(profile, scheduled_date=profile.next_date)
-                self.stdout.write(self.style.SUCCESS(f"Generated {inv.number} for '{profile.profile_name}' ({profile.customer.name}) - Total: ₹{inv.total}"))
+                self.stdout.write(self.style.SUCCESS(f"Generated {inv.number} for '{profile.profile_name}' ({profile.customer.name}) - Total: INR {inv.total}"))
                 generated_count += 1
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"Error generating invoice for '{profile.profile_name}': {str(e)}"))

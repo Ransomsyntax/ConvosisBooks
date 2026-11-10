@@ -102,6 +102,15 @@ def get_user_org(user, request=None):
         base_org = Organization.objects.first()
 
     if not base_org:
+        owned_org = Organization.objects.filter(status='active', owner=user).order_by('id').first()
+        if owned_org:
+            base_org = owned_org
+        else:
+            orgs = list(Organization.objects.filter(status='active').order_by('id'))
+            if len(orgs) == 1:
+                base_org = orgs[0]
+
+    if not base_org:
         return None
 
     # Multi-tenant Context Switch Verification:

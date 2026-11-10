@@ -4217,3 +4217,59 @@ th.l, td.l, table th.l, table td.l {
   color: #dc2626;
   font-weight: 600;
 }
+
+/* Document Form Note/Terms Textarea & Digital Signature Controls */
+.invoice-form-page textarea.in,
+.so-form-page textarea.in,
+.quote-form-page textarea.in,
+.bill-form-page textarea.in,
+.po-form-page textarea.in {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.btn-doc-sign,
+#btn-so-sign,
+#btn-quote-sign,
+#btn-inv-sign,
+#btn-bill-sign,
+#btn-po-sign,
+#btn-ret-sign {
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 6px !important;
+  padding: 6px 14px !important;
+  background: #ffffff !important;
+  color: var(--tx, #0f172a) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease-in-out;
+}
+.btn-doc-sign:hover,
+#btn-so-sign:hover,
+#btn-quote-sign:hover,
+#btn-inv-sign:hover,
+#btn-bill-sign:hover,
+#btn-po-sign:hover,
+#btn-ret-sign:hover {
+  background: #f8fafc !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+.btn-doc-sign:focus-visible,
+#btn-so-sign:focus-visible,
+#btn-quote-sign:focus-visible,
+#btn-inv-sign:focus-visible,
+#btn-bill-sign:focus-visible,
+#btn-po-sign:focus-visible,
+#btn-ret-sign:focus-visible {
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: 1px !important;
+}

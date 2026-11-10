@@ -7869,13 +7869,14 @@ ${renderStockQuantityCell(l, items, whList)}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
           <div>
-            <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="rec-notes" name="notes" rows="3" style="width:100%;" placeholder="Notes will be copied to generated invoices">${esc(rNotes)}</textarea>
+            <div style="margin-bottom:18px;">
+              <label for="rec-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="rec-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;" placeholder="Notes will be copied to generated invoices">${esc(rNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on recurring invoices</span>
             </div>
-            <div class="fg">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
-              <textarea class="in" id="rec-terms" name="terms" rows="3" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;">${esc(rTerms)}</textarea>
+            <div>
+              <label for="rec-terms" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="rec-terms" name="terms" rows="4" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rTerms)}</textarea>
             </div>
           </div>
 
@@ -9310,14 +9311,14 @@ ${renderStockQuantityCell(l, items, whList)}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
           <div>
-            <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="q-notes" name="notes" rows="3" style="width:100%;">${esc(qNotes)}</textarea>
+            <div style="margin-bottom:18px;">
+              <label for="q-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="q-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(qNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the quotation</span>
             </div>
-            <div class="fg">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
-              <textarea class="in" id="q-terms" name="terms" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;">${esc(qTerms)}</textarea>
+            <div>
+              <label for="q-terms" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="q-terms" name="terms" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(qTerms)}</textarea>
             </div>
           </div>
 
@@ -9397,7 +9398,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <input type="hidden" id="q-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
             <input type="hidden" id="q-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
             <input type="hidden" id="q-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
-            <button type="button" class="btn" id="btn-quote-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn btn-doc-sign" id="btn-quote-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
               <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Quote'}
             </button>
           </div>
@@ -9428,9 +9429,12 @@ ${renderStockQuantityCell(l, items, whList)}
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcQuote());
 
   createSalespersonCustomDropdown($('#q-salesperson-container', form), qSalesperson, () => {});
-  setupProjectSelectorForCustomer($('#q-project', form), qCustomer, qProject);
+  function updateProjectFilter() {
+    setupProjectSelectorForCustomer($('#q-project', form), $('#q-customer', form)?.value, qProject);
+  }
+  updateProjectFilter();
   $('#q-customer', form)?.addEventListener('change', (e) => {
-    setupProjectSelectorForCustomer($('#q-project', form), e.target.value);
+    updateProjectFilter();
   });
 
   $('#btn-quote-num-pref', form)?.addEventListener('click', () => {
@@ -9922,7 +9926,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const soSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
   const soPos = rec ? (rec.place_of_supply || APP.org.state) : (srcQuote ? (srcQuote.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(soCustomer))?.state || APP.org.state));
   const soStatus = rec ? (rec.status || 'confirmed') : 'confirmed';
-  const soNotes = rec ? (rec.notes != null ? rec.notes : (APP.org.notes_default || 'Thank you for your order.')) : (srcQuote ? srcQuote.notes : (APP.org.notes_default || 'Thank you for your order.'));
+  const soNotes = rec ? (rec.notes != null ? rec.notes : '') : (srcQuote && srcQuote.notes ? srcQuote.notes : '');
   const soTerms = rec ? (rec.terms != null ? rec.terms : (APP.org.terms_default || 'Payment within 30 days.')) : (srcQuote ? srcQuote.terms : (APP.org.terms_default || 'Payment within 30 days.'));
   const soTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive');
   const soCustType = rec ? (rec.customer_type || 'b2b') : (srcQuote ? (srcQuote.customer_type || 'b2b') : 'b2b');
@@ -10147,17 +10151,18 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
           <div style="display:flex;flex-direction:column;gap:20px;">
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="so-notes" name="notes" rows="3" placeholder="Notes for the customer…" style="width:100%;font-size:12px;">${esc(soNotes)}</textarea>
+              <label for="so-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="so-notes" name="notes" rows="4" placeholder="Notes for the customer…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(soNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the sales order</span>
             </div>
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="so-terms" name="terms" rows="4" placeholder="Payment &amp; delivery terms…" style="width:100%;font-size:12px;">${esc(soTerms)}</textarea>
+              <label for="so-terms" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="so-terms" name="terms" rows="4" placeholder="Payment &amp; delivery terms…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(soTerms)}</textarea>
             </div>
             <div style="border-top:1px dashed var(--bd);padding-top:16px;">
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
               <div style="display:flex;align-items:center;gap:14px;">
-                <button type="button" class="btn" id="btn-so-sign" style="font-size:12px;">
+                <button type="button" class="btn btn-doc-sign" id="btn-so-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
                   <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Sales Order'}
                 </button>
                 <span id="so-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
@@ -10539,6 +10544,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   calcSo();
 }
 window.salesOrderForm = salesOrderForm;
+window.soForm = salesOrderForm;
 
 async function billForm(id, targetEl, onDone, extraOpts = {}) {
   if (typeof targetEl === 'function') {
@@ -10806,17 +10812,18 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
           <div style="display:flex;flex-direction:column;gap:20px;">
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
-              <textarea class="in" id="bill-notes" name="notes" rows="3" placeholder="Notes for reference…" style="width:100%;font-size:12px;">${esc(billNotes)}</textarea>
+              <label for="bill-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
+              <textarea class="in" id="bill-notes" name="notes" rows="4" placeholder="Notes for reference…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(billNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the bill</span>
             </div>
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="bill-terms-input" name="terms" rows="4" placeholder="Payment terms…" style="width:100%;font-size:12px;">${esc(billTerms)}</textarea>
+              <label for="bill-terms-input" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="bill-terms-input" name="terms" rows="4" placeholder="Payment terms…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(billTerms)}</textarea>
             </div>
             <div style="border-top:1px dashed var(--bd);padding-top:16px;">
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
               <div style="display:flex;align-items:center;gap:14px;">
-                <button type="button" class="btn" id="btn-bill-sign" style="font-size:12px;">
+                <button type="button" class="btn btn-doc-sign" id="btn-bill-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
                   <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Bill'}
                 </button>
                 <span id="bill-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
@@ -11435,17 +11442,18 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
           <div style="display:flex;flex-direction:column;gap:20px;">
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
-              <textarea class="in" id="po-notes" name="notes" rows="3" placeholder="Notes for the vendor…" style="width:100%;font-size:12px;">${esc(poNotes)}</textarea>
+              <label for="po-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
+              <textarea class="in" id="po-notes" name="notes" rows="4" placeholder="Notes for the vendor…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(poNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the purchase order</span>
             </div>
             <div>
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="po-terms" name="terms" rows="4" placeholder="Terms of purchase…" style="width:100%;font-size:12px;">${esc(poTerms)}</textarea>
+              <label for="po-terms" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="po-terms" name="terms" rows="4" placeholder="Terms of purchase…" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(poTerms)}</textarea>
             </div>
             <div style="border-top:1px dashed var(--bd);padding-top:16px;">
-              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
               <div style="display:flex;align-items:center;gap:14px;">
-                <button type="button" class="btn" id="btn-po-sign" style="font-size:12px;">
+                <button type="button" class="btn btn-doc-sign" id="btn-po-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
                   <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Purchase Order'}
                 </button>
                 <span id="po-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
@@ -11821,6 +11829,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
 window.purchaseOrderForm = purchaseOrderForm;
 window.billForm = billForm;
 window.salesOrderForm = salesOrderForm;
+window.soForm = salesOrderForm;
 window.statementImportWizardModal = statementImportWizardModal;
 window.importStatementModal = importStatementModal;
 
@@ -12100,14 +12109,14 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
           <div>
-            <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="inv-notes" name="notes" rows="3" style="width:100%;">${esc(invNotes)}</textarea>
+            <div style="margin-bottom:18px;">
+              <label for="inv-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="inv-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(invNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the invoice</span>
             </div>
-            <div class="fg">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
-              <textarea class="in" id="inv-terms-text" name="terms_conditions" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;">${esc(invTermsText)}</textarea>
+            <div>
+              <label for="inv-terms-text" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="inv-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(invTermsText)}</textarea>
             </div>
           </div>
 
@@ -12187,7 +12196,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             <input type="hidden" id="inv-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
             <input type="hidden" id="inv-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
             <input type="hidden" id="inv-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
-            <button type="button" class="btn" id="btn-inv-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn btn-doc-sign" id="btn-inv-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
               <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Invoice'}
             </button>
           </div>
@@ -13011,14 +13020,14 @@ ${renderStockQuantityCell(l, items, whList)}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
           <div>
-            <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="ret-notes" name="notes" rows="3" style="width:100%;">${esc(retNotes)}</textarea>
+            <div style="margin-bottom:18px;">
+              <label for="ret-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="ret-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(retNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the retainer invoice</span>
             </div>
-            <div class="fg">
-              <label style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms & Conditions</label>
-              <textarea class="in" id="ret-terms-text" name="terms_conditions" rows="3" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;">${esc(retTermsText)}</textarea>
+            <div>
+              <label for="ret-terms-text" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="ret-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(retTermsText)}</textarea>
             </div>
           </div>
 
@@ -13098,7 +13107,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <input type="hidden" id="ret-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
             <input type="hidden" id="ret-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
             <input type="hidden" id="ret-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
-            <button type="button" class="btn" id="btn-ret-sign" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn btn-doc-sign" id="btn-ret-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
               <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Retainer Invoice'}
             </button>
           </div>

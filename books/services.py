@@ -1171,6 +1171,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     inv = Invoice.objects.create(
         organization=org,
         customer=profile.customer,
+        recurring_invoice=profile,
         number=inv_num,
         date=target_date,
         due_date=due_date,

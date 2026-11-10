@@ -3846,12 +3846,32 @@ async function itemForm(id, onDone) {
   });
 }
 
-async function docForm(kind, id, targetEl, onDone) {
+async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
+  if (typeof targetEl === 'function') {
+    extraOpts = onDone || {};
+    onDone = targetEl;
+    targetEl = null;
+  }
   if (kind === 'invoices') {
-    return invoiceForm(id, targetEl, onDone);
+    return invoiceForm(id, targetEl, onDone, extraOpts);
+  }
+  if (kind === 'quotes') {
+    return quoteForm(id, targetEl, onDone, extraOpts);
+  }
+  if (kind === 'sales-orders') {
+    return salesOrderForm(id, targetEl, onDone, extraOpts);
+  }
+  if (kind === 'recurring-invoices') {
+    return recurringInvoiceForm(id, targetEl, onDone, extraOpts);
   }
   if (kind === 'retainer-invoices') {
-    return retainerInvoiceForm(id, targetEl, onDone);
+    return retainerInvoiceForm(id, targetEl, onDone, extraOpts);
+  }
+  if (kind === 'bills') {
+    return billForm(id, targetEl, onDone, extraOpts);
+  }
+  if (kind === 'purchase-orders') {
+    return purchaseOrderForm(id, targetEl, onDone, extraOpts);
   }
   const isRetainer = kind === 'retainer-invoices';
   const isPO = kind === 'purchase-orders';
@@ -9138,100 +9158,129 @@ ${renderStockQuantityCell(l, items, whList)}
 window.quoteForm = quoteForm;
 
 
-async function salesOrderForm(id, onDone) {
-  const [parties, items, whList, nextNum, rec] = await Promise.all([
+async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
+  if (typeof targetEl === 'function') {
+    extraOpts = onDone || {};
+    onDone = targetEl;
+    targetEl = null;
+  }
+  const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
+
+  let srcQuote = null;
+  if (!id && extraOpts && extraOpts.fromQuote) {
+    srcQuote = await api(`quotes/${extraOpts.fromQuote}/`).catch(() => null);
+  }
+
+  const [parties, items, salespersons, whList, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
+    api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
     id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
 
+  const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
-  const soCustomer = rec ? (rec.customer_id || rec.party_id) : '';
-  const soDate = rec ? rec.date : APP.today;
-  const soShipDate = rec ? (rec.expected_shipment_date || '') : '';
-  const soOrderNum = rec ? (rec.order_number || '') : '';
-  const soPos = rec ? (rec.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(soCustomer))?.state || APP.org.state);
+  const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
+  const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const soShipDate = rec ? (rec.expected_shipment_date || '') : (srcQuote ? (srcQuote.expiry_date || '') : '');
+  const soOrderNum = rec ? (rec.order_number || '') : (srcQuote ? (srcQuote.reference_number || srcQuote.number) : '');
+  const soSalesperson = rec ? (rec.salesperson || '') : (srcQuote ? (srcQuote.salesperson || '') : '');
+  const soSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
+  const soPos = rec ? (rec.place_of_supply || APP.org.state) : (srcQuote ? (srcQuote.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(soCustomer))?.state || APP.org.state));
   const soStatus = rec ? (rec.status || 'confirmed') : 'confirmed';
-  const soNotes = rec ? (rec.notes || '') : (APP.org.notes_default || 'Thank you for your order.');
-  const soTerms = rec ? (rec.terms || '') : (APP.org.terms_default || 'Payment within 30 days.');
-  const soTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
-  const soCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
-  const soLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
+  const soNotes = rec ? (rec.notes != null ? rec.notes : (APP.org.notes_default || 'Thank you for your order.')) : (srcQuote ? srcQuote.notes : (APP.org.notes_default || 'Thank you for your order.'));
+  const soTerms = rec ? (rec.terms != null ? rec.terms : (APP.org.terms_default || 'Payment within 30 days.')) : (srcQuote ? srcQuote.terms : (APP.org.terms_default || 'Payment within 30 days.'));
+  const soTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive');
+  const soCustType = rec ? (rec.customer_type || 'b2b') : (srcQuote ? (srcQuote.customer_type || 'b2b') : 'b2b');
+  const soLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]);
+  const pendingFiles = [];
 
   const rowHtml = (l = {}) => `
     <tr class="ln-so" style="border-bottom:1px solid var(--bd);">
-      <td style="width:30px;text-align:center;color:var(--tx-muted);cursor:grab;padding:10px 4px;">
-        <i class="fa-solid fa-grip-vertical"></i>
-      </td>
-      <td style="min-width:280px;padding:10px 8px;">
-        <div style="display:flex;align-items:flex-start;gap:10px;">
-          <div style="width:40px;height:40px;border-radius:6px;background:var(--surface-glass-subtle);border:1px dashed var(--bd);display:grid;place-items:center;color:var(--tx-muted);flex-shrink:0;">
-            <i class="fa-solid fa-cart-shopping" style="font-size:16px;"></i>
-          </div>
-          <div style="flex:1;">
-            <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
-              <option value="">Select or type item</option>
-              <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-              ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
-            </select>
-            <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;">
-            <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
-          </div>
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
         </div>
       </td>
-${renderStockQuantityCell(l, items, whList)}
-      <td style="width:130px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;">
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      ${renderStockQuantityCell(l, items, warehouses)}
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
       <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount" value="${esc(l.discount_percent || 0)}" style="text-align:right;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
       </td>
       <td style="width:140px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="Tax rate">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+          <option value="0">Select a Tax</option>
           <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
           <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
           <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
-          <option value="18" ${num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
-      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
-        ${inr(l.line_total || 0)}
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
-      <td style="width:40px;text-align:center;vertical-align:top;padding-top:14px;">
-        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;" title="Remove row">×</button>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
       </td>
     </tr>
   `;
 
-  const m = Modal.open({
-    title: id ? `Edit Sales Order ${soNumber}` : 'New Sales Order',
-    dialog: true,
-    wide: true,
-    body: `
-      <form id="so-form-element" style="padding:4px 0;" novalidate>
-        <div style="display:flex;flex-direction:column;gap:14px;background:var(--surface-glass-subtle);padding:20px;border-radius:10px;border:1px solid var(--bd);">
-          
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Name<span style="color:#ef4444;">*</span></label>
-            <div style="display:flex;gap:6px;flex:1;max-width:440px;">
+  target.innerHTML = `
+    <div class="so-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Sales Order' : 'New Sales Order'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-so-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <form id="so-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
               <select class="in" id="so-customer" name="customer" required style="flex:1;">
-                <option value="">Select a customer</option>
+                <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                 ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
-              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;border-radius:6px;cursor:pointer;">
+              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:1;max-width:440px;">
-              <select class="in" id="so-customer-type" name="customer_type" style="width:200px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="so-customer-type" name="customer_type" style="width:260px;">
                 <option value="b2b" ${soCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
                 <option value="b2c" ${soCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
               </select>
@@ -9242,170 +9291,195 @@ ${renderStockQuantityCell(l, items, whList)}
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order#<span style="color:#ef4444;">*</span></label>
-            <div style="flex:1;max-width:440px;">
-              <input type="text" class="in" id="so-number" name="number" value="${esc(soNumber)}" required>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" id="so-number" name="number" value="${soNumber}" required style="width:260px;">
+              <button type="button" class="btn ic" id="btn-so-num-pref" title="Sales Order preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Reference# / PO#</label>
-            <div style="flex:1;max-width:440px;">
-              <input type="text" class="in" id="so-reference" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. PO-2026-001">
-            </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Reference# / PO#</label>
+            <input class="in" id="so-reference" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. PO-2026-001" style="width:260px;">
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Sales Order Date<span style="color:#ef4444;">*</span></label>
-            <div style="flex:1;max-width:440px;">
-              <input type="date" class="in" id="so-date" name="date" value="${esc(soDate)}" required style="width:100%;">
-            </div>
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order Date*</label>
+            <input class="in" type="date" id="so-date" name="date" value="${soDate}" required style="width:260px;">
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Expected Shipment Date</label>
+            <input class="in" type="date" id="so-ship-date" name="expected_shipment_date" value="${soShipDate}" style="width:180px;">
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Expected Shipment Date</label>
-            <div style="flex:1;max-width:440px;">
-              <input type="date" class="in" id="so-ship-date" name="expected_shipment_date" value="${esc(soShipDate)}" style="width:100%;">
-            </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
+            <select class="in" id="so-salesperson" name="salesperson" style="width:260px;">
+              <option value="">Select or Add Salesperson</option>
+              ${salespersons.map(s => `<option value="${esc(s.name)}" ${soSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            </select>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Place of Supply</label>
-            <div style="flex:1;max-width:440px;">
-              <select class="in" id="so-pos" name="place_of_supply">
-                ${(typeof STATES !== 'undefined' ? STATES : []).map(s => `<option value="${esc(s)}" ${s === soPos ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-              </select>
-            </div>
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="so-subject" name="subject" rows="2" placeholder="Let your customer know what this Sales Order is for" style="width:260px;font-size:12px;">${esc(soSubject)}</textarea>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
-            <label style="width:160px;font-weight:600;font-size:13px;color:var(--tx);">Order Status</label>
-            <div style="flex:1;max-width:440px;">
-              <select class="in" id="so-status" name="status">
-                <option value="confirmed" ${soStatus === 'confirmed' ? 'selected' : ''}>Confirmed</option>
-                <option value="draft" ${soStatus === 'draft' ? 'selected' : ''}>Draft</option>
-                <option value="closed" ${soStatus === 'closed' ? 'selected' : ''}>Closed</option>
-                <option value="void" ${soStatus === 'void' ? 'selected' : ''}>Void</option>
-              </select>
-            </div>
-          </div>
-
+          <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
         </div>
 
-        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px;">
-          <div style="display:flex;align-items:center;gap:12px;">
-            <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--tx);">Item Table</h3>
-            <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Guide
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-so-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-so-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
+                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="so-line-tbody">
+                ${soLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-so-add-row" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:12px;font-weight:600;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-plus" style="margin-right:4px;"></i> Add New Row
+            </button>
+            <button type="button" class="btn" id="btn-so-bulk-items" style="background:none;border:1px solid var(--bd);color:var(--tx);font-size:12px;font-weight:500;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-layer-group" style="margin-right:4px;"></i> Add Items in Bulk
             </button>
           </div>
         </div>
-        <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead>
-              <tr style="background:var(--surface-glass-subtle);border-bottom:1px solid var(--bd);">
-                <th style="width:30px;"></th>
-                <th>ITEM DETAILS</th>
-                <th style="width:140px;min-width:130px;" class="r">QUANTITY</th>
-                <th style="width:130px;" class="r">RATE</th>
-                <th style="width:120px;">DISCOUNT %</th>
-                <th class="th-tax-explainer" data-doc-kind="sales-orders" style="width:140px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
-                <th style="width:120px;" class="r">AMOUNT</th>
-                <th style="width:40px;"></th>
-              </tr>
-            </thead>
-            <tbody id="so-line-tbody">
-              ${soLines.map(rowHtml).join('')}
-            </tbody>
-          </table>
-        </div>
 
-        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
-          <button type="button" class="btn" id="btn-so-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;">
-            <i class="fa-solid fa-circle-plus"></i> Add New Row
-          </button>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
-          <div>
-            <div class="fg" style="margin-bottom:16px;">
-              <label style="font-weight:600;font-size:13px;">Customer Notes</label>
-              <textarea class="in" id="so-notes" name="notes" rows="3">${esc(soNotes)}</textarea>
+        <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
+              <textarea class="in" id="so-notes" name="notes" rows="3" placeholder="Notes for the customer…" style="width:100%;font-size:12px;">${esc(soNotes)}</textarea>
             </div>
-            <div class="fg">
-              <label style="font-weight:600;font-size:13px;">Terms & Conditions</label>
-              <textarea class="in" id="so-terms" name="terms" rows="3">${esc(soTerms)}</textarea>
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="so-terms" name="terms" rows="4" placeholder="Payment &amp; delivery terms…" style="width:100%;font-size:12px;">${esc(soTerms)}</textarea>
+            </div>
+            <div style="border-top:1px dashed var(--bd);padding-top:16px;">
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <button type="button" class="btn" id="btn-so-sign" style="font-size:12px;">
+                  <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Sales Order'}
+                </button>
+                <span id="so-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
+              </div>
+              <input type="hidden" id="so-signature-data" value="${rec && rec.signature_data ? esc(rec.signature_data) : ''}">
+              <input type="hidden" id="so-signed-by" value="${rec && rec.signed_by ? esc(rec.signed_by) : ''}">
+              <input type="hidden" id="so-signature-title" value="${rec && rec.signature_title ? esc(rec.signature_title) : ''}">
             </div>
           </div>
 
-          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd);border-radius:10px;padding:18px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bd);">
-              <span style="font-weight:600;">Sub Total</span>
-              <span id="so-subtotal-val" style="font-size:16px;font-weight:700;">₹0.00</span>
-            </div>
-            <div id="so-tax-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:2px solid var(--bd);margin-top:10px;">
-              <span style="font-size:16px;font-weight:700;">Total ( ₹ )</span>
-              <span id="so-grandtotal-val" style="font-size:22px;font-weight:800;color:var(--accent);">₹0.00</span>
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:20px;">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;color:#475569;">
+                <span>Sub Total</span>
+                <span id="so-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
+              </div>
+              <div id="so-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
+                <span id="so-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
+              </div>
             </div>
           </div>
         </div>
       </form>
-    `,
-    footer: `
-      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;width:100%;">
-        <button type="button" class="btn" data-close>Cancel</button>
-        <button type="button" class="btn" id="btn-so-save-draft">Save as Draft</button>
-        <button type="button" class="btn p" id="btn-so-save-confirm">${id ? 'Update Sales Order' : 'Save & Confirm'}</button>
-      </div>
-    `
-  });
 
-  const form = $('#so-form-element', m.el);
+      <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -4px 12px rgba(0,0,0,0.05);margin-top:auto;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button type="button" class="btn" id="btn-so-cancel" style="padding:8px 18px;">Cancel</button>
+          <button type="button" class="btn" id="btn-so-save-draft" style="padding:8px 18px;">Save as Draft</button>
+          <button type="button" class="btn p" id="btn-so-save-confirm" style="padding:8px 22px;">${id ? 'Update Sales Order' : 'Save & Confirm'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const form = $('#so-form-element', target);
   const tbody = $('#so-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
-  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcSo());
+  const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcSo());
 
   function calcSo() {
     const isTaxInclusive = ($('#so-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
-    $$('.ln-so', tbody).forEach(tr => {
-      const qtyVal = num($('.l-qty', tr).value) || 0;
-      const rateVal = num($('.l-rate', tr).value) || 0;
-      const discVal = num($('.l-disc', tr).value) || 0;
-      const gstVal = num($('.l-gst', tr).value) || 0;
+    let totalQty = 0;
 
-      const gross = qtyVal * rateVal;
-      const net = Math.max(0, gross * (1 - discVal / 100));
+    $$('.ln-so', tbody).forEach(tr => {
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
+      const gst = num($('.l-gst', tr).value) || 0;
+
+      totalQty += q;
+      const gross = q * r;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const net = Math.max(0, gross - disc);
       let taxable = net;
       let taxAmt = 0;
       let lineTot = net;
 
-      if (isTaxInclusive && gstVal > 0) {
-        taxable = Math.round((net / (1 + gstVal / 100)) * 100) / 100;
+      if (isTaxInclusive && gst > 0) {
+        taxable = Math.round((net / (1 + gst / 100)) * 100) / 100;
         taxAmt = Math.round((net - taxable) * 100) / 100;
         lineTot = net;
       } else {
         taxable = Math.round(net * 100) / 100;
-        taxAmt = Math.round((taxable * (gstVal / 100)) * 100) / 100;
+        taxAmt = Math.round((taxable * (gst / 100)) * 100) / 100;
         lineTot = taxable + taxAmt;
       }
 
-      const amtEl = $('.l-amt', tr);
-      if (amtEl) amtEl.textContent = inr(lineTot);
-
       subtotal += taxable;
       totalTax += taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
     const subEl = $('#so-subtotal-val', form);
-    if (subEl) subEl.textContent = inr(subtotal);
+    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
 
     const posVal = $('#so-pos', form).value || APP.org.state;
     const isIntra = (posVal || '').trim().toLowerCase() === (APP.org.state || '').trim().toLowerCase();
@@ -9415,17 +9489,17 @@ ${renderStockQuantityCell(l, items, whList)}
         if (isIntra) {
           const half = totalTax / 2;
           taxRowsEl.innerHTML = `
-            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
-              <span>CGST:</span><span>${inr(half)}</span>
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>CGST</span><span>${inr(half)}</span>
             </div>
-            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
-              <span>SGST:</span><span>${inr(half)}</span>
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>SGST</span><span>${inr(half)}</span>
             </div>
           `;
         } else {
           taxRowsEl.innerHTML = `
-            <div style="display:flex;justify-content:space-between;color:var(--tx-muted);font-size:13px;">
-              <span>IGST:</span><span>${inr(totalTax)}</span>
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>IGST</span><span>${inr(totalTax)}</span>
             </div>
           `;
         }
@@ -9436,22 +9510,78 @@ ${renderStockQuantityCell(l, items, whList)}
 
     const grand = subtotal + totalTax;
     const grandEl = $('#so-grandtotal-val', form);
-    if (grandEl) grandEl.textContent = inr(grand);
+    if (grandEl) grandEl.textContent = inr(grand).replace('₹', '').trim();
+    return { subtotal, totalTax, grand, totalQty };
   }
 
+  $('#btn-so-close-x', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'sales-orders');
+    else history.back();
+  });
+  $('#btn-so-cancel', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'sales-orders');
+    else history.back();
+  });
+
   $('#btn-so-cust-lookup', form)?.addEventListener('click', () => {
-    partyForm('customers', null, newCust => {
-      if (newCust && newCust.id) {
+    handleQuickCreateSelect($('#so-customer', form), newCust => {
+      parties.push(newCust);
+      const opt = document.createElement('option');
+      opt.value = newCust.id;
+      opt.textContent = newCust.name;
+      opt.selected = true;
+      $('#so-customer', form).appendChild(opt);
+      $('#so-customer', form).value = newCust.id;
+      if (newCust.state) $('#so-pos', form).value = newCust.state;
+      calcSo();
+    });
+  });
+
+  $('#so-customer', form)?.addEventListener('change', e => {
+    if (e.target.value === '__new_customer__') {
+      handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        const opt = document.createElement('option');
-        opt.value = newCust.id;
-        opt.textContent = newCust.name;
-        opt.selected = true;
-        $('#so-customer', form).appendChild(opt);
-        if (newCust.state) {
-          $('#so-pos', form).value = newCust.state;
-          calcSo();
-        }
+        if (newCust.state) $('#so-pos', form).value = newCust.state;
+        calcSo();
+      });
+      return;
+    }
+    const custId = $('#so-customer', form).value;
+    const cust = parties.find(p => String(p.id) === String(custId));
+    if (cust) {
+      if (cust.state) $('#so-pos', form).value = cust.state;
+      const gstinEl = $('#so-customer-gstin', form);
+      const custTypeEl = $('#so-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cust.gstin && cust.gstin.trim()) custTypeEl.value = 'b2b';
+        else if (cust.customer_type === 'individual') custTypeEl.value = 'b2c';
+      }
+      calcSo();
+    }
+  });
+
+  $('#btn-so-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#so-signature-data', form)?.value || '',
+      signed_by: $('#so-signed-by', form)?.value || '',
+      signature_title: $('#so-signature-title', form)?.value || '',
+      number: soNumber
+    };
+    openSignatureModal(curSigObj, 'sales-orders', updated => {
+      if ($('#so-signature-data', form)) $('#so-signature-data', form).value = updated.signature_data || '';
+      if ($('#so-signed-by', form)) $('#so-signed-by', form).value = updated.signed_by || '';
+      if ($('#so-signature-title', form)) $('#so-signature-title', form).value = updated.signature_title || '';
+      const descEl = $('#so-sig-desc', form);
+      const signBtn = $('#btn-so-sign', form);
+      if (updated.signature_data) {
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Sales Order';
       }
     });
   });
@@ -9460,7 +9590,7 @@ ${renderStockQuantityCell(l, items, whList)}
     if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcSo();
   });
   tbody.addEventListener('change', e => {
-    if (e.target.matches('.l-gst')) {
+    if (e.target.matches('.l-gst, .l-disc-type')) {
       calcSo();
     } else if (e.target.matches('.l-item')) {
       if (e.target.value === '__new_item__') {
@@ -9474,10 +9604,10 @@ ${renderStockQuantityCell(l, items, whList)}
       const tr = e.target.closest('tr');
       const it = byId[e.target.value];
       if (it && tr) {
-        if (it.selling_price != null && !$('.l-rate', tr).value) $('.l-rate', tr).value = it.selling_price;
-        if (it.description && !$('.l-desc', tr).value) $('.l-desc', tr).value = it.description;
-        if (it.hsn_sac) $('.l-hsn', tr).value = it.hsn_sac;
-        if (it.gst_rate != null) $('.l-gst', tr).value = String(num(it.gst_rate));
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
         stockTracker.updateRow(tr, true);
       }
       calcSo();
@@ -9487,90 +9617,86 @@ ${renderStockQuantityCell(l, items, whList)}
   tbody.addEventListener('click', e => {
     const rm = e.target.closest('[data-rm-line]');
     if (rm) {
-      const tr = rm.closest('tr');
       if ($$('.ln-so', tbody).length > 1) {
-        tr.remove();
+        rm.closest('tr').remove();
         calcSo();
       } else {
-        toast('A sales order requires at least one line item.', 'err');
+        toast('At least one line item is required.', 'err');
       }
     }
   });
 
-  $('#btn-so-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
+  $('#btn-so-add-row', target)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
     stockTracker.updateRow(tbody.lastElementChild, false);
     calcSo();
   });
 
-  $('#so-customer', form).addEventListener('change', e => {
-    if (e.target.value === '__new_customer__') {
-      handleQuickCreateSelect(e.target, newCust => {
-        parties.push(newCust);
-        if (newCust && newCust.state) {
-          $('#so-pos', form).value = newCust.state;
-          calcSo();
-        }
+  $('#btn-so-bulk-items', target)?.addEventListener('click', () => {
+    openBulkItemModal(items, selectedItems => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.id,
+          description: it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: 1,
+          rate: it.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
       });
+      calcSo();
+    });
+  });
+
+  $('#so-tax-pricing', form)?.addEventListener('change', calcSo);
+
+  const saveSo = async (isDraft) => {
+    const custId = $('#so-customer', form).value;
+    if (!custId) {
+      toast('Please select a customer.', 'err');
+      $('#so-customer', form).focus();
       return;
     }
-    const cust = parties.find(p => String(p.id) === String(e.target.value));
-    if (cust) {
-      if (cust.state) $('#so-pos', form).value = cust.state;
-      const gstinEl = $('#so-customer-gstin', form);
-      const custTypeEl = $('#so-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cust.gstin && cust.gstin.trim()) {
-          custTypeEl.value = 'b2b';
-        } else if (cust.customer_type === 'individual') {
-          custTypeEl.value = 'b2c';
-        }
-      }
-      calcSo();
-    }
-  });
-  $('#so-pos', form).addEventListener('change', () => calcSo());
-  $('#so-tax-pricing', form)?.addEventListener('change', () => calcSo());
-
-  async function saveSo(isDraft) {
-    const custId = $('#so-customer', form).value;
-    if (!custId) { toast('Please select a customer.', 'err'); return; }
-    const dt = $('#so-date', form).value;
-    if (!dt) { toast('Please enter order date.', 'err'); return; }
     const numVal = $('#so-number', form).value.trim();
-    if (!numVal) { toast('Please enter a sales order number.', 'err'); return; }
+    if (!numVal) {
+      toast('Please enter a sales order number.', 'err');
+      $('#so-number', form).focus();
+      return;
+    }
+    const dt = $('#so-date', form).value;
+    if (!dt) {
+      toast('Please enter a sales order date.', 'err');
+      return;
+    }
 
     const lines = [];
-    $$('.ln-so', tbody).forEach((tr, idx) => {
-      const itId = $('.l-item', tr).value;
-      const desc = $('.l-desc', tr).value.trim();
-      const hsn = $('.l-hsn', tr).value.trim();
-      const qVal = num($('.l-qty', tr).value) || 1;
-      const rVal = num($('.l-rate', tr).value) || 0;
-      const dVal = num($('.l-disc', tr).value) || 0;
-      const gVal = num($('.l-gst', tr).value) || 0;
-
-      if (itId || desc || rVal > 0) {
-        lines.push({
-          item: itId || null,
-          item_id: itId || null,
-          warehouse: $('.l-wh-select', tr)?.value || null,
-          warehouse_id: $('.l-wh-select', tr)?.value || null,
-          warehouse_code: $('.l-wh-code', tr)?.value || '',
-          description: desc || (itId && byId[itId] ? byId[itId].name : 'Line item'),
-          hsn_sac: hsn,
-          quantity: qVal,
-          rate: rVal,
-          discount_percent: dVal,
-          gst_rate: gVal,
-          position: idx
-        });
+    let lineErr = false;
+    $$('.ln-so', tbody).forEach(tr => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal) {
+        lineErr = true;
+        return;
       }
+      lines.push({
+        item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qtyVal || 1,
+        rate: rateVal,
+        discount_percent: num($('.l-disc', tr).value) || 0,
+        gst_rate: num($('.l-gst', tr).value) || 0
+      });
     });
 
-    if (!lines.length) {
-      toast('Please add at least one line item with a rate or description.', 'err');
+    if (lineErr || !lines.length) {
+      toast('Please enter a description or select an item for each row.', 'err');
       return;
     }
 
@@ -9581,17 +9707,24 @@ ${renderStockQuantityCell(l, items, whList)}
       order_number: $('#so-reference', form).value.trim(),
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
+      due_date: $('#so-ship-date', form).value || dt,
       tax_pricing_type: $('#so-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#so-customer-type', form)?.value || 'b2b',
       place_of_supply: $('#so-pos', form).value || APP.org.state,
-      status: isDraft ? 'draft' : ($('#so-status', form).value || 'confirmed'),
+      salesperson: $('#so-salesperson', form)?.value || '',
+      subject: $('#so-subject', form)?.value?.trim() || '',
+      status: isDraft ? 'draft' : 'confirmed',
       notes: $('#so-notes', form).value.trim(),
       terms: $('#so-terms', form).value.trim(),
+      signature_data: $('#so-signature-data', form)?.value || '',
+      signed_by: $('#so-signed-by', form)?.value || '',
+      signature_title: $('#so-signature-title', form)?.value || '',
+      source_quote: srcQuote ? srcQuote.id : (rec ? rec.source_quote_id : null),
       lines: lines
     };
 
-    const saveBtns = [$('#btn-so-save-draft', m.el), $('#btn-so-save-confirm', m.el)];
-    saveBtns.forEach(b => { b.disabled = true; });
+    const saveBtns = [$('#btn-so-save-draft', target), $('#btn-so-save-confirm', target)];
+    saveBtns.forEach(b => { if (b) b.disabled = true; });
 
     try {
       let saved;
@@ -9601,30 +9734,1222 @@ ${renderStockQuantityCell(l, items, whList)}
       } else {
         saved = await api('sales-orders/', { method: 'POST', body: payload });
         toast(`Sales Order ${saved.number} created successfully!`, 'ok');
+        if (srcQuote) {
+          api(`quotes/${srcQuote.id}/action/accept/`).catch(() => {});
+        }
       }
 
-      m.close();
       if (onDone) onDone(saved);
-      else if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
-      else refresh();
+      else if (window.docMasterDetail) docMasterDetail($('#pg'), 'sales-orders', saved.id);
+      else {
+        location.hash = '#/sales/sales-orders';
+        route();
+      }
     } catch (err) {
       toast(err.message, 'err');
     } finally {
-      saveBtns.forEach(b => { b.disabled = false; });
+      saveBtns.forEach(b => { if (b) b.disabled = false; });
     }
-  }
+  };
 
-  $('#btn-so-save-draft', m.el).addEventListener('click', () => saveSo(true));
-  $('#btn-so-save-confirm', m.el).addEventListener('click', () => saveSo(false));
+  $('#btn-so-save-draft', target).addEventListener('click', () => saveSo(true));
+  $('#btn-so-save-confirm', target).addEventListener('click', () => saveSo(false));
 
   calcSo();
 }
 window.salesOrderForm = salesOrderForm;
+
+async function billForm(id, targetEl, onDone, extraOpts = {}) {
+  if (typeof targetEl === 'function') {
+    extraOpts = onDone || {};
+    onDone = targetEl;
+    targetEl = null;
+  }
+  const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
+
+  let srcPO = null;
+  if (!id && extraOpts && extraOpts.fromPO) {
+    srcPO = await api(`purchase-orders/${extraOpts.fromPO}/`).catch(() => null);
+  }
+
+  const [parties, items, whList, nextNum, rec] = await Promise.all([
+    api('lookup/vendors/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-bill-number/').catch(() => ({ next_number: 'BILL-000001' })),
+    id ? api(`bills/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
+  const billNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'BILL-000001');
+  const billVendor = rec ? (rec.vendor_id || rec.party_id) : (srcPO ? srcPO.vendor_id : '');
+  const billDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const billDueDate = rec ? (rec.due_date || '') : billDate;
+  const billTerms = rec ? (rec.terms || 'Due on Receipt') : (srcPO ? (srcPO.terms || 'Due on Receipt') : 'Due on Receipt');
+  const billOrderNum = rec ? (rec.order_number || rec.vendor_ref || '') : (srcPO ? srcPO.number : '');
+  const billSubject = rec ? (rec.subject || '') : '';
+  const billPos = rec ? (rec.place_of_supply || APP.org.state) : (srcPO ? (srcPO.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(billVendor))?.state || APP.org.state));
+  const billNotes = rec ? (rec.notes != null ? rec.notes : (APP.org.notes_default || 'Thanks for the service.')) : (srcPO ? srcPO.notes : (APP.org.notes_default || 'Thanks for the service.'));
+  const billTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcPO ? (srcPO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive');
+  const billCustType = rec ? (rec.customer_type || 'registered') : (srcPO ? (srcPO.customer_type || 'registered') : 'registered');
+  const billLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcPO && srcPO.lines && srcPO.lines.length) ? srcPO.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]);
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-bill" style="border-bottom:1px solid var(--bd);">
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+        </div>
+      </td>
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      ${renderStockQuantityCell(l, items, warehouses)}
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
+      </td>
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+          <option value="0">Select a Tax</option>
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </td>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  target.innerHTML = `
+    <div class="bill-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Bill' : 'New Bill'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-bill-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <form id="bill-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="bill-vendor" name="vendor" required style="flex:1;">
+                <option value="">Select or add a vendor</option>
+                <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(billVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Supplier Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="bill-customer-type" name="customer_type" style="width:260px;">
+                <option value="registered" ${billCustType === 'registered' ? 'selected' : ''}>Registered Business</option>
+                <option value="unregistered" ${billCustType === 'unregistered' ? 'selected' : ''}>Unregistered Supplier</option>
+              </select>
+              <div id="bill-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="bill-vendor-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(billVendor))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" id="bill-number" name="number" value="${billNum}" required style="width:260px;">
+              <button type="button" class="btn ic" id="btn-bill-num-pref" title="Bill preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Order Number / PO#</label>
+            <input class="in" id="bill-order-number" name="order_number" value="${esc(billOrderNum)}" placeholder="e.g. PO-000001" style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill Date*</label>
+            <input class="in" type="date" id="bill-date" name="date" value="${billDate}" required style="width:260px;">
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Terms</label>
+            <select class="in" id="bill-terms" name="terms" style="width:180px;">
+              <option value="Due on Receipt" ${billTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
+              <option value="Net 15" ${billTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
+              <option value="Net 30" ${billTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
+              <option value="Net 45" ${billTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
+              <option value="Net 60" ${billTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
+            </select>
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
+            <input class="in" type="date" id="bill-due-date" name="due_date" value="${billDueDate}" style="width:160px;">
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="bill-subject" name="subject" rows="2" placeholder="Summary or description of this bill" style="width:260px;font-size:12px;">${esc(billSubject)}</textarea>
+          </div>
+
+          <input type="hidden" id="bill-pos" name="place_of_supply" value="${esc(billPos)}">
+        </div>
+
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="bill-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${billTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${billTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="bills" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-bill-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-bill-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
+                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="bill-line-tbody">
+                ${billLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-bill-add-row" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:12px;font-weight:600;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-plus" style="margin-right:4px;"></i> Add New Row
+            </button>
+            <button type="button" class="btn" id="btn-bill-bulk-items" style="background:none;border:1px solid var(--bd);color:var(--tx);font-size:12px;font-weight:500;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-layer-group" style="margin-right:4px;"></i> Add Items in Bulk
+            </button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
+              <textarea class="in" id="bill-notes" name="notes" rows="3" placeholder="Notes for reference…" style="width:100%;font-size:12px;">${esc(billNotes)}</textarea>
+            </div>
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="bill-terms-input" name="terms" rows="4" placeholder="Payment terms…" style="width:100%;font-size:12px;">${esc(billTerms)}</textarea>
+            </div>
+            <div style="border-top:1px dashed var(--bd);padding-top:16px;">
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <button type="button" class="btn" id="btn-bill-sign" style="font-size:12px;">
+                  <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Bill'}
+                </button>
+                <span id="bill-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
+              </div>
+              <input type="hidden" id="bill-signature-data" value="${rec && rec.signature_data ? esc(rec.signature_data) : ''}">
+              <input type="hidden" id="bill-signed-by" value="${rec && rec.signed_by ? esc(rec.signed_by) : ''}">
+              <input type="hidden" id="bill-signature-title" value="${rec && rec.signature_title ? esc(rec.signature_title) : ''}">
+            </div>
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:20px;">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;color:#475569;">
+                <span>Sub Total</span>
+                <span id="bill-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
+              </div>
+              <div id="bill-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
+                <span id="bill-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -4px 12px rgba(0,0,0,0.05);margin-top:auto;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button type="button" class="btn" id="btn-bill-cancel" style="padding:8px 18px;">Cancel</button>
+          <button type="button" class="btn" id="btn-bill-save-draft" style="padding:8px 18px;">Save as Draft</button>
+          <button type="button" class="btn p" id="btn-bill-save-approve" style="padding:8px 22px;">${id ? 'Update Bill' : 'Save & Approve'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const form = $('#bill-form-element', target);
+  const tbody = $('#bill-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcBill());
+
+  function calcBill() {
+    const isTaxInclusive = ($('#bill-tax-pricing', form)?.value === 'tax_inclusive');
+    let subtotal = 0;
+    let totalTax = 0;
+    let totalQty = 0;
+
+    $$('.ln-bill', tbody).forEach(tr => {
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
+      const gst = num($('.l-gst', tr).value) || 0;
+
+      totalQty += q;
+      const gross = q * r;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const net = Math.max(0, gross - disc);
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gst > 0) {
+        taxable = Math.round((net / (1 + gst / 100)) * 100) / 100;
+        taxAmt = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        taxAmt = Math.round((taxable * (gst / 100)) * 100) / 100;
+        lineTot = taxable + taxAmt;
+      }
+
+      subtotal += taxable;
+      totalTax += taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    });
+
+    const subEl = $('#bill-subtotal-val', form);
+    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
+
+    const posVal = $('#bill-pos', form).value || APP.org.state;
+    const isIntra = (posVal || '').trim().toLowerCase() === (APP.org.state || '').trim().toLowerCase();
+    const taxRowsEl = $('#bill-tax-rows', form);
+    if (taxRowsEl) {
+      if (totalTax > 0) {
+        if (isIntra) {
+          const half = totalTax / 2;
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>CGST</span><span>${inr(half)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>SGST</span><span>${inr(half)}</span>
+            </div>
+          `;
+        } else {
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>IGST</span><span>${inr(totalTax)}</span>
+            </div>
+          `;
+        }
+      } else {
+        taxRowsEl.innerHTML = '';
+      }
+    }
+
+    const grand = subtotal + totalTax;
+    const grandEl = $('#bill-grandtotal-val', form);
+    if (grandEl) grandEl.textContent = inr(grand).replace('₹', '').trim();
+    return { subtotal, totalTax, grand, totalQty };
+  }
+
+  $('#btn-bill-close-x', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'bills');
+    else history.back();
+  });
+  $('#btn-bill-cancel', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'bills');
+    else history.back();
+  });
+
+  $('#btn-bill-vendor-lookup', form)?.addEventListener('click', () => {
+    handleQuickCreateSelect($('#bill-vendor', form), newVen => {
+      parties.push(newVen);
+      const opt = document.createElement('option');
+      opt.value = newVen.id;
+      opt.textContent = newVen.name;
+      opt.selected = true;
+      $('#bill-vendor', form).appendChild(opt);
+      $('#bill-vendor', form).value = newVen.id;
+      if (newVen.state) $('#bill-pos', form).value = newVen.state;
+      calcBill();
+    });
+  });
+
+  $('#bill-vendor', form)?.addEventListener('change', e => {
+    if (e.target.value === '__new_vendor__') {
+      handleQuickCreateSelect(e.target, newVen => {
+        parties.push(newVen);
+        if (newVen.state) $('#bill-pos', form).value = newVen.state;
+        calcBill();
+      });
+      return;
+    }
+    const venId = $('#bill-vendor', form).value;
+    const ven = parties.find(p => String(p.id) === String(venId));
+    if (ven) {
+      if (ven.state) $('#bill-pos', form).value = ven.state;
+      const gstinEl = $('#bill-vendor-gstin', form);
+      const custTypeEl = $('#bill-customer-type', form);
+      if (gstinEl) gstinEl.textContent = ven.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (ven.gstin && ven.gstin.trim()) custTypeEl.value = 'registered';
+        else custTypeEl.value = 'unregistered';
+      }
+      calcBill();
+    }
+  });
+
+  $('#btn-bill-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#bill-signature-data', form)?.value || '',
+      signed_by: $('#bill-signed-by', form)?.value || '',
+      signature_title: $('#bill-signature-title', form)?.value || '',
+      number: billNum
+    };
+    openSignatureModal(curSigObj, 'bills', updated => {
+      if ($('#bill-signature-data', form)) $('#bill-signature-data', form).value = updated.signature_data || '';
+      if ($('#bill-signed-by', form)) $('#bill-signed-by', form).value = updated.signed_by || '';
+      if ($('#bill-signature-title', form)) $('#bill-signature-title', form).value = updated.signature_title || '';
+      const descEl = $('#bill-sig-desc', form);
+      const signBtn = $('#btn-bill-sign', form);
+      if (updated.signature_data) {
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Bill';
+      }
+    });
+  });
+
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcBill();
+  });
+  tbody.addEventListener('change', e => {
+    if (e.target.matches('.l-gst, .l-disc-type')) {
+      calcBill();
+    } else if (e.target.matches('.l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcBill();
+        });
+        return;
+      }
+      const tr = e.target.closest('tr');
+      const it = byId[e.target.value];
+      if (it && tr) {
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.purchase_price || it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        stockTracker.updateRow(tr, true);
+      }
+      calcBill();
+    }
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      if ($$('.ln-bill', tbody).length > 1) {
+        rm.closest('tr').remove();
+        calcBill();
+      } else {
+        toast('At least one line item is required.', 'err');
+      }
+    }
+  });
+
+  $('#btn-bill-add-row', target)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
+    calcBill();
+  });
+
+  $('#btn-bill-bulk-items', target)?.addEventListener('click', () => {
+    openBulkItemModal(items, selectedItems => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.id,
+          description: it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: 1,
+          rate: it.purchase_price || it.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
+      });
+      calcBill();
+    });
+  });
+
+  $('#bill-tax-pricing', form)?.addEventListener('change', calcBill);
+
+  const saveBill = async (isDraft) => {
+    const venId = $('#bill-vendor', form).value;
+    if (!venId) {
+      toast('Please select a vendor.', 'err');
+      $('#bill-vendor', form).focus();
+      return;
+    }
+    const numVal = $('#bill-number', form).value.trim();
+    if (!numVal) {
+      toast('Please enter a bill number.', 'err');
+      $('#bill-number', form).focus();
+      return;
+    }
+    const dt = $('#bill-date', form).value;
+    if (!dt) {
+      toast('Please enter a bill date.', 'err');
+      return;
+    }
+
+    const lines = [];
+    let lineErr = false;
+    $$('.ln-bill', tbody).forEach(tr => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal) {
+        lineErr = true;
+        return;
+      }
+      lines.push({
+        item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qtyVal || 1,
+        rate: rateVal,
+        discount_percent: num($('.l-disc', tr).value) || 0,
+        gst_rate: num($('.l-gst', tr).value) || 0
+      });
+    });
+
+    if (lineErr || !lines.length) {
+      toast('Please enter a description or select an item for each row.', 'err');
+      return;
+    }
+
+    const payload = {
+      vendor: venId,
+      vendor_id: venId,
+      number: numVal,
+      order_number: $('#bill-order-number', form).value.trim(),
+      vendor_ref: $('#bill-order-number', form).value.trim(),
+      date: dt,
+      due_date: $('#bill-due-date', form).value || dt,
+      terms: $('#bill-terms', form).value,
+      tax_pricing_type: $('#bill-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#bill-customer-type', form)?.value || 'registered',
+      place_of_supply: $('#bill-pos', form).value || APP.org.state,
+      subject: $('#bill-subject', form)?.value?.trim() || '',
+      status: isDraft ? 'draft' : 'open',
+      notes: $('#bill-notes', form).value.trim(),
+      terms_conditions: $('#bill-terms-input', form)?.value?.trim() || '',
+      signature_data: $('#bill-signature-data', form)?.value || '',
+      signed_by: $('#bill-signed-by', form)?.value || '',
+      signature_title: $('#bill-signature-title', form)?.value || '',
+      source_purchase_order: srcPO ? srcPO.id : (rec ? rec.source_purchase_order_id : null),
+      lines: lines
+    };
+
+    const saveBtns = [$('#btn-bill-save-draft', target), $('#btn-bill-save-approve', target)];
+    saveBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`bills/${id}/`, { method: 'PUT', body: payload });
+        toast(`Bill ${saved.number} updated successfully!`, 'ok');
+      } else {
+        saved = await api('bills/', { method: 'POST', body: payload });
+        toast(`Bill ${saved.number} created successfully!`, 'ok');
+      }
+
+      if (onDone) onDone(saved);
+      else if (window.docMasterDetail) docMasterDetail($('#pg'), 'bills', saved.id);
+      else {
+        location.hash = '#/purchases/bills';
+        route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      saveBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  };
+
+  $('#btn-bill-save-draft', target).addEventListener('click', () => saveBill(true));
+  $('#btn-bill-save-approve', target).addEventListener('click', () => saveBill(false));
+
+  calcBill();
+}
+window.billForm = billForm;
+
+async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
+  if (typeof targetEl === 'function') {
+    extraOpts = onDone || {};
+    onDone = targetEl;
+    targetEl = null;
+  }
+  const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
+
+  const [parties, items, whList, nextNum, rec] = await Promise.all([
+    api('lookup/vendors/').catch(() => []),
+    api('lookup/items/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-po-number/').catch(() => ({ next_number: 'PO-000001' })),
+    id ? api(`purchase-orders/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
+  const poNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'PO-000001');
+  const poVendor = rec ? (rec.vendor_id || rec.party_id) : '';
+  const poDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const poDeliveryDate = rec ? (rec.delivery_date || '') : poDate;
+  const poOrderNum = rec ? (rec.order_number || '') : '';
+  const poSubject = rec ? (rec.subject || '') : '';
+  const poPos = rec ? (rec.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(poVendor))?.state || APP.org.state);
+  const poNotes = rec ? (rec.notes != null ? rec.notes : (APP.org.notes_default || 'Looking forward to receipt of goods.')) : (APP.org.notes_default || 'Looking forward to receipt of goods.');
+  const poTerms = rec ? (rec.terms != null ? rec.terms : (APP.org.terms_default || 'Standard terms apply.')) : (APP.org.terms_default || 'Standard terms apply.');
+  const poTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
+  const poCustType = rec ? (rec.customer_type || 'registered') : 'registered';
+  const poLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+
+  const rowHtml = (l = {}) => `
+    <tr class="ln-po" style="border-bottom:1px solid var(--bd);">
+      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
+          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
+          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+        </div>
+      </td>
+      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
+          <option value="">Type or click to select an item.</option>
+          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
+          ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+        </select>
+        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
+        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
+      </td>
+      ${renderStockQuantityCell(l, items, warehouses)}
+      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
+      </td>
+      <td style="width:120px;padding:10px 8px;vertical-align:top;">
+        <div style="display:flex;gap:4px;">
+          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
+          <select class="in l-disc-type" style="width:48px;padding:4px;">
+            <option value="percent">%</option>
+            <option value="amount">₹</option>
+          </select>
+        </div>
+      </td>
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+          <option value="0">Select a Tax</option>
+          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
+          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
+          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
+          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
+          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
+        </select>
+      </td>
+      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </td>
+      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
+      </td>
+    </tr>
+  `;
+
+  target.innerHTML = `
+    <div class="po-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
+          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Purchase Order' : 'New Purchase Order'}</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-po-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <form id="po-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+        <div class="fe" data-err="_" role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
+            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+              <select class="in" id="po-vendor" name="vendor" required style="flex:1;">
+                <option value="">Select or add a vendor</option>
+                <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(poVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Supplier Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="po-customer-type" name="customer_type" style="width:260px;">
+                <option value="registered" ${poCustType === 'registered' ? 'selected' : ''}>Registered Business</option>
+                <option value="unregistered" ${poCustType === 'unregistered' ? 'selected' : ''}>Unregistered Supplier</option>
+              </select>
+              <div id="po-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="po-vendor-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(poVendor))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" id="po-number" name="number" value="${poNumber}" required style="width:260px;">
+              <button type="button" class="btn ic" id="btn-po-num-pref" title="Purchase Order preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Reference#</label>
+            <input class="in" id="po-reference" name="order_number" value="${esc(poOrderNum)}" placeholder="e.g. REF-PO-01" style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order Date*</label>
+            <input class="in" type="date" id="po-date" name="date" value="${poDate}" required style="width:260px;">
+
+            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Expected Delivery Date*</label>
+            <input class="in" type="date" id="po-delivery-date" name="delivery_date" value="${poDeliveryDate}" required style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="po-subject" name="subject" rows="2" placeholder="Let your vendor know what this Purchase Order is for" style="width:260px;font-size:12px;">${esc(poSubject)}</textarea>
+          </div>
+
+          <input type="hidden" id="po-pos" name="place_of_supply" value="${esc(poPos)}">
+        </div>
+
+        <div style="margin-top:32px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+              <select class="in" id="po-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${poTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${poTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="purchase-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button type="button" class="btn" id="btn-po-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-solid fa-barcode"></i> Scan Item
+              </button>
+              <button type="button" class="btn" id="btn-po-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i class="fa-regular fa-circle-check"></i> Bulk Actions
+              </button>
+            </div>
+          </div>
+
+          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+            <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
+              <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
+                <tr>
+                  <th style="width:50px;"></th>
+                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
+                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
+                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
+                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
+                  <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="po-line-tbody">
+                ${poLines.map(rowHtml).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+            <button type="button" class="btn" id="btn-po-add-row" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:12px;font-weight:600;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-plus" style="margin-right:4px;"></i> Add New Row
+            </button>
+            <button type="button" class="btn" id="btn-po-bulk-items" style="background:none;border:1px solid var(--bd);color:var(--tx);font-size:12px;font-weight:500;border-radius:6px;padding:6px 14px;cursor:pointer;">
+              <i class="fa-solid fa-layer-group" style="margin-right:4px;"></i> Add Items in Bulk
+            </button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 380px;gap:40px;margin-top:36px;">
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Vendor Notes</label>
+              <textarea class="in" id="po-notes" name="notes" rows="3" placeholder="Notes for the vendor…" style="width:100%;font-size:12px;">${esc(poNotes)}</textarea>
+            </div>
+            <div>
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="po-terms" name="terms" rows="4" placeholder="Terms of purchase…" style="width:100%;font-size:12px;">${esc(poTerms)}</textarea>
+            </div>
+            <div style="border-top:1px dashed var(--bd);padding-top:16px;">
+              <label style="font-weight:500;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Digital Signature</label>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <button type="button" class="btn" id="btn-po-sign" style="font-size:12px;">
+                  <i class="fa-solid fa-pen-nib"></i> ${rec && rec.signature_data ? 'Change Signature' : 'Sign Purchase Order'}
+                </button>
+                <span id="po-sig-desc" style="font-size:11px;color:#64748b;">${rec && rec.signature_data ? 'Custom digital signature attached.' : 'No custom signature attached.'}</span>
+              </div>
+              <input type="hidden" id="po-signature-data" value="${rec && rec.signature_data ? esc(rec.signature_data) : ''}">
+              <input type="hidden" id="po-signed-by" value="${rec && rec.signed_by ? esc(rec.signed_by) : ''}">
+              <input type="hidden" id="po-signature-title" value="${rec && rec.signature_title ? esc(rec.signature_title) : ''}">
+            </div>
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:20px;">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;justify-content:space-between;font-size:13px;color:#475569;">
+                <span>Sub Total</span>
+                <span id="po-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
+              </div>
+              <div id="po-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
+                <span id="po-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -4px 12px rgba(0,0,0,0.05);margin-top:auto;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button type="button" class="btn" id="btn-po-cancel" style="padding:8px 18px;">Cancel</button>
+          <button type="button" class="btn" id="btn-po-save-draft" style="padding:8px 18px;">Save as Draft</button>
+          <button type="button" class="btn p" id="btn-po-save-send" style="padding:8px 22px;">${id ? 'Update Purchase Order' : 'Save & Send'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const form = $('#po-form-element', target);
+  const tbody = $('#po-line-tbody', form);
+  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
+  const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcPo());
+
+  function calcPo() {
+    const isTaxInclusive = ($('#po-tax-pricing', form)?.value === 'tax_inclusive');
+    let subtotal = 0;
+    let totalTax = 0;
+    let totalQty = 0;
+
+    $$('.ln-po', tbody).forEach(tr => {
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
+      const gst = num($('.l-gst', tr).value) || 0;
+
+      totalQty += q;
+      const gross = q * r;
+      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const net = Math.max(0, gross - disc);
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gst > 0) {
+        taxable = Math.round((net / (1 + gst / 100)) * 100) / 100;
+        taxAmt = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        taxAmt = Math.round((taxable * (gst / 100)) * 100) / 100;
+        lineTot = taxable + taxAmt;
+      }
+
+      subtotal += taxable;
+      totalTax += taxAmt;
+
+      const amtEl = $('.l-amt', tr);
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    });
+
+    const subEl = $('#po-subtotal-val', form);
+    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
+
+    const posVal = $('#po-pos', form).value || APP.org.state;
+    const isIntra = (posVal || '').trim().toLowerCase() === (APP.org.state || '').trim().toLowerCase();
+    const taxRowsEl = $('#po-tax-rows', form);
+    if (taxRowsEl) {
+      if (totalTax > 0) {
+        if (isIntra) {
+          const half = totalTax / 2;
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>CGST</span><span>${inr(half)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>SGST</span><span>${inr(half)}</span>
+            </div>
+          `;
+        } else {
+          taxRowsEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;color:#475569;font-size:13px;">
+              <span>IGST</span><span>${inr(totalTax)}</span>
+            </div>
+          `;
+        }
+      } else {
+        taxRowsEl.innerHTML = '';
+      }
+    }
+
+    const grand = subtotal + totalTax;
+    const grandEl = $('#po-grandtotal-val', form);
+    if (grandEl) grandEl.textContent = inr(grand).replace('₹', '').trim();
+    return { subtotal, totalTax, grand, totalQty };
+  }
+
+  $('#btn-po-close-x', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'purchase-orders');
+    else history.back();
+  });
+  $('#btn-po-cancel', target)?.addEventListener('click', () => {
+    if (onDone) onDone(null);
+    else if (window.docMasterDetail) docMasterDetail($('#pg'), 'purchase-orders');
+    else history.back();
+  });
+
+  $('#btn-po-vendor-lookup', form)?.addEventListener('click', () => {
+    handleQuickCreateSelect($('#po-vendor', form), newVen => {
+      parties.push(newVen);
+      const opt = document.createElement('option');
+      opt.value = newVen.id;
+      opt.textContent = newVen.name;
+      opt.selected = true;
+      $('#po-vendor', form).appendChild(opt);
+      $('#po-vendor', form).value = newVen.id;
+      if (newVen.state) $('#po-pos', form).value = newVen.state;
+      calcPo();
+    });
+  });
+
+  $('#po-vendor', form)?.addEventListener('change', e => {
+    if (e.target.value === '__new_vendor__') {
+      handleQuickCreateSelect(e.target, newVen => {
+        parties.push(newVen);
+        if (newVen.state) $('#po-pos', form).value = newVen.state;
+        calcPo();
+      });
+      return;
+    }
+    const venId = $('#po-vendor', form).value;
+    const ven = parties.find(p => String(p.id) === String(venId));
+    if (ven) {
+      if (ven.state) $('#po-pos', form).value = ven.state;
+      const gstinEl = $('#po-vendor-gstin', form);
+      const custTypeEl = $('#po-customer-type', form);
+      if (gstinEl) gstinEl.textContent = ven.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (ven.gstin && ven.gstin.trim()) custTypeEl.value = 'registered';
+        else custTypeEl.value = 'unregistered';
+      }
+      calcPo();
+    }
+  });
+
+  $('#btn-po-sign', form)?.addEventListener('click', () => {
+    const curSigObj = {
+      signature_data: $('#po-signature-data', form)?.value || '',
+      signed_by: $('#po-signed-by', form)?.value || '',
+      signature_title: $('#po-signature-title', form)?.value || '',
+      number: poNumber
+    };
+    openSignatureModal(curSigObj, 'purchase-orders', updated => {
+      if ($('#po-signature-data', form)) $('#po-signature-data', form).value = updated.signature_data || '';
+      if ($('#po-signed-by', form)) $('#po-signed-by', form).value = updated.signed_by || '';
+      if ($('#po-signature-title', form)) $('#po-signature-title', form).value = updated.signature_title || '';
+      const descEl = $('#po-sig-desc', form);
+      const signBtn = $('#btn-po-sign', form);
+      if (updated.signature_data) {
+        if (descEl) descEl.textContent = 'Custom digital signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
+      } else {
+        if (descEl) descEl.textContent = 'No custom signature attached.';
+        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Purchase Order';
+      }
+    });
+  });
+
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcPo();
+  });
+  tbody.addEventListener('change', e => {
+    if (e.target.matches('.l-gst, .l-disc-type')) {
+      calcPo();
+    } else if (e.target.matches('.l-item')) {
+      if (e.target.value === '__new_item__') {
+        handleQuickCreateSelect(e.target, newItem => {
+          items.push(newItem);
+          byId[String(newItem.id)] = newItem;
+          calcPo();
+        });
+        return;
+      }
+      const tr = e.target.closest('tr');
+      const it = byId[e.target.value];
+      if (it && tr) {
+        $('.l-desc', tr).value = it.name;
+        $('.l-hsn', tr).value = it.hsn_sac || '';
+        $('.l-rate', tr).value = it.purchase_price || it.selling_price || 0;
+        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
+        stockTracker.updateRow(tr, true);
+      }
+      calcPo();
+    }
+  });
+
+  tbody.addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm-line]');
+    if (rm) {
+      if ($$('.ln-po', tbody).length > 1) {
+        rm.closest('tr').remove();
+        calcPo();
+      } else {
+        toast('At least one line item is required.', 'err');
+      }
+    }
+  });
+
+  $('#btn-po-add-row', target)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    stockTracker.updateRow(tbody.lastElementChild, false);
+    calcPo();
+  });
+
+  $('#btn-po-bulk-items', target)?.addEventListener('click', () => {
+    openBulkItemModal(items, selectedItems => {
+      selectedItems.forEach(it => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.id,
+          description: it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: 1,
+          rate: it.purchase_price || it.selling_price || 0,
+          discount_percent: 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
+      });
+      calcPo();
+    });
+  });
+
+  $('#po-tax-pricing', form)?.addEventListener('change', calcPo);
+
+  const savePo = async (isDraft) => {
+    const venId = $('#po-vendor', form).value;
+    if (!venId) {
+      toast('Please select a vendor.', 'err');
+      $('#po-vendor', form).focus();
+      return;
+    }
+    const numVal = $('#po-number', form).value.trim();
+    if (!numVal) {
+      toast('Please enter a purchase order number.', 'err');
+      $('#po-number', form).focus();
+      return;
+    }
+    const dt = $('#po-date', form).value;
+    if (!dt) {
+      toast('Please enter a purchase order date.', 'err');
+      return;
+    }
+
+    const lines = [];
+    let lineErr = false;
+    $$('.ln-po', tbody).forEach(tr => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal) {
+        lineErr = true;
+        return;
+      }
+      lines.push({
+        item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qtyVal || 1,
+        rate: rateVal,
+        discount_percent: num($('.l-disc', tr).value) || 0,
+        gst_rate: num($('.l-gst', tr).value) || 0
+      });
+    });
+
+    if (lineErr || !lines.length) {
+      toast('Please enter a description or select an item for each row.', 'err');
+      return;
+    }
+
+    const payload = {
+      vendor: venId,
+      vendor_id: venId,
+      number: numVal,
+      order_number: $('#po-reference', form).value.trim(),
+      date: dt,
+      delivery_date: $('#po-delivery-date', form).value || dt,
+      due_date: $('#po-delivery-date', form).value || dt,
+      terms: $('#po-terms', form).value,
+      tax_pricing_type: $('#po-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#po-customer-type', form)?.value || 'registered',
+      place_of_supply: $('#po-pos', form).value || APP.org.state,
+      subject: $('#po-subject', form)?.value?.trim() || '',
+      status: isDraft ? 'draft' : 'confirmed',
+      notes: $('#po-notes', form).value.trim(),
+      signature_data: $('#po-signature-data', form)?.value || '',
+      signed_by: $('#po-signed-by', form)?.value || '',
+      signature_title: $('#po-signature-title', form)?.value || '',
+      lines: lines
+    };
+
+    const saveBtns = [$('#btn-po-save-draft', target), $('#btn-po-save-send', target)];
+    saveBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`purchase-orders/${id}/`, { method: 'PUT', body: payload });
+        toast(`Purchase Order ${saved.number} updated successfully!`, 'ok');
+      } else {
+        saved = await api('purchase-orders/', { method: 'POST', body: payload });
+        toast(`Purchase Order ${saved.number} created successfully!`, 'ok');
+      }
+
+      if (onDone) onDone(saved);
+      else if (window.docMasterDetail) docMasterDetail($('#pg'), 'purchase-orders', saved.id);
+      else {
+        location.hash = '#/purchases/purchase-orders';
+        route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      saveBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  };
+
+  $('#btn-po-save-draft', target).addEventListener('click', () => savePo(true));
+  $('#btn-po-save-send', target).addEventListener('click', () => savePo(false));
+
+  calcPo();
+}
+window.purchaseOrderForm = purchaseOrderForm;
+window.billForm = billForm;
+window.salesOrderForm = salesOrderForm;
 window.statementImportWizardModal = statementImportWizardModal;
 window.importStatementModal = importStatementModal;
 
-async function invoiceForm(id, targetEl, onDone) {
+async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
+  if (typeof targetEl === 'function') {
+    extraOpts = onDone || {};
+    onDone = targetEl;
+    targetEl = null;
+  }
   const target = targetEl || document.getElementById('pg') || document.body;
+
+  let srcQuote = null;
+  let srcSO = null;
+  if (!id && extraOpts && extraOpts.fromQuote) {
+    srcQuote = await api(`quotes/${extraOpts.fromQuote}/`).catch(() => null);
+  } else if (!id && extraOpts && extraOpts.fromSO) {
+    srcSO = await api(`sales-orders/${extraOpts.fromSO}/`).catch(() => null);
+  }
   const [parties, items, salespersons, nextNum, rec, warehouses] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
@@ -9636,22 +10961,22 @@ async function invoiceForm(id, targetEl, onDone) {
 
   const whList = (warehouses && warehouses.length) ? warehouses : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const invNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'INV-000001');
-  const invCustomer = rec ? (rec.customer_id || rec.party_id) : '';
+  const invCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : (srcSO ? srcSO.customer_id : ''));
   const invDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const invDueDate = rec ? (rec.due_date || '') : invDate;
-  const invTerms = rec ? (rec.terms || 'Due on Receipt') : 'Due on Receipt';
-  const invOrderNum = rec ? (rec.order_number || '') : '';
-  const invSalesperson = rec ? (rec.salesperson || '') : '';
-  const invSubject = rec ? (rec.subject || '') : '';
-  const invPlaceOfSupply = rec ? (rec.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala');
-  const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : 'Thanks for your business.';
-  const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
-  const invTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
-  const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
-  const invCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
-  const invTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
-  const invAdj = rec ? num(rec.adjustment || 0) : 0;
-  const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+  const invTerms = rec ? (rec.terms || 'Due on Receipt') : (srcQuote ? (srcQuote.terms || 'Due on Receipt') : (srcSO ? (srcSO.terms || 'Due on Receipt') : 'Due on Receipt'));
+  const invOrderNum = rec ? (rec.order_number || '') : (srcQuote ? (srcQuote.reference_number || srcQuote.number) : (srcSO ? srcSO.number : ''));
+  const invSalesperson = rec ? (rec.salesperson || '') : (srcQuote ? (srcQuote.salesperson || '') : '');
+  const invSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
+  const invPlaceOfSupply = rec ? (rec.place_of_supply || '') : (srcQuote ? (srcQuote.place_of_supply || '') : (srcSO ? (srcSO.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala')));
+  const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (srcQuote ? srcQuote.notes : (srcSO ? srcSO.notes : 'Thanks for your business.'));
+  const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : (srcQuote ? srcQuote.terms : (srcSO ? srcSO.terms : ''));
+  const invTaxType = rec ? (rec.tax_type || 'tds') : (srcQuote ? (srcQuote.tax_type || 'tds') : 'tds');
+  const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : (srcSO ? (srcSO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive'));
+  const invCustType = rec ? (rec.customer_type || 'b2b') : (srcQuote ? (srcQuote.customer_type || 'b2b') : (srcSO ? (srcSO.customer_type || 'b2b') : 'b2b'));
+  const invTdsTax = rec ? num(rec.tds_tcs_tax || 0) : (srcQuote ? num(srcQuote.tds_tcs_tax || 0) : 0);
+  const invAdj = rec ? num(rec.adjustment || 0) : (srcQuote ? num(srcQuote.adjustment || 0) : 0);
+  const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : ((srcSO && srcSO.lines && srcSO.lines.length) ? srcSO.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]));
   const pendingFiles = [];
 
   const rowHtml = (l = {}) => `
@@ -10406,6 +11731,8 @@ async function invoiceForm(id, targetEl, onDone) {
       subject: $('#inv-subject', form).value.trim(),
       place_of_supply: $('#inv-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
       notes: $('#inv-notes', form).value.trim(),
+      source_quote: srcQuote ? srcQuote.id : (srcSO ? srcSO.source_quote_id : (rec ? rec.source_quote_id : null)),
+      source_sales_order: srcSO ? srcSO.id : (rec ? rec.source_sales_order_id : null),
       signature_data: $('#inv-signature-data', form)?.value || '',
       signed_by: $('#inv-signed-by', form)?.value || '',
       signature_title: $('#inv-signature-title', form)?.value || '',

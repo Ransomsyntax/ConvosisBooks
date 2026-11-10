@@ -294,6 +294,9 @@ class Document(models.Model):
 
 class Invoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='invoices')
+    source_quote = models.ForeignKey('Quote', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
+    source_sales_order = models.ForeignKey('SalesOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
+    recurring_invoice = models.ForeignKey('RecurringInvoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_invoices')
     terms = models.TextField(blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
@@ -314,6 +317,7 @@ class Invoice(Document):
 
 class Bill(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='bills')
+    source_purchase_order = models.ForeignKey('PurchaseOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_bills')
     vendor_ref = models.CharField(max_length=60, blank=True)
 
     def __str__(self):
@@ -693,6 +697,9 @@ class ManagedDocument(models.Model):
 
 class SalesOrder(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='sales_orders')
+    source_quote = models.ForeignKey('Quote', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_sales_orders')
+    converted_to_invoice = models.ForeignKey('Invoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='originating_sales_orders')
+    converted_at = models.DateTimeField(null=True, blank=True)
     expected_shipment_date = models.DateField(null=True, blank=True)
     terms = models.TextField(blank=True)
 
@@ -832,6 +839,8 @@ class CreditNoteLine(Line):
 
 class PurchaseOrder(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='purchase_orders')
+    converted_to_bill = models.ForeignKey('Bill', null=True, blank=True, on_delete=models.SET_NULL, related_name='originating_purchase_orders')
+    converted_at = models.DateTimeField(null=True, blank=True)
     delivery_date = models.DateField(null=True, blank=True)
 
 class PurchaseOrderLine(Line):

@@ -1943,36 +1943,94 @@ class DocResource(Resource):
         source_type = 'manual'
         source_label = 'Direct / Manual Creation'
         source_number = ''
+        related_documents = []
         if isinstance(o, Invoice):
-            sq = getattr(o, 'source_quotes', None)
-            sq_first = sq.first() if sq and hasattr(sq, 'first') else None
-            if sq_first:
+            sq = getattr(o, 'source_quote', None) or (getattr(o, 'source_quotes', None).first() if hasattr(o, 'source_quotes') else None)
+            if sq:
                 source_type = 'quote'
-                source_number = sq_first.number
-                source_label = f'Estimate/Quote {sq_first.number}'
-            elif getattr(o, 'order_number', None):
-                so = SalesOrder.objects.filter(number=o.order_number).first()
-                if so:
+                source_number = sq.number
+                source_label = f'Estimate/Quote {sq.number}'
+                related_documents.append({
+                    'kind': 'quotes', 'type': 'Quote', 'id': sq.pk, 'number': sq.number, 'date': sq.date.isoformat() if hasattr(sq.date, 'isoformat') else str(sq.date), 'total': sq.total, 'status': sq.status, 'relation': 'Source Quote'
+                })
+            sso = getattr(o, 'source_sales_order', None)
+            if not sso and getattr(o, 'order_number', None):
+                sso = SalesOrder.objects.filter(number=o.order_number).first()
+            if sso:
+                if not sq:
                     source_type = 'sales_order'
-                    source_number = so.number
-                    source_label = f'Sales Order {so.number}'
-                else:
-                    source_type = 'reference'
-                    source_number = o.order_number
-                    source_label = f'Ref {o.order_number}'
+                    source_number = sso.number
+                    source_label = f'Sales Order {sso.number}'
+                related_documents.append({
+                    'kind': 'sales-orders', 'type': 'Sales Order', 'id': sso.pk, 'number': sso.number, 'date': sso.date.isoformat() if hasattr(sso.date, 'isoformat') else str(sso.date), 'total': sso.total, 'status': sso.status, 'relation': 'Source Sales Order'
+                })
+                if not sq and sso.source_quote:
+                    related_documents.insert(0, {
+                        'kind': 'quotes', 'type': 'Quote', 'id': sso.source_quote.pk, 'number': sso.source_quote.number, 'date': sso.source_quote.date.isoformat() if hasattr(sso.source_quote.date, 'isoformat') else str(sso.source_quote.date), 'total': sso.source_quote.total, 'status': sso.source_quote.status, 'relation': 'Source Quote'
+                    })
+            rec = getattr(o, 'recurring_invoice', None)
+            if not rec and (o.order_number or '').startswith('REC-'):
+                rec_id = o.order_number.replace('REC-', '')
+                if rec_id.isdigit():
+                    rec = RecurringInvoice.objects.filter(pk=int(rec_id)).first()
+            if rec:
+                source_type = 'recurring_invoice'
+                source_number = rec.profile_name
+                source_label = f'Recurring Profile: {rec.profile_name}'
+                related_documents.append({
+                    'kind': 'recurring-invoices', 'type': 'Recurring Invoice', 'id': rec.pk, 'number': rec.profile_name, 'date': rec.start_date.isoformat() if hasattr(rec.start_date, 'isoformat') else str(rec.start_date), 'total': rec.total, 'status': rec.status, 'relation': 'Recurring Profile'
+                })
+            if not sq and not sso and not rec and getattr(o, 'order_number', None):
+                source_type = 'reference'
+                source_number = o.order_number
+                source_label = f'Ref {o.order_number}'
+            for ra in o.retainer_allocations.select_related('retainer'):
+                related_documents.append({
+                    'kind': 'retainer-invoices', 'type': 'Retainer Invoice', 'id': ra.retainer.pk, 'number': ra.retainer.number, 'date': ra.retainer.date.isoformat() if hasattr(ra.retainer.date, 'isoformat') else str(ra.retainer.date), 'total': ra.retainer.total, 'status': ra.retainer.status, 'relation': f'Retainer Applied (₹{ra.amount})'
+                })
         elif isinstance(o, Quote):
-            if getattr(o, 'converted_to_invoice', None):
-                source_label = f'Converted to Invoice {o.converted_to_invoice.number}'
-            elif getattr(o, 'converted_to_sales_order', None):
-                source_label = f'Converted to Sales Order {o.converted_to_sales_order.number}'
+            if getattr(o, 'converted_to_sales_order', None):
+                so = o.converted_to_sales_order
+                source_label = f'Converted to Sales Order {so.number}'
+                related_documents.append({
+                    'kind': 'sales-orders', 'type': 'Sales Order', 'id': so.pk, 'number': so.number, 'date': so.date.isoformat() if hasattr(so.date, 'isoformat') else str(so.date), 'total': so.total, 'status': so.status, 'relation': 'Converted to Sales Order'
+                })
+                if so.converted_to_invoice:
+                    inv = so.converted_to_invoice
+                    related_documents.append({
+                        'kind': 'invoices', 'type': 'Invoice', 'id': inv.pk, 'number': inv.number, 'date': inv.date.isoformat() if hasattr(inv.date, 'isoformat') else str(inv.date), 'total': inv.total, 'status': inv.status, 'relation': 'Converted to Invoice'
+                    })
+            elif getattr(o, 'converted_to_invoice', None):
+                inv = o.converted_to_invoice
+                source_label = f'Converted to Invoice {inv.number}'
+                related_documents.append({
+                    'kind': 'invoices', 'type': 'Invoice', 'id': inv.pk, 'number': inv.number, 'date': inv.date.isoformat() if hasattr(inv.date, 'isoformat') else str(inv.date), 'total': inv.total, 'status': inv.status, 'relation': 'Converted to Invoice'
+                })
             else:
                 source_label = 'Direct Estimate/Quote'
+        elif isinstance(o, Bill):
+            spo = getattr(o, 'source_purchase_order', None)
+            if not spo and o.order_number:
+                spo = PurchaseOrder.objects.filter(number=o.order_number).first()
+            if spo:
+                source_type = 'purchase_order'
+                source_number = spo.number
+                source_label = f'Purchase Order {spo.number}'
+                related_documents.append({
+                    'kind': 'purchase-orders', 'type': 'Purchase Order', 'id': spo.pk, 'number': spo.number, 'date': spo.date.isoformat() if hasattr(spo.date, 'isoformat') else str(spo.date), 'total': spo.total, 'status': spo.status, 'relation': 'Source Purchase Order'
+                })
+        elif isinstance(o, RetainerInvoice):
+            for a in o.allocations.select_related('invoice'):
+                related_documents.append({
+                    'kind': 'invoices', 'type': 'Invoice', 'id': a.invoice.pk, 'number': a.invoice.number, 'date': a.invoice.date.isoformat() if hasattr(a.invoice.date, 'isoformat') else str(a.invoice.date), 'total': a.invoice.total, 'status': a.invoice.status, 'relation': f'Applied ₹{a.amount}'
+                })
 
         r.update({'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst, 'notes': o.notes,
                   'order_number': getattr(o, 'order_number', '') or '',
                   'source_type': source_type,
                   'source_number': source_number,
                   'source_label': source_label,
+                  'related_documents': related_documents,
                   'intra_state': is_intra_state(o.place_of_supply, Organization.get().state),
                   'attachments': attachments, 'party_details': party_info,
                   'lines': [{'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
@@ -2461,6 +2519,7 @@ class QuoteResource(DocResource):
             inv = Invoice.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
+                source_quote=obj,
                 number=next_number('INV', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
@@ -2510,6 +2569,7 @@ class QuoteResource(DocResource):
             so = SalesOrder.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
+                source_quote=obj,
                 number=next_number('SO', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
@@ -4109,15 +4169,30 @@ class SalesOrderResource(Resource):
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
-            'signature_title': getattr(o, 'signature_title', '') or ''
+            'signature_title': getattr(o, 'signature_title', '') or '',
+            'converted_to_invoice_id': o.converted_to_invoice_id,
+            'converted_to_invoice_number': o.converted_to_invoice.number if o.converted_to_invoice else '',
+            'source_quote_id': o.source_quote_id,
+            'source_quote_number': o.source_quote.number if o.source_quote else '',
+            'converted_at': o.converted_at,
         }
 
     def detail(self, o):
         r = self.row(o)
+        related_documents = []
+        if o.source_quote:
+            related_documents.append({
+                'kind': 'quotes', 'type': 'Quote', 'id': o.source_quote.pk, 'number': o.source_quote.number, 'date': o.source_quote.date.isoformat() if hasattr(o.source_quote.date, 'isoformat') else str(o.source_quote.date), 'total': o.source_quote.total, 'status': o.source_quote.status, 'relation': 'Source Quote'
+            })
+        if o.converted_to_invoice:
+            related_documents.append({
+                'kind': 'invoices', 'type': 'Invoice', 'id': o.converted_to_invoice.pk, 'number': o.converted_to_invoice.number, 'date': o.converted_to_invoice.date.isoformat() if hasattr(o.converted_to_invoice.date, 'isoformat') else str(o.converted_to_invoice.date), 'total': o.converted_to_invoice.total, 'status': o.converted_to_invoice.status, 'relation': 'Converted to Invoice'
+            })
         r.update({
             'place_of_supply': o.place_of_supply,
             'terms': o.terms or '',
             'notes': o.notes or '',
+            'related_documents': related_documents,
             'party_details': {
                 'id': o.customer.pk,
                 'name': o.customer.name,
@@ -4282,15 +4357,20 @@ class SalesOrderResource(Resource):
         elif name == 'convert-to-invoice':
             if obj.status == 'void':
                 raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
-            if obj.status == 'closed':
-                raise ApiError(400, f'Sales order {obj.number} has already been converted to an invoice.')
+            if obj.status == 'closed' or obj.converted_to_invoice_id:
+                target = obj.converted_to_invoice.number if obj.converted_to_invoice else ''
+                raise ApiError(400, f'Sales order {obj.number} has already been converted to an invoice {target}.')
             inv = Invoice.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
+                source_sales_order=obj,
+                source_quote=obj.source_quote,
                 number=next_number('INV', org=obj.organization),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=getattr(obj.customer, 'payment_terms', 30) or 30),
                 place_of_supply=obj.place_of_supply,
+                tax_pricing_type=getattr(obj, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+                customer_type=getattr(obj, 'customer_type', 'b2b') or 'b2b',
                 status='draft',
                 subtotal=obj.subtotal,
                 cgst=obj.cgst,
@@ -4317,7 +4397,9 @@ class SalesOrderResource(Resource):
                     position=l.position
                 )
             obj.status = 'closed'
-            obj.save(update_fields=['status'])
+            obj.converted_to_invoice = inv
+            obj.converted_at = timezone.now()
+            obj.save(update_fields=['status', 'converted_to_invoice', 'converted_at'])
             services.log_audit(request.user, 'convert', 'SalesOrder', obj.number, f"Converted sales order {obj.number} to Invoice {inv.number}")
             return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
         raise ApiError(404, 'Unknown action.')
@@ -4413,7 +4495,7 @@ class PurchaseOrderResource(Resource):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
-            'delivery_date': o.delivery_date, 'status': o.status,
+            'delivery_date': o.delivery_date, 'due_date': o.delivery_date or o.date, 'status': o.status,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
@@ -4421,10 +4503,32 @@ class PurchaseOrderResource(Resource):
             'signed_by': getattr(o, 'signed_by', '') or '',
             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
             'signature_title': getattr(o, 'signature_title', '') or '',
+            'converted_to_bill_id': o.converted_to_bill_id,
+            'converted_to_bill_number': o.converted_to_bill.number if o.converted_to_bill else '',
+            'converted_at': o.converted_at,
         }
 
     def detail(self, o):
         r = self.row(o)
+        r['party_details'] = {
+            'id': o.vendor.pk,
+            'name': o.vendor.name,
+            'company': getattr(o.vendor, 'company_name', '') or getattr(o.vendor, 'company', '') or '',
+            'billing_address': o.vendor.billing_address or '',
+            'gstin': o.vendor.gstin or '',
+            'email': o.vendor.email or '',
+            'phone': o.vendor.phone or '',
+            'state': o.vendor.state or '',
+        }
+        r['place_of_supply'] = o.place_of_supply
+        r['notes'] = o.notes or ''
+        r['terms'] = getattr(o, 'terms', '') or ''
+        related_documents = []
+        if o.converted_to_bill:
+            related_documents.append({
+                'kind': 'bills', 'type': 'Bill', 'id': o.converted_to_bill.pk, 'number': o.converted_to_bill.number, 'date': o.converted_to_bill.date.isoformat() if hasattr(o.converted_to_bill.date, 'isoformat') else str(o.converted_to_bill.date), 'total': o.converted_to_bill.total, 'status': o.converted_to_bill.status, 'relation': 'Converted to Bill'
+            })
+        r['related_documents'] = related_documents
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
@@ -4523,6 +4627,58 @@ class PurchaseOrderResource(Resource):
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
+        elif name == 'convert-to-bill':
+            if obj.status == 'void':
+                raise ApiError(400, f'Cannot convert void purchase order {obj.number}.')
+            if obj.status == 'closed' or obj.converted_to_bill_id:
+                target = obj.converted_to_bill.number if obj.converted_to_bill else ''
+                raise ApiError(400, f'Purchase order {obj.number} has already been converted to Bill {target}.')
+            bill = Bill.objects.create(
+                organization=obj.organization,
+                vendor=obj.vendor,
+                source_purchase_order=obj,
+                number=next_number('BILL', org=obj.organization),
+                date=timezone.localdate(),
+                due_date=timezone.localdate() + timedelta(days=30),
+                place_of_supply=obj.place_of_supply,
+                tax_pricing_type=getattr(obj, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+                customer_type=getattr(obj, 'customer_type', 'registered') or 'registered',
+                status='draft',
+                subtotal=obj.subtotal,
+                cgst=obj.cgst,
+                sgst=obj.sgst,
+                igst=obj.igst,
+                total=obj.total,
+                order_number=obj.number,
+                vendor_ref=obj.number,
+                notes=obj.notes
+            )
+            for l in obj.lines.all():
+                BillLine.objects.create(
+                    bill=bill,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=l.rate,
+                    discount_percent=l.discount_percent,
+                    gst_rate=l.gst_rate,
+                    taxable=l.taxable,
+                    tax_amount=l.tax_amount,
+                    line_total=l.line_total,
+                    position=l.position
+                )
+            obj.status = 'closed'
+            obj.converted_to_bill = bill
+            obj.converted_at = timezone.now()
+            obj.save(update_fields=['status', 'converted_to_bill', 'converted_at'])
+            services.log_audit(request.user, 'create', 'bill', bill.pk, f'Converted Purchase Order {obj.number} to Bill {bill.number}')
+            return j({'bill_id': bill.pk, 'id': bill.pk, 'number': bill.number})
+        elif name == 'void':
+            obj.status = 'void'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'void', 'PurchaseOrder', obj.number, f"Voided purchase order {obj.number}")
+            return j({'status': 'void'})
         raise ApiError(404, 'Unknown action.')
 
 class ExpenseResource(Resource):
@@ -5089,11 +5245,12 @@ class RecurringInvoiceResource(Resource):
         lines = meta.get('lines', []) if isinstance(o.lines_data, dict) else (o.lines_data if isinstance(o.lines_data, list) else [])
         
         # Invoices generated from this profile
-        inv_qs = Invoice.objects.filter(customer=o.customer, order_number=f"REC-{o.pk}").order_by('-date', '-id')
+        inv_qs = Invoice.objects.filter(Q(recurring_invoice=o) | (Q(customer=o.customer) & Q(order_number=f"REC-{o.pk}"))).order_by('-date', '-id')
         generated_invoices = []
+        related_documents = []
         for inv in inv_qs[:50]:
             paid = q2(getattr(inv, 'paid_sum', 0))
-            generated_invoices.append({
+            rec_row = {
                 'id': inv.pk,
                 'number': inv.number,
                 'invoice_id': inv.pk,
@@ -5103,6 +5260,10 @@ class RecurringInvoiceResource(Resource):
                 'status': inv.status,
                 'total': inv.total,
                 'balance': max(Decimal('0.00'), inv.total - paid)
+            }
+            generated_invoices.append(rec_row)
+            related_documents.append({
+                'kind': 'invoices', 'type': 'Invoice', 'id': inv.pk, 'number': inv.number, 'date': inv.date.isoformat() if hasattr(inv.date, 'isoformat') else str(inv.date), 'total': inv.total, 'status': inv.status, 'relation': 'Generated Invoice'
             })
 
         # Calculate upcoming 3 dates
@@ -5123,6 +5284,7 @@ class RecurringInvoiceResource(Resource):
             'occurrences_count': meta.get('occurrences_count', len(generated_invoices)),
             'invoices': generated_invoices,
             'history': generated_invoices,
+            'related_documents': related_documents,
             'upcoming_dates': upcoming
         })
         return d

@@ -1636,8 +1636,8 @@ const LISTS = {
       return acts;
     },
     onAction: async (a, r) => {
-      if (a === 'view') viewQuoteDetail(r.id);
-      else if (a === 'edit') quoteForm(r.id, $('#pg'), () => { location.hash = '#/sales/quotes'; if (typeof route === 'function') route(); });
+      if (a === 'view') docMasterDetail($('#pg'), 'quotes', r.id);
+      else if (a === 'edit') quoteForm(r.id, $('#pg'), () => { docMasterDetail($('#pg'), 'quotes', r.id); });
       else if (a === 'sign') openSignatureModal(r, 'quotes', () => refresh());
       else if (a === 'send') {
         try {
@@ -1763,7 +1763,7 @@ const LISTS = {
           if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
           else refresh();
         } catch (e) { toast(e.message, 'err'); }
-      } else if (a === 'edit') recurringInvoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; if (typeof route === 'function') route(); });
+      } else if (a === 'edit') recurringInvoiceForm(r.id, $('#pg'), () => { docMasterDetail($('#pg'), 'recurring-invoices', r.id); });
       else if (a === 'delete') deleteRecord('recurring-invoices', r, 'recurring profile');
     },
   },
@@ -1841,7 +1841,7 @@ const LISTS = {
     filters: docStatusFilters('Confirmed'),
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'PO#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Delivery Date', s: 'delivery_date', f: r => fd(r.delivery_date || r.due_date) }, { h: 'Total', s: 'total', ...money(r => inr(r.total)) }],
     actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('purchase-orders', r.id) : (a === 'sign' ? openSignatureModal(r, 'purchase-orders', () => refresh()) : null),
+    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'purchase-orders', r.id) : a === 'edit' ? purchaseOrderForm(r.id, $('#pg'), () => { docMasterDetail($('#pg'), 'purchase-orders', r.id); }) : (a === 'sign' ? openSignatureModal(r, 'purchase-orders', () => refresh()) : null),
   },
   'vendor-credits': {
     api: 'vendor-credits', title: 'Vendor Credits', bc: 'Purchases', newLabel: 'New vendor credit', onNew: () => docForm('vendor-credits'), ordering: '-date', empty: 'No vendor credits yet.',
@@ -2306,10 +2306,30 @@ function renderDocSheet(d, kind, customOpts = {}) {
             </div>
 
           ` : ''}
+
+      ${(d.related_documents && d.related_documents.length) ? `
+        <div class="doc-related-documents-sec" style="margin-top:20px;padding-top:16px;border-top:1px dashed #cbd5e1;">
+          <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#475569;margin:0 0 10px;display:flex;align-items:center;gap:6px;">
+            <i class="fa-solid fa-diagram-project" style="color:#2563eb;"></i> Connected Documents &amp; Workflow Trace
+          </h4>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;">
+            ${d.related_documents.map(rel => `
+              <div class="workflow-doc-link-card" data-kind="${esc(rel.kind)}" data-id="${esc(rel.id)}" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:all 0.15s ease;" onmouseover="this.style.background='#eff6ff';this.style.borderColor='#93c5fd'" onmouseout="this.style.background='#f8fafc';this.style.borderColor='#e2e8f0'">
+                <div style="width:28px;height:28px;border-radius:6px;background:#e0e7ff;color:#4338ca;display:flex;align-items:center;justify-content:center;font-size:12px;">
+                  <i class="fa-solid fa-file-lines"></i>
+                </div>
+                <div>
+                  <div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">${esc(rel.relation || 'Related')}: ${esc(rel.type || rel.kind)}</div>
+                  <div style="font-size:12px;font-weight:700;color:#2563eb;">${esc(rel.number || '—')} <span style="font-size:11px;font-weight:500;color:#64748b;">(${rel.date ? fd(rel.date) : ''}${rel.total != null ? ' · ' + inr(rel.total) : ''})</span></div>
+                </div>
+                <span class="badge ${rel.status && (rel.status.toLowerCase() === 'paid' || rel.status.toLowerCase() === 'accepted' || rel.status.toLowerCase() === 'closed') ? 'ok' : 'in'}" style="margin-left:auto;font-size:10px;">${esc((rel.status || '').toUpperCase())}</span>
+                <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px;color:#94a3b8;"></i>
+              </div>
+            `).join('')}
+          </div>
         </div>
       ` : ''}
     </div>
-
   `;
 }
 
@@ -2880,10 +2900,132 @@ function openInvoicePreferencesModal(onDone) {
   });
 }
 
-async function docMasterDetail(root, kind, selectedId, openEdit) {
+async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {}) {
+  const KIND_CONFIG = {
+    'invoices': {
+      title: 'Invoices',
+      singular: 'Invoice',
+      isCust: true,
+      statusFilters: [
+        { val: '', label: 'All Invoices' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'unpaid', label: 'Sent' },
+        { val: 'overdue', label: 'Overdue' },
+        { val: 'paid', label: 'Paid' },
+      ],
+      searchPlaceholder: 'Search invoices…',
+      formFn: (id, target, done, opts) => invoiceForm(id, target, done, opts)
+    },
+    'quotes': {
+      title: 'Quotes',
+      singular: 'Quote',
+      isCust: true,
+      statusFilters: [
+        { val: '', label: 'All Quotes' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'sent', label: 'Sent' },
+        { val: 'accepted', label: 'Accepted' },
+        { val: 'declined', label: 'Declined' },
+        { val: 'invoiced', label: 'Invoiced' }
+      ],
+      searchPlaceholder: 'Search quotes…',
+      formFn: (id, target, done, opts) => quoteForm(id, target, done, opts)
+    },
+    'sales-orders': {
+      title: 'Sales Orders',
+      singular: 'Sales Order',
+      isCust: true,
+      statusFilters: [
+        { val: '', label: 'All Sales Orders' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'confirmed', label: 'Confirmed' },
+        { val: 'closed', label: 'Closed' },
+        { val: 'void', label: 'Void' }
+      ],
+      searchPlaceholder: 'Search sales orders…',
+      formFn: (id, target, done, opts) => salesOrderForm(id, target, done, opts)
+    },
+    'recurring-invoices': {
+      title: 'Recurring Invoices',
+      singular: 'Recurring Profile',
+      isCust: true,
+      statusFilters: [
+        { val: '', label: 'All Recurring Profiles' },
+        { val: 'active', label: 'Active' },
+        { val: 'paused', label: 'Paused' },
+        { val: 'completed', label: 'Completed' },
+        { val: 'cancelled', label: 'Cancelled' }
+      ],
+      searchPlaceholder: 'Search recurring profiles…',
+      formFn: (id, target, done, opts) => recurringInvoiceForm(id, target, done, opts)
+    },
+    'retainer-invoices': {
+      title: 'Retainer Invoices',
+      singular: 'Retainer Invoice',
+      isCust: true,
+      statusFilters: [
+        { val: '', label: 'All Retainers' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'sent', label: 'Sent' },
+        { val: 'partial', label: 'Partially Paid' },
+        { val: 'paid', label: 'Paid' }
+      ],
+      searchPlaceholder: 'Search retainers…',
+      formFn: (id, target, done, opts) => retainerInvoiceForm(id, target, done, opts)
+    },
+    'bills': {
+      title: 'Bills',
+      singular: 'Bill',
+      isCust: false,
+      statusFilters: [
+        { val: '', label: 'All Bills' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'open', label: 'Open' },
+        { val: 'overdue', label: 'Overdue' },
+        { val: 'paid', label: 'Paid' }
+      ],
+      searchPlaceholder: 'Search bills…',
+      formFn: (id, target, done, opts) => billForm(id, target, done, opts)
+    },
+    'purchase-orders': {
+      title: 'Purchase Orders',
+      singular: 'Purchase Order',
+      isCust: false,
+      statusFilters: [
+        { val: '', label: 'All Purchase Orders' },
+        { val: 'draft', label: 'Draft' },
+        { val: 'confirmed', label: 'Confirmed' },
+        { val: 'closed', label: 'Closed' },
+        { val: 'void', label: 'Void' }
+      ],
+      searchPlaceholder: 'Search purchase orders…',
+      formFn: (id, target, done, opts) => purchaseOrderForm(id, target, done, opts)
+    }
+  };
+
+  const meta = KIND_CONFIG[kind] || {
+    title: (kind || '').replace(/-/g, ' ').toUpperCase(),
+    singular: (kind || '').replace(/-/g, ' '),
+    isCust: true,
+    statusFilters: [
+      { val: '', label: 'All' },
+      { val: 'draft', label: 'Draft' },
+      { val: 'open', label: 'Open' },
+      { val: 'closed', label: 'Closed' }
+    ],
+    searchPlaceholder: `Search ${kind}…`,
+    formFn: (id, target, done, opts) => docForm(kind, id, target, done, opts)
+  };
+
   const isRetainer = kind === 'retainer-invoices';
   const isBill = kind === 'bills';
+  const isQuote = kind === 'quotes';
+  const isSO = kind === 'sales-orders';
+  const isPO = kind === 'purchase-orders';
+  const isRec = kind === 'recurring-invoices';
   const inv = kind === 'invoices';
+  const isCustDoc = meta.isCust;
+
   let curFilter = '';
   let searchQuery = '';
   let docs = [];
@@ -2915,24 +3057,19 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     }
   }
 
-  PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId);
+  PAGE.reload = () => docMasterDetail(root, kind, curDoc ? curDoc.id : selectedId, false, extraOpts);
 
-  function openForm(editId) {
-    if (kind === 'invoices' || kind === 'retainer-invoices' || kind === 'quotes') {
-      const formFn = kind === 'retainer-invoices' ? retainerInvoiceForm : (kind === 'quotes' ? quoteForm : invoiceForm);
-      formFn(editId, $('#pg'), (savedDoc) => {
+  function openForm(editId, formExtraOpts = {}) {
+    const combinedOpts = { ...extraOpts, ...formExtraOpts };
+    if (meta.formFn) {
+      meta.formFn(editId, $('#pg'), (savedDoc) => {
         if (savedDoc) {
           docMasterDetail($('#pg'), kind, savedDoc.id);
         } else {
           docMasterDetail($('#pg'), kind, editId || (curDoc ? curDoc.id : null));
         }
-      });
+      }, combinedOpts);
       return;
-    }
-    $$('.doc-row-card', root).forEach(c => c.classList.remove('active'));
-    if (editId) {
-      const card = $(`.doc-row-card[data-id="${editId}"]`, root);
-      if (card) card.classList.add('active');
     }
     docForm(kind, editId, $('#detail-col-box', root), (savedDoc) => {
       if (savedDoc) {
@@ -2948,7 +3085,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
           loadList();
         }
       }
-    });
+    }, combinedOpts);
   }
 
   root.innerHTML = `
@@ -2957,29 +3094,25 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         <div class="master-col-hd">
           <div style="display:flex;align-items:center;min-width:0;flex:1;">
             <select class="master-filter-sel" id="master-filter-sel" aria-label="Filter status">
-              <option value="">All ${isRetainer ? 'Retainers' : inv ? 'Invoices' : 'Bills'}</option>
-              <option value="draft">Draft</option>
-              <option value="unpaid">${!isBill ? 'Sent' : 'Open'}</option>
-              <option value="overdue">Overdue</option>
-              <option value="paid">Paid</option>
+              ${meta.statusFilters.map(f => `<option value="${f.val}">${f.label}</option>`).join('')}
             </select>
           </div>
           <div class="master-hd-actions">
-            <button class="btn" id="master-import-btn" type="button" title="Import ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}"><i class="fa-solid fa-file-import"></i> Import</button>
+            <button class="btn" id="master-import-btn" type="button" title="Import ${esc(meta.title)}"><i class="fa-solid fa-file-import"></i> Import</button>
             <div class="export-dropdown-wrap">
-              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'}"><i class="fa-solid fa-file-export"></i> Export ▾</button>
+              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${esc(meta.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button>
               <div class="pop right export-menu-pop" id="master-export-pop" style="display:none;position:absolute;">
                 <button type="button" class="btn" id="master-export-csv-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button>
                 <button type="button" class="btn" id="master-export-json-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button>
               </div>
             </div>
             <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i> Table</button>
-            <button class="btn p" id="master-new-btn" type="button" title="Create New"><i class="fa-solid fa-plus"></i> New</button>
+            <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> New</button>
           </div>
         </div>
         <div class="master-search-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-subtle,#f8fafc);border-bottom:1px solid var(--bd);">
           <input type="checkbox" id="master-cb-all" title="Select all" style="cursor:pointer;" aria-label="Select all">
-          <input class="in" type="search" id="master-q-in" placeholder="Search ${isRetainer ? 'retainers' : inv ? 'invoices' : 'bills'}…" style="flex:1;height:32px;font-size:12px;">
+          <input class="in" type="search" id="master-q-in" placeholder="${esc(meta.searchPlaceholder)}" style="flex:1;height:32px;font-size:12px;">
           <div id="master-bulk-bar" style="display:none;align-items:center;gap:6px;">
             <button class="btn dn" type="button" id="master-bulk-del-btn" style="background:#fee2e2;color:#dc2626;border-color:#fca5a5;font-weight:600;font-size:11px;padding:0 7px;height:28px;" title="Delete selected">
               <i class="fa-solid fa-trash-can"></i> (<span id="master-bulk-cnt">0</span>)
@@ -2996,7 +3129,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
 
   async function loadList() {
     try {
-      const qParams = { page_size: 100, ordering: '-date' };
+      const qParams = { page_size: 100, ordering: (isRec ? '-created_at' : '-date') };
       if (curFilter) qParams.status = curFilter;
       if (searchQuery) qParams.q = searchQuery;
       const res = await api(`${kind}/?` + qs(qParams));
@@ -3014,7 +3147,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         const found = selectedId ? docs.find(d => String(d.id) === String(selectedId)) : null;
         loadDetail((found || docs[0]).id);
       } else {
-        $('#detail-col-box', root).innerHTML = `<div class="empty" style="margin:auto;"><div>No ${isRetainer ? 'retainer invoices' : inv ? 'invoices' : 'bills'} found.<br><button class="btn p" id="empty-new-btn" style="margin-top:10px;">+ New ${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'}</button></div></div>`;
+        $('#detail-col-box', root).innerHTML = `<div class="empty" style="margin:auto;"><div>No ${esc(meta.title.toLowerCase())} found.<br><button class="btn p" id="empty-new-btn" style="margin-top:10px;">+ New ${esc(meta.singular)}</button></div></div>`;
         const eb = $('#empty-new-btn', root);
         if (eb) eb.addEventListener('click', () => openForm(null));
       }
@@ -3032,29 +3165,40 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     }
     box.innerHTML = docs.map(d => {
       const isActive = curDoc && String(curDoc.id) === String(d.id);
-      const isPaid = d.status === 'Paid';
+      const isPaid = d.status === 'Paid' || d.raw_status === 'paid';
       const isOverdue = d.status === 'Overdue';
-      const badgeClass = isPaid ? 'ok' : isOverdue ? 'ba' : d.raw_status === 'draft' ? 'gr' : 'in';
-      const badgeText = isOverdue ? 'OVERDUE' : d.status.toUpperCase();
+      const isAccepted = d.status === 'Accepted' || d.raw_status === 'accepted';
+      const isConfirmed = d.status === 'Confirmed' || d.raw_status === 'confirmed';
+      const isDraft = d.raw_status === 'draft' || d.status === 'Draft';
+      const isClosed = d.status === 'Closed' || d.raw_status === 'closed';
+
+      let statusColor = '#2563eb';
+      if (isOverdue) statusColor = '#ea580c';
+      else if (isPaid || isAccepted || isClosed) statusColor = '#10b981';
+      else if (isDraft) statusColor = '#64748b';
+      else if (d.status === 'Declined' || d.status === 'Cancelled' || d.raw_status === 'void') statusColor = '#ef4444';
+
+      const partyName = esc(d.customer_name || d.party || d.party_name || d.vendor_name || '—');
+      const docNum = esc(d.number || d.profile_name || '—');
+      const docDate = d.date ? fd(d.date) : (d.start_date ? fd(d.start_date) : '');
+      const docTotal = d.total != null ? inr(d.total) : '';
+
       return `
         <div class="doc-row-card ${isActive ? 'active' : ''}" data-id="${d.id}">
           <input type="checkbox" class="master-doc-cb" data-id="${d.id}" style="margin-top:2px;cursor:pointer;" onclick="event.stopPropagation()">
           <div class="doc-row-info">
             <div class="doc-row-top">
-              <span class="doc-row-party">${esc(d.customer_name || d.party)}</span>
-              <span class="doc-row-amt">${inr(d.total)}</span>
+              <span class="doc-row-party">${partyName}</span>
+              <span class="doc-row-amt">${docTotal}</span>
             </div>
             <div class="doc-row-sub">
-              <span>${esc(d.number)}</span>
-              <span>•</span>
-              <span>${fd(d.date)}</span>
+              <span>${docNum}</span>
+              ${docDate ? `<span>•</span><span>${docDate}</span>` : ''}
               ${d.attachment_count ? '<span title="Has attachments">📎</span>' : ''}
             </div>
             <div class="doc-row-badge-line">
-              ${isOverdue ? `<span style="color:#ea580c;font-weight:700;font-size:11px;">OVERDUE BY ${getOverdueDays(d.due_date) || 22} DAYS</span> <span style="font-size:12px;color:#64748b;">✉</span>` :
-                isPaid ? `<span style="color:#10b981;font-weight:700;font-size:11px;">PAID</span>` :
-                d.raw_status === 'draft' ? `<span style="color:#64748b;font-weight:700;font-size:11px;">DRAFT</span>` :
-                `<span style="color:#2563eb;font-weight:700;font-size:11px;">${esc((d.status || 'SENT').toUpperCase())}</span>`
+              ${isOverdue ? `<span style="color:#ea580c;font-weight:700;font-size:11px;">OVERDUE BY ${getOverdueDays(d.due_date) || 22} DAYS</span>` :
+                `<span style="color:${statusColor};font-weight:700;font-size:11px;">${esc((d.status || d.raw_status || '').toUpperCase())}</span>`
               }
             </div>
           </div>
@@ -3089,7 +3233,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     detailBox.innerHTML = `
       <div class="doc-detail-bar">
         <div class="doc-detail-title-grp">
-          <h1 class="doc-detail-title">${esc(d.number)}</h1>
+          <h1 class="doc-detail-title">${esc(d.number || d.profile_name || 'Document')}</h1>
           <div class="doc-detail-actions">
             ${inv ? `
               <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
@@ -3147,6 +3291,138 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
                   <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
                 </div>
               </div>
+            ` : isQuote ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn p" style="background:#10b981;border-color:#059669;color:#fff;" type="button" data-pop-toggle="convert-pop"><i class="fa-solid fa-arrow-right-arrow-left" style="font-size:11px;margin-right:4px;"></i> Convert ▾</button>
+                <div class="pop right tb-pop-menu" id="convert-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:200px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="convert-so" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-invoice" style="color:#2563eb;"></i> Convert to Sales Order</button>
+                  <button type="button" class="btn" data-act="convert-inv" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-invoice-dollar" style="color:#10b981;"></i> Convert to Invoice</button>
+                </div>
+              </div>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+                <div class="pop right tb-pop-menu" id="send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
+                  <button type="button" class="btn" data-act="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
+                </div>
+              </div>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                </div>
+              </div>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  ${d.status !== 'accepted' ? `<button type="button" class="btn" data-act="accept-quote" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-check" style="color:#10b981;"></i> Mark as Accepted</button>` : ''}
+                  ${d.status !== 'declined' ? `<button type="button" class="btn" data-act="decline-quote" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-xmark" style="color:#ef4444;"></i> Mark as Declined</button>` : ''}
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
+            ` : isSO ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <button class="btn p" style="background:#10b981;border-color:#059669;color:#fff;" type="button" data-act="convert-so-inv"><i class="fa-solid fa-file-invoice-dollar" style="font-size:11px;margin-right:4px;"></i> Convert to Invoice</button>
+              ${d.status === 'draft' ? `<button class="btn" type="button" data-act="confirm-so" style="background:#2563eb;color:#fff;border-color:#2563eb;"><i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Confirm</button>` : ''}
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+                <div class="pop right tb-pop-menu" id="send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
+                  <button type="button" class="btn" data-act="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
+                </div>
+              </div>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                  <button type="button" class="btn" data-act="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
+                  <button type="button" class="btn" data-act="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
+                </div>
+              </div>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${d.status !== 'void' ? `<button type="button" class="btn" data-act="void-so" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void</button>` : ''}
+                  <button type="button" class="btn" data-act="view-journal" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-book-journal-whills" style="color:#8b5cf6;"></i> View Journal</button>
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
+            ` : isPO ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <button class="btn p" style="background:#10b981;border-color:#059669;color:#fff;" type="button" data-act="convert-po-bill"><i class="fa-solid fa-file-invoice" style="font-size:11px;margin-right:4px;"></i> Convert to Bill</button>
+              ${d.status === 'draft' ? `<button class="btn" type="button" data-act="confirm-po" style="background:#2563eb;color:#fff;border-color:#2563eb;"><i class="fa-solid fa-check" style="font-size:11px;margin-right:4px;"></i> Confirm</button>` : ''}
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
+                <div class="pop right tb-pop-menu" id="send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
+                  <button type="button" class="btn" data-act="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
+                </div>
+              </div>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop"><i class="fa-solid fa-print" style="font-size:11px;margin-right:4px;"></i> PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                </div>
+              </div>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${d.status !== 'void' ? `<button type="button" class="btn" data-act="void-po" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void</button>` : ''}
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
+            ` : isRec ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              <button class="btn p" style="background:#10b981;border-color:#059669;color:#fff;" type="button" data-act="gen-rec-inv"><i class="fa-solid fa-bolt" style="font-size:11px;margin-right:4px;"></i> Create Invoice Now</button>
+              ${d.status === 'paused' ? `<button class="btn" type="button" data-act="resume-rec" style="background:#2563eb;color:#fff;border-color:#2563eb;"><i class="fa-solid fa-play" style="font-size:11px;margin-right:4px;"></i> Resume</button>` : `<button class="btn" type="button" data-act="pause-rec" style="background:#f59e0b;color:#fff;border-color:#f59e0b;"><i class="fa-solid fa-pause" style="font-size:11px;margin-right:4px;"></i> Pause</button>`}
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="clone-rec" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${d.status !== 'cancelled' ? `<button type="button" class="btn" data-act="cancel-rec" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Cancel Profile</button>` : ''}
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
+            ` : isRetainer ? `
+              <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>` : ''}
+              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices"><i class="fa-solid fa-hand-holding-dollar" style="font-size:11px;margin-right:4px;"></i> Apply to Invoices</button>` : ''}
+              ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-act="refund-retainer" title="Refund available retainer balance">Refund</button>` : ''}
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="print-pop-gen">PDF / Print ▾</button>
+                <div class="pop right tb-pop-menu" id="print-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
+                  <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
+                </div>
+              </div>
+              <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
+              <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
+                <button class="btn" type="button" data-pop-toggle="more-pop-ret"><i class="fa-solid fa-ellipsis"></i> ▾</button>
+                <div class="pop right tb-pop-menu" id="more-pop-ret" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  <button type="button" class="btn" data-act="clone" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-copy" style="color:#64748b;"></i> Clone</button>
+                  ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' ? `<button type="button" class="btn" data-act="void-retainer" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-ban" style="color:#ef4444;"></i> Void / Cancel</button>` : ''}
+                  <button type="button" class="btn" data-act="custom" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-paint-roller" style="color:#f59e0b;"></i> Customize Template</button>
+                  <div style="border-top:1px solid var(--bd-glass,#cbd5e1);margin:4px 0;"></div>
+                  <button type="button" class="btn" data-act="delete" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;color:#dc2626;"><i class="fa-solid fa-trash-can" style="color:#dc2626;"></i> Delete</button>
+                </div>
+              </div>
             ` : `
               <button class="btn" type="button" data-act="edit">Edit</button>
               <button class="btn" type="button" data-act="sign" title="Digital Signature"><i class="fa-solid fa-signature" style="font-size:11px;margin-right:4px;"></i> ${d.signature_data ? 'Signed ✓' : 'Sign'}</button>
@@ -3156,22 +3432,10 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
                 <div class="pop right tb-pop-menu" id="print-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
                   <button type="button" class="btn" data-act="pdf" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-pdf" style="color:#ef4444;"></i> PDF</button>
                   <button type="button" class="btn" data-act="print" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-print" style="color:#3b82f6;"></i> Print</button>
-                  ${!isBill ? `
-                    <button type="button" class="btn" data-act="print-delivery" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-truck" style="color:#10b981;"></i> Print Delivery Note</button>
-                    <button type="button" class="btn" data-act="print-packing" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-box" style="color:#8b5cf6;"></i> Print Packing Slip</button>
-                  ` : ''}
                 </div>
               </div>
-              ${isRetainer ? `
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer">Record Payment</button>` : ''}
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices">Apply to Invoices</button>` : ''}
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-act="refund-retainer" title="Refund available retainer balance">Refund</button>` : ''}
-                ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' ? `<button class="btn" type="button" data-act="void-retainer">Void / Cancel</button>` : ''}
-              ` : `
-                ${(posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
-                ${posted && num(d.balance) > 0 ? `<button class="btn" type="button" data-act="apply-retainer" title="Apply customer retainer credit">Apply Retainer</button>` : ''}
-                ${isCustDoc ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
-              `}
+              ${(posted || d.raw_status === 'draft') && num(d.balance) > 0 && d.raw_status !== 'void' ? `<button class="btn p" type="button" data-act="pay">Record Payment</button>` : ''}
+              ${!isBill ? `<button class="btn" type="button" data-act="portal">Client Portal</button>` : `<button class="btn" type="button" data-act="vportal">Vendor Portal</button>`}
               <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
                 <button class="btn" type="button" data-pop-toggle="more-pop-gen"><i class="fa-solid fa-ellipsis"></i> ▾</button>
                 <div class="pop right tb-pop-menu" id="more-pop-gen" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:180px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
@@ -3204,6 +3468,33 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         <div style="margin:0 24px 16px;font-size:12px;color:#475569;display:flex;align-items:center;gap:6px;">
           <i class="fa-regular fa-file-lines" style="color:#64748b;"></i>
           <span>Get paid faster by <a href="#/settings" style="color:#2563eb;text-decoration:none;">setting up payment gateways</a> or <a href="#/banking" style="color:#2563eb;text-decoration:none;">Display a UPI QR code</a>.</span>
+        </div>
+      ` : (isQuote && d.status === 'draft') ? `
+        <div class="whats-next-banner" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 18px;margin:16px 24px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1e3a8a;">
+            <span style="font-size:16px;">✨</span>
+            <span><b>WHAT'S NEXT?</b> Send this quote to your client, or convert directly to a Sales Order / Invoice.</span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" type="button" data-act="convert-so" style="border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;cursor:pointer;">To Sales Order</button>
+            <button class="btn p" type="button" data-act="convert-inv" style="border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;cursor:pointer;">To Invoice</button>
+          </div>
+        </div>
+      ` : (isSO && d.status !== 'closed' && d.status !== 'void') ? `
+        <div class="whats-next-banner" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 18px;margin:16px 24px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#166534;">
+            <span style="font-size:16px;">📦</span>
+            <span><b>WHAT'S NEXT?</b> Sales order is confirmed. Convert to an Invoice or dispatch goods.</span>
+          </div>
+          <button class="btn p" type="button" data-act="convert-so-inv" style="background:#16a34a;border-color:#15803d;border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;white-space:nowrap;cursor:pointer;">Convert to Invoice</button>
+        </div>
+      ` : (isPO && d.status !== 'closed' && d.status !== 'void') ? `
+        <div class="whats-next-banner" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 18px;margin:16px 24px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#166534;">
+            <span style="font-size:16px;">🚚</span>
+            <span><b>WHAT'S NEXT?</b> Purchase order placed. Once goods or bill arrives from vendor, convert to a Bill.</span>
+          </div>
+          <button class="btn p" type="button" data-act="convert-po-bill" style="background:#16a34a;border-color:#15803d;border-radius:6px;font-weight:600;padding:6px 14px;font-size:12px;white-space:nowrap;cursor:pointer;">Convert to Bill</button>
         </div>
       ` : ''}
       <div class="doc-canvas-scroll" id="doc-sheet-viewport">
@@ -3282,6 +3573,14 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
     if (!e.target.closest('.tb-dropdown-wrap')) {
       root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
     }
+    const relCard = e.target.closest('.workflow-doc-link-card');
+    if (relCard) {
+      const targetKind = relCard.dataset.kind;
+      const targetId = relCard.dataset.id;
+      if (targetKind && targetId) {
+        return docMasterDetail($('#pg'), targetKind, targetId);
+      }
+    }
     const card = e.target.closest('.doc-row-card');
     if (card) {
       const id = card.dataset.id;
@@ -3304,6 +3603,130 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
       const act = actBtn.dataset.act;
       const d = curDoc;
+
+      // Conversions
+      if (act === 'convert-so') {
+        return salesOrderForm(null, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'sales-orders', saved.id);
+        }, { fromQuote: d.id });
+      }
+      if (act === 'convert-inv') {
+        return invoiceForm(null, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'invoices', saved.id);
+        }, { fromQuote: d.id });
+      }
+      if (act === 'convert-so-inv') {
+        return invoiceForm(null, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'invoices', saved.id);
+        }, { fromSO: d.id });
+      }
+      if (act === 'convert-po-bill') {
+        return billForm(null, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'bills', saved.id);
+        }, { fromPO: d.id });
+      }
+
+      // Quote actions
+      if (act === 'accept-quote') {
+        try {
+          await api(`quotes/${d.id}/accept/`, { method: 'POST', body: {} });
+          toast(`Quote ${d.number} marked as accepted!`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'decline-quote') {
+        try {
+          await api(`quotes/${d.id}/decline/`, { method: 'POST', body: {} });
+          toast(`Quote ${d.number} marked as declined.`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+
+      // Sales Order actions
+      if (act === 'confirm-so') {
+        try {
+          await api(`sales-orders/${d.id}/confirm/`, { method: 'POST', body: {} });
+          toast(`Sales Order ${d.number} confirmed!`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'void-so') {
+        if (!(await confirmBox({ title: `Void ${d.number}?`, message: 'Are you sure you want to void this sales order?', okText: 'Void', danger: true }))) return;
+        try {
+          await api(`sales-orders/${d.id}/void/`, { method: 'POST', body: {} });
+          toast(`Sales Order ${d.number} voided.`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+
+      // Purchase Order actions
+      if (act === 'confirm-po') {
+        try {
+          await api(`purchase-orders/${d.id}/action/`, { method: 'POST', body: { action: 'confirm' } });
+          toast(`Purchase Order ${d.number} confirmed!`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'void-po') {
+        if (!(await confirmBox({ title: `Void ${d.number}?`, message: 'Are you sure you want to void this purchase order?', okText: 'Void', danger: true }))) return;
+        try {
+          await api(`purchase-orders/${d.id}/action/`, { method: 'POST', body: { action: 'void' } });
+          toast(`Purchase Order ${d.number} voided.`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+
+      // Recurring Profile actions
+      if (act === 'gen-rec-inv') {
+        try {
+          const res = await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'generate-invoice' } });
+          toast(res.message || 'Invoice generated successfully!', 'ok');
+          if (res.invoice_id) {
+            docMasterDetail($('#pg'), 'invoices', res.invoice_id);
+          } else {
+            loadDetail(d.id);
+          }
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'pause-rec' || act === 'resume-rec') {
+        const nextAct = act === 'pause-rec' ? 'pause' : 'resume';
+        try {
+          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: nextAct } });
+          toast(`Recurring profile ${nextAct === 'pause' ? 'paused' : 'resumed'}.`, 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'cancel-rec') {
+        if (!(await confirmBox({ title: `Cancel Profile ${d.profile_name}?`, message: 'No more invoices will be generated automatically.', okText: 'Cancel Profile', danger: true }))) return;
+        try {
+          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'cancel' } });
+          toast('Recurring profile cancelled.', 'ok');
+          loadDetail(d.id);
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (act === 'clone-rec') {
+        return recurringInvoiceForm({
+          profile_name: `Copy of ${d.profile_name || ''}`,
+          customer: d.customer_id || d.customer,
+          frequency: d.frequency || 'monthly',
+          start_date: APP.today,
+          next_date: APP.today,
+          total: d.total,
+          lines: d.lines || []
+        }, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'recurring-invoices', saved.id);
+        });
+      }
+
       if (act === 'sign') {
         return openSignatureModal(d, kind, updated => {
           d.signature_data = updated.signature_data;
@@ -3341,7 +3764,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       if (act === 'expected-date') return openExpectedDateModal(d, kind, () => loadDetail(d.id));
       if (act === 'write-off') return openWriteOffModal(d, () => { loadList(); loadDetail(d.id); });
       if (act === 'make-recurring') {
-        return recurringInvoiceModal(null, {
+        return recurringInvoiceForm({
           profile_name: `Recurring - ${d.party || 'Invoice'}`,
           customer: d.customer_id || d.party_id,
           customer_id: d.customer_id || d.party_id,
@@ -3357,6 +3780,8 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
             discount_percent: l.discount_percent || 0,
             gst_rate: l.gst_rate || 18
           }))
+        }, $('#pg'), (saved) => {
+          if (saved) docMasterDetail($('#pg'), 'recurring-invoices', saved.id);
         });
       }
       if (act === 'create-credit-note') {
@@ -3431,14 +3856,6 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
       }
       if (act === 'view-journal') return openViewJournalModal(d, kind);
       if (act === 'preferences') return openInvoicePreferencesModal(() => loadDetail(d.id));
-      if (act === 'remind') {
-        try {
-          const res = await api(`invoices/${d.id}/remind/`, { method: 'POST', body: {} });
-          toast(res.message || 'Payment reminder sent to customer!', 'ok');
-          loadDetail(d.id);
-        } catch (err) { toast(err.message, 'err'); }
-        return;
-      }
       if (act === 'portal') return customerPortalModal(d.customer_id || d.party_id || d.id);
       if (act === 'vportal') return customerPortalModal(d.vendor_id || d.party_id || d.id);
       if (act === 'irn') {
@@ -3490,18 +3907,20 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
         return;
       }
       if (act === 'delete') {
-        const docLabel = isRetainer ? 'retainer invoice ' : inv ? 'invoice ' : 'bill ';
-        if (!(await confirmBox({ title: 'Delete ' + docLabel + d.number + '?', message: 'This will completely remove the document and restore balances. This cannot be undone.', okText: 'Delete', danger: true }))) return;
+        const docLabel = `${meta.singular} `;
+        if (!(await confirmBox({ title: 'Delete ' + docLabel + (d.number || d.profile_name || '') + '?', message: 'This will completely remove the document. This cannot be undone.', okText: 'Delete', danger: true }))) return;
         try {
           await api(`${kind}/${d.id}/`, { method: 'DELETE' });
-          toast(d.number + ' deleted');
+          toast((d.number || d.profile_name || 'Document') + ' deleted');
           curDoc = null;
           loadList();
         } catch (err) { toast(err.message, 'err'); }
         return;
       }
       if (act === 'close') {
-        listPage(root, LISTS[kind]);
+        if (window.LISTS && window.LISTS[kind]) {
+          listPage(root, LISTS[kind]);
+        }
       }
     }
   });
@@ -3516,7 +3935,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   const nBtn = $('#master-new-btn', root);
   if (nBtn) nBtn.addEventListener('click', () => openForm(null));
   const impBtn = $('#master-import-btn', root);
-  if (impBtn) impBtn.addEventListener('click', () => openUniversalImportModal(kind, isRetainer ? 'Retainer Invoices' : inv ? 'Invoices' : 'Bills'));
+  if (impBtn) impBtn.addEventListener('click', () => openUniversalImportModal(kind, meta.title));
   const expToggleBtn = $('#master-export-toggle-btn', root);
   const expPop = $('#master-export-pop', root);
   if (expToggleBtn && expPop) {
@@ -3532,7 +3951,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   if (expCsvBtn) {
     expCsvBtn.addEventListener('click', () => {
       if (expPop) expPop.style.display = 'none';
-      if (!list || !list.length) {
+      if (!docs || !docs.length) {
         toast('No data available to export.', 'err');
         return;
       }
@@ -3543,7 +3962,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   if (expJsonBtn) {
     expJsonBtn.addEventListener('click', async () => {
       if (expPop) expPop.style.display = 'none';
-      if (!list || !list.length) {
+      if (!docs || !docs.length) {
         toast('No data available to export.', 'err');
         return;
       }
@@ -3565,7 +3984,9 @@ async function docMasterDetail(root, kind, selectedId, openEdit) {
   const vmBtn = $('#master-view-mode-btn', root);
   if (vmBtn) {
     vmBtn.addEventListener('click', () => {
-      listPage(root, LISTS[kind]);
+      if (window.LISTS && window.LISTS[kind]) {
+        listPage(root, LISTS[kind]);
+      }
     });
   }
   let t;

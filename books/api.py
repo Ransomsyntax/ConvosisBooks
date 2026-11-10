@@ -1854,7 +1854,16 @@ class DocResource(Resource):
         r = {'id': o.pk, 'number': o.number, 'party_id': self.party(o).pk, 'party': self.party(o).name,
              'customer_name': self.party(o).name if self.party(o) else '',
              'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
+             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+             'transaction_series': getattr(o, 'transaction_series', 'Default Transaction Series') or 'Default Transaction Series',
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
+             'salesperson': getattr(o, 'salesperson', '') or '',
+             'project_name': getattr(o, 'project_name', '') or '',
+             'subject': getattr(o, 'subject', '') or '',
+             'terms': getattr(o, 'terms', '') or '',
+             'notes': getattr(o, 'notes', '') or '',
+             'accounts_receivable': getattr(o, 'accounts_receivable', 'Accounts Receivable') or 'Accounts Receivable',
+             'accounts_payable': getattr(o, 'accounts_payable', 'Accounts Payable') or 'Accounts Payable',
              'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
              'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
@@ -2087,6 +2096,9 @@ class DocResource(Resource):
         head = {self.party_attr: party, 'date': date_, 'due_date': due, 'place_of_supply': pos,
                 'tax_pricing_type': tax_pricing, 'customer_type': cust_type,
                 'notes': c.text('notes', max_len=2000)}
+        for fld in ('location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
+            if fld in data:
+                head[fld] = str(data.get(fld) or '').strip()
         if 'signature_data' in data:
             head['signature_data'] = str(data.get('signature_data') or '')
         if 'signed_by' in data:
@@ -5218,8 +5230,8 @@ class RecurringInvoiceResource(Resource):
 
     def row(self, o):
         meta = o.lines_data if isinstance(o.lines_data, dict) else {}
-        repeat_every = int(meta.get('repeat_every', 1) or 1)
-        pt = meta.get('payment_terms')
+        repeat_every = int(getattr(o, 'repeat_every', meta.get('repeat_every', 1)) or 1)
+        pt = getattr(o, 'payment_terms', meta.get('payment_terms'))
         if pt is None:
             pt = getattr(o.customer, 'payment_terms', 30) or 30
         freq_disp = dict(getattr(o, 'FREQUENCIES', [])).get(o.frequency, o.frequency.replace('_', ' ').capitalize())
@@ -5227,11 +5239,19 @@ class RecurringInvoiceResource(Resource):
             'id': o.pk, 'profile_name': o.profile_name, 'name': o.profile_name, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'frequency': o.frequency,
             'frequency_label': freq_disp,
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'order_number': getattr(o, 'order_number', '') or '',
+            'salesperson': getattr(o, 'salesperson', '') or '',
+            'project_name': getattr(o, 'project_name', '') or '',
+            'subject': getattr(o, 'subject', '') or '',
+            'notes': getattr(o, 'notes', '') or meta.get('notes', ''),
+            'terms': getattr(o, 'terms', '') or meta.get('terms', ''),
+            'create_as_draft': getattr(o, 'create_as_draft', True),
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
             'repeat_every': repeat_every,
             'start_date': o.start_date, 'end_date': o.end_date, 'next_date': o.next_date,
-            'never_ends': not bool(o.end_date),
+            'never_ends': getattr(o, 'never_ends', not bool(o.end_date)),
             'status': o.status, 'status_label': o.status.replace('_', ' ').capitalize(),
             'total': o.total, 'total_amount': o.total, 'subtotal': o.subtotal,
             'tax_amount': max(Decimal('0.00'), (o.total or Decimal('0.00')) - (o.subtotal or Decimal('0.00'))),
@@ -5359,9 +5379,20 @@ class RecurringInvoiceResource(Resource):
             profile_name=pname,
             customer=cust,
             frequency=freq,
+            location=str(data.get('location') or 'HO Kottayam').strip(),
+            order_number=str(data.get('order_number') or '').strip(),
+            repeat_every=repeat_every,
             start_date=sdate,
             end_date=edate,
             next_date=next_d,
+            never_ends=never_ends,
+            payment_terms=payment_terms,
+            salesperson=str(data.get('salesperson') or '').strip(),
+            project_name=str(data.get('project_name') or '').strip(),
+            subject=str(data.get('subject') or '').strip(),
+            notes=notes,
+            terms=terms,
+            create_as_draft=bool(data.get('create_as_draft', True)),
             status=status_val,
             tax_pricing_type=str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower(),
             customer_type=str(data.get('customer_type') or 'b2b').strip().lower(),
@@ -5392,6 +5423,7 @@ class RecurringInvoiceResource(Resource):
             obj.start_date = c.date('start_date', required=True)
         if 'never_ends' in data or 'end_date' in data:
             never_ends = c.boolean('never_ends', default=False) if 'never_ends' in data else False
+            obj.never_ends = never_ends
             if never_ends:
                 obj.end_date = None
             else:
@@ -5408,6 +5440,26 @@ class RecurringInvoiceResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        if 'location' in data:
+            obj.location = str(data.get('location') or 'HO Kottayam').strip()
+        if 'order_number' in data:
+            obj.order_number = str(data.get('order_number') or '').strip()
+        if 'salesperson' in data:
+            obj.salesperson = str(data.get('salesperson') or '').strip()
+        if 'project_name' in data:
+            obj.project_name = str(data.get('project_name') or '').strip()
+        if 'subject' in data:
+            obj.subject = str(data.get('subject') or '').strip()
+        if 'notes' in data:
+            obj.notes = str(data.get('notes') or '')
+        if 'terms' in data:
+            obj.terms = str(data.get('terms') or '')
+        if 'create_as_draft' in data:
+            obj.create_as_draft = bool(data.get('create_as_draft'))
+        if 'repeat_every' in data:
+            obj.repeat_every = max(1, int(data.get('repeat_every') or 1))
+        if 'payment_terms' in data:
+            obj.payment_terms = int(data.get('payment_terms') or 30)
         if 'total' in data:
             tot = c.number('total', required=True, lo=Decimal('0.01'))
             obj.total = tot
@@ -5678,6 +5730,13 @@ class ProjectResource(Resource):
         ('Billing Method', 'billing_method'), ('Rate Per Hour', 'rate_per_hour'),
         ('Budget Hours', 'budget_hours'), ('Description', 'description')
     ]
+
+    def queryset(self, request):
+        qs = super().queryset(request)
+        cid = request.GET.get('customer') or request.GET.get('customer_id')
+        if cid and str(cid).isdigit():
+            qs = qs.filter(customer_id=int(cid))
+        return qs
 
     def get_template_sample(self):
         return ['Cloud ERP Implementation', 'PRJ-001', 'Acme Infotech Ltd', 'hourly_rate', '2500.00', '120.00', 'Cloud ERP deployment and training']
@@ -6173,16 +6232,28 @@ class SalespersonResource(Resource):
 
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
+        user_org = get_user_org(request.user) or Organization.get()
         if request.method == 'GET':
-            user_org = get_user_org(request.user)
+            from .models import Salesperson
+            sp_qs = Salesperson.objects.filter(is_active=True)
+            if user_org:
+                sp_qs = sp_qs.filter(organization=user_org)
+            results = [{'id': s.pk, 'name': s.name, 'email': s.email, 'phone': s.phone, 'is_active': s.is_active} for s in sp_qs.order_by('name')]
+            
+            # Backwards compatibility: also include existing user staff
             from django.contrib.auth import get_user_model
             User = get_user_model()
-            sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
-            results = [{'id': u.pk, 'name': u.get_full_name() or u.username, 'email': u.email} for u in sp_qs.order_by('username')]
+            u_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+            existing_names = {s['name'].strip().lower() for s in results}
+            for u in u_qs.order_by('username'):
+                uname = u.get_full_name() or u.username
+                if uname.strip().lower() not in existing_names:
+                    existing_names.add(uname.strip().lower())
+                    results.append({'id': f"u_{u.pk}", 'name': uname, 'email': u.email, 'phone': getattr(u.profile, 'phone', '') if hasattr(u, 'profile') else '', 'is_active': True})
             return j({'count': len(results), 'page': 1, 'pages': 1, 'results': results})
 
         if request.method == 'POST':
-            user_org = get_user_org(request.user) or Organization.get()
+            from .models import Salesperson
             d = body(request)
             name = (d.get('name') or '').strip()
             if not name:
@@ -6190,47 +6261,49 @@ class SalespersonResource(Resource):
             email = (d.get('email') or '').strip().lower()
             phone = (d.get('phone') or '').strip()
 
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
+            sp, created = Salesperson.objects.update_or_create(
+                organization=user_org,
+                name=name,
+                defaults={'email': email, 'phone': phone, 'is_active': True}
+            )
 
-            parts = name.split(None, 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else ''
-
-            if not email:
-                base_slug = re.sub(r'[^a-zA-Z0-9]', '', name.lower()) or 'sales'
-                email = f"{base_slug}_{uuid.uuid4().hex[:4]}@convosisbooks.local"
-
-            user = User.objects.filter(email__iexact=email).first()
-            if not user:
-                username = email.split('@')[0]
-                if User.objects.filter(username=username).exists():
-                    username = f"{username}_{uuid.uuid4().hex[:4]}"
-                user = User.objects.create(
-                    username=username,
-                    email=email,
-                    first_name=first_name,
-                    last_name=last_name,
-                    is_active=True
-                )
-                user.set_unusable_password()
-                user.save()
-
-            profile, _ = UserProfile.objects.get_or_create(user=user)
-            profile.organization = user_org
-            if phone:
-                profile.phone = phone
-            profile.role = 'staff'
-            profile.save()
-
-            services.log_audit(request.user, 'create', 'Salesperson', user.pk, f"Added salesperson: {name}", org=user_org, module='sales', submodule='salespersons')
+            services.log_audit(request.user, 'create' if created else 'update', 'Salesperson', sp.pk, f"Saved salesperson: {name}", org=user_org, module='sales', submodule='salespersons')
 
             return j({
-                'id': user.pk,
-                'name': user.get_full_name() or user.username or name,
-                'email': user.email,
+                'id': sp.pk,
+                'name': sp.name,
+                'email': sp.email,
+                'phone': sp.phone,
+                'is_active': sp.is_active,
                 'status': 'ok'
             }, status=201)
+        raise ApiError(405, 'Method not allowed.')
+
+    def handle_item(self, request, pk):
+        check_permission(request, resource_name=self.name)
+        user_org = get_user_org(request.user) or Organization.get()
+        from .models import Salesperson
+        sp = Salesperson.objects.filter(pk=pk, organization=user_org).first()
+        if not sp:
+            raise ApiError(404, 'Salesperson not found.')
+        if request.method == 'GET':
+            return j({'id': sp.pk, 'name': sp.name, 'email': sp.email, 'phone': sp.phone, 'is_active': sp.is_active})
+        elif request.method in ('PUT', 'PATCH'):
+            d = body(request)
+            if 'name' in d:
+                sp.name = (d.get('name') or '').strip()
+            if 'email' in d:
+                sp.email = (d.get('email') or '').strip().lower()
+            if 'phone' in d:
+                sp.phone = (d.get('phone') or '').strip()
+            if 'is_active' in d:
+                sp.is_active = bool(d.get('is_active'))
+            sp.save()
+            return j({'id': sp.pk, 'name': sp.name, 'email': sp.email, 'phone': sp.phone, 'is_active': sp.is_active, 'status': 'ok'})
+        elif request.method == 'DELETE':
+            sp.is_active = False
+            sp.save(update_fields=['is_active'])
+            return j({'status': 'ok', 'message': f"Salesperson {sp.name} removed."})
         raise ApiError(405, 'Method not allowed.')
 
 
@@ -6608,8 +6681,12 @@ def lookup(request, name):
         data = [{'id': o.pk, 'name': o.name}
                 for o in org_filter(ItemCategory.objects.all()).order_by('name')]
     elif name == 'projects':
+        p_qs = org_filter(Project.objects.filter(status='active'))
+        cid = request.GET.get('customer') or request.GET.get('customer_id')
+        if cid and str(cid).isdigit():
+            p_qs = p_qs.filter(customer_id=int(cid))
         data = [{'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id}
-                for o in org_filter(Project.objects.filter(status='active')).order_by('name')]
+                for o in p_qs.order_by('name')]
     elif name == 'warehouse-stock':
         item_id = request.GET.get('item_id')
         wh_id = request.GET.get('warehouse_id')
@@ -6672,10 +6749,27 @@ def lookup(request, name):
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
                 for o in org_filter(PriceList.objects.filter(active=True)).order_by('name')]
     elif name == 'salespersons':
+        from .models import Salesperson
+        sp_qs = Salesperson.objects.filter(is_active=True)
+        if user_org:
+            sp_qs = sp_qs.filter(organization=user_org)
+        data = [{'id': s.pk, 'name': s.name, 'email': s.email, 'phone': s.phone} for s in sp_qs.order_by('name')]
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        sp_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
-        data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in sp_qs.order_by('username')]
+        sp_user_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+        existing_names = {s['name'].strip().lower() for s in data}
+        for u in sp_user_qs.order_by('username'):
+            uname = u.get_full_name() or u.username
+            if uname.strip().lower() not in existing_names:
+                existing_names.add(uname.strip().lower())
+                data.append({'id': f"u_{u.pk}", 'name': uname, 'email': u.email, 'phone': getattr(u.profile, 'phone', '') if hasattr(u, 'profile') else ''})
+    elif name == 'transaction-series':
+        data = [
+            {'id': 'Default Transaction Series', 'name': 'Default Transaction Series'},
+            {'id': 'Online Store Series', 'name': 'Online Store Series'},
+            {'id': 'Export Series', 'name': 'Export Series'},
+            {'id': 'Retail Series', 'name': 'Retail Series'},
+        ]
     elif name == 'employees':
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -9244,6 +9338,112 @@ def settings_number_series_view(request):
     services.log_audit(request.user, 'update', 'Sequence', seq_key, f"Updated numbering series for {mod_key}: next sequence {next_seq}")
     prev = services.preview_document_number(mod_key, org=org)
     return j({'status': 'ok', 'module': mod_key, 'preview': prev})
+
+@api_view
+def doc_number_preferences_view(request):
+    """
+    Get or configure document number preferences for a document type and transaction series.
+    Supports auto-generate vs manual mode, custom prefixes with placeholders (${YEAR}, ${FYS_YY}, etc.),
+    next sequence number, and fiscal year restarting.
+    """
+    org = get_user_org(request.user) or Organization.get()
+    from .models import DocumentNumberPreference, Sequence
+
+    canon_map = {
+        'inv': 'invoices', 'invoices': 'invoices', 'invoice': 'invoices',
+        'qtn': 'quotes', 'quotes': 'quotes', 'quote': 'quotes',
+        'so': 'sales_orders', 'sales_orders': 'sales_orders', 'sales-orders': 'sales_orders',
+        'rec': 'recurring_invoices', 'recurring_invoices': 'recurring_invoices', 'recurring-invoices': 'recurring_invoices',
+        'ret': 'retainer_invoices', 'retainer_invoices': 'retainer_invoices', 'retainer-invoices': 'retainer_invoices',
+        'bill': 'bills', 'bills': 'bills',
+        'po': 'purchase_orders', 'purchase_orders': 'purchase_orders', 'purchase-orders': 'purchase_orders'
+    }
+
+    if request.method == 'GET':
+        doc_type_raw = str(request.GET.get('document_type') or request.GET.get('module') or 'invoices').strip().lower()
+        clean_doc = canon_map.get(doc_type_raw, doc_type_raw)
+        series = str(request.GET.get('transaction_series') or 'Default Transaction Series').strip()
+        location = str(request.GET.get('location') or 'HO Kottayam').strip()
+
+        pref = DocumentNumberPreference.objects.filter(
+            organization=org, document_type=clean_doc, transaction_series=series
+        ).first()
+        if not pref:
+            pref = DocumentNumberPreference.objects.filter(
+                organization=org, document_type=clean_doc
+            ).first()
+
+        prev = services.preview_document_number(clean_doc, org=org, series=series)
+        default_pfx = prev.get('prefix') or 'INV'
+        if not default_pfx.endswith('/'):
+            default_pfx = f"{default_pfx}/"
+
+        return j({
+            'document_type': clean_doc,
+            'transaction_series': series,
+            'location': location,
+            'auto_generate': pref.auto_generate if pref else True,
+            'prefix': pref.prefix if (pref and pref.prefix) else default_pfx,
+            'next_number': pref.next_number if pref else prev.get('next_sequence', 1),
+            'restart_yearly': pref.restart_yearly if pref else True,
+            'preview_formatted': prev.get('formatted', '')
+        })
+
+    if request.method in ('POST', 'PUT'):
+        d = body(request)
+        doc_type_raw = str(d.get('document_type') or d.get('module') or 'invoices').strip().lower()
+        clean_doc = canon_map.get(doc_type_raw, doc_type_raw)
+        series = str(d.get('transaction_series') or 'Default Transaction Series').strip()
+        location = str(d.get('location') or 'HO Kottayam').strip()
+        auto_generate = bool(d.get('auto_generate', True))
+        prefix = str(d.get('prefix') or '').strip()
+        try:
+            next_number = max(1, int(d.get('next_number', 1)))
+        except (ValueError, TypeError):
+            next_number = 1
+        restart_yearly = bool(d.get('restart_yearly', True))
+
+        pref, _ = DocumentNumberPreference.objects.update_or_create(
+            organization=org,
+            document_type=clean_doc,
+            transaction_series=series,
+            defaults={
+                'location': location,
+                'auto_generate': auto_generate,
+                'prefix': prefix,
+                'next_number': next_number,
+                'restart_yearly': restart_yearly
+            }
+        )
+
+        cfg = services.get_document_module_config(clean_doc)
+        pfx = cfg['pfx'] if cfg else 'DOC'
+        fy = services.get_financial_year()
+        seq_key = f"{org.pk}_{pfx}_{fy}" if (cfg and cfg.get('has_fy')) else f"{org.pk}_{pfx}"
+        seq, _ = Sequence.objects.get_or_create(key=seq_key)
+        seq.value = max(0, next_number - 1)
+        seq.save(update_fields=['value'])
+
+        prev = services.preview_document_number(clean_doc, org=org, series=series)
+
+        services.log_audit(
+            request.user, 'update', 'DocumentNumberPreference', pref.pk,
+            f"Configured number preferences for {clean_doc} ({series}): auto={auto_generate}, prefix={prefix}, next={next_number}",
+            org=org, module='settings', submodule='number_preferences'
+        )
+
+        return j({
+            'status': 'ok',
+            'document_type': clean_doc,
+            'transaction_series': series,
+            'auto_generate': auto_generate,
+            'prefix': prefix,
+            'next_number': next_number,
+            'restart_yearly': restart_yearly,
+            'preview_formatted': prev.get('formatted', '')
+        })
+
+    raise ApiError(405, 'Method not allowed.')
 
 @api_view
 def settings_templates_view(request):

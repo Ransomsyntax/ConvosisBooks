@@ -281,7 +281,13 @@ class Document(models.Model):
     order_number = models.CharField(max_length=60, blank=True, default='')
     tax_pricing_type = models.CharField(max_length=20, default='tax_exclusive', choices=[('tax_exclusive', 'Tax Exclusive'), ('tax_inclusive', 'Tax Inclusive')], blank=True)
     customer_type = models.CharField(max_length=20, default='b2b', blank=True)
+    location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
+    transaction_series = models.CharField(max_length=120, default='Default Transaction Series', blank=True)
+    salesperson = models.CharField(max_length=120, blank=True, default='')
+    project_name = models.CharField(max_length=150, blank=True, default='')
+    subject = models.TextField(blank=True, default='')
     notes = models.TextField(blank=True)
+    terms = models.TextField(blank=True, default='')
     signature_data = models.TextField(blank=True, default='')
     signed_by = models.CharField(max_length=150, blank=True, default='')
     signed_at = models.DateTimeField(null=True, blank=True)
@@ -297,7 +303,7 @@ class Invoice(Document):
     source_quote = models.ForeignKey('Quote', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
     source_sales_order = models.ForeignKey('SalesOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
     recurring_invoice = models.ForeignKey('RecurringInvoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_invoices')
-    terms = models.TextField(blank=True)
+    accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
@@ -318,6 +324,7 @@ class Invoice(Document):
 class Bill(Document):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='bills')
     source_purchase_order = models.ForeignKey('PurchaseOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_bills')
+    accounts_payable = models.CharField(max_length=120, default='Accounts Payable', blank=True)
     vendor_ref = models.CharField(max_length=60, blank=True)
 
     def __str__(self):
@@ -701,7 +708,6 @@ class SalesOrder(Document):
     converted_to_invoice = models.ForeignKey('Invoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='originating_sales_orders')
     converted_at = models.DateTimeField(null=True, blank=True)
     expected_shipment_date = models.DateField(null=True, blank=True)
-    terms = models.TextField(blank=True)
 
 class SalesOrderLine(Line):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
@@ -710,10 +716,6 @@ class Quote(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='quotes')
     reference_number = models.CharField(max_length=100, blank=True, default='')
     expiry_date = models.DateField(null=True, blank=True)
-    salesperson = models.CharField(max_length=120, blank=True, default='')
-    project_name = models.CharField(max_length=150, blank=True, default='')
-    subject = models.TextField(blank=True, default='')
-    terms = models.TextField(blank=True, default='')
     tax_type = models.CharField(max_length=10, default='tds', choices=[('tds', 'TDS'), ('tcs', 'TCS')])
     tds_tcs_tax = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     adjustment = models.DecimalField(default=Decimal('0.00'), **MONEY)
@@ -735,9 +737,20 @@ class RecurringInvoice(models.Model):
     profile_name = models.CharField(max_length=150)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='recurring_invoices')
     frequency = models.CharField(max_length=20, choices=FREQUENCIES, default='monthly')
+    location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
+    order_number = models.CharField(max_length=60, blank=True, default='')
+    repeat_every = models.PositiveIntegerField(default=1)
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     next_date = models.DateField()
+    never_ends = models.BooleanField(default=True)
+    payment_terms = models.PositiveIntegerField(default=30)
+    salesperson = models.CharField(max_length=120, blank=True, default='')
+    project_name = models.CharField(max_length=150, blank=True, default='')
+    subject = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    terms = models.TextField(blank=True, default='')
+    create_as_draft = models.BooleanField(default=True)
     status = models.CharField(max_length=20, default='active')
     tax_pricing_type = models.CharField(max_length=20, default='tax_exclusive', choices=[('tax_exclusive', 'Tax Exclusive'), ('tax_inclusive', 'Tax Inclusive')], blank=True)
     customer_type = models.CharField(max_length=20, default='b2b', blank=True)
@@ -749,7 +762,8 @@ class RecurringInvoice(models.Model):
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
     applied_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
-    terms = models.TextField(blank=True)
+    accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
+    purpose = models.CharField(max_length=255, blank=True, default='')
     sent_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
@@ -1734,6 +1748,42 @@ class DPDPDataProcessor(models.Model):
 
     def __str__(self):
         return f'{self.vendor_name} ({self.service_type})'
+
+
+class Salesperson(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='salespersons')
+    name = models.CharField(max_length=150)
+    email = models.EmailField(blank=True, default='')
+    phone = models.CharField(max_length=40, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('organization', 'name')
+
+    def __str__(self):
+        return self.name
+
+
+class DocumentNumberPreference(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='doc_number_preferences')
+    document_type = models.CharField(max_length=50)  # quotes, sales_orders, invoices, recurring_invoices, retainer_invoices, bills, purchase_orders
+    location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
+    transaction_series = models.CharField(max_length=120, default='Default Transaction Series', blank=True)
+    auto_generate = models.BooleanField(default=True)
+    prefix = models.CharField(max_length=100, blank=True, default='')
+    next_number = models.PositiveIntegerField(default=1)
+    restart_yearly = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('organization', 'document_type', 'transaction_series')
+
+    def __str__(self):
+        return f'{self.document_type} - {self.transaction_series} ({self.prefix}{self.next_number})'
 
 
 from django.db.models.signals import pre_save, post_save

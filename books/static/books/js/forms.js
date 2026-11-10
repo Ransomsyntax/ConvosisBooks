@@ -1,4 +1,26 @@
-'use strict';
+const payload = {
+      customer: custId,
+      customer_id: custId,
+      number: numVal,
+      order_number: ($('#ret-order-number', form)?.value || '').trim(),
+      location: $('#ret-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#ret-series', form)?.value || 'Default Transaction Series',
+      accounts_receivable: $('#ret-accounts-receivable', form)?.value || 'Accounts Receivable',
+      date: dt,
+      due_date: $('#ret-due-date', form).value || dt,
+      tax_pricing_type: $('#ret-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#ret-customer-type', form)?.value || 'b2b',
+      place_of_supply: $('#ret-place-of-supply', form)?.value || APP.org.state,
+      salesperson: form.querySelector('#ret-salesperson-container select.sp-select')?.value || '',
+      project_name: $('#ret-project', form)?.value || '',
+      subject: ($('#ret-purpose', form)?.value || '').trim(),
+      terms: $('#ret-terms-text', form)?.value || '',
+      notes: $('#ret-notes', form)?.value || '',
+      tax_type: form.querySelector('input[name="tax_type"]:checked')?.value || 'tds',
+      tds_tcs_tax: num($('#ret-tds-tax', form)?.value) || 0,
+      adjustment: num($('#ret-adj-val', form)?.value) || 0,
+      adjustment_label: ($('#ret-adj-label', form)?.value || 'Adjustment').trim(),
+      'use strict';
 
 const Modal = (() => {
   const stack = [];
@@ -3846,6 +3868,541 @@ async function itemForm(id, onDone) {
   });
 }
 
+/* =========================================================================
+   CONVOSIS BOOKS - DOCUMENT NUMBER PREFERENCES, SALESPERSONS & SHARED HELPERS
+   ========================================================================= */
+
+async function openDocNumberPreferencesModal({ kind, series = 'Default Transaction Series', location = 'HO Kottayam', currentNumber = '', onSave }) {
+  const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : 'invoices')))));
+  const docLabel = kind === 'quotes' ? 'Quote' : (kind === 'sales-orders' ? 'Sales Order' : (kind === 'bills' ? 'Bill' : (kind === 'purchase-orders' ? 'Purchase Order' : (kind === 'retainer-invoices' ? 'Retainer Invoice' : (kind === 'recurring-invoices' ? 'Recurring Invoice' : 'Invoice')))));
+
+  let pref = { auto_generate: true, prefix: 'INV/', next_number: 1, restart_yearly: true, preview_formatted: '' };
+  try {
+    const res = await api(`settings/doc-number-preferences/?document_type=${encodeURIComponent(canonDoc)}&transaction_series=${encodeURIComponent(series)}&location=${encodeURIComponent(location)}`);
+    if (res) pref = res;
+  } catch (e) {}
+
+  const defaultPfx = canonDoc === 'invoices' ? 'INV/' : (canonDoc === 'quotes' ? 'QTN/' : (canonDoc === 'sales_orders' ? 'SO/' : (canonDoc === 'bills' ? 'BILL/' : (canonDoc === 'purchase_orders' ? 'PO/' : (canonDoc === 'retainer_invoices' ? 'RET/' : 'REC/')))));
+  const prefixVal = pref.prefix || defaultPfx;
+  const nextNumVal = pref.next_number || 1;
+  const isAuto = pref.auto_generate !== false;
+  const restartYearly = pref.restart_yearly !== false;
+
+  const bodyHtml = `
+    <div style="font-size:13px;color:var(--tx);display:flex;flex-direction:column;gap:18px;">
+      <div style="color:#64748b;font-size:13px;line-height:1.5;">
+        Your ${docLabel.toLowerCase()} numbers are set on auto-generate mode to save your time. Are you sure about changing this setting?
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+          <input type="radio" name="doc_pref_mode" value="auto" ${isAuto ? 'checked' : ''} style="margin-top:3px;cursor:pointer;">
+          <div style="flex:1;">
+            <div style="font-weight:600;color:var(--tx);margin-bottom:8px;">Continue auto-generating ${docLabel.toLowerCase()} numbers</div>
+            
+            <div id="doc-pref-auto-fields" style="background:#f8fafc;border:1px solid var(--bd);border-radius:6px;padding:14px;display:${isAuto ? 'flex' : 'none'};flex-direction:column;gap:12px;">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label style="width:100px;font-weight:500;color:#475569;font-size:12.5px;">Prefix</label>
+                <div style="display:flex;align-items:center;gap:6px;position:relative;">
+                  <input type="text" id="doc-pref-prefix" class="in" value="${esc(prefixVal)}" style="width:180px;font-family:monospace;font-size:13px;">
+                  <button type="button" class="btn s" id="btn-doc-pref-tag" title="Insert Placeholder" style="padding:4px 8px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;background:#fff;cursor:pointer;">
+                    + Insert Placeholders
+                  </button>
+                  <div id="doc-pref-tag-popover" style="display:none;position:absolute;top:100%;left:120px;background:#fff;border:1px solid #cbd5e1;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);border-radius:6px;z-index:99;padding:6px 0;width:220px;margin-top:4px;">
+                    <div style="padding:4px 10px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;">Placeholders</div>
+                    <div class="pref-tag-opt" data-tag="\${YEAR}" style="padding:6px 12px;font-size:12px;cursor:pointer;"><b>\${YEAR}</b> - Calendar Year (2026)</div>
+                    <div class="pref-tag-opt" data-tag="\${FYS_YY}" style="padding:6px 12px;font-size:12px;cursor:pointer;"><b>\${FYS_YY}</b> - FY Start (26)</div>
+                    <div class="pref-tag-opt" data-tag="\${FYE_YY}" style="padding:6px 12px;font-size:12px;cursor:pointer;"><b>\${FYE_YY}</b> - FY End (27)</div>
+                    <div class="pref-tag-opt" data-tag="\${FY}" style="padding:6px 12px;font-size:12px;cursor:pointer;"><b>\${FY}</b> - Fiscal Year (26-27)</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label style="width:100px;font-weight:500;color:#475569;font-size:12.5px;">Next Number</label>
+                <input type="number" id="doc-pref-next-number" class="in" min="1" value="${nextNumVal}" style="width:120px;font-family:monospace;font-size:13px;">
+              </div>
+
+              <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx);cursor:pointer;margin-top:4px;">
+                <input type="checkbox" id="doc-pref-restart-yearly" ${restartYearly ? 'checked' : ''} style="cursor:pointer;">
+                <span>Restart ${docLabel.toLowerCase()} numbering at the beginning of each fiscal year</span>
+              </label>
+            </div>
+          </div>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <input type="radio" name="doc_pref_mode" value="manual" ${!isAuto ? 'checked' : ''} style="cursor:pointer;">
+          <span style="font-weight:600;color:var(--tx);">I will add them manually each time</span>
+        </label>
+      </div>
+    </div>
+  `;
+
+  const footerHtml = `
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;width:100%;">
+      <button type="button" class="btn p" id="btn-doc-pref-save" style="background:#2563eb;color:#fff;font-weight:600;padding:7px 18px;border-radius:4px;cursor:pointer;">Save</button>
+      <button type="button" class="btn" data-close style="padding:7px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    </div>
+  `;
+
+  const modal = Modal.open({
+    title: `Configure ${docLabel} Number Preferences`,
+    body: bodyHtml,
+    footer: footerHtml,
+    dialog: true
+  });
+
+  const mEl = modal.el;
+  const autoFields = mEl.querySelector('#doc-pref-auto-fields');
+  const radios = mEl.querySelectorAll('input[name="doc_pref_mode"]');
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      const mode = mEl.querySelector('input[name="doc_pref_mode"]:checked')?.value;
+      if (autoFields) autoFields.style.display = mode === 'auto' ? 'flex' : 'none';
+    });
+  });
+
+  const tagBtn = mEl.querySelector('#btn-doc-pref-tag');
+  const tagPop = mEl.querySelector('#doc-pref-tag-popover');
+  const prefixInp = mEl.querySelector('#doc-pref-prefix');
+  if (tagBtn && tagPop) {
+    tagBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tagPop.style.display = tagPop.style.display === 'block' ? 'none' : 'block';
+    });
+    mEl.querySelectorAll('.pref-tag-opt').forEach(opt => {
+      opt.addEventListener('click', () => {
+        const tag = opt.getAttribute('data-tag');
+        if (prefixInp && tag) {
+          prefixInp.value += tag;
+          prefixInp.focus();
+        }
+        tagPop.style.display = 'none';
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (tagPop && !tagPop.contains(e.target) && e.target !== tagBtn) {
+        tagPop.style.display = 'none';
+      }
+    });
+  }
+
+  const saveBtn = mEl.querySelector('#btn-doc-pref-save');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async () => {
+      const selectedMode = mEl.querySelector('input[name="doc_pref_mode"]:checked')?.value || 'auto';
+      const autoGen = selectedMode === 'auto';
+      const pfx = prefixInp ? prefixInp.value.trim() : '';
+      const nextNum = parseInt(mEl.querySelector('#doc-pref-next-number')?.value || '1', 10);
+      const restart = !!mEl.querySelector('#doc-pref-restart-yearly')?.checked;
+
+      try {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        const res = await api('settings/doc-number-preferences/', {
+          method: 'POST',
+          body: {
+            document_type: canonDoc,
+            transaction_series: series,
+            location: location,
+            auto_generate: autoGen,
+            prefix: pfx,
+            next_number: nextNum,
+            restart_yearly: restart
+          }
+        });
+        toast(`${docLabel} number preferences saved.`);
+        if (onSave) onSave(res);
+        modal.close();
+      } catch (err) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+        alert(err.message || 'Failed to save preferences.');
+      }
+    });
+  }
+}
+
+async function openManageSalespersonsModal({ onSelect, onListUpdated }) {
+  let spList = [];
+  try {
+    const res = await api('salespersons/');
+    spList = (res && res.results) ? res.results : [];
+  } catch (e) {
+    spList = [];
+  }
+
+  const renderTableRows = (list) => {
+    if (!list || !list.length) {
+      return `<tr><td colspan="4" style="text-align:center;padding:24px;color:#94a3b8;font-weight:500;">No salespersons found. Click "+ New Salesperson" above to add one.</td></tr>`;
+    }
+    return list.map(sp => `
+      <tr style="border-bottom:1px solid #e2e8f0;">
+        <td style="padding:10px 12px;font-weight:600;color:#0f172a;">${esc(sp.name)}</td>
+        <td style="padding:10px 12px;color:#475569;">${esc(sp.email || '—')}</td>
+        <td style="padding:10px 12px;"><span style="background:#ecfdf5;color:#059669;font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;">Active</span></td>
+        <td style="padding:10px 12px;text-align:right;">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <button type="button" class="btn s btn-sp-select" data-sp-name="${esc(sp.name)}" style="font-size:12px;padding:3px 10px;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:4px;cursor:pointer;">Select</button>
+            ${!String(sp.id).startsWith('u_') ? `<button type="button" class="btn ic btn-sp-delete" data-sp-id="${sp.id}" title="Remove" style="color:#ef4444;border:none;background:none;cursor:pointer;"><i class="fa-regular fa-trash-can"></i></button>` : ''}
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  };
+
+  const bodyHtml = `
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="position:relative;flex:1;max-width:320px;">
+          <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:10px;top:10px;color:#94a3b8;font-size:13px;"></i>
+          <input type="text" id="sp-modal-search" class="in" placeholder="Search salespersons" style="padding-left:32px;width:100%;font-size:13px;">
+        </div>
+        <button type="button" class="btn p" id="btn-sp-show-new" style="background:#2563eb;color:#fff;font-weight:600;font-size:13px;padding:6px 14px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-plus"></i> New Salesperson
+        </button>
+      </div>
+
+      <div id="sp-modal-new-card" style="display:none;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:16px;">
+        <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:12px;">New Salesperson</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#ef4444;margin-bottom:4px;">Name*</label>
+            <input type="text" id="sp-new-name" class="in" placeholder="Salesperson name" style="width:100%;">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;font-weight:600;color:#ef4444;margin-bottom:4px;">Email*</label>
+            <input type="email" id="sp-new-email" class="in" placeholder="email@company.com" style="width:100%;">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button type="button" class="btn p" id="btn-sp-save-new" style="background:#2563eb;color:#fff;font-weight:600;font-size:12.5px;padding:6px 16px;border-radius:4px;cursor:pointer;">
+            Save and Select
+          </button>
+          <button type="button" class="btn" id="btn-sp-cancel-new" style="font-size:12.5px;padding:6px 14px;border-radius:4px;cursor:pointer;">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;max-height:360px;overflow-y:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead style="background:#f1f5f9;border-bottom:1px solid #cbd5e1;text-align:left;color:#475569;font-weight:600;">
+            <tr>
+              <th style="padding:8px 12px;">Name</th>
+              <th style="padding:8px 12px;">Email</th>
+              <th style="padding:8px 12px;">Status</th>
+              <th style="padding:8px 12px;text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sp-modal-tbody">
+            ${renderTableRows(spList)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const modal = Modal.open({
+    title: 'Manage Salespersons',
+    body: bodyHtml,
+    footer: '<button type="button" class="btn" data-close style="padding:6px 16px;">Close</button>',
+    dialog: true,
+    wide: true
+  });
+
+  const mEl = modal.el;
+  const newCard = mEl.querySelector('#sp-modal-new-card');
+  const showNewBtn = mEl.querySelector('#btn-sp-show-new');
+  const cancelNewBtn = mEl.querySelector('#btn-sp-cancel-new');
+  const saveNewBtn = mEl.querySelector('#btn-sp-save-new');
+  const nameInp = mEl.querySelector('#sp-new-name');
+  const emailInp = mEl.querySelector('#sp-new-email');
+  const searchInp = mEl.querySelector('#sp-modal-search');
+  const tbody = mEl.querySelector('#sp-modal-tbody');
+
+  if (showNewBtn && newCard) {
+    showNewBtn.addEventListener('click', () => {
+      newCard.style.display = 'block';
+      if (nameInp) nameInp.focus();
+    });
+  }
+  if (cancelNewBtn && newCard) {
+    cancelNewBtn.addEventListener('click', () => {
+      newCard.style.display = 'none';
+      if (nameInp) nameInp.value = '';
+      if (emailInp) emailInp.value = '';
+    });
+  }
+
+  if (saveNewBtn) {
+    saveNewBtn.addEventListener('click', async () => {
+      const name = nameInp ? nameInp.value.trim() : '';
+      const email = emailInp ? emailInp.value.trim().toLowerCase() : '';
+      if (!name) {
+        alert('Please enter salesperson name.');
+        if (nameInp) nameInp.focus();
+        return;
+      }
+      try {
+        saveNewBtn.disabled = true;
+        saveNewBtn.textContent = 'Saving...';
+        const res = await api('salespersons/', {
+          method: 'POST',
+          body: { name, email }
+        });
+        toast(`Salesperson ${name} added.`);
+        if (onSelect) onSelect(res.name || name);
+        if (onListUpdated) onListUpdated();
+        modal.close();
+      } catch (err) {
+        saveNewBtn.disabled = false;
+        saveNewBtn.textContent = 'Save and Select';
+        alert(err.message || 'Failed to save salesperson.');
+      }
+    });
+  }
+
+  if (searchInp && tbody) {
+    searchInp.addEventListener('input', () => {
+      const q = searchInp.value.trim().toLowerCase();
+      const filtered = spList.filter(s => (s.name || '').toLowerCase().includes(q) || (s.email || '').toLowerCase().includes(q));
+      tbody.innerHTML = renderTableRows(filtered);
+      bindRowActions();
+    });
+  }
+
+  function bindRowActions() {
+    mEl.querySelectorAll('.btn-sp-select').forEach(b => {
+      b.addEventListener('click', () => {
+        const spName = b.getAttribute('data-sp-name');
+        if (onSelect && spName) onSelect(spName);
+        modal.close();
+      });
+    });
+    mEl.querySelectorAll('.btn-sp-delete').forEach(b => {
+      b.addEventListener('click', async () => {
+        const spId = b.getAttribute('data-sp-id');
+        if (confirm('Are you sure you want to remove this salesperson?')) {
+          try {
+            await api(`salespersons/${spId}/`, { method: 'DELETE' });
+            spList = spList.filter(s => String(s.id) !== String(spId));
+            tbody.innerHTML = renderTableRows(spList);
+            bindRowActions();
+            toast('Salesperson removed.');
+            if (onListUpdated) onListUpdated();
+          } catch (e) {
+            alert(e.message || 'Failed to delete salesperson.');
+          }
+        }
+      });
+    });
+  }
+
+  bindRowActions();
+}
+
+function createSalespersonCustomDropdown(containerEl, currentVal = '', onSelect) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '';
+  containerEl.style.position = 'relative';
+
+  let selectedName = currentVal || '';
+  let salespersons = [];
+
+  const trigger = document.createElement('div');
+  trigger.className = 'in sp-select-trigger';
+  trigger.style.cssText = 'width:260px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;background:#fff;padding:6px 10px;border:1px solid var(--bd);border-radius:4px;';
+  
+  const textSpan = document.createElement('span');
+  textSpan.style.cssText = selectedName ? 'color:var(--tx);font-weight:500;' : 'color:#94a3b8;';
+  textSpan.textContent = selectedName || 'Select or Add Salesperson';
+
+  const caret = document.createElement('i');
+  caret.className = 'fa-solid fa-chevron-down';
+  caret.style.cssText = 'font-size:11px;color:#64748b;';
+
+  const hiddenInput = document.createElement('input');
+  hiddenInput.type = 'hidden';
+  hiddenInput.name = 'salesperson';
+  hiddenInput.id = 'doc-salesperson-input';
+  hiddenInput.value = selectedName;
+
+  trigger.appendChild(textSpan);
+  trigger.appendChild(caret);
+  containerEl.appendChild(trigger);
+  containerEl.appendChild(hiddenInput);
+
+  const popover = document.createElement('div');
+  popover.className = 'sp-custom-popover';
+  popover.style.cssText = 'display:none;position:absolute;top:100%;left:0;width:280px;background:#fff;border:1px solid #cbd5e1;box-shadow:0 10px 25px -5px rgba(0,0,0,0.15);border-radius:6px;z-index:1000;margin-top:4px;overflow:hidden;';
+
+  const searchBox = document.createElement('div');
+  searchBox.style.cssText = 'padding:8px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;position:relative;';
+  searchBox.innerHTML = `
+    <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:18px;top:16px;color:#94a3b8;font-size:12px;"></i>
+    <input type="text" class="in sp-popover-search" placeholder="Search" style="width:100%;padding-left:28px;font-size:12px;height:28px;">
+  `;
+
+  const listContainer = document.createElement('div');
+  listContainer.className = 'sp-popover-list';
+  listContainer.style.cssText = 'max-height:200px;overflow-y:auto;padding:4px 0;';
+
+  const manageOption = document.createElement('div');
+  manageOption.className = 'sp-popover-manage';
+  manageOption.style.cssText = 'padding:10px 14px;border-top:1px solid #e2e8f0;color:#2563eb;font-weight:600;font-size:12.5px;cursor:pointer;display:flex;align-items:center;gap:8px;background:#f8fafc;';
+  manageOption.innerHTML = '<i class="fa-solid fa-gear"></i> Manage Salespersons';
+
+  popover.appendChild(searchBox);
+  popover.appendChild(listContainer);
+  popover.appendChild(manageOption);
+  containerEl.appendChild(popover);
+
+  async function loadSalespersons() {
+    try {
+      salespersons = await api('lookup/salespersons/').catch(() => []);
+    } catch (e) {
+      salespersons = [];
+    }
+    renderList('');
+  }
+
+  function renderList(query) {
+    listContainer.innerHTML = '';
+    const q = (query || '').toLowerCase().trim();
+    const filtered = salespersons.filter(s => (s.name || '').toLowerCase().includes(q));
+
+    if (!filtered.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:16px;text-align:center;color:#94a3b8;font-size:11.5px;font-weight:700;letter-spacing:0.5px;';
+      empty.textContent = 'NO RESULTS FOUND';
+      listContainer.appendChild(empty);
+      return;
+    }
+
+    filtered.forEach(sp => {
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:8px 14px;cursor:pointer;font-size:13px;color:var(--tx);transition:background 0.15s;';
+      item.textContent = sp.name;
+      item.addEventListener('mouseenter', () => item.style.background = '#f1f5f9');
+      item.addEventListener('mouseleave', () => item.style.background = '#fff');
+      item.addEventListener('click', () => {
+        selectValue(sp.name);
+        popover.style.display = 'none';
+      });
+      listContainer.appendChild(item);
+    });
+  }
+
+  function selectValue(name) {
+    selectedName = name || '';
+    hiddenInput.value = selectedName;
+    textSpan.textContent = selectedName || 'Select or Add Salesperson';
+    textSpan.style.color = selectedName ? 'var(--tx)' : '#94a3b8';
+    textSpan.style.fontWeight = selectedName ? '500' : 'normal';
+    if (onSelect) onSelect(selectedName);
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = popover.style.display === 'block';
+    popover.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+      loadSalespersons();
+      setTimeout(() => {
+        const inp = searchBox.querySelector('input');
+        if (inp) { inp.value = ''; inp.focus(); }
+      }, 50);
+    }
+  });
+
+  const searchInput = searchBox.querySelector('input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      renderList(searchInput.value);
+    });
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  manageOption.addEventListener('click', (e) => {
+    e.stopPropagation();
+    popover.style.display = 'none';
+    openManageSalespersonsModal({
+      onSelect: (name) => {
+        selectValue(name);
+        loadSalespersons();
+      },
+      onListUpdated: () => {
+        loadSalespersons();
+      }
+    });
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!containerEl.contains(e.target)) {
+      popover.style.display = 'none';
+    }
+  });
+
+  loadSalespersons();
+
+  return {
+    setValue: selectValue,
+    getValue: () => hiddenInput.value
+  };
+}
+
+async function setupProjectSelectorForCustomer(selectEl, customerId, selectedProject = '') {
+  if (!selectEl) return;
+  if (!customerId) {
+    selectEl.innerHTML = '<option value="">Select a customer first to view projects</option>';
+    selectEl.disabled = true;
+    return;
+  }
+  try {
+    const projects = await api(`lookup/projects/?customer=${customerId}`).catch(() => []);
+    if (projects && projects.length) {
+      selectEl.disabled = false;
+      selectEl.innerHTML = `
+        <option value="">Select Project</option>
+        ${projects.map(p => `<option value="${esc(p.name)}" ${p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      `;
+    } else {
+      selectEl.disabled = true;
+      selectEl.innerHTML = '<option value="">There are no active projects for this customer.</option>';
+    }
+  } catch (e) {
+    selectEl.disabled = true;
+    selectEl.innerHTML = '<option value="">There are no active projects for this customer.</option>';
+  }
+}
+
+function renderPaymentGatewayBanner() {
+  return `
+    <div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;padding:14px 18px;margin-top:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="width:36px;height:36px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:16px;">
+          <i class="fa-solid fa-credit-card"></i>
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:13.5px;color:var(--tx);">Want to get paid faster?</div>
+          <div style="font-size:12px;color:#64748b;margin-top:2px;">Set up payment gateways and give your customers multiple payment options to pay you.</div>
+        </div>
+      </div>
+      <button type="button" class="btn s" onclick="location.hash='#/settings/payment-gateways'" style="font-size:12px;font-weight:600;padding:7px 16px;border-radius:4px;white-space:nowrap;background:#fff;border:1px solid #cbd5e1;color:#1e293b;cursor:pointer;">
+        Set up Payment Gateway
+      </button>
+    </div>
+  `;
+}
+
+window.openDocNumberPreferencesModal = openDocNumberPreferencesModal;
+window.openManageSalespersonsModal = openManageSalespersonsModal;
+window.createSalespersonCustomDropdown = createSalespersonCustomDropdown;
+window.setupProjectSelectorForCustomer = setupProjectSelectorForCustomer;
+window.renderPaymentGatewayBanner = renderPaymentGatewayBanner;
+
 async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
   if (typeof targetEl === 'function') {
     extraOpts = onDone || {};
@@ -6895,7 +7452,10 @@ function renderStockQuantityCell(l = {}, items = [], whList = []) {
       <input class="in l-qty" type="number" step="0.001" min="0.001" value="${esc(l.quantity || '1.00')}" style="text-align:right;width:100%;font-weight:600;">
       <div class="l-stock-info-box" style="margin-top:4px;display:flex;flex-direction:column;gap:3px;font-size:11px;">
         <div class="l-unit-badge" style="color:#64748b;font-weight:500;text-align:right;font-size:11px;">${esc(curUnit)}</div>
-        <div class="l-wh-wrap" style="display:${hasTrack ? 'flex' : 'none'};justify-content:flex-end;">
+        <div class="l-stock-avail" style="display:${curItemId ? 'block' : 'none'};font-size:10.5px;font-weight:600;color:#059669;text-align:right;" title="Available stock in selected warehouse">
+          Available Stock: ${hasTrack ? `${stockVal} ${esc(curUnit)}` : (curItem && curItem.type === 'service' ? 'N/A' : `${stockVal} ${esc(curUnit)}`)}
+        </div>
+        <div class="l-wh-wrap" style="display:${curItemId ? 'flex' : 'none'};align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;">
           <div class="l-wh-pill" style="position:relative;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:#2563eb;background:#eff6ff;padding:2px 7px;border-radius:4px;border:1px solid #bfdbfe;cursor:pointer;max-width:100%;" title="Click to select warehouse">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 21v-4h6v4M7 3h10l2 4H5l2-4z"/></svg>
             <span class="l-wh-label" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:85px;">${esc(curWh.name || curWh.code || 'HO Kottayam')}</span>
@@ -6904,9 +7464,7 @@ function renderStockQuantityCell(l = {}, items = [], whList = []) {
               ${whList.map(w => `<option value="${w.id}" data-code="${esc(w.code)}" ${String(curWh.id) === String(w.id) ? 'selected' : ''}>${esc(w.name)} (${esc(w.code)})</option>`).join('')}
             </select>
           </div>
-        </div>
-        <div class="l-stock-avail" style="display:${hasTrack ? 'block' : 'none'};font-size:10.5px;font-weight:600;color:#059669;text-align:right;" title="Available stock in selected warehouse">
-          Avail: ${stockVal} ${esc(curUnit)}
+          <a href="javascript:void(0)" class="l-recent-tx" style="font-size:10px;color:#2563eb;text-decoration:none;" title="View recent transactions">Recent Transactions</a>
         </div>
         <div class="l-stock-warn" style="display:none;font-size:10px;line-height:1.2;font-weight:600;color:#dc2626;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;padding:3px 5px;text-align:left;margin-top:2px;"></div>
       </div>
@@ -6945,11 +7503,11 @@ function initItemTableStockTracker(tbody, items, whList, onCalc) {
     const warnBox = $('.l-stock-warn', tr);
     const qtyInput = $('.l-qty', tr);
 
-    if (!it || it.type !== 'goods' || !it.track_inventory) {
+    if (!it) {
       if (whWrap) whWrap.style.display = 'none';
       if (availBadge) availBadge.style.display = 'none';
       if (warnBox) warnBox.style.display = 'none';
-      if (unitBadge) unitBadge.textContent = it ? (it.unit || 'Nos') : '';
+      if (unitBadge) unitBadge.textContent = '';
       if (qtyInput) {
         qtyInput.style.borderColor = '';
         qtyInput.style.backgroundColor = '';
@@ -6959,7 +7517,6 @@ function initItemTableStockTracker(tbody, items, whList, onCalc) {
 
     if (unitBadge) unitBadge.textContent = it.unit || 'Nos';
     if (whWrap) whWrap.style.display = 'flex';
-    if (availBadge) availBadge.style.display = 'block';
 
     let whId = whSelect?.value;
     if (!whId && it.warehouse_id) {
@@ -6972,16 +7529,43 @@ function initItemTableStockTracker(tbody, items, whList, onCalc) {
     }
 
     const whObj = whList.find(w => String(w.id) === String(whId)) || whList[0] || { id: whId, name: 'HO Kottayam', code: 'WH-MAIN' };
-    if (whLabel) whLabel.textContent = whObj.name || whObj.code || 'Warehouse';
+    if (whLabel) whLabel.textContent = whObj.name || whObj.code || 'HO Kottayam';
     if (whIdIn) whIdIn.value = whObj.id || '';
     if (whCodeIn) whCodeIn.value = whObj.code || '';
 
-    if (forceRefresh) {
-      delete stockCache[`${it.id}_${whObj.id}`];
-    }
-    const avail = await fetchStock(it.id, whObj.id);
     if (availBadge) {
-      availBadge.textContent = `Avail: ${avail} ${it.unit || 'Nos'}`;
+      availBadge.style.display = 'block';
+      if (it.type === 'goods' && it.track_inventory) {
+        if (forceRefresh) {
+          delete stockCache[`${it.id}_${whObj.id}`];
+        }
+        const avail = await fetchStock(it.id, whObj.id);
+        availBadge.textContent = `Available Stock: ${avail} ${it.unit || 'Nos'}`;
+        const enteredQty = num(qtyInput?.value) || 0;
+        if (enteredQty > avail) {
+          if (warnBox) {
+            warnBox.textContent = `Insufficient Stock. Available quantity in ${whObj.name || 'selected warehouse'}: ${avail} ${it.unit || 'Nos'}. Requested quantity: ${enteredQty} ${it.unit || 'Nos'}.`;
+            warnBox.style.display = 'block';
+          }
+          if (qtyInput) {
+            qtyInput.style.borderColor = '#ef4444';
+            qtyInput.style.backgroundColor = '#fef2f2';
+          }
+        } else {
+          if (warnBox) warnBox.style.display = 'none';
+          if (qtyInput) {
+            qtyInput.style.borderColor = '';
+            qtyInput.style.backgroundColor = '';
+          }
+        }
+      } else {
+        availBadge.textContent = `Available Stock: ${it.type === 'service' ? 'N/A' : (it.stock != null ? `${it.stock} ${it.unit || 'Nos'}` : 'N/A')}`;
+        if (warnBox) warnBox.style.display = 'none';
+        if (qtyInput) {
+          qtyInput.style.borderColor = '';
+          qtyInput.style.backgroundColor = '';
+        }
+      }
     }
 
     const enteredQty = num(qtyInput?.value) || 0;
@@ -7069,6 +7653,14 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData)
   ]);
 
+  const rLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const rOrderNum = rec ? (rec.order_number || '') : '';
+  const rSalesperson = rec ? (rec.salesperson || '') : '';
+  const rProject = rec ? (rec.project_name || '') : '';
+  const rSubject = rec ? (rec.subject || '') : '';
+  const rCreateDraft = rec ? (rec.create_as_draft !== undefined ? !!rec.create_as_draft : true) : true;
+  const rRepeatEvery = rec ? (rec.repeat_every != null ? rec.repeat_every : 1) : 1;
+
   const rProfileName = rec ? (rec.profile_name || rec.name || '') : '';
   const rCustomer = rec ? (rec.customer_id || rec.customer) : '';
   const rFrequency = rec ? (rec.frequency || 'monthly') : 'monthly';
@@ -7153,13 +7745,8 @@ ${renderStockQuantityCell(l, items, whList)}
 
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Profile Name*</label>
-            <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Retainer Support" style="max-width:440px;width:100%;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="rec-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
@@ -7168,7 +7755,18 @@ ${renderStockQuantityCell(l, items, whList)}
               <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
             </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Profile Name*</label>
+            <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Support Retainer" style="max-width:440px;width:100%;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
+            <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-8" style="max-width:440px;width:100%;">
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
@@ -7185,60 +7783,57 @@ ${renderStockQuantityCell(l, items, whList)}
             </div>
           </div>
 
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Repeat Every*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input class="in" type="number" id="rec-repeat-every" name="repeat_every" min="1" value="${rRepeatEvery}" style="width:70px;text-align:center;">
+              <select class="in" id="rec-frequency" name="frequency" style="width:160px;">
+                <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Week(s)</option>
+                <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Month(s)</option>
+                <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Year(s)</option>
+              </select>
+            </div>
+
+            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Starts On*</label>
+            <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:150px;">
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Ends On</label>
+            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:150px;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
+
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;cursor:pointer;margin-left:10px;">
+              <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''}> Never Expires
+            </label>
+          </div>
+
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Frequency*</label>
-            <select class="in" id="rec-frequency" name="frequency" style="width:260px;">
-              <option value="daily" ${rFrequency === 'daily' ? 'selected' : ''}>Daily</option>
-              <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Weekly</option>
-              <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Monthly</option>
-              <option value="quarterly" ${rFrequency === 'quarterly' ? 'selected' : ''}>Quarterly</option>
-              <option value="half_yearly" ${rFrequency === 'half_yearly' ? 'selected' : ''}>Half-Yearly</option>
-              <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Yearly</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Start Date*</label>
-            <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:260px;">
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Next Invoice Date*</label>
-            <input class="in" type="date" id="rec-next-date" name="next_date" value="${rNextDate}" required style="width:260px;">
-          </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">End Date</label>
-            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:260px;${rNeverEnds ? 'opacity:0.5;' : ''}" ${rNeverEnds ? 'disabled' : ''}>
-            <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--tx);cursor:pointer;margin-left:14px;">
-              <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
-              Never Ends
-            </label>
-          </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
             <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Payment Terms</label>
-            <select class="in" id="rec-payment-terms" name="payment_terms" style="width:260px;">
-              <option value="0" ${rPaymentTerms === 0 ? 'selected' : ''}>Due on Receipt</option>
-              <option value="15" ${rPaymentTerms === 15 ? 'selected' : ''}>Net 15</option>
-              <option value="30" ${rPaymentTerms === 30 ? 'selected' : ''}>Net 30</option>
-              <option value="45" ${rPaymentTerms === 45 ? 'selected' : ''}>Net 45</option>
-              <option value="60" ${rPaymentTerms === 60 ? 'selected' : ''}>Net 60</option>
-            </select>
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Status</label>
-            <select class="in" id="rec-status" name="status" style="width:180px;">
-              <option value="active" ${rStatus === 'active' ? 'selected' : ''}>Active</option>
-              <option value="paused" ${rStatus === 'paused' ? 'selected' : ''}>Paused</option>
-              <option value="completed" ${rStatus === 'completed' ? 'selected' : ''}>Completed</option>
-              <option value="cancelled" ${rStatus === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+            <select class="in" id="rec-payment-terms" name="payment_terms" style="width:200px;">
+              <option value="Due on Receipt" ${String(rec ? rec.payment_terms : '') === 'Due on Receipt' || rPaymentTerms === 0 ? 'selected' : ''}>Due on Receipt</option>
+              <option value="Net 15" ${String(rec ? rec.payment_terms : '') === 'Net 15' || rPaymentTerms === 15 ? 'selected' : ''}>Net 15</option>
+              <option value="Net 30" ${String(rec ? rec.payment_terms : '') === 'Net 30' || rPaymentTerms === 30 ? 'selected' : ''}>Net 30</option>
+              <option value="Net 45" ${String(rec ? rec.payment_terms : '') === 'Net 45' || rPaymentTerms === 45 ? 'selected' : ''}>Net 45</option>
+              <option value="Net 60" ${String(rec ? rec.payment_terms : '') === 'Net 60' || rPaymentTerms === 60 ? 'selected' : ''}>Net 60</option>
+              <option value="Due end of the month" ${String(rec ? rec.payment_terms : '') === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
             </select>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;margin-top:4px;">
-            <label style="width:150px;"></label>
-            <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--tx);">
-              <input type="checkbox" id="rec-auto-send" ${rAutoSend ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
-              Auto-send invoice by email to customer upon generation
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
+            <div id="rec-salesperson-container"></div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="rec-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this customer.</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
             </label>
+            <textarea class="in" id="rec-subject" name="subject" rows="2" placeholder="Let your customer know what this Recurring Invoice is for" style="width:260px;font-size:12px;">${esc(rSubject)}</textarea>
           </div>
         </div>
 
@@ -7324,7 +7919,16 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
         </div>
 
-        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+        ${renderPaymentGatewayBanner()}
+
+        <div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:12px 16px;background:#f8fafc;border:1px solid var(--bd);border-radius:6px;">
+          <input type="checkbox" id="rec-create-as-draft" name="create_as_draft" ${rCreateDraft ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+          <label for="rec-create-as-draft" style="font-weight:600;font-size:13px;color:var(--tx);cursor:pointer;display:flex;align-items:center;gap:6px;">
+            Preferences : Create Invoices as Drafts <i class="fa-solid fa-gear" style="color:#2563eb;font-size:12px;"></i>
+          </label>
+        </div>
+
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:24px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn p" id="btn-rec-save" style="font-weight:600;cursor:pointer;">Save Profile</button>
             <button type="button" class="btn" id="btn-rec-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
@@ -7343,6 +7947,121 @@ ${renderStockQuantityCell(l, items, whList)}
   const tbody = $('#recurring-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRecTotals());
+
+  createSalespersonCustomDropdown($('#rec-salesperson-container', form), rSalesperson, () => {});
+  setupProjectSelectorForCustomer($('#rec-project', form), rCustomer, rProject);
+  $('#rec-customer', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#rec-project', form), e.target.value);
+  });
+
+  async function saveRecurringInvoice(forceDraft = false) {
+    const custId = $('#rec-customer', form).value;
+    if (!custId || custId === '__new_customer__') {
+      toast('Please select a customer.', 'err');
+      $('#rec-customer', form).focus();
+      return;
+    }
+    const profName = ($('#rec-profile-name', form).value || '').trim();
+    if (!profName) {
+      toast('Please enter a profile name.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+    const sd = $('#rec-start-date', form).value;
+    if (!sd) {
+      toast('Please enter start date.', 'err');
+      $('#rec-start-date', form).focus();
+      return;
+    }
+
+    const lines = [];
+    $$('.ln-rec', tbody).forEach((tr, idx) => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qVal = num($('.l-qty', tr).value) || 1;
+      const rVal = num($('.l-rate', tr).value) || 0;
+      const dVal = num($('.l-disc', tr).value) || 0;
+      const gVal = num($('.l-gst', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value || 'percent';
+
+      let taxable = qVal * rVal;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - dVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - dVal);
+      }
+      taxable = r2(taxable);
+      const lTot = r2(taxable * (1 + gVal / 100));
+
+      lines.push({
+        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qVal,
+        rate: rVal,
+        discount_percent: dVal,
+        gst_rate: gVal,
+        line_total: lTot,
+        position: idx
+      });
+    });
+
+    if (!lines.length) {
+      toast('At least one line item is required.', 'err');
+      return;
+    }
+
+    const payload = {
+      customer: Number(custId),
+      customer_id: Number(custId),
+      profile_name: profName,
+      name: profName,
+      order_number: ($('#rec-order-number', form)?.value || '').trim(),
+      frequency: $('#rec-frequency', form)?.value || 'monthly',
+      repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
+      start_date: sd,
+      end_date: $('#rec-never-ends', form).checked ? null : ($('#rec-end-date', form).value || null),
+      never_ends: $('#rec-never-ends', form).checked,
+      payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
+      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
+      salesperson: form.querySelector('#rec-salesperson-container select.sp-select')?.value || '',
+      project_name: $('#rec-project', form)?.value || '',
+      subject: ($('#rec-subject', form)?.value || '').trim(),
+      notes: ($('#rec-notes', form)?.value || '').trim(),
+      terms: ($('#rec-terms', form)?.value || '').trim(),
+      create_as_draft: forceDraft ? true : ($('#rec-create-as-draft', form)?.checked ?? true),
+      status: forceDraft ? 'draft' : 'active',
+      lines: lines
+    };
+
+    const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
+    actionBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
+      } else {
+        saved = await api('recurring-invoices/', { method: 'POST', body: payload });
+      }
+      toast(`Recurring profile "${profName}" saved successfully!`, 'ok');
+      if (onDone) onDone(saved);
+      else {
+        location.hash = '#/sales/recurring-invoices';
+        if (typeof route === 'function') route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      actionBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  }
+
+  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurringInvoice(false));
+  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurringInvoice(true));
 
   const neverEndsCb = $('#rec-never-ends', form);
   const endDateIn = $('#rec-end-date', form);
@@ -8377,6 +9096,9 @@ async function quoteForm(id, targetEl, onDone) {
 
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
+  const qLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const qSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const qOrderNum = rec ? (rec.order_number || '') : (rec ? (rec.reference_number || '') : '');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
   const qRef = rec ? (rec.reference_number || '') : '';
@@ -8463,7 +9185,7 @@ ${renderStockQuantityCell(l, items, whList)}
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="q-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
@@ -8472,6 +9194,19 @@ ${renderStockQuantityCell(l, items, whList)}
               <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="q-location" name="location" style="width:260px;">
+                ${whList.map(w => `<option value="${esc(w.name)}" ${(qLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -8492,11 +9227,22 @@ ${renderStockQuantityCell(l, items, whList)}
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-quote-num-pref" title="Quote preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="q-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(qSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${qSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${qSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${qSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
+            <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:260px;">
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
@@ -8514,18 +9260,13 @@ ${renderStockQuantityCell(l, items, whList)}
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <select class="in" id="q-salesperson" name="salesperson" style="width:260px;">
-              <option value="">Select or Add Salesperson</option>
-              ${salespersons.map(s => `<option value="${esc(s.name)}" ${qSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              <option value="__new_salesperson__">+ Add New Salesperson…</option>
-            </select>
+            <div id="q-salesperson-container"></div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Project Name</label>
-            <select class="in" id="q-project" name="project_name" style="width:260px;">
-              <option value="">Select a Project</option>
-              ${projects.map(pj => `<option value="${esc(pj.name)}" data-cust="${pj.customer_id}" ${qProject === pj.name ? 'selected' : ''}>${esc(pj.name)}</option>`).join('')}
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="q-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this customer.</option>
             </select>
           </div>
 
@@ -8684,6 +9425,8 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
         </div>
 
+        ${renderPaymentGatewayBanner()}
+
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-q-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
@@ -8706,16 +9449,22 @@ ${renderStockQuantityCell(l, items, whList)}
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcQuote());
 
-  function updateProjectFilter() {
-    const custId = $('#q-customer', form).value;
-    const projSel = $('#q-project', form);
-    if (!projSel) return;
-    Array.from(projSel.options).forEach(opt => {
-      if (!opt.value) return;
-      const cId = opt.dataset.cust;
-      opt.style.display = (!custId || !cId || String(cId) === String(custId)) ? '' : 'none';
+  createSalespersonCustomDropdown($('#q-salesperson-container', form), qSalesperson, () => {});
+  setupProjectSelectorForCustomer($('#q-project', form), qCustomer, qProject);
+  $('#q-customer', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#q-project', form), e.target.value);
+  });
+
+  $('#btn-quote-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'quotes',
+      series: $('#q-series', form)?.value || 'Default Transaction Series',
+      location: $('#q-location', form)?.value || 'HO Kottayam',
+      onSave: (pfx, next) => {
+        if (next) $('#q-number', form).value = next;
+      }
     });
-  }
+  });
 
   function calcQuote() {
     const isTaxInclusive = ($('#q-tax-pricing', form)?.value === 'tax_inclusive');
@@ -9077,12 +9826,15 @@ ${renderStockQuantityCell(l, items, whList)}
       customer: Number(custId),
       number: numVal,
       reference_number: ($('#q-reference', form)?.value || '').trim(),
+      order_number: ($('#q-order-number', form)?.value || $('#q-reference', form)?.value || '').trim(),
+      location: $('#q-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expiry_date: expVal,
       tax_pricing_type: $('#q-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#q-customer-type', form)?.value || 'b2b',
       place_of_supply: (custObj && custObj.state) ? custObj.state : APP.org.state,
-      salesperson: $('#q-salesperson', form).value,
+      salesperson: form.querySelector('#q-salesperson-container select.sp-select')?.value || '',
       project_name: $('#q-project', form).value,
       subject: ($('#q-subject', form)?.value || '').trim(),
       notes: $('#q-notes', form).value.trim(),
@@ -9181,6 +9933,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   ]);
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
+  const soLocation = rec ? (rec.location || 'HO Kottayam') : (srcQuote ? (srcQuote.location || 'HO Kottayam') : 'HO Kottayam');
+  const soSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (srcQuote ? (srcQuote.transaction_series || 'Default Transaction Series') : 'Default Transaction Series');
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
   const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -9265,7 +10019,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="so-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
@@ -9274,6 +10028,19 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="so-location" name="location" style="width:260px;">
+                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(soLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -9294,16 +10061,27 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="so-number" name="number" value="${soNumber}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-so-num-pref" title="Sales Order preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="so-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(soSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${soSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${soSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${soSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="so-number" name="number" value="${soNumber}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
+            <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Reference# / PO#</label>
-            <input class="in" id="so-reference" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. PO-2026-001" style="width:260px;">
+            <input class="in" id="so-reference" name="reference_number" value="${esc(rec ? (rec.reference_number || '') : '')}" placeholder="e.g. PO-2026-001" style="width:260px;">
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
@@ -9316,10 +10094,13 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <select class="in" id="so-salesperson" name="salesperson" style="width:260px;">
-              <option value="">Select or Add Salesperson</option>
-              ${salespersons.map(s => `<option value="${esc(s.name)}" ${soSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            <div id="so-salesperson-container"></div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="so-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this customer.</option>
             </select>
           </div>
 
@@ -9423,6 +10204,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
             </div>
           </div>
         </div>
+
+        ${renderPaymentGatewayBanner()}
       </form>
 
       <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -4px 12px rgba(0,0,0,0.05);margin-top:auto;">
@@ -9439,6 +10222,23 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#so-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcSo());
+
+  createSalespersonCustomDropdown($('#so-salesperson-container', form), soSalesperson, () => {});
+  setupProjectSelectorForCustomer($('#so-project', form), soCustomer, rec ? rec.project_name : '');
+  $('#so-customer', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#so-project', form), e.target.value);
+  });
+
+  $('#btn-so-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'sales-orders',
+      series: $('#so-series', form)?.value || 'Default Transaction Series',
+      location: $('#so-location', form)?.value || 'HO Kottayam',
+      onSave: (pfx, next) => {
+        if (next) $('#so-number', form).value = next;
+      }
+    });
+  });
 
   function calcSo() {
     const isTaxInclusive = ($('#so-tax-pricing', form)?.value === 'tax_inclusive');
@@ -9704,14 +10504,17 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       customer: custId,
       customer_id: custId,
       number: numVal,
-      order_number: $('#so-reference', form).value.trim(),
+      order_number: ($('#so-order-number', form)?.value || $('#so-reference', form)?.value || '').trim(),
+      location: $('#so-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#so-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
       due_date: $('#so-ship-date', form).value || dt,
       tax_pricing_type: $('#so-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#so-customer-type', form)?.value || 'b2b',
       place_of_supply: $('#so-pos', form).value || APP.org.state,
-      salesperson: $('#so-salesperson', form)?.value || '',
+      salesperson: form.querySelector('#so-salesperson-container select.sp-select')?.value || '',
+      project_name: $('#so-project', form)?.value || '',
       subject: $('#so-subject', form)?.value?.trim() || '',
       status: isDraft ? 'draft' : 'confirmed',
       notes: $('#so-notes', form).value.trim(),
@@ -9781,6 +10584,10 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   ]);
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
+  const billLocation = rec ? (rec.location || 'HO Kottayam') : (srcPO ? (srcPO.location || 'HO Kottayam') : 'HO Kottayam');
+  const billSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const billAccountsPay = rec ? (rec.accounts_payable || 'Accounts Payable') : 'Accounts Payable';
+  const billProject = rec ? (rec.project_name || '') : '';
   const billNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'BILL-000001');
   const billVendor = rec ? (rec.vendor_id || rec.party_id) : (srcPO ? srcPO.vendor_id : '');
   const billDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -9862,7 +10669,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="bill-vendor" name="vendor" required style="flex:1;">
                 <option value="">Select or add a vendor</option>
                 <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
@@ -9871,6 +10678,19 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
               <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="bill-location" name="location" style="width:260px;">
+                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(billLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="bill-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Destination of Supply: ${esc(billPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -9891,8 +10711,14 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="bill-number" name="number" value="${billNum}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-bill-num-pref" title="Bill preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="bill-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(billSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${billSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${billSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${billSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="bill-number" name="number" value="${billNum}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-bill-num-pref" title="Configure Bill Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
@@ -9918,6 +10744,23 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
 
             <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
             <input class="in" type="date" id="bill-due-date" name="due_date" value="${billDueDate}" style="width:160px;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
+              Accounts Payable
+              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The liability account that tracks money owed to vendors"></i>
+            </label>
+            <select class="in" id="bill-accounts-payable" name="accounts_payable" style="width:260px;">
+              <option value="Accounts Payable" selected>Accounts Payable</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="bill-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this vendor.</option>
+            </select>
           </div>
 
           <div style="display:flex;align-items:flex-start;gap:16px;">
@@ -10036,6 +10879,22 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#bill-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcBill());
+
+  setupProjectSelectorForCustomer($('#bill-project', form), billVendor, billProject);
+  $('#bill-vendor', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#bill-project', form), e.target.value);
+  });
+
+  $('#btn-bill-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'bills',
+      series: $('#bill-series', form)?.value || 'Default Transaction Series',
+      location: $('#bill-location', form)?.value || 'HO Kottayam',
+      onSave: (pfx, next) => {
+        if (next) $('#bill-number', form).value = next;
+      }
+    });
+  });
 
   function calcBill() {
     const isTaxInclusive = ($('#bill-tax-pricing', form)?.value === 'tax_inclusive');
@@ -10303,6 +11162,10 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       number: numVal,
       order_number: $('#bill-order-number', form).value.trim(),
       vendor_ref: $('#bill-order-number', form).value.trim(),
+      location: $('#bill-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#bill-series', form)?.value || 'Default Transaction Series',
+      accounts_payable: $('#bill-accounts-payable', form)?.value || 'Accounts Payable',
+      project_name: $('#bill-project', form)?.value || '',
       date: dt,
       due_date: $('#bill-due-date', form).value || dt,
       terms: $('#bill-terms', form).value,
@@ -10370,6 +11233,9 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   ]);
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
+  const poLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const poSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const poProject = rec ? (rec.project_name || '') : '';
   const poNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'PO-000001');
   const poVendor = rec ? (rec.vendor_id || rec.party_id) : '';
   const poDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -10451,7 +11317,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="po-vendor" name="vendor" required style="flex:1;">
                 <option value="">Select or add a vendor</option>
                 <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
@@ -10460,6 +11326,19 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
               <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="po-location" name="location" style="width:260px;">
+                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(poLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="po-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Destination of Supply: ${esc(poPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -10480,8 +11359,14 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="po-number" name="number" value="${poNumber}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-po-num-pref" title="Purchase Order preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="po-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(poSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${poSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${poSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${poSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="po-number" name="number" value="${poNumber}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-po-num-pref" title="Configure Purchase Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
@@ -10498,6 +11383,13 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
             <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Expected Delivery Date*</label>
             <input class="in" type="date" id="po-delivery-date" name="delivery_date" value="${poDeliveryDate}" required style="width:260px;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="po-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this vendor.</option>
+            </select>
           </div>
 
           <div style="display:flex;align-items:flex-start;gap:16px;">
@@ -10616,6 +11508,22 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#po-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcPo());
+
+  setupProjectSelectorForCustomer($('#po-project', form), poVendor, poProject);
+  $('#po-vendor', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#po-project', form), e.target.value);
+  });
+
+  $('#btn-po-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'purchase-orders',
+      series: $('#po-series', form)?.value || 'Default Transaction Series',
+      location: $('#po-location', form)?.value || 'HO Kottayam',
+      onSave: (pfx, next) => {
+        if (next) $('#po-number', form).value = next;
+      }
+    });
+  });
 
   function calcPo() {
     const isTaxInclusive = ($('#po-tax-pricing', form)?.value === 'tax_inclusive');
@@ -10882,6 +11790,9 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       vendor_id: venId,
       number: numVal,
       order_number: $('#po-reference', form).value.trim(),
+      location: $('#po-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#po-series', form)?.value || 'Default Transaction Series',
+      project_name: $('#po-project', form)?.value || '',
       date: dt,
       delivery_date: $('#po-delivery-date', form).value || dt,
       due_date: $('#po-delivery-date', form).value || dt,
@@ -11047,7 +11958,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="inv-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
@@ -11056,6 +11967,19 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="inv-location" name="location" style="width:260px;">
+                ${whList.map(w => `<option value="${esc(w.name)}" ${(rec && rec.location === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="inv-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Source of Supply: ${esc(invPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -11076,8 +12000,14 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Invoice#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="inv-number" name="number" value="${invNum}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-inv-num-pref" title="Invoice preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="inv-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(rec && rec.transaction_series === 'Default Transaction Series') || !rec ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${rec && rec.transaction_series === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${rec && rec.transaction_series === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${rec && rec.transaction_series === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="inv-number" name="number" value="${invNum}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
@@ -11107,11 +12037,24 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
+              Accounts Receivable
+              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
+            </label>
+            <select class="in" id="inv-accounts-receivable" name="accounts_receivable" style="width:260px;">
+              <option value="Accounts Receivable" selected>Accounts Receivable</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <select class="in" id="inv-salesperson" name="salesperson" style="width:260px;">
-              <option value="">Select or Add Salesperson</option>
-              ${salespersons.map(s => `<option value="${esc(s.name)}" ${invSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            <div id="inv-salesperson-container"></div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="inv-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this customer.</option>
             </select>
           </div>
 
@@ -11272,6 +12215,8 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
+        ${renderPaymentGatewayBanner()}
+
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-inv-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
@@ -11296,6 +12241,27 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#invoice-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcInvoice());
+
+  // Initialize custom salesperson dropdown and projects
+  createSalespersonCustomDropdown($('#inv-salesperson-container', form), invSalesperson, () => {});
+  setupProjectSelectorForCustomer($('#inv-project', form), invCustomer, rec ? rec.project_name : '');
+  $('#inv-customer', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#inv-project', form), e.target.value);
+  });
+
+  // Wire up Configure Invoice Preferences gear icon
+  $('#btn-inv-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'invoices',
+      series: $('#inv-series', form)?.value || 'Default Transaction Series',
+      location: $('#inv-location', form)?.value || 'HO Kottayam',
+      onSave: (res) => {
+        if (res && res.preview_formatted) {
+          $('#inv-number', form).value = res.preview_formatted;
+        }
+      }
+    });
+  });
 
   function updateDueDate() {
     const dVal = $('#inv-date', form).value;
@@ -11721,6 +12687,9 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       customer: custId,
       customer_id: custId,
       number: numVal,
+      location: $('#inv-location', form)?.value || 'HO Kottayam',
+      transaction_series: $('#inv-series', form)?.value || 'Default Transaction Series',
+      accounts_receivable: $('#inv-accounts-receivable', form)?.value || 'Accounts Receivable',
       order_number: $('#inv-order-number', form).value.trim(),
       date: dt,
       due_date: $('#inv-due-date', form).value || dt,
@@ -11811,6 +12780,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
   const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
+  const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const retProject = rec ? (rec.project_name || '') : '';
   const retDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
   const retTerms = rec ? (rec.terms || 'Due on Receipt') : 'Due on Receipt';
@@ -11897,7 +12869,7 @@ ${renderStockQuantityCell(l, items, whList)}
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:440px;">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
               <select class="in" id="ret-customer" name="customer" required style="flex:1;">
                 <option value="">Select or add a customer</option>
                 <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
@@ -11906,6 +12878,19 @@ ${renderStockQuantityCell(l, items, whList)}
               <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
                 <i class="fa-solid fa-magnifying-glass"></i>
               </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="ret-location" name="location" style="width:260px;">
+                ${whList.map(w => `<option value="${esc(w.name)}" ${(retLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="ret-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Source of Supply: ${esc(retPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
             </div>
           </div>
 
@@ -11926,8 +12911,14 @@ ${renderStockQuantityCell(l, items, whList)}
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:260px;">
-              <button type="button" class="btn ic" id="btn-ret-num-pref" title="Retainer invoice preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+              <select class="in" id="ret-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(retSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${retSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${retSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${retSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                 <i class="fa-solid fa-gear"></i>
               </button>
             </div>
@@ -11957,11 +12948,24 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
+              Accounts Receivable
+              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
+            </label>
+            <select class="in" id="ret-accounts-receivable" name="accounts_receivable" style="width:260px;">
+              <option value="Accounts Receivable" selected>Accounts Receivable</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <select class="in" id="ret-salesperson" name="salesperson" style="width:260px;">
-              <option value="">Select or Add Salesperson</option>
-              ${salespersons.map(s => `<option value="${esc(s.name)}" ${retSalesperson === s.name ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              <option value="__new_salesperson__">+ Add New Salesperson…</option>
+            <div id="ret-salesperson-container"></div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <select class="in" id="ret-project" name="project_name" style="width:260px;" disabled>
+              <option value="">There are no active projects for this customer.</option>
             </select>
           </div>
 
@@ -12122,6 +13126,8 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
         </div>
 
+        ${renderPaymentGatewayBanner()}
+
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
@@ -12143,6 +13149,23 @@ ${renderStockQuantityCell(l, items, whList)}
   const tbody = $('#retainer-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRetainer());
+
+  createSalespersonCustomDropdown($('#ret-salesperson-container', form), retSalesperson, () => {});
+  setupProjectSelectorForCustomer($('#ret-project', form), retCustomer, retProject);
+  $('#ret-customer', form)?.addEventListener('change', (e) => {
+    setupProjectSelectorForCustomer($('#ret-project', form), e.target.value);
+  });
+
+  $('#btn-ret-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'retainer-invoices',
+      series: $('#ret-series', form)?.value || 'Default Transaction Series',
+      location: $('#ret-location', form)?.value || 'HO Kottayam',
+      onSave: (pfx, next) => {
+        if (next) $('#ret-number', form).value = next;
+      }
+    });
+  });
 
   function updateDueDate() {
     const dVal = $('#ret-date', form).value;

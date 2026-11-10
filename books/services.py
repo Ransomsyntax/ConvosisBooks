@@ -155,14 +155,42 @@ def get_document_module_config(module_or_pfx):
         clean_pfx = re.sub(r'[^A-Z0-9]', '', raw)[:10] or 'DOC'
         return {'pfx': clean_pfx, 'digits': 5, 'has_fy': True, 'model': None, 'field': 'number'}
 
-def next_document_number(module_or_pfx, org=None, date=None):
+def get_doc_number_preference(module_or_pfx, org=None, series=None):
+    from .models import DocumentNumberPreference, Organization
+    if not org:
+        org = Organization.get()
+    if not org:
+        return None
+    raw = (module_or_pfx or '').strip()
+    canon_map = {
+        'INV': 'invoices', 'INVOICE': 'invoices', 'INVOICES': 'invoices',
+        'RET': 'retainer_invoices', 'RETAINER': 'retainer_invoices', 'RETAINER-INVOICES': 'retainer_invoices', 'RETAINER_INVOICE': 'retainer_invoices',
+        'SO': 'sales_orders', 'SALES_ORDER': 'sales_orders', 'SALES-ORDERS': 'sales_orders', 'SALESORDER': 'sales_orders',
+        'QTN': 'quotes', 'QT': 'quotes', 'QUOTE': 'quotes', 'QUOTES': 'quotes', 'QUOTATION': 'quotes',
+        'PO': 'purchase_orders', 'PURCHASE_ORDER': 'purchase_orders', 'PURCHASE-ORDERS': 'purchase_orders', 'PURCHASEORDER': 'purchase_orders',
+        'BILL': 'bills', 'BILLS': 'bills',
+        'REC': 'recurring_invoices', 'RECURRING': 'recurring_invoices', 'RECURRING_INVOICE': 'recurring_invoices', 'RECURRING-INVOICES': 'recurring_invoices'
+    }
+    clean_doc = canon_map.get(raw.upper(), raw.lower())
+    if series:
+        pref = DocumentNumberPreference.objects.filter(
+            organization=org, document_type=clean_doc, transaction_series=series
+        ).first()
+        if pref:
+            return pref
+    return DocumentNumberPreference.objects.filter(
+        organization=org, document_type=clean_doc
+    ).first()
+
+def next_document_number(module_or_pfx, org=None, date=None, series=None):
     """
     Generate an atomic, collision-free organization-wise document number.
     Format:
       {Organization Code}/{Module Prefix}/{Financial Year}/{Sequential Number}
-      or {Organization Code}/ITEM/{Sequential Number} (6 digits) for Items.
+      or custom format based on DocumentNumberPreference.
     Guarantees uniqueness using select_for_update() row locks and DB collision verification.
     """
+    import datetime
     from .models import Organization, Sequence
     if not org:
         org = Organization.get()
@@ -171,12 +199,29 @@ def next_document_number(module_or_pfx, org=None, date=None):
     org_id = org.pk if org else 1
     fy = get_financial_year(date)
     
+    date_val = date
+    if not date_val:
+        date_val = timezone.localdate()
+    elif isinstance(date_val, str):
+        try:
+            date_val = datetime.date.fromisoformat(date_val[:10])
+        except Exception:
+            date_val = timezone.localdate()
+    elif isinstance(date_val, datetime.datetime):
+        date_val = date_val.date()
+
+    yr = date_val.year
+    start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
+    end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
+    
     cfg = get_document_module_config(module_or_pfx)
     pfx = cfg['pfx']
     digits = cfg['digits']
     has_fy = cfg['has_fy']
     model = cfg.get('model')
     field = cfg.get('field', 'number')
+
+    pref = get_doc_number_preference(module_or_pfx, org=org, series=series)
 
     if has_fy:
         seq_key = f"{org_id}_{pfx}_{fy}"
@@ -185,13 +230,31 @@ def next_document_number(module_or_pfx, org=None, date=None):
 
     with transaction.atomic():
         seq, _ = Sequence.objects.select_for_update().get_or_create(key=seq_key)
+        if pref and pref.next_number:
+            try:
+                p_start = int(pref.next_number)
+                if seq.value < p_start - 1:
+                    seq.value = p_start - 1
+            except Exception:
+                pass
         
         while True:
             seq.value += 1
-            if has_fy:
-                candidate = f"{org_code}/{pfx}/{fy}/{seq.value:0{digits}d}"
+            num_digits = digits
+            if pref and pref.next_number:
+                num_digits = max(digits, len(str(pref.next_number).strip()))
+            if pref and pref.prefix:
+                eval_pfx = pref.prefix
+                eval_pfx = eval_pfx.replace('%FYS_YY%', start_yy).replace('${FYS_YY}', start_yy)
+                eval_pfx = eval_pfx.replace('%FYE_YY%', end_yy).replace('${FYE_YY}', end_yy)
+                eval_pfx = eval_pfx.replace('%FY%', fy).replace('${FY}', fy)
+                eval_pfx = eval_pfx.replace('%YEAR%', str(yr)).replace('${YEAR}', str(yr))
+                eval_pfx = eval_pfx.replace('%ORG%', org_code).replace('${ORG}', org_code)
+                candidate = f"{eval_pfx}{seq.value:0{num_digits}d}"
+            elif has_fy:
+                candidate = f"{org_code}/{pfx}/{fy}/{seq.value:0{num_digits}d}"
             else:
-                candidate = f"{org_code}/{pfx}/{seq.value:0{digits}d}"
+                candidate = f"{org_code}/{pfx}/{seq.value:0{num_digits}d}"
 
             collision = False
             if model and field:
@@ -204,12 +267,21 @@ def next_document_number(module_or_pfx, org=None, date=None):
             
             if not collision:
                 seq.save(update_fields=['value'])
+                if pref:
+                    try:
+                        nxt_seq = seq.value + 1
+                        pad = len(str(pref.next_number or ''))
+                        pref.next_number = f"{nxt_seq:0{pad}d}" if pad > 1 else str(nxt_seq)
+                        pref.save(update_fields=['next_number'])
+                    except Exception:
+                        pass
                 return candidate
 
-def preview_document_number(module_or_pfx, org=None, date=None):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None):
     """
     Preview the next document number without incrementing the sequence counter.
     """
+    import datetime
     from .models import Organization, Sequence
     if not org:
         org = Organization.get()
@@ -218,12 +290,39 @@ def preview_document_number(module_or_pfx, org=None, date=None):
     org_id = org.pk if org else 1
     fy = get_financial_year(date)
     
+    date_val = date
+    if not date_val:
+        date_val = timezone.localdate()
+    elif isinstance(date_val, str):
+        try:
+            date_val = datetime.date.fromisoformat(date_val[:10])
+        except Exception:
+            date_val = timezone.localdate()
+    elif isinstance(date_val, datetime.datetime):
+        date_val = date_val.date()
+
+    yr = date_val.year
+    start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
+    end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
+    
     cfg = get_document_module_config(module_or_pfx)
     pfx = cfg['pfx']
     digits = cfg['digits']
     has_fy = cfg['has_fy']
     model = cfg.get('model')
     field = cfg.get('field', 'number')
+
+    pref = get_doc_number_preference(module_or_pfx, org=org, series=series)
+    if pref and not pref.auto_generate:
+        return {
+            'next_number': '',
+            'prefix': pref.prefix or pfx,
+            'next_sequence': 1,
+            'formatted': '',
+            'financial_year': fy if has_fy else '',
+            'org_code': org_code,
+            'auto_generate': False
+        }
 
     if has_fy:
         seq_key = f"{org_id}_{pfx}_{fy}"
@@ -232,14 +331,32 @@ def preview_document_number(module_or_pfx, org=None, date=None):
 
     seq = Sequence.objects.filter(key=seq_key).first()
     curr_val = seq.value if seq else 0
+    if pref and pref.next_number:
+        try:
+            p_start = int(pref.next_number)
+            if curr_val < p_start - 1:
+                curr_val = p_start - 1
+        except Exception:
+            pass
 
     val = curr_val
     while True:
         val += 1
-        if has_fy:
-            candidate = f"{org_code}/{pfx}/{fy}/{val:0{digits}d}"
+        num_digits = digits
+        if pref and pref.next_number:
+            num_digits = max(digits, len(str(pref.next_number).strip()))
+        if pref and pref.prefix:
+            eval_pfx = pref.prefix
+            eval_pfx = eval_pfx.replace('%FYS_YY%', start_yy).replace('${FYS_YY}', start_yy)
+            eval_pfx = eval_pfx.replace('%FYE_YY%', end_yy).replace('${FYE_YY}', end_yy)
+            eval_pfx = eval_pfx.replace('%FY%', fy).replace('${FY}', fy)
+            eval_pfx = eval_pfx.replace('%YEAR%', str(yr)).replace('${YEAR}', str(yr))
+            eval_pfx = eval_pfx.replace('%ORG%', org_code).replace('${ORG}', org_code)
+            candidate = f"{eval_pfx}{val:0{num_digits}d}"
+        elif has_fy:
+            candidate = f"{org_code}/{pfx}/{fy}/{val:0{num_digits}d}"
         else:
-            candidate = f"{org_code}/{pfx}/{val:0{digits}d}"
+            candidate = f"{org_code}/{pfx}/{val:0{num_digits}d}"
 
         collision = False
         if model and field:
@@ -253,11 +370,12 @@ def preview_document_number(module_or_pfx, org=None, date=None):
         if not collision:
             return {
                 'next_number': candidate,
-                'prefix': pfx,
+                'prefix': (pref.prefix if pref and pref.prefix else pfx),
                 'next_sequence': val,
                 'formatted': candidate,
                 'financial_year': fy if has_fy else '',
-                'org_code': org_code
+                'org_code': org_code,
+                'auto_generate': True
             }
 
 def next_number(prefix, org=None, date=None):
@@ -1088,7 +1206,7 @@ def advance_recurring_date(d, frequency, repeat_every=1):
         return date(new_year, new_month, new_day)
 
 @transaction.atomic
-def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=None):
+def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=None, **kwargs):
     """
     Generate an actual sales invoice from a recurring invoice profile.
     Guarantees idempotency and prevents duplicate invoice generation.
@@ -1098,7 +1216,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     from .models import Invoice, InvoiceLine, Item, Organization
 
     org = profile.organization or Organization.get()
-    target_date = scheduled_date or profile.next_date
+    target_date = scheduled_date or kwargs.get('date') or kwargs.get('invoice_date') or profile.next_date
     if not isinstance(target_date, datetime.date):
         if hasattr(target_date, 'date'):
             target_date = target_date.date()
@@ -1108,7 +1226,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     meta = profile.lines_data if isinstance(profile.lines_data, dict) else {}
     raw_lines = meta.get('lines', []) if isinstance(profile.lines_data, dict) else (profile.lines_data if isinstance(profile.lines_data, list) else [])
 
-    rec_order_no = f"REC-{profile.pk}"
+    rec_order_no = getattr(profile, 'order_number', None) or f"REC-{profile.pk}"
     existing_inv = Invoice.objects.filter(
         organization=org, customer=profile.customer, order_number=rec_order_no, date=target_date
     ).first()
@@ -1177,16 +1295,20 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         due_date=due_date,
         place_of_supply=pos,
         order_number=rec_order_no,
+        location=getattr(profile, 'location', 'HO Kottayam') or 'HO Kottayam',
+        salesperson=getattr(profile, 'salesperson', '') or '',
+        project_name=getattr(profile, 'project_name', '') or '',
+        subject=getattr(profile, 'subject', '') or '',
         tax_pricing_type=getattr(profile, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
         customer_type=getattr(profile, 'customer_type', 'b2b') or 'b2b',
-        notes=meta.get('notes') or f"Generated automatically from recurring profile: {profile.profile_name}",
-        terms=meta.get('terms') or getattr(org, 'terms_default', 'Due on Receipt'),
+        notes=meta.get('notes') or profile.notes or f"Generated automatically from recurring profile: {profile.profile_name}",
+        terms=meta.get('terms') or profile.terms or getattr(org, 'terms_default', 'Due on Receipt'),
         subtotal=tot['subtotal'],
         cgst=tot['cgst'],
         sgst=tot['sgst'],
         igst=tot['igst'],
         total=tot['total'],
-        status='draft'
+        status='draft' if getattr(profile, 'create_as_draft', True) else 'sent'
     )
 
     InvoiceLine.objects.bulk_create([

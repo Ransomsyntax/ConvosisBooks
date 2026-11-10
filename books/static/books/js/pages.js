@@ -2306,6 +2306,8 @@ function renderDocSheet(d, kind, customOpts = {}) {
             </div>
 
           ` : ''}
+        </div>
+      ` : ''}
 
       ${(d.related_documents && d.related_documents.length) ? `
         <div class="doc-related-documents-sec" style="margin-top:20px;padding-top:16px;border-top:1px dashed #cbd5e1;">

@@ -6236,6 +6236,7 @@ def me(request):
         'user': {
             'id': u.pk,
             'user_id': profile.user_id_code if profile and profile.user_id_code else f"USR-{u.pk:08d}",
+            'user_id_code': profile.user_id_code if profile and profile.user_id_code else f"USR-{u.pk:08d}",
             'username': u.get_username(),
             'name': u.get_full_name() or u.get_username(),
             'email': u.email,

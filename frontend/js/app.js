@@ -336,9 +336,9 @@ function applyOrg() {
   const uce = $('#userCardEmail');
   if (uce) uce.textContent = APP.user.email || '';
   const ucUid = $('#userCardUserId');
-  if (ucUid) ucUid.textContent = APP.user.user_id || '-';
+  if (ucUid) ucUid.textContent = (APP.user && (APP.user.user_id || APP.user.user_id_code)) || '-';
   const ucOid = $('#userCardOrgId');
-  if (ucOid) ucOid.textContent = (APP.org && APP.org.organization_id) || '-';
+  if (ucOid) ucOid.textContent = (APP.org && (APP.org.organization_id || APP.org.org_id)) || '-';
   const av = $('#sidebarUserAvatar'); if (av) av.textContent = (APP.user.name || 'A')[0].toUpperCase();
   const un = $('#sidebarUserName'); if (un) un.textContent = APP.user.name || APP.user.username || 'Admin';
   const ur = $('#sidebarUserRole'); if (ur) ur.textContent = rDisp;

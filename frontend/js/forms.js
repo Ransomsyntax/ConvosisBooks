@@ -74,13 +74,20 @@ const Modal = (() => {
       };
 
       m.request = async () => {
-        if (m.beforeClose && !(await m.beforeClose())) return;
-        m.close();
+        if (m.requesting) return;
+        m.requesting = true;
+        try {
+          if (m.beforeClose && !(await m.beforeClose())) return;
+          m.close();
+        } finally {
+          m.requesting = false;
+        }
       };
 
       el.addEventListener('click', e => {
         if (e.target.closest('[data-close]')) {
           e.preventDefault();
+          e.stopPropagation();
           m.request();
         }
       });
@@ -105,8 +112,23 @@ const Modal = (() => {
       if (onClose) onClose();
       if (m.prev && m.prev.isConnected && m.prev.focus) m.prev.focus();
     };
-    m.request = async () => { if (m.beforeClose && !(await m.beforeClose())) return; m.close(); };
-    el.addEventListener('click', e => { if (e.target.closest('[data-close]')) { e.preventDefault(); m.request(); } });
+    m.request = async () => {
+      if (m.requesting) return;
+      m.requesting = true;
+      try {
+        if (m.beforeClose && !(await m.beforeClose())) return;
+        m.close();
+      } finally {
+        m.requesting = false;
+      }
+    };
+    el.addEventListener('click', e => {
+      if (e.target.closest('[data-close]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        m.request();
+      }
+    });
     stack.push(m);
     document.body.classList.add('modal-open');
     const f = el.querySelector('input:not([type=hidden]):not([disabled]),select,textarea') || el.querySelector('.mf .p');

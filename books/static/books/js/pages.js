@@ -2807,45 +2807,48 @@ function openAddEWayBillModal(doc, kind, onDone) {
 async function openViewJournalModal(doc, kind) {
   try {
     const res = await api(`${kind}/${doc.id}/view-journal/`);
-    const journals = res.journals || [];
+    const journals = Array.isArray(res.journals) ? res.journals : [];
 
     let contentHtml = '';
     if (!journals.length) {
       contentHtml = `<p class="sub" style="padding:24px;text-align:center;">No journal entries posted for this document yet.</p>`;
     } else {
-      contentHtml = journals.map(j => `
-        <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin-bottom:14px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;">
-            <div><b>Journal #${esc(j.number)}</b> &nbsp;|&nbsp; <span>Date: ${fd(j.date)}</span></div>
-            <div style="color:#64748b;">${esc(j.reference || '')}</div>
-          </div>
-          <table class="lt" style="width:100%;font-size:12px;border-collapse:collapse;">
-            <thead>
-              <tr style="border-bottom:1px solid var(--bd-glass);text-align:left;">
-                <th style="padding:6px;">Account</th>
-                <th style="padding:6px;">Description</th>
-                <th style="padding:6px;text-align:right;">Debit (₹)</th>
-                <th style="padding:6px;text-align:right;">Credit (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(j.lines || []).map(l => `
-                <tr style="border-bottom:1px solid rgba(0,0,0,0.04);">
-                  <td style="padding:6px;"><b>${esc(l.account_code || '')}</b> ${esc(l.account_name)}</td>
-                  <td style="padding:6px;color:#64748b;">${esc(l.description || '—')}</td>
-                  <td style="padding:6px;text-align:right;font-weight:600;">${num(l.debit) > 0 ? inr(l.debit) : '—'}</td>
-                  <td style="padding:6px;text-align:right;font-weight:600;">${num(l.credit) > 0 ? inr(l.credit) : '—'}</td>
+      contentHtml = journals.map(j => {
+        const lines = Array.isArray(j.lines) ? j.lines : (Array.isArray(j.items) ? j.items : []);
+        return `
+          <div style="background:var(--surface-glass-subtle);border:1px solid var(--bd-glass);border-radius:8px;padding:12px;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;">
+              <div><b>Journal #${esc(j.number)}</b> &nbsp;|&nbsp; <span>Date: ${fd(j.date)}</span></div>
+              <div style="color:#64748b;">${esc(j.reference || '')}</div>
+            </div>
+            <table class="lt" style="width:100%;font-size:12px;border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--bd-glass);text-align:left;">
+                  <th style="padding:6px;">Account</th>
+                  <th style="padding:6px;">Description</th>
+                  <th style="padding:6px;text-align:right;">Debit (₹)</th>
+                  <th style="padding:6px;text-align:right;">Credit (₹)</th>
                 </tr>
-              `).join('')}
-              <tr style="border-top:2px solid var(--bd-glass);font-weight:700;">
-                <td colspan="2" style="padding:6px;text-align:right;">Total:</td>
-                <td style="padding:6px;text-align:right;">${inr(j.total_debit || (j.lines || []).reduce((s, l) => s + num(l.debit), 0))}</td>
-                <td style="padding:6px;text-align:right;">${inr(j.total_credit || (j.lines || []).reduce((s, l) => s + num(l.credit), 0))}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      `).join('');
+              </thead>
+              <tbody>
+                ${lines.map(l => `
+                  <tr style="border-bottom:1px solid rgba(0,0,0,0.04);">
+                    <td style="padding:6px;"><b>${esc(l.account_code || '')}</b> ${esc(l.account_name)}</td>
+                    <td style="padding:6px;color:#64748b;">${esc(l.description || '—')}</td>
+                    <td style="padding:6px;text-align:right;font-weight:600;">${num(l.debit) > 0 ? inr(l.debit) : '—'}</td>
+                    <td style="padding:6px;text-align:right;font-weight:600;">${num(l.credit) > 0 ? inr(l.credit) : '—'}</td>
+                  </tr>
+                `).join('')}
+                <tr style="border-top:2px solid var(--bd-glass);font-weight:700;">
+                  <td colspan="2" style="padding:6px;text-align:right;">Total:</td>
+                  <td style="padding:6px;text-align:right;">${inr(j.total_debit || lines.reduce((s, l) => s + num(l.debit), 0))}</td>
+                  <td style="padding:6px;text-align:right;">${inr(j.total_credit || lines.reduce((s, l) => s + num(l.credit), 0))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+      }).join('');
     }
 
     Modal.open({

@@ -1189,7 +1189,7 @@ tr:hover td {
   background: rgba(15, 23, 42, 0.48);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  z-index: 100;
+  z-index: 100000;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1318,12 +1318,11 @@ tr:hover td {
   width: max-content;
   max-width: 380px;
   padding: 7px;
-  display: flex !important;
+  display: none;
   flex-direction: column !important;
   background: #ffffff !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  opacity: 1 !important;
   color: var(--tx);
   border: 1px solid rgba(0, 0, 0, 0.12) !important;
   border-radius: 14px;
@@ -1388,12 +1387,25 @@ tr:hover td {
   }
 }
 
+.user-menu-wrap.menu-dismissed:hover #umm.pop {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(-8px) scale(0.96) !important;
+}
+
 .user-menu-wrap.open #umm.pop,
 #umm.pop.on {
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
   transform: translateY(0) scale(1) !important;
+}
+
+body.modal-open #convobot-launcher,
+body.modal-open #convobot-widget,
+body.modal-open #convobot-widget.maximized {
+  z-index: 99 !important;
 }
 
 button, .btn, .mi, .av, .ib, .plus, .theme-toggle-btn, .sw {

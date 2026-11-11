@@ -363,6 +363,8 @@ function applyOrg() {
 const closePops = () => {
   $$('.pop.on').forEach(p => { p.classList.remove('on'); p.style.display = ''; });
   $$('.user-menu-wrap.open').forEach(w => w.classList.remove('open'));
+  const userMenu = $('#userMenuWrapper');
+  if (userMenu) userMenu.classList.add('menu-dismissed');
 };
 
 (function initUserMenuHover() {
@@ -373,6 +375,7 @@ const closePops = () => {
 
   wrap.addEventListener('mouseenter', () => {
     clearTimeout(timer);
+    wrap.classList.remove('menu-dismissed');
     menu.classList.add('on');
     wrap.classList.add('open');
   });
@@ -382,6 +385,7 @@ const closePops = () => {
     timer = setTimeout(() => {
       menu.classList.remove('on');
       wrap.classList.remove('open');
+      wrap.classList.remove('menu-dismissed');
     }, 180);
   });
 })();
@@ -500,6 +504,7 @@ document.addEventListener('click', async e => {
     const on = p.classList.contains('on');
     closePops();
     if (!on) {
+      if (btn === '#um') $('#userMenuWrapper')?.classList.remove('menu-dismissed');
       p.classList.add('on');
       const w = p.closest('.user-menu-wrap');
       if (w) w.classList.add('open');

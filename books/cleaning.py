@@ -9,6 +9,7 @@ from django.core.validators import validate_email
 GSTIN_RE = re.compile(r'^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$')
 PAN_RE = re.compile(r'^[A-Z]{5}\d{4}[A-Z]$')
 PHONE_RE = re.compile(r'^[0-9+()\-\s]{7,20}$')
+EXPENSE_REFERENCE_RE = re.compile(r'^[A-Za-z0-9 #/().:_-]{1,80}$')
 REQUIRED = 'This field is required.'
 
 class ApiError(Exception):

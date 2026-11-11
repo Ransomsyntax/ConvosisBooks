@@ -113,6 +113,73 @@ class MissingFieldsAndPreferencesTest(TestCase):
         self.assertEqual(get_res.status_code, 200)
         self.assertEqual(get_res.json()['prefix'], 'INV/${YEAR}/')
 
+    def test_invoice_and_retainer_number_preferences_are_independent(self):
+        endpoint = '/api/document-number-preferences/'
+        series = 'Default Transaction Series'
+        invoice_config = {
+            'document_type': 'invoices',
+            'transaction_series': series,
+            'location': 'HO Kottayam',
+            'auto_generate': True,
+            'prefix': 'INV-CHECK/${YEAR}/',
+            'next_number': 14,
+            'restart_yearly': True
+        }
+        retainer_config = {
+            **invoice_config,
+            'document_type': 'retainer_invoices',
+            'prefix': 'RET-CHECK/${YEAR}/',
+            'next_number': 28,
+            'restart_yearly': False
+        }
+
+        for config in (invoice_config, retainer_config):
+            response = self.client.post(
+                endpoint,
+                data=json.dumps(config),
+                content_type='application/json'
+            )
+            self.assertEqual(response.status_code, 200)
+
+        invoice_pref = self.client.get(endpoint, {
+            'document_type': 'invoices',
+            'transaction_series': series
+        }).json()
+        retainer_pref = self.client.get(endpoint, {
+            'document_type': 'retainer_invoices',
+            'transaction_series': series
+        }).json()
+        self.assertEqual(invoice_pref['prefix'], invoice_config['prefix'])
+        self.assertEqual(invoice_pref['next_number'], 14)
+        self.assertTrue(invoice_pref['restart_yearly'])
+        self.assertEqual(retainer_pref['prefix'], retainer_config['prefix'])
+        self.assertEqual(retainer_pref['next_number'], 28)
+        self.assertFalse(retainer_pref['restart_yearly'])
+
+        invoice_number = next_document_number('invoices', self.org, series=series)
+        retainer_number = next_document_number('retainer_invoices', self.org, series=series)
+        self.assertTrue(invoice_number.startswith('INV-CHECK/'))
+        self.assertTrue(invoice_number.endswith('00014'))
+        self.assertTrue(retainer_number.startswith('RET-CHECK/'))
+        self.assertTrue(retainer_number.endswith('00028'))
+
+        retainer_config['auto_generate'] = False
+        response = self.client.post(
+            endpoint,
+            data=json.dumps(retainer_config),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        manual_retainer_pref = self.client.get(endpoint, {
+            'document_type': 'retainer_invoices',
+            'transaction_series': series
+        }).json()
+        self.assertFalse(manual_retainer_pref['auto_generate'])
+        self.assertEqual(
+            preview_document_number('retainer_invoices', self.org, series=series)['formatted'],
+            ''
+        )
+
     def test_create_documents_with_all_missing_fields(self):
         # 1. Invoice
         inv = Invoice.objects.create(

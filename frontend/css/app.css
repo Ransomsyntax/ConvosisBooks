@@ -2292,3 +2292,226 @@ body.in-settings .pg {
     height: auto !important;
   }
 }
+
+.sig-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.sig-meta-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+}
+.sig-meta-field label {
+  display: block;
+  margin-bottom: 6px !important;
+}
+.sig-meta-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13px !important;
+  box-sizing: border-box;
+}
+.md:has(.sig-modal-container) {
+  max-width: 760px;
+}
+
+@media (max-width: 900px) {
+  html, body {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+  #top {
+    gap: 6px;
+    padding: 0 10px;
+  }
+  #top > .sp {
+    display: none;
+  }
+  #gs {
+    flex: 1 1 100px;
+    min-width: 80px;
+    margin-left: 0;
+  }
+  main, body.col main, .main-wrapper {
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+  }
+  .split-view-container {
+    height: auto;
+    min-height: calc(100vh - 50px);
+    overflow: visible;
+  }
+  .master-col {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    min-height: 350px;
+  }
+  .split-view-container:not(.has-selection) .detail-col {
+    display: none;
+  }
+  .split-view-container.has-selection .master-col {
+    display: none;
+  }
+  .split-view-container.has-selection .detail-col {
+    display: flex;
+    height: auto;
+    min-height: calc(100vh - 50px);
+  }
+  .doc-detail-title-grp {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1100px) {
+  #top .org {
+    display: none;
+  }
+  #gs {
+    flex: 1 1 180px;
+    min-width: 120px;
+  }
+}
+
+@media (max-width: 640px) {
+  html, body {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  #top {
+    gap: 4px;
+    padding: 0 6px;
+  }
+  #top > .sp {
+    display: none;
+  }
+  #top .logo {
+    gap: 3px;
+    padding: 2px;
+    flex: 0 0 auto;
+  }
+  #top .logo img {
+    height: 23px;
+  }
+  #gs {
+    flex: 1 1 40px;
+    min-width: 0;
+    margin-left: 0;
+  }
+  #gs input {
+    min-width: 0;
+    padding-right: 6px;
+    font-size: 12px;
+  }
+  #top .ib,
+  #top .plus,
+  #top .theme-toggle-btn,
+  #top .av {
+    flex: 0 0 32px;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+  #top .plus span,
+  #top .theme-toggle-btn span {
+    display: none;
+  }
+  .pg {
+    min-width: 0;
+    max-width: 100%;
+    padding: 12px;
+  }
+  .hd, .act, .tb, .master-col-hd, .doc-detail-bar {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .zb-form-wrap,
+  .zb-form-ctrl {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .zb-form-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-height: 0;
+    margin-bottom: 14px;
+  }
+  .zb-form-label {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .zb-form-ctrl {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+  .zb-form-ctrl .in,
+  .zb-form-ctrl select.in,
+  .zb-form-ctrl textarea.in {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .tw, .table-responsive, .doc-canvas-scroll, [style*="overflow-x:auto"] {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mo {
+    align-items: flex-start;
+    padding: 8px;
+  }
+  .md, .md.wide {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    display: flex;
+    flex-direction: column;
+  }
+  .mb {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+  }
+  .mf {
+    flex: 0 0 auto;
+    padding: 10px 16px;
+  }
+  .sig-meta-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .doc-detail-bar {
+    padding: 8px 10px;
+  }
+}
+
+@media (max-width: 360px) {
+  #top .logo { flex: 0 0 32px; justify-content: center; }
+  #top .logo .app { display: none; }
+  #top .logo img { width: 28px; height: 23px; object-fit: contain; }
+  #gs { flex: 1 1 32px; min-width: 32px; }
+  #gs:focus-within {
+    position: fixed;
+    top: 8px;
+    left: 44px;
+    right: 176px;
+    z-index: 60;
+    max-width: none;
+  }
+}

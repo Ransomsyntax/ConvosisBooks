@@ -1433,14 +1433,14 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
 
         <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:12px 14px;border:1px solid var(--bd);">
           <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="fg" style="margin:0;">
+          <div class="sig-meta-grid">
+            <div class="fg sig-meta-field">
               <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Signer Name</label>
-              <input type="text" class="in" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name" style="font-size:12px;width:100%;">
+              <input type="text" class="in sig-meta-input" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name">
             </div>
-            <div class="fg" style="margin:0;">
+            <div class="fg sig-meta-field">
               <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Designation / Title</label>
-              <input type="text" class="in" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory" style="font-size:12px;width:100%;">
+              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory">
             </div>
           </div>
         </div>
@@ -6199,6 +6199,8 @@ async function journalForm(id) {
 }
 
 async function expenseForm(id) {
+  const referencePattern = /^[A-Za-z0-9 #\/().:_-]{0,80}$/;
+  const referenceError = 'Use letters, numbers, spaces, and # / - _ . ( ) or : only.';
   const [vendors, accounts] = await Promise.all([api('lookup/vendors/'), api('lookup/accounts/')]);
   const expAccounts = accounts.filter(a => a.type === 'expense');
   const o = id ? await api(`expenses/${id}/`) : {
@@ -6215,16 +6217,30 @@ async function expenseForm(id) {
       ${fld({ name: 'amount', label: 'Taxable Amount (₹)', req: true, type: 'number', value: o.amount, ph: '0.00' })}
       ${fld({ name: 'gst_rate', label: 'GST Rate', type: 'select', opts: GST_SLABS.map(s => [s, s + '%']), value: o.gst_rate })}
       ${fld({ name: 'paid_through', label: 'Paid Through', type: 'select', opts: [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash'], ['Credit Card', 'Credit Card']], value: o.paid_through })}
-      ${fld({ name: 'reference', label: 'Reference / Bill #', value: o.reference, ph: 'e.g. Receipt #401' })}
+      ${fld({ name: 'reference', label: 'Reference / Bill #', value: o.reference, ph: 'e.g. Receipt #401', attrs: 'maxlength="80" autocomplete="off"' })}
       ${fld({ name: 'notes', label: 'Notes / Purpose', type: 'textarea', value: o.notes, rows: 2 })}
     </div>`,
     onSubmit: async d => {
+      if (!referencePattern.test(d.reference || '')) {
+        throw new ApiErr(400, { reference: referenceError }, 'Please correct the highlighted fields.');
+      }
       d.amount = num(d.amount);
       d.gst_rate = num(d.gst_rate);
       if (id) await api(`expenses/${id}/`, { method: 'PUT', body: d });
       else await api('expenses/', { method: 'POST', body: d });
       toast(id ? 'Expense updated' : 'Expense recorded and journal posted');
       refresh();
+    },
+    onReady: form => {
+      const input = $('[name="reference"]', form);
+      if (!input) return;
+      input.addEventListener('input', () => {
+        const error = form.querySelector('[data-err="reference"]');
+        const invalid = !referencePattern.test(input.value);
+        input.classList.toggle('in-error', invalid);
+        input.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+        if (error) error.textContent = invalid ? referenceError : '';
+      });
     }
   });
 }
@@ -12446,51 +12462,6 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     });
   });
 
-  $('#btn-inv-num-pref', form)?.addEventListener('click', async () => {
-    let currentConfig = { prefix: 'INV', next_sequence: 1, formatted: invNum };
-    try {
-      currentConfig = await api('invoices/sequence/');
-    } catch (_) {}
-
-    Modal.open({
-      title: 'Configure Invoice Number Sequence',
-      dialog: true,
-      body: `
-        <div style="padding:10px 0;">
-          <p class="sub" style="margin-bottom:14px;font-size:13px;line-height:1.5;">Specify the prefix and next sequential counter for your invoices. Document numbers follow <code>ORG/PREFIX/FY/SEQUENCE</code>.</p>
-          <div class="fg">
-            <label style="font-weight:600;font-size:12px;">Prefix</label>
-            <input class="in" id="inv-prefix-input" value="${esc(currentConfig.prefix || 'INV')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. INV">
-          </div>
-          <div class="fg" style="margin-top:14px;">
-            <label style="font-weight:600;font-size:12px;">Next Sequence Number</label>
-            <input class="in" id="inv-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
-          </div>
-        </div>
-      `,
-      footer: `
-        <button class="btn" data-close>Cancel</button>
-        <button class="btn p" id="btn-save-inv-seq">Save Sequence</button>
-      `
-    });
-
-    $('#btn-save-inv-seq')?.addEventListener('click', async () => {
-      const pfx = ($('#inv-prefix-input').value || '').trim().toUpperCase() || 'INV';
-      const seq = Math.max(1, parseInt($('#inv-next-seq-input').value, 10) || 1);
-      try {
-        const res = await api('invoices/sequence/', {
-          method: 'POST',
-          body: { prefix: pfx, next_sequence: seq }
-        });
-        $('#inv-number', form).value = res.formatted;
-        Modal.close();
-        toast(`Invoice sequence updated to ${res.formatted}`, 'ok');
-      } catch (err) {
-        toast(err.message, 'err');
-      }
-    });
-  });
-
   tbody.addEventListener('change', e => {
     if (e.target.classList.contains('l-item')) {
       if (e.target.value === '__new_item__') {
@@ -12683,7 +12654,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       tax_pricing_type: $('#inv-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#inv-customer-type', form)?.value || 'b2b',
       terms: $('#inv-terms', form).value,
-      salesperson: $('#inv-salesperson', form).value,
+      salesperson: $('#doc-salesperson-input', form)?.value || '',
       subject: $('#inv-subject', form).value.trim(),
       place_of_supply: $('#inv-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
       notes: $('#inv-notes', form).value.trim(),
@@ -13148,8 +13119,10 @@ ${renderStockQuantityCell(l, items, whList)}
       kind: 'retainer-invoices',
       series: $('#ret-series', form)?.value || 'Default Transaction Series',
       location: $('#ret-location', form)?.value || 'HO Kottayam',
-      onSave: (pfx, next) => {
-        if (next) $('#ret-number', form).value = next;
+      onSave: (res) => {
+        if (res && res.preview_formatted) {
+          $('#ret-number', form).value = res.preview_formatted;
+        }
       }
     });
   });
@@ -13349,51 +13322,6 @@ ${renderStockQuantityCell(l, items, whList)}
         if (noneSpan) noneSpan.style.display = 'inline';
         if (descEl) descEl.textContent = 'No custom signature attached.';
         if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Retainer Invoice';
-      }
-    });
-  });
-
-  $('#btn-ret-num-pref', form)?.addEventListener('click', async () => {
-    let currentConfig = { prefix: 'RET', next_sequence: 1, formatted: retNum };
-    try {
-      currentConfig = await api('retainer-invoices/sequence/');
-    } catch (_) {}
-
-    Modal.open({
-      title: 'Configure Retainer Invoice Number Sequence',
-      dialog: true,
-      body: `
-        <div style="padding:10px 0;">
-          <p class="sub" style="margin-bottom:14px;font-size:13px;line-height:1.5;">Specify the prefix and next sequential counter for your retainer invoices. Document numbers follow <code>ORG/PREFIX/FY/SEQUENCE</code>.</p>
-          <div class="fg">
-            <label style="font-weight:600;font-size:12px;">Prefix</label>
-            <input class="in" id="ret-prefix-input" value="${esc(currentConfig.prefix || 'RET')}" style="width:160px;text-transform:uppercase;" placeholder="e.g. RET">
-          </div>
-          <div class="fg" style="margin-top:14px;">
-            <label style="font-weight:600;font-size:12px;">Next Sequence Number</label>
-            <input class="in" id="ret-next-seq-input" type="number" min="1" step="1" value="${currentConfig.next_sequence || 1}" style="width:160px;">
-          </div>
-        </div>
-      `,
-      footer: `
-        <button class="btn" data-close>Cancel</button>
-        <button class="btn p" id="btn-save-ret-seq">Save Sequence</button>
-      `
-    });
-
-    $('#btn-save-ret-seq')?.addEventListener('click', async () => {
-      const pfx = ($('#ret-prefix-input').value || '').trim().toUpperCase() || 'RET';
-      const seq = Math.max(1, parseInt($('#ret-next-seq-input').value, 10) || 1);
-      try {
-        const res = await api('retainer-invoices/sequence/', {
-          method: 'POST',
-          body: { prefix: pfx, next_sequence: seq }
-        });
-        $('#ret-number', form).value = res.formatted;
-        Modal.close();
-        toast(`Retainer invoice sequence updated to ${res.formatted}`, 'ok');
-      } catch (err) {
-        toast(err.message, 'err');
       }
     });
   });

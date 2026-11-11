@@ -3226,9 +3226,15 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
   }
 
   function renderDetailPane() {
-    if (!curDoc) return;
-    const d = curDoc;
     const detailBox = $('#detail-col-box', root);
+    const splitView = root.querySelector('.split-view-container');
+    if (!curDoc) {
+      if (splitView) splitView.classList.remove('has-selection');
+      detailBox.innerHTML = `<div class="empty" style="margin:auto;">Select a ${esc(meta.singular.toLowerCase())} to view its details.</div>`;
+      return;
+    }
+    if (splitView) splitView.classList.add('has-selection');
+    const d = curDoc;
     const posted = isRetainer ? (d.raw_status === 'sent' || d.raw_status === 'partial') : (d.raw_status === (inv ? 'sent' : 'open') || d.raw_status === 'partial');
     const attCount = (d.attachments ? d.attachments.length : (d.attachment_count || 0));
 
@@ -3456,7 +3462,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
           <button class="btn" type="button" data-act="att" title="Manage Attachments" style="display:flex;align-items:center;gap:4px;">
             <span>📎</span> <b id="detail-att-cnt">${attCount}</b>
           </button>
-          <button class="btn" type="button" data-act="close" title="Close">✕</button>
+          <button class="btn" type="button" data-act="close" title="Close details" aria-label="Close details">✕</button>
         </div>
       </div>
       ${(inv && (d.status === 'Overdue' || num(d.balance) > 0)) ? `
@@ -3920,8 +3926,14 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
         return;
       }
       if (act === 'close') {
-        if (LISTS[kind]) {
-          listPage(root, LISTS[kind]);
+        curDoc = null;
+        renderMasterList();
+        renderDetailPane();
+        const filter = $('#master-filter-sel', root);
+        if (filter) filter.focus();
+        if (innerWidth <= 900) {
+          const master = $('.master-col', root);
+          if (master) master.scrollIntoView({ block: 'start' });
         }
       }
     }

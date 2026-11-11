@@ -23,7 +23,7 @@ REQUIRED = 'This field is required.'
 
 from . import services
 from .calc import GST_SLABS, compute, is_intra_state, q2
-from .cleaning import GSTIN_RE, PAN_RE, ApiError, Cleaner
+from .cleaning import EXPENSE_REFERENCE_RE, GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     StockTransfer, StockTransferLine,
@@ -4771,7 +4771,12 @@ class ExpenseResource(Resource):
         tax_amt = q2(amt * gst_r / Decimal(100))
         tot = amt + tax_amt
         paid_via = c.text('paid_through', default='Bank Account', max_len=80)
-        ref = c.text('reference', max_len=80)
+        ref = c.text(
+            'reference',
+            max_len=80,
+            pattern=EXPENSE_REFERENCE_RE,
+            pattern_msg='Use letters, numbers, spaces, and # / - _ . ( ) or : only.'
+        )
         notes = c.text('notes', max_len=1000)
         c.done()
 
@@ -4815,7 +4820,12 @@ class ExpenseResource(Resource):
         if 'paid_through' in data:
             obj.paid_through = c.text('paid_through', max_len=80)
         if 'reference' in data:
-            obj.reference = c.text('reference', max_len=80)
+            obj.reference = c.text(
+                'reference',
+                max_len=80,
+                pattern=EXPENSE_REFERENCE_RE,
+                pattern_msg='Use letters, numbers, spaces, and # / - _ . ( ) or : only.'
+            )
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=1000)
         c.done()
@@ -10502,7 +10512,5 @@ def api_register_view(request):
         return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
     except Exception as e:
         return j({'error': str(e), 'message': str(e)}, 400)
-
-
 
 

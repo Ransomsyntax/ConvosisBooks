@@ -2,7 +2,7 @@ import re
 """Business logic: numbering, stock movements, document lifecycle, dashboard analytics."""
 import base64
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
 import json
@@ -4412,23 +4412,44 @@ def record_bank_deposit(data, user=None):
     }
 
 @transaction.atomic
-def record_bank_transfer(data, user=None):
+def record_bank_transfer(data, user=None, org=None):
     from_id = data.get('from_account') or data.get('from_account_id')
     to_id = data.get('to_account') or data.get('to_account_id')
-    if from_id == to_id:
+    if str(from_id) == str(to_id):
         raise ApiError(400, 'Source and destination bank accounts must be different.')
 
-    from_acc = BankAccount.objects.filter(pk=from_id).first()
-    to_acc = BankAccount.objects.filter(pk=to_id).first()
-    if not from_acc or not to_acc:
-        raise ApiError(404, 'Bank account not found.')
+    if not org and getattr(user, 'pk', None):
+        profile = UserProfile.objects.filter(user=user).select_related('organization').first()
+        org = profile.organization if profile else None
+    if not org:
+        raise ApiError(403, 'Organization required.')
 
-    amount = Decimal(str(data.get('amount', 0)))
+    try:
+        from_id = int(from_id)
+        to_id = int(to_id)
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Select valid source and destination bank accounts.')
+
+    accounts = BankAccount.objects.select_for_update().filter(
+        pk__in=(from_id, to_id), organization=org
+    ).order_by('pk')
+    accounts_by_id = {account.pk: account for account in accounts}
+    from_acc = accounts_by_id.get(from_id)
+    to_acc = accounts_by_id.get(to_id)
+    if not from_acc or not to_acc:
+        raise ApiError(404, 'Bank account not found in your organization.')
+
+    try:
+        amount = Decimal(str(data.get('amount', 0)))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ApiError(400, 'Transfer amount must be a valid number.')
+    if not amount.is_finite():
+        raise ApiError(400, 'Transfer amount must be a finite number.')
     if amount <= Decimal('0.00'):
         raise ApiError(400, 'Transfer amount must be greater than zero.')
 
     dt = data.get('date') or timezone.localdate()
-    check_transaction_lock(dt)
+    check_transaction_lock(dt, org=org)
     if from_acc.current_balance < amount:
         raise ApiError(400, f"Insufficient funds in {from_acc.name}. Available balance: ₹{from_acc.current_balance:,.2f}, transfer amount: ₹{amount:,.2f}.")
     ref = data.get('reference', '')
@@ -4442,6 +4463,7 @@ def record_bank_transfer(data, user=None):
 
     xfer_num = next_number('TXF')
     transfer = BankTransfer.objects.create(
+        organization=org,
         number=xfer_num,
         from_account=from_acc,
         to_account=to_acc,
@@ -4454,6 +4476,7 @@ def record_bank_transfer(data, user=None):
     )
 
     BankTransaction.objects.create(
+        organization=org,
         bank_account=from_acc,
         date=dt,
         description=f"Transfer to {to_acc.name}{' - ' + desc if desc else ''}",
@@ -4466,6 +4489,7 @@ def record_bank_transfer(data, user=None):
         status='manually_added'
     )
     BankTransaction.objects.create(
+        organization=org,
         bank_account=to_acc,
         date=dt,
         description=f"Transfer from {from_acc.name}{' - ' + desc if desc else ''}",
@@ -4478,18 +4502,17 @@ def record_bank_transfer(data, user=None):
         status='manually_added'
     )
 
-    from_gl = from_acc.gl_account or Account.objects.filter(code='1010').first()
-    to_gl = to_acc.gl_account or Account.objects.filter(code='1010').first()
+    from_gl = from_acc.gl_account or Account.objects.filter(code='1010', organization=org).first()
+    to_gl = to_acc.gl_account or Account.objects.filter(code='1010', organization=org).first()
     if from_gl and to_gl:
-        xfer_org = getattr(from_acc, 'organization', None) or getattr(to_acc, 'organization', None) or Organization.objects.first()
         post_journal_entry(
             dt, 'transfer', f"TXF {xfer_num}", f"Bank Transfer from {from_acc.name} to {to_acc.name}",
             [(to_gl, amount, Decimal('0.00'), f"Transfer into {to_acc.name}"),
              (from_gl, Decimal('0.00'), amount, f"Transfer out of {from_acc.name}")],
-            user, org=xfer_org
+            user, org=org
         )
 
-    log_audit(user, 'create', 'BankTransfer', transfer.pk, f"Recorded transfer {transfer.number} of ₹{transfer.amount} from {from_acc.name} to {to_acc.name}")
+    log_audit(user, 'create', 'BankTransfer', transfer.pk, f"Recorded transfer {transfer.number} of ₹{transfer.amount} from {from_acc.name} to {to_acc.name}", org=org)
     return {
         'id': transfer.pk,
         'number': transfer.number,

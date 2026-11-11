@@ -371,6 +371,9 @@ class Resource:
     def create(self, data, user):
         raise ApiError(405, 'Creating this record is not supported.')
 
+    def create_for_request(self, data, user, request):
+        return self.create(data, user)
+
     def update(self, obj, data, user):
         raise ApiError(405, 'Editing this record is not supported.')
 
@@ -626,7 +629,7 @@ class Resource:
                     records = data
                 else:
                     with transaction.atomic():
-                        obj = self.create(data, request.user)
+                        obj = self.create_for_request(data, request.user, request)
                         if hasattr(obj, 'organization') and not getattr(obj, 'organization_id', None):
                             try:
                                 with transaction.atomic():
@@ -3940,7 +3943,12 @@ class BankTransferResource(Resource):
         }
 
     def create(self, data, user):
-        res = services.record_bank_transfer(data, user)
+        res = services.record_bank_transfer(data, user, org=get_user_org(user))
+        return BankTransfer.objects.get(pk=res['id'])
+
+    def create_for_request(self, data, user, request):
+        org = get_user_org(user, request)
+        res = services.record_bank_transfer(data, user, org=org)
         return BankTransfer.objects.get(pk=res['id'])
 
 class BankReconciliationResource(Resource):
@@ -7498,7 +7506,7 @@ def banking_transfer_view(request):
     if request.method != 'POST':
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
-    res = services.record_bank_transfer(d, user=request.user)
+    res = services.record_bank_transfer(d, user=request.user, org=get_user_org(request.user, request))
     return j(res)
 
 @api_view
@@ -10494,7 +10502,6 @@ def api_register_view(request):
         return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
     except Exception as e:
         return j({'error': str(e), 'message': str(e)}, 400)
-
 
 
 

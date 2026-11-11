@@ -335,6 +335,69 @@ class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
             services.record_bank_transfer(data, user=self.admin_user)
         self.assertIn('Insufficient funds', str(ctx.exception))
 
+    def test_bank_transfer_rejects_invalid_amounts(self):
+        data = {
+            'from_account': self.bank_hdfc.pk,
+            'to_account': self.bank_icici.pk,
+            'date': str(timezone.localdate())
+        }
+        for amount in ('NaN', 'Infinity', 'not-a-number'):
+            with self.subTest(amount=amount):
+                data['amount'] = amount
+                with self.assertRaises(services.ApiError):
+                    services.record_bank_transfer(data, user=self.admin_user)
+
+    def test_bank_transfer_is_scoped_to_the_active_organization(self):
+        other_org = Organization.objects.create(name='Other Bank Org', company_id='other-bank-org')
+        other_account = BankAccount.objects.create(
+            organization=other_org,
+            name='Other Org Account',
+            bank_name='Other Bank',
+            account_number='OTHER-001',
+            current_balance=Decimal('1000.00'),
+            bank_balance=Decimal('1000.00')
+        )
+        client = Client()
+        client.force_login(self.accountant_user)
+        payload = {
+            'from_account': other_account.pk,
+            'to_account': self.bank_hdfc.pk,
+            'amount': '100.00',
+            'date': str(timezone.localdate())
+        }
+
+        for endpoint in ('/api/banking/transfer/', '/api/bank-transfers/'):
+            response = client.post(endpoint, data=json.dumps(payload), content_type='application/json')
+            self.assertEqual(response.status_code, 404, response.content)
+
+        other_account.refresh_from_db()
+        self.bank_hdfc.refresh_from_db()
+        self.assertEqual(other_account.current_balance, Decimal('1000.00'))
+        self.assertEqual(self.bank_hdfc.current_balance, Decimal('250000.00'))
+        self.assertFalse(BankTransfer.objects.filter(from_account=other_account).exists())
+        self.assertFalse(BankTransaction.objects.filter(bank_account=other_account).exists())
+
+    def test_bank_transfer_resource_stores_organization_on_all_entries(self):
+        client = Client()
+        client.force_login(self.accountant_user)
+        response = client.post(
+            '/api/bank-transfers/',
+            data=json.dumps({
+                'from_account': self.bank_hdfc.pk,
+                'to_account': self.bank_icici.pk,
+                'amount': '100.00',
+                'date': str(timezone.localdate())
+            }),
+            content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        transfer = BankTransfer.objects.get(pk=response.json()['id'])
+        self.assertEqual(transfer.organization, self.org)
+        transactions = BankTransaction.objects.filter(reference=transfer.number)
+        self.assertEqual(transactions.count(), 2)
+        self.assertTrue(all(txn.organization == self.org for txn in transactions))
+
     def test_complete_bank_reconciliation(self):
         today = timezone.localdate()
         txn = BankTransaction.objects.create(
@@ -1973,6 +2036,4 @@ class TestBooksSubscriptionAndBilling(TestCase):
         res1 = self.client.get('/api/subscription/summary/')
         self.assertEqual(res1.status_code, 200)
         self.assertNotEqual(res1.json()['usage']['records']['limit'], 5000000)
-
-
 

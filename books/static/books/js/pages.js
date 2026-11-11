@@ -3920,7 +3920,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
         return;
       }
       if (act === 'close') {
-        if (window.LISTS && window.LISTS[kind]) {
+        if (LISTS[kind]) {
           listPage(root, LISTS[kind]);
         }
       }
@@ -3986,7 +3986,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
   const vmBtn = $('#master-view-mode-btn', root);
   if (vmBtn) {
     vmBtn.addEventListener('click', () => {
-      if (window.LISTS && window.LISTS[kind]) {
+      if (LISTS[kind]) {
         listPage(root, LISTS[kind]);
       }
     });

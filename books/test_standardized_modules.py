@@ -93,6 +93,24 @@ class StandardizedModulesTestCase(TestCase):
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json().get('purpose'), 'Upfront retainer advance for Q4 software engineering')
 
+    def test_retainer_invoice_purpose_preserves_explicit_customer_notes(self):
+        today = timezone.localdate()
+        payload = {
+            'customer': self.customer.id,
+            'date': today.isoformat(),
+            'due_date': (today + timedelta(days=30)).isoformat(),
+            'purpose': 'Project advance',
+            'notes': 'Please include the project code on remittance.',
+            'lines': [{'description': 'Retainer', 'quantity': 1, 'rate': 100, 'gst_rate': 0}]
+        }
+
+        response = self.client.post('/api/retainer-invoices/', payload, content_type='application/json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json().get('purpose'), 'Project advance')
+        retainer = RetainerInvoice.objects.get(pk=response.json()['id'])
+        self.assertEqual(retainer.notes, 'Please include the project code on remittance.')
+
     def test_quote_creation_and_fields(self):
         """Test quote creation with standard full-page fields."""
         today = timezone.localdate()
@@ -119,4 +137,3 @@ class StandardizedModulesTestCase(TestCase):
         self.assertEqual(data.get('subject'), 'Project Quotation for Mobile App')
         self.assertEqual(data.get('reference_number'), 'REF-Q-001')
         self.assertEqual(Quote.objects.filter(pk=data['id']).count(), 1)
-

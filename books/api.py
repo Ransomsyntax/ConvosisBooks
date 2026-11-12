@@ -2414,6 +2414,8 @@ class RetainerInvoiceResource(DocResource):
         purpose = c.text('purpose', max_len=500) or c.text('subject', max_len=500)
         if purpose:
             res['subject'] = purpose
+            if 'notes' not in c.d:
+                res['notes'] = purpose
         return res
 
     def extra_detail(self, o):

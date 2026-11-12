@@ -2403,6 +2403,29 @@ class RetainerInvoiceResource(DocResource):
             'terms': c.text('terms_conditions' if 'terms_conditions' in c.d else 'terms', max_len=2000),
             'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60)
         }
+        project_id = c.integer('project_id', lo=1) if 'project_id' in c.d else None
+        if 'project_id' in c.d or 'project_name' in c.d:
+            project_name = c.text('project_name', max_len=150)
+            customer_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+            project = None
+            if project_id:
+                project = Project.objects.filter(
+                    pk=project_id,
+                    organization=user_org,
+                    customer_id=customer_id,
+                    status='active',
+                ).first() if user_org and customer_id else None
+                if not project:
+                    c.err('project_id', 'Select an active project associated with this customer in your organization.')
+            elif project_name and user_org and customer_id:
+                project = Project.objects.filter(
+                    organization=user_org,
+                    customer_id=customer_id,
+                    name__iexact=project_name,
+                    status='active',
+                ).first()
+            res['project'] = project
+            res['project_name'] = project.name if project else project_name
         if 'custom_fields_data' in c.d:
             custom_fields = c.d['custom_fields_data']
             if not isinstance(custom_fields, dict):
@@ -2457,6 +2480,7 @@ class RetainerInvoiceResource(DocResource):
         return {
             'business_location_id': o.business_location_id,
             'business_location_gstin': o.business_location_gstin,
+            'project_id': o.project_id,
             'business_location_details': ({
                 'name': o.business_location.name,
                 'address': o.business_location.address,
@@ -2474,6 +2498,48 @@ class RetainerInvoiceResource(DocResource):
             'applied_amount': applied,
             'available_balance': max(Z, paid - applied)
         }
+
+    def parse(self, data, user=None):
+        if isinstance(data, dict) and isinstance(data.get('lines'), list):
+            normalized = dict(data)
+            normalized_lines = []
+            line_errors = []
+            for index, line in enumerate(data['lines'], 1):
+                if not isinstance(line, dict) or 'amount' not in line:
+                    normalized_lines.append(line)
+                    continue
+                if not any(str(line.get(field) or '').strip() for field in ('description', 'amount', 'item', 'item_id')):
+                    continue
+                amount_cleaner = Cleaner(line)
+                amount = amount_cleaner.number(
+                    'amount',
+                    lo=Decimal('0'),
+                    hi=Decimal('999999999'),
+                    places=2,
+                )
+                if amount_cleaner.errors:
+                    line_errors.append(
+                        f"Line {index}: amount - {amount_cleaner.errors['amount']}"
+                    )
+                    continue
+                normalized_line = dict(line)
+                normalized_line.pop('amount', None)
+                normalized_line.update({
+                    'quantity': '1',
+                    'rate': str(amount),
+                    'discount_percent': '0',
+                    'gst_rate': '0',
+                })
+                normalized_lines.append(normalized_line)
+            if line_errors:
+                raise ApiError(
+                    400,
+                    'Please correct the line items.',
+                    {'lines': ' | '.join(line_errors)},
+                )
+            normalized['lines'] = normalized_lines
+            data = normalized
+        return super().parse(data, user=user)
 
     def _validate_business_location(self, data, user, current=None):
         location_id = data.get('business_location_id') or data.get('business_location')

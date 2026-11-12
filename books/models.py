@@ -763,6 +763,7 @@ class RecurringInvoice(models.Model):
 
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
+    project = models.ForeignKey('Project', null=True, blank=True, on_delete=models.SET_NULL, related_name='retainer_invoices')
     business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='retainer_invoices')
     business_location_gstin = models.CharField(max_length=15, blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)

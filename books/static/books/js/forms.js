@@ -4411,7 +4411,7 @@ function createSalespersonCustomDropdown(containerEl, currentVal = '', onSelect)
   };
 }
 
-async function setupProjectSelectorForCustomer(selectEl, customerId, selectedProject = '') {
+async function setupProjectSelectorForCustomer(selectEl, customerId, selectedProject = '', useProjectId = false, onError = null) {
   if (!selectEl) return;
   if (!customerId) {
     selectEl.innerHTML = '<option value="">Select a customer first to view projects</option>';
@@ -4419,12 +4419,13 @@ async function setupProjectSelectorForCustomer(selectEl, customerId, selectedPro
     return;
   }
   try {
-    const projects = await api(`lookup/projects/?customer=${customerId}`).catch(() => []);
+    const request = api(`lookup/projects/?customer=${customerId}`);
+    const projects = onError ? await request : await request.catch(() => []);
     if (projects && projects.length) {
       selectEl.disabled = false;
       selectEl.innerHTML = `
         <option value="">Select Project</option>
-        ${projects.map(p => `<option value="${esc(p.name)}" ${p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      ${projects.map(p => `<option value="${useProjectId ? p.id : esc(p.name)}" ${useProjectId ? `data-project-name="${esc(p.name)}"` : ''} ${String(p.id) === String(selectedProject) || p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
       `;
     } else {
       selectEl.disabled = true;
@@ -4432,7 +4433,8 @@ async function setupProjectSelectorForCustomer(selectEl, customerId, selectedPro
     }
   } catch (e) {
     selectEl.disabled = true;
-    selectEl.innerHTML = '<option value="">There are no active projects for this customer.</option>';
+    selectEl.innerHTML = `<option value="">${onError ? 'Projects could not be loaded.' : 'There are no active projects for this customer.'}</option>`;
+    if (onError) onError(e);
   }
 }
 
@@ -12881,15 +12883,27 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, retLocations, nextNum, rec] = await Promise.all([
-    api('lookup/customers/').catch(() => []),
-    api('lookup/retainer-locations/').catch(() => []),
-    id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
-    id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
-  ]);
+  let formData;
+  try {
+    formData = await Promise.all([
+      api('lookup/customers/'),
+      api('lookup/retainer-locations/'),
+      id ? Promise.resolve(null) : api('lookup/next-retainer-number/'),
+      id ? api(`retainer-invoices/${id}/`) : Promise.resolve(null)
+    ]);
+  } catch (error) {
+    toast(`Unable to load Retainer Invoice form: ${error.message}`, 'err');
+    return;
+  }
+  const [parties, retLocations, nextNum, rec] = formData;
 
   const retOrg = APP && APP.org ? APP.org : {};
-  const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
+  const retNum = rec ? rec.number : (nextNum.next_number || nextNum.formatted || '');
+  const retNumberReadOnly = Boolean(rec || nextNum.auto_generate !== false);
+  if (!rec && retNumberReadOnly && !retNum) {
+    toast('Unable to generate the Retainer Invoice Number. Check the document numbering configuration.', 'err');
+    return;
+  }
   const retPdfTheme = retOrg.template_theme || 'convosis';
   const retPdfTemplateName = {
     convosis: 'Standard Template',
@@ -12898,29 +12912,15 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     minimal: 'Minimal Template'
   }[retPdfTheme] || retPdfTheme;
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
-  const currentLocation = rec && rec.business_location_id
-    ? retLocations.find(location => String(location.id) === String(rec.business_location_id))
-    : null;
   const defaultLocation = retLocations.find(location => location.is_default) || retLocations[0];
   const retLocationId = rec
     ? (rec.business_location_id || (retLocations.find(location => location.name === rec.location)?.id || ''))
     : (defaultLocation?.id || '');
-  const retLocation = rec ? (rec.location || currentLocation?.name || 'HO Kottayam') : (defaultLocation?.name || 'HO Kottayam');
-  const retLocationOptions = retLocations.map(location => `
-    <option value="${location.id}" ${String(retLocationId) === String(location.id) ? 'selected' : ''}>
-      ${esc(location.name)}${location.is_default ? ' (Default)' : ''}
-    </option>
-  `).join('') + (
-    rec && rec.business_location_id && !currentLocation
-      ? `<option value="${rec.business_location_id}" selected>${esc(retLocation)} (Inactive)</option>`
-      : ''
-  );
   const retParty = parties.find(party => String(party.id) === String(retCustomer));
   const retBranch = rec ? (rec.branch || '') : '';
-  const retProject = rec ? (rec.project_name || '') : '';
+  const retProject = rec ? (rec.project_id || rec.project_name || '') : '';
   const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
-  const retTerms = rec && ['Due on Receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due end of the month'].includes(rec.terms) ? rec.terms : 'Due on Receipt';
   const retOrderNum = rec ? (rec.order_number || '') : '';
   const retSalesperson = rec ? (rec.salesperson || '') : '';
   const retSubject = rec ? (rec.subject || rec.purpose || '') : '';
@@ -12929,32 +12929,29 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const retTermsText = rec ? (rec.terms != null ? rec.terms : '') : (retOrg.terms_default || '');
   const retTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const retCustType = retParty?.customer_type === 'individual' ? 'b2c' : 'b2b';
-  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
+  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ amount: 0 }];
   const retAdditionalFields = rec && rec.custom_fields_data && typeof rec.custom_fields_data === 'object' && !Array.isArray(rec.custom_fields_data)
     ? Object.entries(rec.custom_fields_data).map(([label, value]) => ({ label, value }))
     : [];
   const pendingFiles = [];
 
   const rowHtml = (l = {}) => {
-    const quantity = l.quantity == null ? 1 : num(l.quantity);
-    const rate = l.rate == null ? 0 : num(l.rate);
-    const discount = num(l.discount_percent || 0);
-    const gst = num(l.gst_rate || 0);
-    const amount = l.line_total == null
-      ? quantity * rate * (1 - discount / 100) * (1 + gst / 100)
-      : num(l.line_total);
+    const amount = l.amount == null
+      ? (l.line_total == null
+        ? num(l.quantity || 1) * num(l.rate || 0) * (1 - num(l.discount_percent || 0) / 100) * (1 + num(l.gst_rate || 0) / 100)
+        : num(l.line_total))
+      : num(l.amount);
     return `
       <tr class="ln-retainer-invoice" style="border-bottom:1px solid var(--bd);">
         <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
           <input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:6px 8px;width:100%;">
         </td>
         <td style="width:180px;padding:10px 8px;vertical-align:top;">
-          <input class="in l-amount" aria-label="Amount" type="number" step="0.01" min="0" value="${amount.toFixed(2)}" style="text-align:right;width:100%;">
+          <input class="in l-amount" aria-label="Amount" type="number" step="0.01" min="0" max="999999999" value="${amount.toFixed(2)}" style="text-align:right;width:100%;">
         </td>
         <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
           <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
         </td>
-        <td hidden><input class="l-item" value="${esc(l.item || '')}"><input class="l-qty" value="${quantity}"><input class="l-rate" value="${rate}"><input class="l-disc" value="${discount}"><input class="l-gst" value="${gst}"><input class="l-hsn" value="${esc(l.hsn_sac || '')}"><input class="l-wh-select" value="${esc(l.warehouse_id || '')}"><input class="l-wh-code" value="${esc(l.warehouse_code || '')}"></td>
       </tr>
     `;
   };
@@ -12998,91 +12995,38 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             </div>
           </div>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
-            <div>
-              <select class="in" id="ret-location" name="location" style="width:260px;">
-                ${retLocations.length ? `<option value="">Select a business location</option>${retLocationOptions}` : `<option value="" selected>${esc(retLocation)} (legacy location)</option>${retLocationOptions}`}
-              </select>
-              <div id="ret-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Source of Supply: ${esc(retPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-                <span id="ret-location-gstin" style="margin-left:8px;">Location GSTIN: ${esc(currentLocation?.gstin || rec?.business_location_gstin || 'Not provided')}</span>
-              </div>
+          <div style="display:none;">
+              <input type="hidden" id="ret-location" name="business_location_id" value="${esc(retLocationId)}">
               <input type="hidden" id="ret-branch" name="branch" value="${esc(retBranch)}">
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="ret-customer-type" name="customer_type" disabled aria-label="Customer type derived from selected customer" style="width:260px;background:#f8fafc;">
-                <option value="b2b" ${retCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                <option value="b2c" ${retCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-              </select>
-              <div id="ret-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
-                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                <span id="ret-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(retCustomer))?.gstin) || 'Not provided'}</span>
-              </div>
-            </div>
+              <input type="hidden" id="ret-customer-type" name="customer_type" value="${retCustType}">
+              <input type="hidden" id="ret-accounts-receivable" name="accounts_receivable" value="${esc(rec?.accounts_receivable || 'Accounts Receivable')}">
+              <input type="hidden" id="ret-salesperson" name="salesperson" value="${esc(retSalesperson)}">
+              <input type="hidden" id="ret-purpose" name="purpose" value="${esc(retSubject)}">
+              <input type="hidden" id="ret-due-date" name="due_date" value="${esc(retDueDate)}">
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Number*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:180px;">
+              <input class="in" id="ret-number" name="number" value="${retNum}" required ${retNumberReadOnly ? 'readonly' : ''} style="width:180px;">
             </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label for="ret-reference" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Reference #</label>
-            <input class="in" id="ret-reference" name="reference" value="${esc(retOrderNum)}" style="width:260px;">
+            <input class="in" id="ret-reference" name="reference" value="${esc(retOrderNum)}" maxlength="60" style="width:260px;">
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
             <label for="ret-date" style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Date*</label>
             <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:260px;">
-            
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Payment Terms</label>
-            <select class="in" id="ret-terms" name="terms" style="width:180px;">
-              <option value="Due on Receipt" ${retTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
-              <option value="Net 15" ${retTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
-              <option value="Net 30" ${retTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
-              <option value="Net 45" ${retTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
-              <option value="Net 60" ${retTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
-              <option value="Due end of the month" ${retTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
-            </select>
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
-            <input class="in" type="date" id="ret-due-date" name="due_date" value="${retDueDate}" style="width:160px;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
-              Accounts Receivable
-              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
-            </label>
-            <select class="in" id="ret-accounts-receivable" name="accounts_receivable" style="width:260px;">
-              <option value="Accounts Receivable" selected>Accounts Receivable</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div id="ret-salesperson-container"></div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label for="ret-project" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Project Name</label>
-            <select class="in" id="ret-project" name="project_name" style="width:260px;" disabled>
+            <select class="in" id="ret-project" name="project_id" style="width:260px;" disabled>
               <option value="">There are no active projects for this customer.</option>
             </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Purpose <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="ret-purpose" name="purpose" rows="2" placeholder="Enter purpose of this retainer invoice (e.g. Project advance or service retainer)" style="width:260px;font-size:12px;">${esc(retSubject)}</textarea>
           </div>
 
           <input type="hidden" id="ret-place-of-supply" name="place_of_supply" value="${esc(retPlaceOfSupply)}">
@@ -13220,116 +13164,67 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     const projectCustomerId = /^\d+$/.test(String(customerId || '')) ? customerId : '';
     projectSaveButtons.forEach(button => { button.disabled = true; });
     try {
-      await setupProjectSelectorForCustomer($('#ret-project', form), projectCustomerId, selectedProject);
+      const projectSelect = $('#ret-project', form);
+      await setupProjectSelectorForCustomer(
+        projectSelect,
+        projectCustomerId,
+        selectedProject,
+        true,
+        error => toast(`Unable to load projects: ${error.message}`, 'err')
+      );
+      if (projectSelect && rec?.project_name && String(selectedProject) === String(rec.project_id || rec.project_name)) {
+        const savedProjectIsAvailable = Array.from(projectSelect.options).some(option =>
+          option.value === String(rec.project_id || '') || option.dataset.projectName === rec.project_name
+        );
+        if (!savedProjectIsAvailable) {
+          projectSelect.insertAdjacentHTML(
+            'beforeend',
+            `<option value="__legacy_project__" data-project-name="${esc(rec.project_name)}" selected>${esc(rec.project_name)} (inactive or unavailable)</option>`
+          );
+          projectSelect.value = '__legacy_project__';
+          projectSelect.disabled = false;
+        }
+      }
     } finally {
       projectSaveButtons.forEach(button => { button.disabled = false; });
     }
   }
 
   function applyRetainerCustomerContext(customer) {
-    const gstinEl = $('#ret-customer-gstin', form);
     const custTypeEl = $('#ret-customer-type', form);
-    if (customer?.state) $('#ret-place-of-supply', form).value = customer.state;
-    if (gstinEl) gstinEl.textContent = customer?.gstin || 'Not provided';
+    if (customer) {
+      $('#ret-place-of-supply', form).value = customer.state || (APP.org ? APP.org.state : 'Kerala');
+    }
     if (custTypeEl) custTypeEl.value = customer?.customer_type === 'individual' ? 'b2c' : 'b2b';
   }
 
-  function applyRetainerLocationContext() {
-    const locationId = $('#ret-location', form)?.value;
-    const selectedLocation = retLocations.find(location => String(location.id) === String(locationId));
-    const gstin = selectedLocation?.gstin || (
-      rec && String(rec.business_location_id || '') === String(locationId)
-        ? rec.business_location_gstin
-        : ''
-    );
-    const gstinEl = $('#ret-location-gstin', form);
-    if (gstinEl) gstinEl.textContent = `Location GSTIN: ${gstin || 'Not provided'}`;
-  }
-
-  createSalespersonCustomDropdown($('#ret-salesperson-container', form), retSalesperson, () => {});
   await refreshRetainerProjects(retCustomer, retProject);
   $('#ret-customer', form)?.addEventListener('change', e => {
     void refreshRetainerProjects(e.target.value);
-    applyRetainerCustomerContext(parties.find(party => String(party.id) === String(e.target.value)));
+    const customer = parties.find(party => String(party.id) === String(e.target.value));
+    applyRetainerCustomerContext(customer);
+    updateDueDate(customer);
   });
-  $('#ret-location', form)?.addEventListener('change', applyRetainerLocationContext);
-  applyRetainerLocationContext();
-
-  function updateDueDate() {
+  function updateDueDate(customer = parties.find(party => String(party.id) === String($('#ret-customer', form).value))) {
     const dVal = $('#ret-date', form).value;
     if (!dVal) return;
-    const termsVal = $('#ret-terms', form).value;
     const d = new Date(dVal + 'T00:00:00');
-    if (termsVal === 'Due on Receipt') {
-      $('#ret-due-date', form).value = dVal;
-    } else if (termsVal === 'Net 15') {
-      d.setDate(d.getDate() + 15);
-      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
-    } else if (termsVal === 'Net 30') {
-      d.setDate(d.getDate() + 30);
-      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
-    } else if (termsVal === 'Net 45') {
-      d.setDate(d.getDate() + 45);
-      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
-    } else if (termsVal === 'Net 60') {
-      d.setDate(d.getDate() + 60);
-      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
-    } else if (termsVal === 'Due end of the month') {
-      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      $('#ret-due-date', form).value = endOfMonth.toISOString().slice(0, 10);
-    }
+    const paymentDays = Number(customer?.payment_terms) || 30;
+    d.setDate(d.getDate() + paymentDays);
+    $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
   }
 
   function calcRetainer() {
-    const isTaxInclusive = ($('#ret-tax-pricing', form)?.value === 'tax_inclusive');
-    let subtotal = 0;
-    let totalTax = 0;
+    let totalCents = 0;
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
-      const qty = num($('.l-qty', tr).value) || 0;
-      const rate = num($('.l-rate', tr).value) || 0;
-      const discVal = num($('.l-disc', tr).value) || 0;
-      const gross = qty * rate;
-      const disc = gross * discVal / 100;
-      const net = Math.max(0, gross - disc);
-      const gstRate = num($('.l-gst', tr).value) || 0;
-
-      let taxable = net;
-      let tax = 0;
-      let lineTot = net;
-
-      if (isTaxInclusive && gstRate > 0) {
-        taxable = Math.round((net / (1 + gstRate / 100)) * 100) / 100;
-        tax = Math.round((net - taxable) * 100) / 100;
-        lineTot = net;
-      } else {
-        taxable = Math.round(net * 100) / 100;
-        tax = Math.round((taxable * (gstRate / 100)) * 100) / 100;
-        lineTot = taxable + tax;
-      }
-
-      if (document.activeElement !== $('.l-amount', tr)) {
-        $('.l-amount', tr).value = lineTot.toFixed(2);
-      }
-      subtotal += taxable;
-      totalTax += tax;
+      const amount = Math.max(0, num($('.l-amount', tr).value) || 0);
+      totalCents += Math.round(amount * 100);
     });
+    const total = totalCents / 100;
 
-    const grand = subtotal + totalTax;
-
-    $('#ret-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#ret-grandtotal-val', form).textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#ret-bar-total-amount', form).textContent = inr(grand);
-  }
-
-  function updateRateFromAmount(tr) {
-    const amountInput = $('.l-amount', tr);
-    const quantity = num($('.l-qty', tr).value) || 1;
-    const discount = Math.min(100, Math.max(0, num($('.l-disc', tr).value))) / 100;
-    const gstRate = Math.max(0, num($('.l-gst', tr).value));
-    const inclusive = $('#ret-tax-pricing', form).value === 'tax_inclusive';
-    const taxFactor = inclusive ? 1 : 1 + gstRate / 100;
-    const divisor = quantity * (1 - discount) * taxFactor;
-    $('.l-rate', tr).value = divisor > 0 ? (num(amountInput.value) / divisor).toFixed(6) : '0';
+    $('#ret-subtotal-val', form).textContent = total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-grandtotal-val', form).textContent = total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-bar-total-amount', form).textContent = inr(total);
   }
 
   function renderAttach() {
@@ -13374,6 +13269,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
         sel.value = newCust.id;
         applyRetainerCustomerContext(newCust);
+        updateDueDate(newCust);
         void refreshRetainerProjects(newCust.id);
         sel.dispatchEvent(new Event('change', { bubbles: true }));
       }
@@ -13385,34 +13281,20 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
         applyRetainerCustomerContext(newCust);
+        updateDueDate(newCust);
         void refreshRetainerProjects(newCust.id);
         e.target.dispatchEvent(new Event('change', { bubbles: true }));
-        if (newCust.payment_terms) {
-          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
-          if (termsMap[newCust.payment_terms]) {
-            $('#ret-terms', form).value = termsMap[newCust.payment_terms];
-            updateDueDate();
-          }
-        }
       });
       return;
     }
     const custId = $('#ret-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
     applyRetainerCustomerContext(cust);
-    if (cust) {
-      if (cust.payment_terms) {
-        const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
-        if (termsMap[cust.payment_terms]) {
-          $('#ret-terms', form).value = termsMap[cust.payment_terms];
-          updateDueDate();
-        }
-      }
-    }
+    updateDueDate(cust);
   });
 
   $('#ret-date', form).addEventListener('change', updateDueDate);
-  $('#ret-terms', form).addEventListener('change', updateDueDate);
+  if (!rec) updateDueDate();
 
   $('#btn-ret-sign', form)?.addEventListener('click', () => {
     const curSigObj = {
@@ -13444,14 +13326,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   });
 
   form.addEventListener('input', e => {
-    const tr = e.target.closest('.ln-retainer-invoice');
-    if (tr && e.target.classList.contains('l-amount')) updateRateFromAmount(tr);
     calcRetainer();
   });
   form.addEventListener('change', () => calcRetainer());
 
   $('#btn-ret-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ amount: 0 }));
     calcRetainer();
   });
 
@@ -13543,32 +13423,20 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     const lines = [];
     let lineErr = false;
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
-      const itVal = $('.l-item', tr).value;
       const descVal = $('.l-desc', tr).value.trim();
       const amountRaw = $('.l-amount', tr).value.trim();
-      const amountVal = amountRaw ? num(amountRaw) : 0;
-      const qtyVal = num($('.l-qty', tr).value) || 0;
-      const rateVal = num($('.l-rate', tr).value) || 0;
-      if (!descVal && !itVal && !amountRaw) return;
-      if (amountVal < 0) {
+      if (!descVal && !amountRaw) return;
+      if (amountRaw && (!Number.isFinite(Number(amountRaw)) || Number(amountRaw) < 0)) {
         lineErr = true;
         return;
       }
-      if (!descVal && !itVal) {
+      if (!descVal) {
         lineErr = true;
         return;
       }
       lines.push({
-        item: itVal || null,
-        warehouse: $('.l-wh-select', tr)?.value || null,
-        warehouse_id: $('.l-wh-select', tr)?.value || null,
-        warehouse_code: $('.l-wh-code', tr)?.value || '',
-        description: descVal || 'Item line',
-        hsn_sac: $('.l-hsn', tr).value.trim(),
-        quantity: qtyVal || 1,
-        rate: rateVal,
-        discount_percent: num($('.l-disc', tr).value) || 0,
-        gst_rate: num($('.l-gst', tr).value) || 0
+        description: descVal,
+        amount: amountRaw || '0'
       });
     });
 
@@ -13607,7 +13475,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       tax_pricing_type: $('#ret-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#ret-customer-type', form)?.value || 'b2b',
       salesperson: (form.querySelector('#ret-salesperson-container select.sp-select')?.value || $('#ret-salesperson', form)?.value || ''),
-      project_name: $('#ret-project', form)?.value || '',
+      project_id: /^\d+$/.test($('#ret-project', form)?.value || '') ? $('#ret-project', form).value : null,
+      project_name: $('#ret-project option:checked', form)?.dataset.projectName || '',
       purpose: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       subject: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       place_of_supply: $('#ret-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),

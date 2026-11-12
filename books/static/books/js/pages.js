@@ -2103,7 +2103,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
           ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer Invoice# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
             ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
-            ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
+            ${isRetainer ? `<tr><td>Retainer Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
             ${!isRetainer ? `<tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>` : ''}
 
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
@@ -2112,10 +2112,9 @@ function renderDocSheet(d, kind, customOpts = {}) {
             ${isRetainer && d.location ? `<tr><td>Business Location</td><td>: ${esc(d.location)}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
-            ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
-            ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
-            <tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
-            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
+            ${!isRetainer && d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
+            ${!isRetainer ? `<tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
+            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>` : ''}
           </table>
 
         </div>
@@ -2196,20 +2195,20 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
         <div class="doc-bottom-right">
           <div class="doc-totals-box">
-            <div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
+            ${!isRetainer ? `<div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
               <a href="javascript:void(0)" class="btn-tax-pricing-info" data-doc-kind="${kind}" style="color:#2563eb;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-weight:600;" title="View GST Pricing & B2B/B2C Rules Guide">
                 <i class="fa-solid fa-circle-info"></i> Tax &amp; Billing (${partyTypeLabel} · ${taxPricingLabel})
               </a>
-            </div>
+            </div>` : ''}
             ${!hideAmounts ? `
-              <div class="doc-totals-row">
+              ${!isRetainer ? `<div class="doc-totals-row">
                 <span>Taxable Amount (${taxPricingLabel})</span>
                 <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
-              </div>
-              ${d.intra_state ? `
+              </div>` : ''}
+              ${!isRetainer && d.intra_state ? `
                 <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
                 <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
-              ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
+              ` : (!isRetainer && num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
               <div class="doc-totals-row main-total">
                 <span>Total</span>
                 <span>${inr(d.total)}</span>
@@ -2625,21 +2624,25 @@ function printDocument(doc, kind, mode = 'standard', isPdf = false) {
 }
 
 function openSendEmailModal(doc, kind, onDone) {
+  const isRetainer = kind === 'retainer-invoices';
   const party = doc.party_details || {};
   const recipient = party.email || doc.customer_email || doc.email || '';
   const partyName = doc.party || party.name || 'Valued Customer';
   const orgName = (APP.org && APP.org.name) || 'Convosis';
-  const defaultSubj = `Invoice ${doc.number} from ${orgName}`;
-  const defaultBody = `Dear ${partyName},\n\nInvoice ${doc.number} for the amount of ${inr(doc.total)} has been issued.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
+  const documentLabel = isRetainer ? 'Retainer Invoice' : 'Invoice';
+  const defaultSubj = `${documentLabel} ${doc.number} from ${orgName}`;
+  const defaultBody = isRetainer
+    ? `Dear ${partyName},\n\nThanks for your business.\n\nThe retainer invoice ${doc.number} is attached with this email. Here is an overview of the invoice for your reference.\n\nRetainer Invoice Overview:\nInvoice #: ${doc.number}\nDate: ${fd(doc.date)}\nAmount: ${inr(doc.total)}\n\nRegards,\n${orgName}`
+    : `Dear ${partyName},\n\nInvoice ${doc.number} for the amount of ${inr(doc.total)} has been issued.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
 
   formModal({
-    title: `Send Invoice · ${esc(doc.number)}`,
+    title: `Send ${documentLabel} · ${esc(doc.number)}`,
     submit: 'Send Email',
     wide: false,
     body: `
       <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
         <div><b>To:</b> ${esc(partyName)}</div>
-        <div style="margin-top:2px;"><b>Invoice:</b> ${esc(doc.number)} &nbsp;|&nbsp; <b>Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Due:</b> ${fd(doc.due_date)}</div>
+        <div style="margin-top:2px;"><b>${documentLabel}:</b> ${esc(doc.number)} &nbsp;|&nbsp; <b>Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>${isRetainer ? 'Date' : 'Due'}:</b> ${fd(isRetainer ? doc.date : doc.due_date)}</div>
       </div>
       <div class="fgrid">
         ${fld({ name: 'to_email', label: 'To Email Address', type: 'email', req: 1, value: recipient, placeholder: 'customer@example.com', col: 'c2' })}
@@ -2648,7 +2651,7 @@ function openSendEmailModal(doc, kind, onDone) {
         ${fld({ name: 'message', label: 'Message', type: 'textarea', req: 1, value: defaultBody, col: 'c2' })}
         <div style="grid-column:span 2;font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:4px;">
           <i class="fa-solid fa-paperclip"></i>
-          <span>This email includes document details. PDF attachments are not available yet.</span>
+          <span>${isRetainer ? 'The Retainer Invoice PDF will be attached to this email.' : 'This email includes document details. PDF attachments are not available yet.'}</span>
         </div>
       </div>
     `,
@@ -2663,7 +2666,7 @@ function openSendEmailModal(doc, kind, onDone) {
           message: data.message
         }
       });
-      toast(`Invoice ${doc.number} sent to ${data.to_email}`, 'ok');
+      toast(`${documentLabel} ${doc.number} sent to ${data.to_email}`, 'ok');
       if (onDone) onDone();
     }
   });

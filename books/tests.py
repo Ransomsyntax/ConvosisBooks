@@ -1339,10 +1339,11 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
             'terms_conditions': 'Retainer terms for this customer.',
             'custom_fields_data': {'Engagement code': 'ENG-42', 'Client contact': 'Mira'},
             'lines': [
-                {'description': 'Discovery phase', 'quantity': 1, 'rate': '125.25', 'gst_rate': 0},
-                {'description': 'Support reserve', 'quantity': 1, 'rate': '75.50', 'gst_rate': 0},
-                {'description': 'Zero-value line', 'quantity': 1, 'rate': '0.00', 'gst_rate': 0},
+                {'description': 'Discovery phase', 'amount': '125.25'},
+                {'description': 'Support reserve', 'amount': '75.50'},
+                {'description': 'Zero-value line', 'amount': '0.00'},
             ],
+            'project_id': project.pk,
         }
         response = self.client.post(
             '/api/retainer-invoices/',
@@ -1355,6 +1356,7 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertTrue(detail['number'])
         self.assertEqual(detail['reference'], 'PO-RET-42')
         self.assertEqual(detail['project_name'], project.name)
+        self.assertEqual(detail['project_id'], project.pk)
         self.assertEqual(detail['notes'], 'Customer notes for this retainer.')
         self.assertEqual(detail['terms'], 'Retainer terms for this customer.')
         self.assertEqual(detail['custom_fields_data'], {'Engagement code': 'ENG-42', 'Client contact': 'Mira'})
@@ -1370,7 +1372,7 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
             'terms_conditions': 'Updated retainer terms.',
             'custom_fields_data': {'Engagement code': 'ENG-43'},
             'lines': [
-                {'description': 'Updated phase', 'quantity': 1, 'rate': '210.00', 'gst_rate': 0},
+                {'description': 'Updated phase', 'amount': '210.00'},
             ],
         })
         update = self.client.put(
@@ -1386,7 +1388,94 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertEqual(updated['terms'], 'Updated retainer terms.')
         self.assertEqual(updated['custom_fields_data'], {'Engagement code': 'ENG-43'})
         self.assertEqual(updated['project_name'], project.name)
+        self.assertEqual(updated['project_id'], project.pk)
         self.assertEqual(Decimal(str(updated['total'])), Decimal('210.00'))
+
+    def test_retainer_amount_rows_reject_invalid_values_and_foreign_projects(self):
+        project = Project.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            name='Scoped Retainer Project',
+        )
+        other_customer = Customer.objects.create(
+            organization=self.org,
+            name='Another Project Customer',
+            state=self.org.state,
+        )
+        other_project = Project.objects.create(
+            organization=self.org,
+            customer=other_customer,
+            name='Not This Customer Project',
+        )
+        base_payload = {
+            'customer': self.customer.pk,
+            'project_id': project.pk,
+            'date': str(date.today()),
+            'due_date': str(date.today()),
+            'lines': [{'description': 'Valid retainer line', 'amount': '12.34'}],
+        }
+        for invalid_amount in ('-0.01', 'not-an-amount'):
+            payload = dict(base_payload)
+            payload['lines'] = [{'description': 'Invalid retainer line', 'amount': invalid_amount}]
+            response = self.client.post(
+                '/api/retainer-invoices/',
+                data=json.dumps(payload),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 400, response.content)
+
+        base_payload['project_id'] = other_project.pk
+        response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps(base_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+
+    @override_settings(
+        PASSWORD_RESET_EMAIL_CONFIGURED=True,
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    )
+    def test_retainer_email_attaches_generated_pdf(self):
+        response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'reference': 'RET-PDF-1',
+                'notes': 'PDF customer notes',
+                'terms_conditions': 'PDF terms',
+                'custom_fields_data': {'Engagement': 'PDF project'},
+                'lines': [
+                    {'description': 'PDF discovery work', 'amount': '100.25'},
+                    {'description': 'PDF support work', 'amount': '50.50'},
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        retainer = RetainerInvoice.objects.get(pk=response.json()['id'])
+        self.assertTrue(services.generate_retainer_invoice_pdf(retainer).startswith(b'%PDF-'))
+
+        email_response = self.client.post(
+            f'/api/retainer-invoices/{retainer.pk}/email/',
+            data=json.dumps({
+                'to_email': 'customer@example.com',
+                'subject': f'Retainer Invoice {retainer.number}',
+                'message': 'Please see the attached retainer invoice.',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(email_response.status_code, 200, email_response.content)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['customer@example.com'])
+        self.assertEqual(len(mail.outbox[0].attachments), 1)
+        filename, pdf_content, content_type = mail.outbox[0].attachments[0]
+        self.assertEqual(filename, f'{retainer.number}.pdf')
+        self.assertEqual(content_type, 'application/pdf')
+        self.assertTrue(pdf_content.startswith(b'%PDF-'))
+        self.assertGreater(len(pdf_content), 1000)
 
     def test_retainer_location_and_number_series_round_trip(self):
         location = BusinessLocation.objects.create(

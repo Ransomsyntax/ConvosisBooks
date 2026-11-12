@@ -1302,6 +1302,12 @@ def send_document_email(doc, to_email, subject='', message='', user=None, cc='')
         to=[to_email],
         cc=[cc] if cc else []
     )
+    if isinstance(doc, RetainerInvoice):
+        email.attach(
+            f'{doc.number}.pdf',
+            generate_retainer_invoice_pdf(doc),
+            'application/pdf',
+        )
     try:
         sent_count = email.send(fail_silently=False)
     except (OSError, SMTPException):
@@ -1312,6 +1318,204 @@ def send_document_email(doc, to_email, subject='', message='', user=None, cc='')
     log_audit(user, 'send_email', doc.__class__.__name__, doc.pk,
               f"Sent email for {doc.number} to {to_email}. Subject: {subj}", org=org)
     return {'status': 'ok', 'recipient': to_email, 'message': f"Email sent for {doc.number} to {to_email}."}
+
+
+def generate_retainer_invoice_pdf(retainer):
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from xml.sax.saxutils import escape
+    from io import BytesIO
+    import os
+    import reportlab
+
+    organization = retainer.organization
+    customer = retainer.customer
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=18 * mm,
+        title=f'Retainer Invoice {retainer.number}',
+        author=organization.name if organization else 'Convosis Books',
+    )
+    styles = getSampleStyleSheet()
+    regular_font = 'Helvetica'
+    bold_font = 'Helvetica-Bold'
+    vera_path = os.path.join(reportlab.__path__[0], 'fonts', 'Vera.ttf')
+    vera_bold_path = os.path.join(reportlab.__path__[0], 'fonts', 'VeraBd.ttf')
+    if os.path.isfile(vera_path) and os.path.isfile(vera_bold_path):
+        if 'ConvosisVera' not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont('ConvosisVera', vera_path))
+            pdfmetrics.registerFont(TTFont('ConvosisVera-Bold', vera_bold_path))
+        regular_font = 'ConvosisVera'
+        bold_font = 'ConvosisVera-Bold'
+
+    color_value = getattr(organization, 'template_color', '') or '#1877f2'
+    try:
+        primary_color = colors.HexColor(color_value)
+    except (ValueError, TypeError):
+        primary_color = colors.HexColor('#1877f2')
+    theme = getattr(organization, 'template_theme', '') if organization else ''
+    if theme == 'modern':
+        primary_color = colors.HexColor('#0f172a')
+    elif theme == 'executive':
+        primary_color = colors.HexColor('#334155')
+    elif theme == 'minimal':
+        primary_color = colors.HexColor('#475569')
+
+    body_style = ParagraphStyle(
+        'RetainerBody', parent=styles['BodyText'], fontName=regular_font,
+        fontSize=9, leading=12, textColor=colors.HexColor('#1e293b'),
+    )
+    heading_style = ParagraphStyle(
+        'RetainerHeading', parent=styles['Heading1'], fontName=bold_font,
+        fontSize=17, leading=21, textColor=primary_color, spaceAfter=4,
+    )
+    small_style = ParagraphStyle(
+        'RetainerSmall', parent=body_style, fontSize=8, leading=10,
+        textColor=colors.HexColor('#475569'),
+    )
+    right_style = ParagraphStyle(
+        'RetainerRight', parent=body_style, alignment=TA_RIGHT,
+    )
+
+    def paragraph(value, style=body_style):
+        text = escape(str(value or '')).replace('\r\n', '\n').replace('\n', '<br/>')
+        return Paragraph(text or '&nbsp;', style)
+
+    def paragraph_markup(value, style=body_style):
+        return Paragraph(value or '&nbsp;', style)
+
+    currency = (getattr(customer, 'currency', '') or
+                getattr(organization, 'base_currency', '') or 'INR').upper()
+
+    def money(value):
+        return f'{currency} {Decimal(value or 0):,.2f}'
+
+    story = [
+        paragraph(getattr(organization, 'name', '') or 'Convosis Books', heading_style),
+    ]
+    organization_lines = [
+        getattr(organization, 'legal_name', ''),
+        getattr(organization, 'address', ''),
+        ' '.join(filter(None, [
+            getattr(organization, 'city', ''),
+            getattr(organization, 'state', ''),
+            getattr(organization, 'pincode', ''),
+        ])),
+        f"GSTIN: {organization.gstin}" if getattr(organization, 'gstin', '') else '',
+        getattr(organization, 'email', ''),
+        getattr(organization, 'phone', ''),
+    ]
+    organization_lines = [value for value in organization_lines if value]
+    if organization_lines:
+        story.append(paragraph('\n'.join(organization_lines), small_style))
+    story.extend([Spacer(1, 8), paragraph('RETAINER INVOICE', heading_style)])
+
+    location = retainer.business_location
+    location_lines = []
+    if location:
+        location_lines = [
+            f'Business location: {location.name}',
+            location.address,
+            ' '.join(filter(None, [location.city, location.state, location.pincode])),
+            f'GSTIN: {retainer.business_location_gstin}' if retainer.business_location_gstin else '',
+        ]
+    metadata = [
+        [paragraph_markup(f'<b>Invoice #</b> {escape(retainer.number)}'),
+         paragraph_markup(f'<b>Date</b> {retainer.date:%d/%m/%Y}', right_style)],
+        [paragraph_markup(f'<b>Reference #</b> {escape(retainer.order_number or "—")}'),
+         paragraph_markup(f'<b>Project</b> {escape(retainer.project_name or "—")}', right_style)],
+    ]
+    if location_lines:
+        metadata.append([paragraph('\n'.join(location_lines), small_style), paragraph_markup('')])
+    table = Table(metadata, colWidths=[88 * mm, 88 * mm], hAlign='LEFT')
+    table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.extend([table, Spacer(1, 10)])
+
+    customer_lines = [
+        customer.name,
+        customer.company,
+        customer.billing_address,
+        ' '.join(filter(None, [customer.billing_city, customer.state, customer.billing_pincode])),
+        customer.email,
+        f'GSTIN: {customer.gstin}' if customer.gstin else '',
+    ]
+    story.append(paragraph_markup('<b>Customer</b>', body_style))
+    story.append(paragraph('\n'.join(value for value in customer_lines if value), small_style))
+    story.append(Spacer(1, 12))
+
+    line_rows = [[paragraph_markup('<b>Description</b>'), paragraph_markup('<b>Amount</b>', right_style)]]
+    for line in retainer.lines.order_by('position', 'id'):
+        line_rows.append([
+            paragraph(line.description),
+            paragraph(money(line.line_total), right_style),
+        ])
+    line_table = Table(line_rows, colWidths=[122 * mm, 54 * mm], repeatRows=1, hAlign='LEFT')
+    line_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), primary_color),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([line_table, Spacer(1, 8)])
+    total_table = Table(
+        [[paragraph_markup('<b>Total</b>'), paragraph_markup(f'<b>{money(retainer.total)}</b>', right_style)]],
+        colWidths=[122 * mm, 54 * mm],
+        hAlign='LEFT',
+    )
+    total_table.setStyle(TableStyle([
+        ('LINEABOVE', (0, 0), (-1, 0), 1, primary_color),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(total_table)
+
+    def append_note(title, value):
+        if value:
+            story.extend([
+                Spacer(1, 10),
+                paragraph_markup(f'<b>{escape(title)}</b>'),
+                paragraph(value, small_style),
+            ])
+
+    append_note('Customer Notes', retainer.notes)
+    append_note('Terms & Conditions', retainer.terms)
+    for label, value in (retainer.custom_fields_data or {}).items():
+        append_note(str(label), str(value))
+
+    def draw_footer(canvas, _document):
+        canvas.saveState()
+        canvas.setFont(regular_font, 8)
+        canvas.setFillColor(colors.HexColor('#64748b'))
+        canvas.drawString(16 * mm, 10 * mm, f'Retainer Invoice {retainer.number}')
+        canvas.drawRightString(A4[0] - 16 * mm, 10 * mm, f'Page {canvas.getPageNumber()}')
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    return buffer.getvalue()
 
 
 def send_document_sms(doc, to_phone, message='', user=None):

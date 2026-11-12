@@ -281,6 +281,7 @@ class Document(models.Model):
     order_number = models.CharField(max_length=60, blank=True, default='')
     tax_pricing_type = models.CharField(max_length=20, default='tax_exclusive', choices=[('tax_exclusive', 'Tax Exclusive'), ('tax_inclusive', 'Tax Inclusive')], blank=True)
     customer_type = models.CharField(max_length=20, default='b2b', blank=True)
+    branch = models.CharField(max_length=120, blank=True, default='')
     location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
     transaction_series = models.CharField(max_length=120, default='Default Transaction Series', blank=True)
     salesperson = models.CharField(max_length=120, blank=True, default='')
@@ -737,6 +738,7 @@ class RecurringInvoice(models.Model):
     profile_name = models.CharField(max_length=150)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='recurring_invoices')
     frequency = models.CharField(max_length=20, choices=FREQUENCIES, default='monthly')
+    branch = models.CharField(max_length=120, blank=True, default='')
     location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
     order_number = models.CharField(max_length=60, blank=True, default='')
     repeat_every = models.PositiveIntegerField(default=1)
@@ -824,6 +826,8 @@ class DeliveryChallan(models.Model):
     number = models.CharField(max_length=60, unique=True)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='delivery_challans')
     date = models.DateField()
+    branch = models.CharField(max_length=120, blank=True, default='')
+    location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
     challan_type = models.CharField(max_length=40, choices=CHALLAN_TYPES, default='other')
     status = models.CharField(max_length=20, default='open')
     vehicle_number = models.CharField(max_length=50, blank=True)
@@ -866,6 +870,8 @@ class Expense(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
+    branch = models.CharField(max_length=120, blank=True, default='')
+    location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
     expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses')
     vendor = models.ForeignKey(Vendor, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
     amount = models.DecimalField(**MONEY)
@@ -1787,6 +1793,71 @@ class DocumentNumberPreference(models.Model):
         return f'{self.document_type} - {self.transaction_series} ({self.prefix}{self.next_number})'
 
 
+class DocumentNumberSeries(models.Model):
+    CUSTOMER_TYPES = [('', 'Any'), ('b2b', 'B2B'), ('b2c', 'B2C')]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='document_number_series')
+    name = models.CharField(max_length=120)
+    document_type = models.CharField(max_length=50)
+    customer_type = models.CharField(max_length=10, choices=CUSTOMER_TYPES, blank=True, default='')
+    branch = models.CharField(max_length=120, blank=True, default='')
+    location = models.CharField(max_length=120, blank=True, default='')
+    gstin = models.CharField(max_length=15, blank=True, default='')
+    prefix = models.CharField(max_length=100, blank=True, default='')
+    separator = models.CharField(max_length=5, default='/')
+    starting_number = models.PositiveIntegerField(default=1)
+    next_number = models.PositiveIntegerField(default=1)
+    padding = models.PositiveSmallIntegerField(default=5)
+    financial_year = models.CharField(max_length=10, blank=True, default='')
+    reset_annually = models.BooleanField(default=True)
+    active = models.BooleanField(default=True)
+    gst_compliant = models.BooleanField(default=False)
+    allow_manual_selection = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['document_type', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'document_type', 'name'], name='uniq_doc_num_series_name'),
+        ]
+
+    def __str__(self):
+        return f'{self.document_type} - {self.name}'
+
+
+class DocumentNumberSeriesCounter(models.Model):
+    series = models.ForeignKey(DocumentNumberSeries, on_delete=models.PROTECT, related_name='counters')
+    financial_year = models.CharField(max_length=10, default='*')
+    next_number = models.PositiveIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['series', 'financial_year'], name='uniq_doc_num_series_counter_fy'),
+        ]
+
+
+class DocumentNumberAllocation(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='document_number_allocations')
+    series = models.ForeignKey(DocumentNumberSeries, on_delete=models.PROTECT, related_name='allocations')
+    document_type = models.CharField(max_length=50)
+    number = models.CharField(max_length=60)
+    financial_year = models.CharField(max_length=10, blank=True, default='')
+    branch = models.CharField(max_length=120, blank=True, default='')
+    location = models.CharField(max_length=120, blank=True, default='')
+    gstin = models.CharField(max_length=15, blank=True, default='')
+    customer_type = models.CharField(max_length=10, blank=True, default='')
+    allocated_at = models.DateTimeField(auto_now_add=True)
+    cancelled = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['document_type', 'financial_year', 'number']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'document_type', 'number'], name='uniq_doc_num_allocation'),
+        ]
+
+
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
@@ -1811,4 +1882,3 @@ def sync_user_profile_normalized_email(sender, instance, created, **kwargs):
         if instance.profile.normalized_email != norm:
             instance.profile.normalized_email = norm
             instance.profile.save(update_fields=['normalized_email'])
-

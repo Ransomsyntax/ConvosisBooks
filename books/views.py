@@ -1,13 +1,59 @@
 import re
+import hashlib
+import logging
+from smtplib import SMTPException
+from django.conf import settings
+from django.contrib.auth.views import PasswordResetView
+from django.core.cache import cache
 from django.contrib.auth import authenticate, login as auth_login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import transaction, IntegrityError, OperationalError
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseServerError
+from django.http import HttpResponseRedirect, JsonResponse, HttpResponseNotFound, HttpResponseServerError
 from django.shortcuts import redirect, render
+from django.urls import reverse_lazy
 from django.views.decorators.csrf import ensure_csrf_cookie
 from .models import Organization, UserProfile
+
+logger = logging.getLogger(__name__)
+
+
+def _password_reset_rate_limited(request):
+    ip_address = request.META.get('REMOTE_ADDR', '')
+    cache_key = 'password-reset-request:' + hashlib.sha256(ip_address.encode('utf-8')).hexdigest()
+    if cache.add(cache_key, 1, timeout=3600):
+        return False
+    try:
+        return cache.incr(cache_key) > 5
+    except ValueError:
+        return not cache.add(cache_key, 1, timeout=3600)
+
+
+class RateLimitedPasswordResetView(PasswordResetView):
+    template_name = 'registration/password_reset_form.html'
+    email_template_name = 'registration/password_reset_email.html'
+    subject_template_name = 'registration/password_reset_subject.txt'
+    success_url = reverse_lazy('password_reset_done')
+    extra_email_context = {'site_name': 'CONVOSIS Books'}
+    rate_limited = False
+
+    def dispatch(self, request, *args, **kwargs):
+        self.rate_limited = request.method == 'POST' and _password_reset_rate_limited(request)
+        return super().dispatch(request, *args, **kwargs)
+
+    def form_valid(self, form):
+        if self.rate_limited:
+            return HttpResponseRedirect(self.get_success_url())
+        if not settings.DEBUG and not getattr(settings, 'PASSWORD_RESET_EMAIL_CONFIGURED', False):
+            logger.error('Password reset email is not configured; request was accepted without disclosing account status.')
+            return HttpResponseRedirect(self.get_success_url())
+        try:
+            return super().form_valid(form)
+        except (SMTPException, OSError):
+            logger.exception('Password reset email delivery failed.')
+            return HttpResponseRedirect(self.get_success_url())
+
 
 def login_view(request, tab=None):
     if request.user.is_authenticated:

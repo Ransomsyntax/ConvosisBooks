@@ -147,6 +147,8 @@ urlpatterns = [
     path('settings/payment-terms/', api.settings_payment_terms_view),
     path('settings/payment-terms/<int:term_id>/', api.settings_payment_terms_view),
     path('settings/number-series/', api.settings_number_series_view),
+    path('settings/number-series/configured/', api.settings_document_number_series_view),
+    path('settings/number-series/configured/<int:series_id>/', api.settings_document_number_series_view),
     path('settings/doc-number-preferences/', api.doc_number_preferences_view),
     path('document-number-preferences/', api.doc_number_preferences_view),
     path('settings/templates/', api.settings_templates_view),

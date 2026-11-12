@@ -13,7 +13,7 @@ from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
-from django.db.models import F, ProtectedError, Q, Sum
+from django.db.models import Count, F, Max, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.text import slugify
@@ -30,7 +30,7 @@ from .models import (
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
     CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
-    DeliveryChallanLine, DocumentFolder, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
+    DeliveryChallanLine, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
@@ -866,8 +866,12 @@ class Resource:
                 prev_row = self.row(obj)
             except Exception:
                 pass
+            submitted = body(request)
+            submitted_number = str(submitted.get('number') or '').strip()
+            if hasattr(obj, 'number') and getattr(obj, 'status', 'draft') != 'draft' and submitted_number and submitted_number != obj.number:
+                raise ApiError(400, 'Issued document numbers cannot be changed. Void the document and create a new one.')
             with transaction.atomic():
-                self.update(obj, body(request), request.user)
+                self.update(obj, submitted, request.user)
             new_obj = self.get_object(pk, request)
             new_row = {}
             try:
@@ -1867,6 +1871,7 @@ class DocResource(Resource):
              'customer_name': self.party(o).name if self.party(o) else '',
              'date': o.date, 'due_date': o.due_date, 'place_of_supply': o.place_of_supply,
              'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+             'branch': getattr(o, 'branch', '') or '',
              'transaction_series': getattr(o, 'transaction_series', 'Default Transaction Series') or 'Default Transaction Series',
              'order_number': getattr(o, 'order_number', '') or '', 'attachment_count': att_count,
              'salesperson': getattr(o, 'salesperson', '') or '',
@@ -1885,6 +1890,15 @@ class DocResource(Resource):
              'signed_by': getattr(o, 'signed_by', '') or '',
              'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
              'signature_title': getattr(o, 'signature_title', '') or ''}
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=o.organization, number=o.number
+        ).select_related('series').first()
+        if allocation:
+            r.update({
+                'numbering_series_id': allocation.series_id,
+                'numbering_series': allocation.series.name,
+                'numbering_financial_year': allocation.financial_year,
+            })
         if isinstance(o, RetainerInvoice):
             applied = q2(getattr(o, 'applied_sum', getattr(o, 'applied_amount', 0)))
             r['applied_amount'] = applied
@@ -2108,7 +2122,7 @@ class DocResource(Resource):
         head = {self.party_attr: party, 'date': date_, 'due_date': due, 'place_of_supply': pos,
                 'tax_pricing_type': tax_pricing, 'customer_type': cust_type,
                 'notes': c.text('notes', max_len=2000)}
-        for fld in ('location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
+        for fld in ('branch', 'location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
             if fld in data:
                 head[fld] = str(data.get(fld) or '').strip()
         if 'signature_data' in data:
@@ -2153,8 +2167,19 @@ class DocResource(Resource):
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
         num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (self.Model.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = services.next_document_number(pfx, org=user_org, date=head['date'])
+        series_configured = services.has_document_number_series(pfx, org=user_org)
+        if not num or num_exists or series_configured:
+            party = head.get(self.party_attr)
+            explicit_customer_type = str(data.get('customer_type') or '').strip().lower()
+            customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else (
+                'b2b' if getattr(party, 'gstin', '') else 'b2c'
+            )
+            num = services.next_document_number(
+                pfx, org=user_org, date=head['date'], customer_type=customer_type,
+                branch=head.get('branch', ''), location=head.get('location', ''),
+                gstin=data.get('gstin') or (getattr(user_org, 'gstin', '') if user_org else ''),
+                series_id=data.get('numbering_series_id'), user=user,
+            )
         else:
             import re
             m = re.search(r'(\d+)$', num)
@@ -2175,6 +2200,9 @@ class DocResource(Resource):
     def update(self, obj, data, user):
         user_org = get_user_org(user)
         services.check_transaction_lock(obj.date, org=user_org)
+        submitted_number = str(data.get('number') or '').strip()
+        if obj.status != 'draft' and submitted_number and submitted_number != obj.number:
+            raise ApiError(400, 'Issued document numbers cannot be changed. Void the document and create a new one.')
         is_inv = isinstance(obj, Invoice)
         is_ret = isinstance(obj, RetainerInvoice)
         if obj.status != 'draft':
@@ -2561,7 +2589,12 @@ class QuoteResource(DocResource):
                 organization=obj.organization,
                 customer=obj.customer,
                 source_quote=obj,
-                number=next_number('INV', org=obj.organization),
+                number=services.next_document_number(
+                    'INV', org=obj.organization, date=timezone.localdate(),
+                    customer_type=getattr(obj, 'customer_type', 'b2b'),
+                    branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+                ),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 place_of_supply=obj.place_of_supply,
@@ -2574,6 +2607,8 @@ class QuoteResource(DocResource):
                 igst=obj.igst,
                 total=obj.total,
                 order_number=obj.reference_number or obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes,
                 terms=obj.terms
             )
@@ -2611,7 +2646,12 @@ class QuoteResource(DocResource):
                 organization=obj.organization,
                 customer=obj.customer,
                 source_quote=obj,
-                number=next_number('SO', org=obj.organization),
+                number=services.next_document_number(
+                    'SO', org=obj.organization, date=timezone.localdate(),
+                    customer_type=getattr(obj, 'customer_type', 'b2b'),
+                    branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+                ),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=obj.customer.payment_terms or 30),
                 expected_shipment_date=obj.expiry_date or timezone.localdate() + timedelta(days=7),
@@ -2625,6 +2665,8 @@ class QuoteResource(DocResource):
                 igst=obj.igst,
                 total=obj.total,
                 order_number=obj.reference_number or obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes,
                 terms=obj.terms
             )
@@ -4205,6 +4247,8 @@ class SalesOrderResource(Resource):
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'party': o.customer.name,
             'date': o.date, 'due_date': o.due_date,
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'expected_shipment_date': o.expected_shipment_date,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
@@ -4285,14 +4329,21 @@ class SalesOrderResource(Resource):
         terms = c.text('terms', max_len=2000) or ''
         notes = c.text('notes', max_len=2000) or ''
         order_num = c.text('order_number', max_len=60) or ''
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         pos = c.text('place_of_supply', max_len=60) or cust.state or (user_org.state if user_org else Organization.get().state)
         status = c.choice('status', ['draft', 'confirmed'], default='confirmed')
         c.done()
 
         num = (data.get('number') or '').strip()
         num_exists = SalesOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (SalesOrder.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = next_number('SO', org=user_org)
+        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        if not num or num_exists or services.has_document_number_series('SO', org=user_org):
+            num = services.next_document_number(
+                'SO', org=user_org, date=dt, customer_type=cust_type,
+                branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
         else:
             import re
             m = re.match(r'^SO-(\d+)$', num)
@@ -4306,14 +4357,13 @@ class SalesOrderResource(Resource):
                     seq.save(update_fields=['value'])
 
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
-        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
         so = SalesOrder.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, due_date=due_dt,
             place_of_supply=pos,
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
-            order_number=order_num, status=status
+            order_number=order_num, status=status, branch=branch, location=location
         )
         lines = parse_lines(data.get('lines', []), org=user_org)
         intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
@@ -4357,6 +4407,10 @@ class SalesOrderResource(Resource):
             obj.notes = c.text('notes', max_len=2000) or ''
         if 'order_number' in data:
             obj.order_number = c.text('order_number', max_len=60) or ''
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         if 'status' in data and data['status']:
             obj.status = c.choice('status', ['draft', 'confirmed', 'closed', 'void'], default=obj.status)
         if 'tax_pricing_type' in data:
@@ -4398,6 +4452,7 @@ class SalesOrderResource(Resource):
         elif name == 'void':
             obj.status = 'void'
             obj.save(update_fields=['status'])
+            services.mark_document_number_cancelled(obj.organization, 'sales_orders', obj.number)
             services.log_audit(request.user, 'void', 'SalesOrder', obj.number, f"Voided sales order {obj.number}")
             return j({'status': obj.status})
         elif name == 'convert-to-invoice':
@@ -4411,7 +4466,12 @@ class SalesOrderResource(Resource):
                 customer=obj.customer,
                 source_sales_order=obj,
                 source_quote=obj.source_quote,
-                number=next_number('INV', org=obj.organization),
+                number=services.next_document_number(
+                    'INV', org=obj.organization, date=timezone.localdate(),
+                    customer_type=getattr(obj, 'customer_type', 'b2b'),
+                    branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+                ),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=getattr(obj.customer, 'payment_terms', 30) or 30),
                 place_of_supply=obj.place_of_supply,
@@ -4424,6 +4484,8 @@ class SalesOrderResource(Resource):
                 igst=obj.igst,
                 total=obj.total,
                 order_number=obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes,
                 terms=obj.terms
             )
@@ -4542,6 +4604,8 @@ class PurchaseOrderResource(Resource):
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
             'delivery_date': o.delivery_date, 'due_date': o.delivery_date or o.date, 'status': o.status,
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
@@ -4592,13 +4656,21 @@ class PurchaseOrderResource(Resource):
             raise ApiError(404, 'Vendor not found.')
         dt = c.date('date', required=True)
         deliv = c.date('delivery_date')
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         c.done()
 
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = PurchaseOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (PurchaseOrder.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = services.next_document_number('PO', org=user_org, date=dt)
+        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
+        if not num or num_exists or services.has_document_number_series('PO', org=user_org):
+            num = services.next_document_number(
+                'PO', org=user_org, date=dt,
+                customer_type='b2b' if cust_type == 'registered' else 'b2c',
+                branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
         else:
             import re
             m = re.search(r'(\d+)$', num)
@@ -4611,13 +4683,13 @@ class PurchaseOrderResource(Resource):
                     seq.value = val
                     seq.save(update_fields=['value'])
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
-        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         po = PurchaseOrder.objects.create(
             organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             delivery_date=deliv, status='draft',
-            tax_pricing_type=tax_pricing, customer_type=cust_type
+            tax_pricing_type=tax_pricing, customer_type=cust_type,
+            branch=branch, location=location
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(po.place_of_supply, Organization.get().state)
@@ -4651,6 +4723,10 @@ class PurchaseOrderResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'registered').strip().lower()
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
@@ -4683,7 +4759,12 @@ class PurchaseOrderResource(Resource):
                 organization=obj.organization,
                 vendor=obj.vendor,
                 source_purchase_order=obj,
-                number=next_number('BILL', org=obj.organization),
+                number=services.next_document_number(
+                    'BILL', org=obj.organization, date=timezone.localdate(),
+                    customer_type='b2b' if getattr(obj, 'customer_type', '') == 'registered' else 'b2c',
+                    branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+                ),
                 date=timezone.localdate(),
                 due_date=timezone.localdate() + timedelta(days=30),
                 place_of_supply=obj.place_of_supply,
@@ -4697,6 +4778,8 @@ class PurchaseOrderResource(Resource):
                 total=obj.total,
                 order_number=obj.number,
                 vendor_ref=obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes
             )
             for l in obj.lines.all():
@@ -4723,6 +4806,7 @@ class PurchaseOrderResource(Resource):
         elif name == 'void':
             obj.status = 'void'
             obj.save(update_fields=['status'])
+            services.mark_document_number_cancelled(obj.organization, 'purchase_orders', obj.number)
             services.log_audit(request.user, 'void', 'PurchaseOrder', obj.number, f"Voided purchase order {obj.number}")
             return j({'status': 'void'})
         raise ApiError(404, 'Unknown action.')
@@ -4766,6 +4850,8 @@ class ExpenseResource(Resource):
     def row(self, o):
         return {
             'id': o.pk, 'number': o.number, 'date': o.date,
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'expense_account_id': o.expense_account_id,
             'expense_account_name': o.expense_account.name if o.expense_account else '',
             'vendor_id': o.vendor_id, 'vendor_name': o.vendor.name if o.vendor else 'Direct Expense',
@@ -4777,6 +4863,8 @@ class ExpenseResource(Resource):
     def create(self, data, user):
         c = Cleaner(data)
         dt = c.date('date', required=True)
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         acc_id = c.integer('expense_account', required=True, lo=1)
         acc = Account.objects.filter(pk=acc_id).first()
         if not acc:
@@ -4800,11 +4888,15 @@ class ExpenseResource(Resource):
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = Expense.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else False
-        if not num or num_exists:
-            num = services.next_document_number('EXP', org=user_org, date=dt)
+        if not num or num_exists or services.has_document_number_series('EXP', org=user_org):
+            num = services.next_document_number(
+                'EXP', org=user_org, date=dt, branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
         exp = Expense.objects.create(
             organization=user_org,
-            number=num, date=dt, expense_account=acc, vendor=ven,
+            number=num, date=dt, branch=branch, location=location,
+            expense_account=acc, vendor=ven,
             amount=amt, gst_rate=gst_r, tax_amount=tax_amt, total=tot,
             paid_through=paid_via, reference=ref, notes=notes,
             created_by=user if getattr(user, 'pk', None) else None
@@ -4815,6 +4907,10 @@ class ExpenseResource(Resource):
 
     def update(self, obj, data, user):
         c = Cleaner(data)
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         if 'date' in data:
             obj.date = c.date('date', required=True)
         if 'expense_account' in data:
@@ -4971,21 +5067,28 @@ class CreditNoteResource(Resource):
             raise ApiError(404, 'Customer not found.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         c.done()
 
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = CreditNote.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (CreditNote.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = services.next_document_number('CN', org=user_org, date=dt)
-        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        if not num or num_exists or services.has_document_number_series('CN', org=user_org):
+            num = services.next_document_number(
+                'CN', org=user_org, date=dt, customer_type=cust_type,
+                branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         cn = CreditNote.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, due_date=dt,
             place_of_supply=cust.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open',
-            tax_pricing_type=tax_pricing, customer_type=cust_type
+            tax_pricing_type=tax_pricing, customer_type=cust_type,
+            branch=branch, location=location
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(cn.place_of_supply, Organization.get().state)
@@ -5020,6 +5123,10 @@ class CreditNoteResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
@@ -5158,21 +5265,29 @@ class VendorCreditResource(Resource):
             raise ApiError(404, 'Vendor not found.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         c.done()
 
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = VendorCredit.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (VendorCredit.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = services.next_document_number('DN', org=user_org, date=dt)
-        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         cust_type = str(data.get('customer_type') or 'registered').strip().lower()
+        if not num or num_exists or services.has_document_number_series('DN', org=user_org):
+            num = services.next_document_number(
+                'DN', org=user_org, date=dt,
+                customer_type='b2b' if cust_type == 'registered' else 'b2c',
+                branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
+        tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         vc = VendorCredit.objects.create(
             organization=user_org,
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open',
-            tax_pricing_type=tax_pricing, customer_type=cust_type
+            tax_pricing_type=tax_pricing, customer_type=cust_type,
+            branch=branch, location=location
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(vc.place_of_supply, Organization.get().state)
@@ -5207,6 +5322,10 @@ class VendorCreditResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'registered').strip().lower()
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
@@ -5283,6 +5402,7 @@ class RecurringInvoiceResource(Resource):
             'id': o.pk, 'profile_name': o.profile_name, 'name': o.profile_name, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'frequency': o.frequency,
             'frequency_label': freq_disp,
+            'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'order_number': getattr(o, 'order_number', '') or '',
             'salesperson': getattr(o, 'salesperson', '') or '',
@@ -5377,6 +5497,7 @@ class RecurringInvoiceResource(Resource):
         status_val = c.choice('status', self.STATUSES, default='active')
         payment_terms = c.integer('payment_terms', lo=0, default=getattr(cust, 'payment_terms', 30) or 30)
         auto_send = c.boolean('auto_send', default=False)
+        branch = c.text('branch', max_len=120)
         notes = c.text('notes', max_len=2000)
         terms = c.text('terms', max_len=2000)
         max_occ = c.integer('max_occurrences', lo=1)
@@ -5423,6 +5544,7 @@ class RecurringInvoiceResource(Resource):
             profile_name=pname,
             customer=cust,
             frequency=freq,
+            branch=branch,
             location=str(data.get('location') or 'HO Kottayam').strip(),
             order_number=str(data.get('order_number') or '').strip(),
             repeat_every=repeat_every,
@@ -5484,6 +5606,8 @@ class RecurringInvoiceResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = str(data.get('location') or 'HO Kottayam').strip()
         if 'order_number' in data:
@@ -5634,6 +5758,8 @@ class DeliveryChallanResource(Resource):
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'date': o.date,
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'challan_type': o.challan_type, 'status': o.status,
             'vehicle_number': o.vehicle_number, 'notes': o.notes,
             'signature_data': getattr(o, 'signature_data', '') or '',
@@ -5659,6 +5785,8 @@ class DeliveryChallanResource(Resource):
             raise ApiError(404, 'Customer not found.')
         dt = c.date('date', required=True)
         ctype = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default='other')
+        branch = c.text('branch', max_len=120)
+        location = c.text('location', max_len=120) or 'HO Kottayam'
         vnum = c.text('vehicle_number', max_len=50)
         if vnum:
             v_clean = re.sub(r'[\s\-]', '', vnum).upper()
@@ -5670,11 +5798,15 @@ class DeliveryChallanResource(Resource):
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = DeliveryChallan.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (DeliveryChallan.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists:
-            num = services.next_document_number('DC', org=user_org, date=dt)
+        if not num or num_exists or services.has_document_number_series('DC', org=user_org):
+            num = services.next_document_number(
+                'DC', org=user_org, date=dt, branch=branch, location=location,
+                gstin=getattr(user_org, 'gstin', ''), user=user
+            )
         dc = DeliveryChallan.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, challan_type=ctype,
+            branch=branch, location=location,
             vehicle_number=vnum, notes=notes, status='open'
         )
         for l in data.get('lines', []):
@@ -5697,6 +5829,10 @@ class DeliveryChallanResource(Resource):
             obj.customer = cust
         if 'date' in data:
             obj.date = c.date('date', required=True)
+        if 'branch' in data:
+            obj.branch = c.text('branch', max_len=120)
+        if 'location' in data:
+            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         if 'challan_type' in data:
             obj.challan_type = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default=obj.challan_type)
         if 'vehicle_number' in data:
@@ -5708,10 +5844,13 @@ class DeliveryChallanResource(Resource):
             obj.vehicle_number = vnum
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=1000)
+        previous_status = obj.status
         if 'status' in data:
             obj.status = c.choice('status', ['open', 'closed', 'cancelled'], default=obj.status)
         c.done()
         obj.save()
+        if obj.status == 'cancelled' and previous_status != 'cancelled':
+            services.mark_document_number_cancelled(obj.organization, 'delivery_challans', obj.number)
 
         if 'lines' in data:
             obj.lines.all().delete()
@@ -6822,19 +6961,59 @@ def lookup(request, name):
     elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
         pfx = org.quote_prefix or 'QTN' if org else 'QTN'
-        data = services.preview_document_number(pfx, org=org)
+        data = services.preview_document_number(
+            pfx, org=org, date=request.GET.get('date'),
+            customer_type=request.GET.get('customer_type'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            user=request.user,
+        )
     elif name in ('next-so-number', 'next-sales-order-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('SO', org=org)
+        data = services.preview_document_number(
+            'SO', org=org, date=request.GET.get('date'),
+            customer_type=request.GET.get('customer_type'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            user=request.user,
+        )
     elif name in ('next-invoice-number', 'next-inv-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('INV', org=org)
+        data = services.preview_document_number(
+            'INV', org=org, date=request.GET.get('date'),
+            customer_type=request.GET.get('customer_type'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            user=request.user,
+        )
     elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('RET', org=org)
+        data = services.preview_document_number(
+            'RET', org=org, date=request.GET.get('date'),
+            customer_type=request.GET.get('customer_type'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            user=request.user,
+        )
+    elif name in ('next-po-number', 'next-purchase-order-number'):
+        org = user_org or Organization.get()
+        supplier_type = request.GET.get('customer_type', '')
+        data = services.preview_document_number(
+            'PO', org=org, date=request.GET.get('date'),
+            customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'), user=request.user,
+        )
     elif name in ('next-bill-number',):
         org = user_org or Organization.get()
-        data = services.preview_document_number('BILL', org=org)
+        supplier_type = request.GET.get('customer_type', '')
+        data = services.preview_document_number(
+            'BILL', org=org, date=request.GET.get('date'),
+            customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
+            branch=request.GET.get('branch'),
+            location=request.GET.get('location'), gstin=request.GET.get('gstin'),
+            user=request.user,
+        )
     elif name in ('next-customer-code', 'next-cust-code', 'next-cust-number'):
         org = user_org or Organization.get()
         data = services.preview_document_number('CUST', org=org)
@@ -8759,7 +8938,7 @@ def settings_all_view(request):
         ('DC', 'Delivery Challan'), ('ITEM', 'Items'), ('ST', 'Stock Transfer'),
         ('EXP', 'Expense'), ('ADJ', 'Stock Adjustment')
     ]:
-        prev = services.preview_document_number(mod_key, org=org)
+        prev = services.preview_document_number(mod_key, org=org, use_configured_series=False)
         number_series.append({
             'module': mod_key,
             'label': label,
@@ -9344,7 +9523,9 @@ def settings_number_series_view(request):
     if request.method == 'GET':
         res = []
         for mod_key, label in modules:
-            prev = services.preview_document_number(mod_key, org=org)
+            prev = services.preview_document_number(
+                mod_key, org=org, use_configured_series=False
+            )
             res.append({
                 'module': mod_key,
                 'label': label,
@@ -9383,6 +9564,168 @@ def settings_number_series_view(request):
     prev = services.preview_document_number(mod_key, org=org)
     return j({'status': 'ok', 'module': mod_key, 'preview': prev})
 
+
+def _number_series_payload(series):
+    allocations = series.allocations.all()
+    by_dimension = lambda field: {
+        row[field] or '—': row['count']
+        for row in allocations.values(field).annotate(count=Count('id')).order_by(field)
+    }
+    return {
+        'id': series.pk,
+        'name': series.name,
+        'document_type': series.document_type,
+        'customer_type': series.customer_type,
+        'branch': series.branch,
+        'location': series.location,
+        'gstin': series.gstin,
+        'prefix': series.prefix,
+        'separator': series.separator,
+        'starting_number': series.starting_number,
+        'next_number': series.next_number,
+        'padding': series.padding,
+        'financial_year': series.financial_year,
+        'reset_annually': series.reset_annually,
+        'active': series.active,
+        'gst_compliant': series.gst_compliant,
+        'allow_manual_selection': series.allow_manual_selection,
+        'document_count': allocations.count(),
+        'cancelled_count': allocations.filter(cancelled=True).count(),
+        'by_branch': by_dimension('branch'),
+        'by_gstin': by_dimension('gstin'),
+        'by_customer_type': by_dimension('customer_type'),
+        'by_financial_year': by_dimension('financial_year'),
+    }
+
+
+@api_view
+def settings_document_number_series_view(request, series_id=None):
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+    document_types = {
+        'invoices', 'retainer_invoices', 'recurring_invoices', 'quotes',
+        'sales_orders', 'credit_notes', 'delivery_challans', 'bills',
+        'purchase_orders', 'expenses', 'debit_notes',
+    }
+
+    if request.method == 'GET':
+        queryset = DocumentNumberSeries.objects.filter(organization=org)
+        if series_id:
+            series = queryset.filter(pk=series_id).first()
+            if not series:
+                raise ApiError(404, 'Numbering series not found.')
+            return j(_number_series_payload(series))
+        return j({'series': [_number_series_payload(item) for item in queryset]})
+
+    if request.method == 'DELETE':
+        if not series_id:
+            raise ApiError(400, 'Numbering series ID is required.')
+        series = DocumentNumberSeries.objects.filter(organization=org, pk=series_id).first()
+        if not series:
+            raise ApiError(404, 'Numbering series not found.')
+        previous = _number_series_payload(series)
+        series.active = False
+        series.save(update_fields=['active', 'updated_at'])
+        services.log_audit(
+            request.user, 'deactivate', 'DocumentNumberSeries', series.pk,
+            f'Deactivated numbering series {series.name}.',
+            org=org, module='settings', submodule='number_series',
+            previous_values=previous, new_values=_number_series_payload(series),
+        )
+        return j({'status': 'ok', 'id': series.pk, 'active': False})
+
+    if request.method not in ('POST', 'PUT', 'PATCH'):
+        raise ApiError(405, 'Method not allowed.')
+
+    data = body(request)
+    document_type = str(data.get('document_type') or '').strip().lower().replace('-', '_')
+    if document_type not in document_types:
+        raise ApiError(400, 'Choose a supported document type.')
+    name = str(data.get('name') or '').strip()
+    if not name or len(name) > 120:
+        raise ApiError(400, 'Series name must be between 1 and 120 characters.')
+    customer_type = str(data.get('customer_type') or '').strip().lower()
+    if customer_type not in ('', 'b2b', 'b2c'):
+        raise ApiError(400, 'Customer type must be B2B, B2C, or Any.')
+    branch = str(data.get('branch') or '').strip()
+    location = str(data.get('location') or '').strip()
+    gstin = str(data.get('gstin') or '').strip().upper()
+    if len(branch) > 120 or len(location) > 120:
+        raise ApiError(400, 'Branch and location names cannot exceed 120 characters.')
+    if gstin and (len(gstin) != 15 or not re.fullmatch(r'[0-9A-Z]{15}', gstin)):
+        raise ApiError(400, 'GSTIN must contain 15 uppercase letters or digits.')
+    prefix = str(data.get('prefix') or '').strip()
+    if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
+        raise ApiError(400, 'Prefix must be 1-100 printable characters.')
+    separator = str(data.get('separator') or '/').strip()
+    if separator not in ('/', '-', '.', '_'):
+        raise ApiError(400, 'Choose slash, hyphen, period, or underscore as the separator.')
+    try:
+        starting_number = int(data.get('starting_number', 1))
+        next_number = int(data.get('next_number', starting_number))
+        padding = int(data.get('padding', 5))
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Starting number, next number, and padding must be whole numbers.')
+    if starting_number < 1 or next_number < 1 or padding < 1 or padding > 12:
+        raise ApiError(400, 'Number values must be positive and padding cannot exceed 12 digits.')
+    financial_year = str(data.get('financial_year') or '').strip()
+    if financial_year and not re.fullmatch(r'\d{2}-\d{2}', financial_year):
+        raise ApiError(400, 'Financial year must use YY-YY format or be left blank for all years.')
+    reset_annually = bool(data.get('reset_annually', True))
+    active = bool(data.get('active', True))
+    gst_compliant = bool(data.get('gst_compliant', False))
+    allow_manual_selection = bool(data.get('allow_manual_selection', False))
+
+    with transaction.atomic():
+        series = DocumentNumberSeries.objects.filter(organization=org, pk=series_id).first() if series_id else None
+        if series_id and not series:
+            raise ApiError(404, 'Numbering series not found.')
+        if series and series.document_type != document_type and series.allocations.exists():
+            raise ApiError(409, 'Document type cannot be changed after this series has allocated numbers.')
+        if series:
+            previous = _number_series_payload(series)
+            high_water_mark = series.counters.aggregate(value=Max('next_number'))['value'] or series.starting_number
+            allocated = series.allocations.exists()
+            if next_number < high_water_mark:
+                raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({high_water_mark}).')
+            if allocated and starting_number != series.starting_number:
+                raise ApiError(409, 'Starting number cannot be changed after this series has allocated numbers.')
+        else:
+            previous = {}
+            if next_number < starting_number:
+                raise ApiError(400, 'Next number cannot be lower than the starting number.')
+            if DocumentNumberSeries.objects.filter(organization=org, document_type=document_type, name=name).exists():
+                raise ApiError(409, 'A series with this name already exists for the selected document type.')
+
+        defaults = {
+            'name': name, 'document_type': document_type, 'customer_type': customer_type,
+            'branch': branch, 'location': location, 'gstin': gstin,
+            'prefix': prefix, 'separator': separator,
+            'starting_number': starting_number, 'next_number': next_number,
+            'padding': padding, 'financial_year': financial_year,
+            'reset_annually': reset_annually, 'active': active,
+            'gst_compliant': gst_compliant, 'allow_manual_selection': allow_manual_selection,
+        }
+        if series:
+            for field, value in defaults.items():
+                setattr(series, field, value)
+            series.save()
+        else:
+            try:
+                series = DocumentNumberSeries.objects.create(organization=org, **defaults)
+            except IntegrityError:
+                raise ApiError(409, 'A series with this name already exists for the selected document type.')
+
+        current = _number_series_payload(series)
+        services.log_audit(
+            request.user, 'update' if previous else 'create', 'DocumentNumberSeries', series.pk,
+            f"{'Updated' if previous else 'Created'} numbering series {series.name} for {document_type}.",
+            org=org, module='settings', submodule='number_series',
+            previous_values=previous, new_values=current,
+        )
+    return j({'status': 'ok', 'series': current}, status=200 if series_id else 201)
+
+
 @api_view
 def doc_number_preferences_view(request):
     """
@@ -9417,7 +9760,7 @@ def doc_number_preferences_view(request):
                 organization=org, document_type=clean_doc
             ).first()
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series)
+        prev = services.preview_document_number(clean_doc, org=org, series=series, use_configured_series=False)
         default_pfx = prev.get('prefix') or 'INV'
         if not default_pfx.endswith('/'):
             default_pfx = f"{default_pfx}/"
@@ -9468,7 +9811,7 @@ def doc_number_preferences_view(request):
         seq.value = max(0, next_number - 1)
         seq.save(update_fields=['value'])
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series)
+        prev = services.preview_document_number(clean_doc, org=org, series=series, use_configured_series=False)
 
         services.log_audit(
             request.user, 'update', 'DocumentNumberPreference', pref.pk,

@@ -2565,8 +2565,12 @@ async function renderDirectTaxesPage(container) {
 // =========================================================================
 
 async function renderNumberSeriesPage(container) {
-  const data = await api('/settings/number-series/');
+  const [data, configuredData] = await Promise.all([
+    api('/settings/number-series/'),
+    api('/settings/number-series/configured/')
+  ]);
   const series = data.series || [];
+  const configuredSeries = configuredData.series || [];
 
   container.innerHTML = `
     <div class="settings-page-header">
@@ -2605,7 +2609,161 @@ async function renderNumberSeriesPage(container) {
         </tbody>
       </table>
     </div>
+    <div class="settings-page-header" style="margin-top:24px;">
+      <div class="settings-page-header-left">
+        <h2>Independent Numbering Series</h2>
+        <p class="sub">Add customer-, branch-, location-, GSTIN-, or financial-year-specific sequences. Existing numbering preferences remain available above.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnAddDocumentNumberSeries">+ Add Series</button>
+      </div>
+    </div>
+    <div class="settings-table-card">
+      <table class="settings-data-table">
+        <thead>
+          <tr>
+            <th>NAME / DOCUMENT TYPE</th>
+            <th>CUSTOMER / BRANCH</th>
+            <th>LOCATION / GSTIN</th>
+            <th>PREFIX</th>
+            <th>NEXT / FY</th>
+            <th>STATUS</th>
+            <th>DOCUMENTS / VOID</th>
+            <th style="text-align:right;">ACTION</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${configuredSeries.map(s => `
+            <tr>
+              <td><b>${esc(s.name)}</b><div class="sub">${esc(s.document_type.replace(/_/g, ' '))}</div></td>
+              <td>${esc(s.customer_type || 'Any')}${s.branch ? `<div class="sub">${esc(s.branch)}</div>` : ''}</td>
+              <td>${esc(s.location || 'Any')}${s.gstin ? `<div class="sub">${esc(s.gstin)}</div>` : ''}</td>
+              <td><code>${esc(s.prefix + (s.separator || '') + '…')}</code></td>
+              <td>${s.next_number}<div class="sub">${esc(s.financial_year || (s.reset_annually ? 'Current / annual' : 'All years'))}</div></td>
+              <td>${s.active ? 'Active' : 'Inactive'}</td>
+              <td>${s.document_count} / ${s.cancelled_count}</td>
+              <td style="text-align:right;white-space:nowrap;">
+                <button type="button" class="btn-table-action" data-edit-document-number-series="${s.id}">Configure</button>
+                ${s.active ? `<button type="button" class="btn-table-action" data-deactivate-document-number-series="${s.id}">Deactivate</button>` : ''}
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="8" class="sub" style="text-align:center;padding:18px;">No independent numbering series configured. Existing numbering settings remain active.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
   `;
+
+  container.querySelector('#btnAddDocumentNumberSeries')?.addEventListener('click', () => openDocumentNumberSeriesModal());
+  container.querySelectorAll('[data-edit-document-number-series]').forEach(button => {
+    button.addEventListener('click', () => {
+      const selected = configuredSeries.find(item => String(item.id) === button.dataset.editDocumentNumberSeries);
+      if (selected) openDocumentNumberSeriesModal(selected);
+    });
+  });
+  container.querySelectorAll('[data-deactivate-document-number-series]').forEach(button => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Deactivate this numbering series? Existing document numbers will remain unchanged.')) return;
+      try {
+        await api(`/settings/number-series/configured/${button.dataset.deactivateDocumentNumberSeries}/`, { method: 'DELETE' });
+        toast('Numbering series deactivated.', 'success');
+        await renderNumberSeriesPage(container);
+      } catch (err) {
+        toast(err.message || 'Failed to deactivate numbering series.', 'error');
+      }
+    });
+  });
+}
+
+function openDocumentNumberSeriesModal(series = null) {
+  const item = series || {};
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:720px;">
+      <div class="modal-header">
+        <h3>${series ? 'Configure' : 'Add'} Numbering Series</h3>
+        <button type="button" class="modal-close-btn" data-close-series>✕</button>
+      </div>
+      <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <label class="form-group">Series Name*<input class="form-control" id="nsName" maxlength="120" value="${esc(item.name || '')}" required></label>
+        <label class="form-group">Document Type*
+          <select class="form-control" id="nsDocumentType" ${series ? 'disabled' : ''}>
+            ${[
+              ['invoices','Invoice'],['retainer_invoices','Retainer Invoice'],['recurring_invoices','Recurring Invoice'],
+              ['quotes','Quote'],['sales_orders','Sales Order'],['credit_notes','Credit Note'],
+              ['delivery_challans','Delivery Challan'],['bills','Bill'],['purchase_orders','Purchase Order'],
+              ['expenses','Expense'],['debit_notes','Debit Note']
+            ].map(([value,label]) => `<option value="${value}" ${item.document_type === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="form-group">Customer Type
+          <select class="form-control" id="nsCustomerType">
+            <option value="" ${!item.customer_type ? 'selected' : ''}>Any</option>
+            <option value="b2b" ${item.customer_type === 'b2b' ? 'selected' : ''}>B2B</option>
+            <option value="b2c" ${item.customer_type === 'b2c' ? 'selected' : ''}>B2C</option>
+          </select>
+        </label>
+        <label class="form-group">Branch<input class="form-control" id="nsBranch" maxlength="120" value="${esc(item.branch || '')}"></label>
+        <label class="form-group">Business Location<input class="form-control" id="nsLocation" maxlength="120" value="${esc(item.location || '')}"></label>
+        <label class="form-group">GSTIN<input class="form-control" id="nsGstin" maxlength="15" value="${esc(item.gstin || '')}"></label>
+        <label class="form-group">Prefix / Template*
+          <input class="form-control" id="nsPrefix" maxlength="100" value="${esc(item.prefix || '')}" placeholder="\${ORG}/INV/\${FY}">
+        </label>
+        <label class="form-group">Separator
+          <select class="form-control" id="nsSeparator">${['/','-','.','_'].map(value => `<option value="${value}" ${(item.separator || '/') === value ? 'selected' : ''}>${value === '/' ? 'Slash /' : value}</option>`).join('')}</select>
+        </label>
+        <label class="form-group">Starting Number<input class="form-control" id="nsStartingNumber" type="number" min="1" value="${item.starting_number || 1}"></label>
+        <label class="form-group">Next Number<input class="form-control" id="nsNextNumber" type="number" min="1" value="${item.next_number || 1}"></label>
+        <label class="form-group">Number Padding<input class="form-control" id="nsPadding" type="number" min="1" max="12" value="${item.padding || 5}"></label>
+        <label class="form-group">Financial Year (YY-YY; blank = all)<input class="form-control" id="nsFinancialYear" maxlength="5" value="${esc(item.financial_year || '')}" placeholder="26-27"></label>
+        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsResetAnnually" type="checkbox" ${item.reset_annually !== false ? 'checked' : ''}>Reset sequence annually</label>
+        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsActive" type="checkbox" ${item.active !== false ? 'checked' : ''}>Active</label>
+        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsGstCompliant" type="checkbox" ${item.gst_compliant ? 'checked' : ''}>Enforce GST invoice serial format (max 16 characters)</label>
+        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsManualSelection" type="checkbox" ${item.allow_manual_selection ? 'checked' : ''}>Permit admin-only manual series selection</label>
+        ${series ? `<div class="sub" style="grid-column:1/-1;">Documents allocated: ${item.document_count}; cancelled: ${item.cancelled_count}. Existing numbers and historical sequence counters are retained.</div>` : ''}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" data-close-series>Cancel</button>
+        <button type="button" class="btn-primary" id="btnSaveDocumentNumberSeries">Save Series</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelectorAll('[data-close-series]').forEach(button => button.addEventListener('click', () => modal.remove()));
+  modal.querySelector('#btnSaveDocumentNumberSeries').addEventListener('click', async event => {
+    const saveButton = event.currentTarget;
+    const payload = {
+      name: modal.querySelector('#nsName').value.trim(),
+      document_type: modal.querySelector('#nsDocumentType').value,
+      customer_type: modal.querySelector('#nsCustomerType').value,
+      branch: modal.querySelector('#nsBranch').value.trim(),
+      location: modal.querySelector('#nsLocation').value.trim(),
+      gstin: modal.querySelector('#nsGstin').value.trim().toUpperCase(),
+      prefix: modal.querySelector('#nsPrefix').value.trim(),
+      separator: modal.querySelector('#nsSeparator').value,
+      starting_number: Number(modal.querySelector('#nsStartingNumber').value),
+      next_number: Number(modal.querySelector('#nsNextNumber').value),
+      padding: Number(modal.querySelector('#nsPadding').value),
+      financial_year: modal.querySelector('#nsFinancialYear').value.trim(),
+      reset_annually: modal.querySelector('#nsResetAnnually').checked,
+      active: modal.querySelector('#nsActive').checked,
+      gst_compliant: modal.querySelector('#nsGstCompliant').checked,
+      allow_manual_selection: modal.querySelector('#nsManualSelection').checked
+    };
+    try {
+      saveButton.disabled = true;
+      await api(series ? `/settings/number-series/configured/${series.id}/` : '/settings/number-series/configured/', {
+        method: series ? 'PUT' : 'POST',
+        body: JSON.stringify(payload)
+      });
+      modal.remove();
+      toast('Numbering series saved.', 'success');
+      await renderNumberSeriesPage($('#settingsMainPane'));
+    } catch (err) {
+      toast(err.message || 'Failed to save numbering series.', 'error');
+      saveButton.disabled = false;
+    }
+  });
 }
 
 function openEditNumberSeriesModal(moduleKey, moduleLabel, currentPrefix, currentSeq) {
@@ -3833,4 +3991,3 @@ window.openInviteUserModal = openInviteUserModal;
 window.openAddPaymentTermModal = openAddPaymentTermModal;
 window.openAddCurrencyModal = openAddCurrencyModal;
 window.getSettingsPageRenderer = getSettingsPageRenderer;
-

@@ -11,14 +11,17 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core import mail
+from django.core.cache import cache
 from django.test import Client, TestCase
+from django.test.utils import override_settings
 from django.utils import timezone
 
 from books import services
 from books.services import advance_recurring_date
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
-    Bill, Customer, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
+    Bill, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
     UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project
 )
@@ -2128,3 +2131,205 @@ class TestBooksSubscriptionAndBilling(TestCase):
         res1 = self.client.get('/api/subscription/summary/')
         self.assertEqual(res1.status_code, 200)
         self.assertNotEqual(res1.json()['usage']['records']['limit'], 5000000)
+
+
+class TestConfiguredDocumentNumberSeries(BaseAccountingTestCase):
+    def test_preview_falls_back_until_required_series_context_is_available(self):
+        from books.models import DocumentNumberSeries
+
+        DocumentNumberSeries.objects.create(
+            organization=self.org, name='Main Branch Invoice',
+            document_type='invoices', branch='Main', prefix='MAIN-%FY%',
+            separator='-', starting_number=12, next_number=12, padding=4
+        )
+
+        self.client.force_login(self.admin_user)
+        context_free = self.client.get('/api/lookup/next-invoice-number/')
+        self.assertEqual(context_free.status_code, 200)
+        self.assertNotIn('MAIN-', context_free.json()['next_number'])
+
+        contextual = self.client.get(
+            '/api/lookup/next-invoice-number/?branch=Main&customer_type=b2b'
+        )
+        self.assertEqual(contextual.status_code, 200)
+        self.assertTrue(contextual.json()['next_number'].startswith('MAIN-'))
+        self.assertTrue(contextual.json()['next_number'].endswith('0012'))
+
+    def test_series_selection_counters_and_allocation_audit(self):
+        from books.models import DocumentNumberSeries
+
+        b2b = DocumentNumberSeries.objects.create(
+            organization=self.org, name='B2B Main', document_type='invoices',
+            customer_type='b2b', branch='Main', prefix='INV-%FY%',
+            separator='-', starting_number=7, next_number=7, padding=4
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org, name='B2C Main', document_type='invoices',
+            customer_type='b2c', branch='Main', prefix='B2C-%FY%',
+            separator='-', starting_number=1, next_number=1, padding=4
+        )
+
+        first = services.next_document_number(
+            'INV', org=self.org, date=date(2026, 11, 12),
+            customer_type='b2b', branch='Main', user=self.admin_user
+        )
+        second = services.next_document_number(
+            'INV', org=self.org, date=date(2026, 11, 12),
+            customer_type='b2b', branch='Main', user=self.admin_user
+        )
+        other_class = services.next_document_number(
+            'INV', org=self.org, date=date(2026, 11, 12),
+            customer_type='b2c', branch='Main', user=self.admin_user
+        )
+
+        self.assertEqual(first, 'INV-26-27-0007')
+        self.assertEqual(second, 'INV-26-27-0008')
+        self.assertEqual(other_class, 'B2C-26-27-0001')
+        self.assertEqual(
+            DocumentNumberAllocation.objects.get(number=first).series_id,
+            b2b.pk
+        )
+        self.assertEqual(b2b.allocations.count(), 2)
+
+    def test_series_selection_is_organization_scoped(self):
+        from books.models import DocumentNumberSeries
+
+        other_org = Organization.objects.create(name='Other Numbering Org')
+        DocumentNumberSeries.objects.create(
+            organization=other_org, name='Other Org Invoice',
+            document_type='invoices', prefix='OTHER', separator='-'
+        )
+        generated = services.next_document_number(
+            'INV', org=self.org, date=date(2026, 11, 12),
+            user=self.admin_user
+        )
+
+        self.assertTrue(generated.startswith(self.org.get_code() + '/INV/'))
+        self.assertFalse(DocumentNumberAllocation.objects.filter(organization=other_org).exists())
+
+    def test_voiding_preserves_the_allocation_as_cancelled(self):
+        from books.models import DocumentNumberSeries
+
+        DocumentNumberSeries.objects.create(
+            organization=self.org, name='Invoice Audit',
+            document_type='invoices', prefix='INV-AUDIT', separator='-'
+        )
+        generated = services.next_document_number(
+            'INV', org=self.org, date=date(2026, 11, 12),
+            user=self.admin_user
+        )
+
+        updated = services.mark_document_number_cancelled(
+            self.org, 'invoices', generated
+        )
+
+        allocation = DocumentNumberAllocation.objects.get(number=generated)
+        self.assertEqual(updated, 1)
+        self.assertTrue(allocation.cancelled)
+
+    def test_series_settings_are_tenant_isolated(self):
+        from books.models import DocumentNumberSeries
+
+        own = DocumentNumberSeries.objects.create(
+            organization=self.org, name='Own', document_type='invoices',
+            prefix='OWN'
+        )
+        other_org = Organization.objects.create(name='Other Settings Org')
+        DocumentNumberSeries.objects.create(
+            organization=other_org, name='Private', document_type='invoices',
+            prefix='PRIVATE'
+        )
+        self.client.force_login(self.admin_user)
+
+        response = self.client.get('/api/settings/number-series/configured/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item['id'] for item in response.json()['series']], [own.pk])
+
+    def test_legacy_number_series_settings_accept_specific_profiles(self):
+        from books.models import DocumentNumberSeries
+
+        DocumentNumberSeries.objects.create(
+            organization=self.org, name='North Branch',
+            document_type='invoices', branch='North', prefix='NORTH'
+        )
+        self.client.force_login(self.admin_user)
+
+        response = self.client.get('/api/settings/number-series/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['series'])
+
+
+class TestPasswordResetWorkflow(BaseAccountingTestCase):
+    @override_settings(
+        DEBUG=False,
+        PASSWORD_RESET_EMAIL_CONFIGURED=True,
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    )
+    def test_password_reset_email_link_is_single_use_and_resets_password(self):
+        import re
+
+        cache.clear()
+        self.admin_user.email = 'reset-user@example.com'
+        self.admin_user.save(update_fields=['email'])
+        response = self.client.post(
+            '/accounts/password_reset/',
+            {'email': self.admin_user.email},
+            REMOTE_ADDR='192.0.2.10',
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        link = re.search(r'/accounts/reset/[^/\s]+/[^/\s]+/', mail.outbox[0].body)
+        self.assertIsNotNone(link)
+        confirm = self.client.get(link.group(0))
+        self.assertEqual(confirm.status_code, 302)
+        set_password_url = confirm.url
+        self.client.get(set_password_url)
+        changed = self.client.post(set_password_url, {
+            'new_password1': 'NewSecurePassword123!',
+            'new_password2': 'NewSecurePassword123!',
+        })
+
+        self.assertEqual(changed.status_code, 302)
+        self.admin_user.refresh_from_db()
+        self.assertTrue(self.admin_user.check_password('NewSecurePassword123!'))
+        reused = self.client.get(link.group(0))
+        self.assertEqual(reused.status_code, 200)
+        self.assertContains(reused, 'invalid or has expired')
+
+    @override_settings(
+        DEBUG=False,
+        PASSWORD_RESET_EMAIL_CONFIGURED=True,
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    )
+    def test_reset_request_is_generic_and_rate_limited_per_client_address(self):
+        cache.clear()
+        self.admin_user.email = 'reset-user@example.com'
+        self.admin_user.save(update_fields=['email'])
+        existing = self.client.post(
+            '/accounts/password_reset/',
+            {'email': self.admin_user.email},
+            REMOTE_ADDR='192.0.2.11',
+        )
+        missing = self.client.post(
+            '/accounts/password_reset/',
+            {'email': 'nobody@example.com'},
+            REMOTE_ADDR='192.0.2.12',
+        )
+
+        self.assertEqual(existing.status_code, missing.status_code)
+        self.assertEqual(existing.url, missing.url)
+        self.assertEqual(len(mail.outbox), 1)
+
+        statuses = []
+        for _ in range(6):
+            limited = self.client.post(
+                '/accounts/password_reset/',
+                {'email': self.admin_user.email},
+                REMOTE_ADDR='192.0.2.13',
+            )
+            statuses.append(limited.status_code)
+        self.assertEqual(statuses, [302] * 6)
+        self.assertEqual(len(mail.outbox), 6)

@@ -1,5 +1,55 @@
 'use strict';
 
+function bindDocumentNumberPreview(form, options) {
+  const numberInput = form.querySelector(options.number);
+  if (!numberInput) return;
+
+  let latestRequest = 0;
+  let lastSuggestedNumber = numberInput.value;
+  const refresh = async () => {
+    const requestId = ++latestRequest;
+    const params = new URLSearchParams();
+    [
+      ['date', options.date],
+      ['customer_type', options.customerType],
+      ['branch', options.branch],
+      ['location', options.location]
+    ].forEach(([name, selector]) => {
+      const value = selector ? form.querySelector(selector)?.value : '';
+      if (value) params.set(name, value);
+    });
+    const gstin = options.getGstin ? options.getGstin() : '';
+    if (gstin) params.set('gstin', gstin);
+
+    try {
+      const preview = await api(`lookup/${options.endpoint}/?${params.toString()}`);
+      if (requestId !== latestRequest || !preview || !preview.next_number) return;
+      if (!numberInput.value || numberInput.value === lastSuggestedNumber) {
+        numberInput.value = preview.next_number;
+        lastSuggestedNumber = preview.next_number;
+      }
+    } catch (error) {
+      if (requestId === latestRequest) {
+        toast(`Could not refresh document number preview: ${error.message}`, 'err');
+      }
+    }
+  };
+
+  [options.date, options.customerType, options.location, options.party]
+    .filter(Boolean)
+    .forEach(selector => {
+      form.querySelector(selector)?.addEventListener('change', refresh);
+    });
+  if (options.branch) {
+    let branchTimer;
+    form.querySelector(options.branch)?.addEventListener('input', () => {
+      clearTimeout(branchTimer);
+      branchTimer = setTimeout(refresh, 250);
+    });
+  }
+  void refresh();
+}
+
 const Modal = (() => {
   const stack = [];
 
@@ -4519,6 +4569,8 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
                 help: `GSTIN: <span id="doc-party-gstin" style="font-weight:600;">${esc(initialGstin)}</span>`
               }),
               fld({ name: 'place_of_supply', label: 'Place of supply', type: 'select', opts: STATES, value: r.place_of_supply || APP.org.state, help: 'Same state as your organization → CGST + SGST; otherwise IGST.' }),
+              fld({ name: 'branch', label: 'Branch', value: r.branch || '', ph: 'Optional branch' }),
+              fld({ name: 'location', label: 'Location', value: r.location || 'HO Kottayam' }),
               fld({ name: 'date', label: 'Date', type: 'date', req: 1, value: r.date }),
               fld({ name: 'due_date', label: 'Due date', type: 'date', value: due0 }),
               fld({ name: 'order_number', label: 'Order Number', value: r.order_number || '', ph: 'e.g. 653248543' }),
@@ -6227,13 +6279,16 @@ async function expenseForm(id) {
   const expAccounts = accounts.filter(a => a.type === 'expense');
   const o = id ? await api(`expenses/${id}/`) : {
     date: APP.today, expense_account: expAccounts[0]?.id || '', vendor: '',
-    amount: '', gst_rate: '18', paid_through: 'Bank Account', reference: '', notes: ''
+    amount: '', gst_rate: '18', paid_through: 'Bank Account', reference: '', notes: '',
+    branch: '', location: 'HO Kottayam'
   };
 
   formModal({
     title: id ? 'Edit Expense' : 'Record Operating Expense',
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date })}
+      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', ph: 'Optional branch' })}
+      ${fld({ name: 'location', label: 'Location', value: o.location || 'HO Kottayam' })}
       ${fld({ name: 'expense_account', label: 'Expense Account', type: 'select', opts: expAccounts.map(a => [a.id, `${a.code} - ${a.name}`]), value: o.expense_account || o.expense_account_id, req: true })}
       ${fld({ name: 'vendor', label: 'Vendor / Paid To', type: 'select', opts: [['', 'Direct Expense (No Vendor)'], ...vendors.map(v => [v.id, v.name])], value: o.vendor || o.vendor_id })}
       ${fld({ name: 'amount', label: 'Taxable Amount (₹)', req: true, type: 'number', value: o.amount, ph: '0.00' })}
@@ -7396,12 +7451,14 @@ async function challanModal(id) {
     api('lookup/customers/').catch(() => []),
     id ? api(`delivery-challans/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
-  const o = rec || { customer_id: '', date: APP.today, challan_type: 'other', vehicle_number: '', notes: '' };
+  const o = rec || { customer_id: '', date: APP.today, challan_type: 'other', vehicle_number: '', notes: '', branch: '', location: 'HO Kottayam' };
   formModal({
     title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
     body: `<div class="g">
       ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: [['', 'Select Customer…'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || '', col: 's6' })}
       ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
+      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', ph: 'Optional branch', col: 's6' })}
+      ${fld({ name: 'location', label: 'Location', value: o.location || 'HO Kottayam', col: 's6' })}
       ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', opts: [['job_work', 'Job Work'], ['supply_on_approval', 'Supply on Approval'], ['other', 'Other Delivery']], value: o.challan_type, col: 's6' })}
       ${fld({ name: 'vehicle_number', label: 'Vehicle Number', value: o.vehicle_number || '', col: 's6', ph: 'KL-05-AB-1234' })}
       ${fld({ name: 'notes', label: 'Notes / Transportation Memo', type: 'textarea', value: o.notes || '', col: 's12' })}
@@ -7670,6 +7727,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   ]);
 
   const rLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const rBranch = rec ? (rec.branch || '') : '';
   const rOrderNum = rec ? (rec.order_number || '') : '';
   const rSalesperson = rec ? (rec.salesperson || '') : '';
   const rProject = rec ? (rec.project_name || '') : '';
@@ -7783,6 +7841,12 @@ ${renderStockQuantityCell(l, items, whList)}
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
             <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-8" style="max-width:440px;width:100%;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Branch / Location</label>
+            <input class="in" id="rec-branch" name="branch" maxlength="120" value="${esc(rBranch)}" placeholder="Optional branch" style="width:210px;">
+            <input class="in" id="rec-location" name="location" maxlength="120" value="${esc(rLocation)}" placeholder="Location" style="width:210px;">
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
@@ -8036,6 +8100,8 @@ ${renderStockQuantityCell(l, items, whList)}
       profile_name: profName,
       name: profName,
       order_number: ($('#rec-order-number', form)?.value || '').trim(),
+      branch: ($('#rec-branch', form)?.value || '').trim(),
+      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
       frequency: $('#rec-frequency', form)?.value || 'monthly',
       repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
       start_date: sd,
@@ -8357,6 +8423,8 @@ ${renderStockQuantityCell(l, items, whList)}
       profile_name: pName,
       customer: Number(custId),
       frequency: $('#rec-frequency', form).value,
+      branch: ($('#rec-branch', form)?.value || '').trim(),
+      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
       tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#rec-customer-type', form)?.value || 'b2b',
       start_date: sDateVal,
@@ -9114,6 +9182,7 @@ async function quoteForm(id, targetEl, onDone) {
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const qBranch = rec ? (rec.branch || '') : '';
   const qSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const qOrderNum = rec ? (rec.order_number || '') : (rec ? (rec.reference_number || '') : '');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -9224,6 +9293,7 @@ ${renderStockQuantityCell(l, items, whList)}
               <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(qBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -9480,6 +9550,7 @@ ${renderStockQuantityCell(l, items, whList)}
       kind: 'quotes',
       series: $('#q-series', form)?.value || 'Default Transaction Series',
       location: $('#q-location', form)?.value || 'HO Kottayam',
+      branch: $('#q-branch', form)?.value || '',
       onSave: (pfx, next) => {
         if (next) $('#q-number', form).value = next;
       }
@@ -9848,6 +9919,7 @@ ${renderStockQuantityCell(l, items, whList)}
       reference_number: ($('#q-reference', form)?.value || '').trim(),
       order_number: ($('#q-order-number', form)?.value || $('#q-reference', form)?.value || '').trim(),
       location: $('#q-location', form)?.value || 'HO Kottayam',
+      branch: $('#q-branch', form)?.value || '',
       transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expiry_date: expVal,
@@ -9954,6 +10026,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const soLocation = rec ? (rec.location || 'HO Kottayam') : (srcQuote ? (srcQuote.location || 'HO Kottayam') : 'HO Kottayam');
+  const soBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : '');
   const soSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (srcQuote ? (srcQuote.transaction_series || 'Default Transaction Series') : 'Default Transaction Series');
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
@@ -10061,6 +10134,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(soBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -10255,6 +10329,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'sales-orders',
       series: $('#so-series', form)?.value || 'Default Transaction Series',
       location: $('#so-location', form)?.value || 'HO Kottayam',
+      branch: $('#so-branch', form)?.value || '',
       onSave: (pfx, next) => {
         if (next) $('#so-number', form).value = next;
       }
@@ -10527,6 +10602,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       number: numVal,
       order_number: ($('#so-order-number', form)?.value || $('#so-reference', form)?.value || '').trim(),
       location: $('#so-location', form)?.value || 'HO Kottayam',
+      branch: $('#so-branch', form)?.value || '',
       transaction_series: $('#so-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
@@ -10607,6 +10683,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const billLocation = rec ? (rec.location || 'HO Kottayam') : (srcPO ? (srcPO.location || 'HO Kottayam') : 'HO Kottayam');
+  const billBranch = rec ? (rec.branch || '') : (srcPO ? (srcPO.branch || '') : '');
   const billSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const billAccountsPay = rec ? (rec.accounts_payable || 'Accounts Payable') : 'Accounts Payable';
   const billProject = rec ? (rec.project_name || '') : '';
@@ -10713,6 +10790,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
               <div id="bill-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Destination of Supply: ${esc(billPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="bill-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(billBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -10913,6 +10991,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'bills',
       series: $('#bill-series', form)?.value || 'Default Transaction Series',
       location: $('#bill-location', form)?.value || 'HO Kottayam',
+      branch: $('#bill-branch', form)?.value || '',
       onSave: (pfx, next) => {
         if (next) $('#bill-number', form).value = next;
       }
@@ -11186,6 +11265,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       order_number: $('#bill-order-number', form).value.trim(),
       vendor_ref: $('#bill-order-number', form).value.trim(),
       location: $('#bill-location', form)?.value || 'HO Kottayam',
+      branch: $('#bill-branch', form)?.value || '',
       transaction_series: $('#bill-series', form)?.value || 'Default Transaction Series',
       accounts_payable: $('#bill-accounts-payable', form)?.value || 'Accounts Payable',
       project_name: $('#bill-project', form)?.value || '',
@@ -11235,6 +11315,18 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-bill-save-draft', target).addEventListener('click', () => saveBill(true));
   $('#btn-bill-save-approve', target).addEventListener('click', () => saveBill(false));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-bill-number',
+      number: '#bill-number',
+      date: '#bill-date',
+      customerType: '#bill-customer-type',
+      branch: '#bill-branch',
+      location: '#bill-location',
+      party: '#bill-vendor',
+      getGstin: () => parties.find(p => String(p.id) === String($('#bill-vendor', form)?.value))?.gstin || ''
+    });
+  }
   calcBill();
 }
 window.billForm = billForm;
@@ -11257,6 +11349,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const poLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const poBranch = rec ? (rec.branch || '') : '';
   const poSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const poProject = rec ? (rec.project_name || '') : '';
   const poNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'PO-000001');
@@ -11362,6 +11455,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
               <div id="po-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Destination of Supply: ${esc(poPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="po-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(poBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -11543,6 +11637,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'purchase-orders',
       series: $('#po-series', form)?.value || 'Default Transaction Series',
       location: $('#po-location', form)?.value || 'HO Kottayam',
+      branch: $('#po-branch', form)?.value || '',
       onSave: (pfx, next) => {
         if (next) $('#po-number', form).value = next;
       }
@@ -11815,6 +11910,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       number: numVal,
       order_number: $('#po-reference', form).value.trim(),
       location: $('#po-location', form)?.value || 'HO Kottayam',
+      branch: $('#po-branch', form)?.value || '',
       transaction_series: $('#po-series', form)?.value || 'Default Transaction Series',
       project_name: $('#po-project', form)?.value || '',
       date: dt,
@@ -11862,6 +11958,18 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-po-save-draft', target).addEventListener('click', () => savePo(true));
   $('#btn-po-save-send', target).addEventListener('click', () => savePo(false));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-po-number',
+      number: '#po-number',
+      date: '#po-date',
+      customerType: '#po-customer-type',
+      branch: '#po-branch',
+      location: '#po-location',
+      party: '#po-vendor',
+      getGstin: () => parties.find(p => String(p.id) === String($('#po-vendor', form)?.value))?.gstin || ''
+    });
+  }
   calcPo();
 }
 window.purchaseOrderForm = purchaseOrderForm;
@@ -11905,6 +12013,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const invSalesperson = rec ? (rec.salesperson || '') : (srcQuote ? (srcQuote.salesperson || '') : '');
   const invSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
   const invPlaceOfSupply = rec ? (rec.place_of_supply || '') : (srcQuote ? (srcQuote.place_of_supply || '') : (srcSO ? (srcSO.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala')));
+  const invBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : (srcSO ? (srcSO.branch || '') : ''));
   const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (srcQuote ? srcQuote.notes : (srcSO ? srcSO.notes : 'Thanks for your business.'));
   const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : (srcQuote ? srcQuote.terms : (srcSO ? srcSO.terms : ''));
   const invTaxType = rec ? (rec.tax_type || 'tds') : (srcQuote ? (srcQuote.tax_type || 'tds') : 'tds');
@@ -12005,6 +12114,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               <div id="inv-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Source of Supply: ${esc(invPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="inv-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(invBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -12280,6 +12390,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'invoices',
       series: $('#inv-series', form)?.value || 'Default Transaction Series',
       location: $('#inv-location', form)?.value || 'HO Kottayam',
+      branch: $('#inv-branch', form)?.value || '',
       onSave: (res) => {
         if (res && res.preview_formatted) {
           $('#inv-number', form).value = res.preview_formatted;
@@ -12668,6 +12779,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       customer_id: custId,
       number: numVal,
       location: $('#inv-location', form)?.value || 'HO Kottayam',
+      branch: $('#inv-branch', form)?.value || '',
       transaction_series: $('#inv-series', form)?.value || 'Default Transaction Series',
       accounts_receivable: $('#inv-accounts-receivable', form)?.value || 'Accounts Receivable',
       order_number: $('#inv-order-number', form).value.trim(),
@@ -12742,6 +12854,18 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-inv-save-draft', target).addEventListener('click', () => saveInvoice(true));
   $('#btn-inv-save-send', target).addEventListener('click', () => saveInvoice(false));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-invoice-number',
+      number: '#inv-number',
+      date: '#inv-date',
+      customerType: '#inv-customer-type',
+      branch: '#inv-branch',
+      location: '#inv-location',
+      party: '#inv-customer',
+      getGstin: () => parties.find(p => String(p.id) === String($('#inv-customer', form)?.value))?.gstin || ''
+    });
+  }
   renderAttach();
   calcInvoice();
 }
@@ -12767,6 +12891,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   }[retPdfTheme] || retPdfTheme;
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
   const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const retBranch = rec ? (rec.branch || '') : '';
   const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const retProject = rec ? (rec.project_name || '') : '';
   const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
@@ -12858,6 +12983,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
               <div id="ret-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Source of Supply: ${esc(retPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
+              <input class="in" id="ret-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(retBranch)}" style="width:260px;margin-top:6px;">
             </div>
           </div>
 
@@ -13095,6 +13221,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       kind: 'retainer-invoices',
       series: $('#ret-series', form)?.value || 'Default Transaction Series',
       location: $('#ret-location', form)?.value || 'HO Kottayam',
+      branch: $('#ret-branch', form)?.value || '',
       onSave: (res) => {
         if (res && res.preview_formatted) {
           $('#ret-number', form).value = res.preview_formatted;
@@ -13449,6 +13576,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       number: numVal,
       reference: ($('#ret-reference', form)?.value || '').trim(),
       location: $('#ret-location', form)?.value || 'HO Kottayam',
+      branch: $('#ret-branch', form)?.value || '',
       transaction_series: $('#ret-series', form)?.value || 'Default Transaction Series',
       accounts_receivable: $('#ret-accounts-receivable', form)?.value || 'Accounts Receivable',
       date: dt,
@@ -13536,6 +13664,18 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   $('#btn-ret-close-x', target)?.addEventListener('click', handleRetClose);
   $('#btn-ret-cancel', target)?.addEventListener('click', handleRetClose);
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-retainer-number',
+      number: '#ret-number',
+      date: '#ret-date',
+      customerType: '#ret-customer-type',
+      branch: '#ret-branch',
+      location: '#ret-location',
+      party: '#ret-customer',
+      getGstin: () => parties.find(p => String(p.id) === String($('#ret-customer', form)?.value))?.gstin || ''
+    });
+  }
   renderAttach();
   calcRetainer();
 }

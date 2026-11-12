@@ -2019,7 +2019,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const ribClass = isPaid ? 'paid' : isOverdue ? 'overdue' : isDraft ? 'draft' : isPartial ? 'open' : 'open';
   const ribText = isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDraft ? 'Draft' : isPartial ? 'Partially Paid' : (isBill ? 'Open' : 'Sent');
 
-  const linesHtml = (d.lines || []).map((l, i) => `
+  const linesHtml = (d.lines || []).map((l, i) => isRetainer ? `
+    <tr>
+      <td><div style="font-weight:600;color:#0f172a;">${esc(l.description)}</div></td>
+      <td class="r" style="font-weight:700;">${inr(l.line_total).replace('₹', '')}</td>
+    </tr>
+  ` : `
     <tr>
       <td style="width:36px;color:#64748b;font-weight:600;">${i + 1}</td>
       <td>
@@ -2086,17 +2091,18 @@ function renderDocSheet(d, kind, customOpts = {}) {
           <div class="doc-main-heading" style="color:${color};">${esc(title)}</div>
           ${isBill ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Bill# ${esc(d.number)}</div><div style="font-size:12px;color:#475569;margin-bottom:8px;">Balance Due <b style="color:${color};font-size:14px;">${inr(d.balance)}</b></div>` : ''}
 
-          ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer# ${esc(d.number)}</div>` : ''}
+          ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer Invoice# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
             ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
             ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
-            <tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>
+            ${!isRetainer ? `<tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>` : ''}
 
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
-            ${(isRetainer && (d.purpose || d.subject || d.notes)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject || d.notes)}</b></td></tr>` : ''}
+            ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
+            ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
             ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
             <tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
             <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
@@ -2130,14 +2136,19 @@ function renderDocSheet(d, kind, customOpts = {}) {
       <table class="doc-items-tbl ${isDarkHead ? 'dark-head' : ''}">
         <thead>
           <tr>
-            <th>#</th>
-            <th>Item &amp; Description</th>
-            ${showHsn ? '<th>HSN/SAC</th>' : ''}
-            <th class="r">Qty</th>
-            ${!hideAmounts ? `
-              <th class="r">Rate</th>
+            ${isRetainer ? `
+              <th>Description</th>
               <th class="r">Amount</th>
-            ` : ''}
+            ` : `
+              <th>#</th>
+              <th>Item &amp; Description</th>
+              ${showHsn ? '<th>HSN/SAC</th>' : ''}
+              <th class="r">Qty</th>
+              ${!hideAmounts ? `
+                <th class="r">Rate</th>
+                <th class="r">Amount</th>
+              ` : ''}
+            `}
           </tr>
         </thead>
         <tbody>
@@ -2155,7 +2166,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
           ` : ''}
           ${d.notes ? `
             <div class="doc-notes-block">
-              <div class="doc-notes-label">Notes</div>
+              <div class="doc-notes-label">${isRetainer ? 'Customer Notes' : 'Notes'}</div>
               <div>${esc(d.notes)}</div>
             </div>
           ` : ''}
@@ -2163,6 +2174,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
             <div class="doc-terms-block">
               <div class="doc-notes-label">Terms &amp; Conditions</div>
               <div>${esc(d.terms)}</div>
+            </div>
+          ` : ''}
+          ${isRetainer && d.custom_fields_data && Object.keys(d.custom_fields_data).length ? `
+            <div class="doc-notes-block">
+              <div class="doc-notes-label">Additional Fields</div>
+              ${Object.entries(d.custom_fields_data).map(([label, value]) => `<div><b>${esc(label)}:</b> ${esc(value)}</div>`).join('')}
             </div>
           ` : ''}
         </div>
@@ -2336,18 +2353,19 @@ function renderDocSheet(d, kind, customOpts = {}) {
 }
 
 function openTemplateCustomizer(doc, kind, onUpdate) {
-  const inv = kind === 'invoices';
+  const isRetainer = kind === 'retainer-invoices';
+  const inv = kind === 'invoices' || isRetainer;
   const org = APP.org;
   const currentTheme = org.template_theme || (inv ? 'convosis' : 'modern');
   const currentColor = org.template_color || '#1877f2';
 
   formModal({
-    title: 'Customize ' + (inv ? 'Invoice' : 'Bill') + ' Template',
+    title: `Customize ${isRetainer ? 'Retainer Invoice' : inv ? 'Invoice' : 'Bill'} Template`,
     wide: true,
     submit: 'Save Template Settings',
     body: `
       <div style="margin-bottom:14px;padding:12px;background:var(--surface-glass-subtle);border-radius:8px;font-size:12.5px;color:var(--sub);">
-        Select template layouts, colors, and configure company details displayed on your invoices and bills.
+        Select template layouts, colors, and configure company details displayed on your ${isRetainer ? 'retainer invoices' : inv ? 'invoices' : 'bills'}.
       </div>
 
       <div class="fgrid">
@@ -2379,7 +2397,9 @@ function openTemplateCustomizer(doc, kind, onUpdate) {
 
     `,
     onSubmit: async d => {
-      APP.org = await api('organization/', { method: 'PUT', body: d });
+      APP.org = isRetainer
+        ? await api('/settings/organization/', { method: 'POST', body: d })
+        : await api('organization/', { method: 'PUT', body: d });
       applyOrg();
       toast('Template customized successfully');
       if (onUpdate) onUpdate();

@@ -20,7 +20,7 @@ from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, Customer, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
-    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice
+    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project
 )
 
 User = get_user_model()
@@ -1302,6 +1302,98 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         super().setUp()
         self.client.force_login(self.admin_user)
 
+    def test_retainer_invoice_form_fields_round_trip(self):
+        project = Project.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            name='Retainer Form Project',
+        )
+        payload = {
+            'customer': self.customer.id,
+            'date': str(date.today()),
+            'due_date': str(date.today() + timedelta(days=30)),
+            'reference': 'PO-RET-42',
+            'project_name': project.name,
+            'purpose': 'Project advance',
+            'notes': 'Customer notes for this retainer.',
+            'terms_conditions': 'Retainer terms for this customer.',
+            'custom_fields_data': {'Engagement code': 'ENG-42', 'Client contact': 'Mira'},
+            'lines': [
+                {'description': 'Discovery phase', 'quantity': 1, 'rate': '125.25', 'gst_rate': 0},
+                {'description': 'Support reserve', 'quantity': 1, 'rate': '75.50', 'gst_rate': 0},
+                {'description': 'Zero-value line', 'quantity': 1, 'rate': '0.00', 'gst_rate': 0},
+            ],
+        }
+        response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        retainer_id = response.json()['id']
+        detail = self.client.get(f'/api/retainer-invoices/{retainer_id}/').json()
+        self.assertTrue(detail['number'])
+        self.assertEqual(detail['reference'], 'PO-RET-42')
+        self.assertEqual(detail['project_name'], project.name)
+        self.assertEqual(detail['notes'], 'Customer notes for this retainer.')
+        self.assertEqual(detail['terms'], 'Retainer terms for this customer.')
+        self.assertEqual(detail['custom_fields_data'], {'Engagement code': 'ENG-42', 'Client contact': 'Mira'})
+        self.assertEqual([line['description'] for line in detail['lines']], [
+            'Discovery phase', 'Support reserve', 'Zero-value line',
+        ])
+        self.assertEqual(Decimal(str(detail['total'])), Decimal('200.75'))
+
+        payload.update({
+            'number': detail['number'],
+            'reference': 'PO-RET-43',
+            'notes': 'Updated customer notes.',
+            'terms_conditions': 'Updated retainer terms.',
+            'custom_fields_data': {'Engagement code': 'ENG-43'},
+            'lines': [
+                {'description': 'Updated phase', 'quantity': 1, 'rate': '210.00', 'gst_rate': 0},
+            ],
+        })
+        update = self.client.put(
+            f'/api/retainer-invoices/{retainer_id}/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 200, update.content)
+        updated = self.client.get(f'/api/retainer-invoices/{retainer_id}/').json()
+        self.assertEqual(updated['number'], detail['number'])
+        self.assertEqual(updated['reference'], 'PO-RET-43')
+        self.assertEqual(updated['notes'], 'Updated customer notes.')
+        self.assertEqual(updated['terms'], 'Updated retainer terms.')
+        self.assertEqual(updated['custom_fields_data'], {'Engagement code': 'ENG-43'})
+        self.assertEqual(updated['project_name'], project.name)
+        self.assertEqual(Decimal(str(updated['total'])), Decimal('210.00'))
+
+    def test_retainer_custom_fields_are_organization_scoped(self):
+        response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.id,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'custom_fields_data': {'Engagement code': 'ORG-ONLY'},
+                'lines': [{'description': 'Organization scoped retainer', 'quantity': 1, 'rate': '10.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        retainer_id = response.json()['id']
+
+        other_org = Organization.objects.create(name='Other Retainer Org', company_id='other-retainer-org')
+        other_user = User.objects.create_user(username='other_retainer_admin', password='TestPassword123!')
+        UserProfile.objects.create(user=other_user, organization=other_org, role=UserProfile.ADMIN)
+        other_client = Client()
+        other_client.force_login(other_user)
+
+        self.assertEqual(other_client.get(f'/api/retainer-invoices/{retainer_id}/').status_code, 404)
+        other_list = other_client.get('/api/retainer-invoices/').json()
+        other_ids = {row['id'] for row in other_list.get('results', [])}
+        self.assertNotIn(retainer_id, other_ids)
+
     def test_retainer_invoice_lifecycle_and_accounting(self):
         """
         Retainer Invoice:
@@ -2036,4 +2128,3 @@ class TestBooksSubscriptionAndBilling(TestCase):
         res1 = self.client.get('/api/subscription/summary/')
         self.assertEqual(res1.status_code, 200)
         self.assertNotEqual(res1.json()['usage']['records']['limit'], 5000000)
-

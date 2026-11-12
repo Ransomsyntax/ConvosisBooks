@@ -2366,21 +2366,38 @@ class RetainerInvoiceResource(DocResource):
                 ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
 
     def extra_clean(self, c):
-        res = {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
+        res = {
+            'terms': c.text('terms_conditions' if 'terms_conditions' in c.d else 'terms', max_len=2000),
+            'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60)
+        }
+        if 'custom_fields_data' in c.d:
+            custom_fields = c.d['custom_fields_data']
+            if not isinstance(custom_fields, dict):
+                raise ApiError(400, 'Additional fields must be an object.')
+            clean_custom_fields = {}
+            for label, value in custom_fields.items():
+                if not isinstance(label, str) or not isinstance(value, str):
+                    raise ApiError(400, 'Additional field names and values must be text.')
+                label = label.strip()
+                if not label or len(label) > 100 or len(value) > 2000:
+                    raise ApiError(400, 'Additional field names must be 1-100 characters and values no more than 2000 characters.')
+                clean_custom_fields[label] = value
+            res['custom_fields_data'] = clean_custom_fields
         purpose = c.text('purpose', max_len=500) or c.text('subject', max_len=500)
         if purpose:
-            res['notes'] = purpose
+            res['subject'] = purpose
         return res
 
     def extra_detail(self, o):
         paid = q2(getattr(o, 'paid_sum', o.paid_amount))
         applied = q2(getattr(o, 'applied_sum', o.applied_amount))
-        purpose_val = getattr(o, 'notes', '') or ''
         return {
             'terms': getattr(o, 'terms', ''),
             'order_number': o.order_number,
-            'purpose': purpose_val,
-            'subject': purpose_val,
+            'reference': o.order_number,
+            'purpose': getattr(o, 'subject', '') or '',
+            'subject': getattr(o, 'subject', '') or '',
+            'custom_fields_data': o.custom_fields_data or {},
             'paid': paid,
             'applied_amount': applied,
             'available_balance': max(Z, paid - applied)
@@ -10512,5 +10529,3 @@ def api_register_view(request):
         return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
     except Exception as e:
         return j({'error': str(e), 'message': str(e)}, 400)
-
-

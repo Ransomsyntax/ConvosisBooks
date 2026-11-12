@@ -761,6 +761,7 @@ class RecurringInvoice(models.Model):
 
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
+    custom_fields_data = models.JSONField(default=dict, blank=True)
     applied_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
     purpose = models.CharField(max_length=255, blank=True, default='')
@@ -1810,5 +1811,4 @@ def sync_user_profile_normalized_email(sender, instance, created, **kwargs):
         if instance.profile.normalized_email != norm:
             instance.profile.normalized_email = norm
             instance.profile.save(update_fields=['normalized_email'])
-
 

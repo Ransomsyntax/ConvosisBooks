@@ -12749,85 +12749,72 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, items, salespersons, whList, nextNum, rec] = await Promise.all([
+  const [parties, whList, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
-    api('lookup/items/').catch(() => []),
-    api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
     id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
 
+  const retOrg = APP && APP.org ? APP.org : {};
   const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
+  const retPdfTheme = retOrg.template_theme || 'convosis';
+  const retPdfTemplateName = {
+    convosis: 'Standard Template',
+    modern: 'Modern Template',
+    executive: 'Executive Template',
+    minimal: 'Minimal Template'
+  }[retPdfTheme] || retPdfTheme;
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
   const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const retProject = rec ? (rec.project_name || '') : '';
-  const retDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
+  const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
-  const retTerms = rec ? (rec.terms || 'Due on Receipt') : 'Due on Receipt';
+  const retTerms = rec && ['Due on Receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due end of the month'].includes(rec.terms) ? rec.terms : 'Due on Receipt';
   const retOrderNum = rec ? (rec.order_number || '') : '';
   const retSalesperson = rec ? (rec.salesperson || '') : '';
-  const retSubject = rec ? (rec.subject || '') : '';
-  const retPlaceOfSupply = rec ? (rec.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala');
-  const retNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : 'Thanks for your business.';
-  const retTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
-  const retTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const retSubject = rec ? (rec.subject || rec.purpose || '') : '';
+  const retPlaceOfSupply = rec ? (rec.place_of_supply || '') : (retOrg.state || 'Kerala');
+  const retNotes = rec ? (rec.notes != null ? rec.notes : '') : (retOrg.notes_default || 'Thanks for your business.');
+  const retTermsText = rec ? (rec.terms != null ? rec.terms : '') : (retOrg.terms_default || '');
   const retTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const retCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
-  const retTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
-  const retAdj = rec ? num(rec.adjustment || 0) : 0;
-  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
+  const retAdditionalFields = rec && rec.custom_fields_data && typeof rec.custom_fields_data === 'object' && !Array.isArray(rec.custom_fields_data)
+    ? Object.entries(rec.custom_fields_data).map(([label, value]) => ({ label, value }))
+    : [];
   const pendingFiles = [];
 
-  const rowHtml = (l = {}) => `
-    <tr class="ln-retainer-invoice" style="border-bottom:1px solid var(--bd);">
-      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
-        <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
-          <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
-          <i class="fa-regular fa-image" style="font-size:16px;"></i>
-        </div>
-      </td>
-      <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
-          <option value="">Type or click to select an item.</option>
-          <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
-        </select>
-        <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
-        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
-        <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
-      </td>
-${renderStockQuantityCell(l, items, whList)}
-      <td style="width:110px;padding:10px 8px;vertical-align:top;">
-        <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
-      </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
-      <td style="width:140px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
-          <option value="0">Select a Tax</option>
-          <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
-          <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
-          <option value="12" ${num(l.gst_rate) === 12 ? 'selected' : ''}>GST [12%]</option>
-          <option value="18" ${l.gst_rate == null || num(l.gst_rate) === 18 ? 'selected' : ''}>GST [18%]</option>
-          <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
-        </select>
-      </td>
-      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
-        ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </td>
-      <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
-        <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
-      </td>
-    </tr>
+  const rowHtml = (l = {}) => {
+    const quantity = l.quantity == null ? 1 : num(l.quantity);
+    const rate = l.rate == null ? 0 : num(l.rate);
+    const discount = num(l.discount_percent || 0);
+    const gst = num(l.gst_rate || 0);
+    const amount = l.line_total == null
+      ? quantity * rate * (1 - discount / 100) * (1 + gst / 100)
+      : num(l.line_total);
+    return `
+      <tr class="ln-retainer-invoice" style="border-bottom:1px solid var(--bd);">
+        <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
+          <input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:6px 8px;width:100%;">
+        </td>
+        <td style="width:180px;padding:10px 8px;vertical-align:top;">
+          <input class="in l-amount" aria-label="Amount" type="number" step="0.01" min="0" value="${amount.toFixed(2)}" style="text-align:right;width:100%;">
+        </td>
+        <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
+          <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
+        </td>
+        <td hidden><input class="l-item" value="${esc(l.item || '')}"><input class="l-qty" value="${quantity}"><input class="l-rate" value="${rate}"><input class="l-disc" value="${discount}"><input class="l-gst" value="${gst}"><input class="l-hsn" value="${esc(l.hsn_sac || '')}"><input class="l-wh-select" value="${esc(l.warehouse_id || '')}"><input class="l-wh-code" value="${esc(l.warehouse_code || '')}"></td>
+      </tr>
+    `;
+  };
+  const additionalFieldRowHtml = (field = {}) => `
+    <div class="ret-additional-field-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center;">
+      <input class="in ret-additional-field-label" aria-label="Additional field name" maxlength="100" placeholder="Field name" value="${esc(field.label || '')}">
+      <input class="in ret-additional-field-value" aria-label="Additional field value" maxlength="2000" placeholder="Field value" value="${esc(field.value || '')}">
+      <button type="button" class="btn ic" data-rm-ret-additional-field title="Remove field" aria-label="Remove additional field" style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;">×</button>
+    </div>
   `;
 
   target.innerHTML = `
@@ -12889,7 +12876,7 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice#*</label>
+            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Number*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <select class="in" id="ret-series" name="transaction_series" style="width:180px;">
                 <option value="Default Transaction Series" ${(retSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
@@ -12905,15 +12892,15 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
-            <input class="in" id="ret-order-number" name="order_number" value="${esc(retOrderNum)}" style="width:260px;">
+            <label for="ret-reference" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Reference #</label>
+            <input class="in" id="ret-reference" name="reference" value="${esc(retOrderNum)}" style="width:260px;">
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Date*</label>
+            <label for="ret-date" style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Date*</label>
             <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:260px;">
             
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Terms</label>
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Payment Terms</label>
             <select class="in" id="ret-terms" name="terms" style="width:180px;">
               <option value="Due on Receipt" ${retTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
               <option value="Net 15" ${retTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
@@ -12943,7 +12930,7 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
+            <label for="ret-project" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Project Name</label>
             <select class="in" id="ret-project" name="project_name" style="width:260px;" disabled>
               <option value="">There are no active projects for this customer.</option>
             </select>
@@ -12959,39 +12946,18 @@ ${renderStockQuantityCell(l, items, whList)}
           <input type="hidden" id="ret-place-of-supply" name="place_of_supply" value="${esc(retPlaceOfSupply)}">
         </div>
 
+        <input type="hidden" id="ret-tax-pricing" name="tax_pricing_type" value="${esc(retTaxPricing)}">
         <div style="margin-top:32px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="ret-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${retTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${retTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="retainer-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
-              </button>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-ret-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <i class="fa-solid fa-barcode"></i> Scan Item
-              </button>
-              <button type="button" class="btn" id="btn-ret-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <i class="fa-regular fa-circle-check"></i> Bulk Actions
-              </button>
-            </div>
+            <span style="font-size:15px;font-weight:700;color:var(--tx);">Description and Amount</span>
           </div>
 
           <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>
-                  <th style="width:50px;"></th>
-                  <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
-                  <th style="width:140px;min-width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
-                  <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
-                  <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
-                  <th class="th-tax-explainer" data-doc-kind="retainer-invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
-                  <th style="width:100px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
+                  <th style="text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DESCRIPTION</th>
+                  <th style="width:180px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
               </thead>
@@ -13003,10 +12969,7 @@ ${renderStockQuantityCell(l, items, whList)}
 
           <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
             <button type="button" class="btn" id="btn-ret-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-              <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
-            </button>
-            <button type="button" class="btn" id="btn-ret-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-              <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
+              <i class="fa-solid fa-circle-plus"></i> Add New Row
             </button>
           </div>
         </div>
@@ -13030,42 +12993,20 @@ ${renderStockQuantityCell(l, items, whList)}
               <span id="ret-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
             </div>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-              <div style="display:flex;align-items:center;gap:14px;">
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
-                  <input type="radio" name="ret_tax_type" value="tds" ${retTaxType === 'tds' ? 'checked' : ''}> TDS
-                </label>
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
-                  <input type="radio" name="ret_tax_type" value="tcs" ${retTaxType === 'tcs' ? 'checked' : ''}> TCS
-                </label>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <select class="in" id="ret-tds-tax" name="tds_tcs_tax" style="width:150px;">
-                  <option value="0">Select a Tax</option>
-                  <option value="1" ${retTdsTax === 1 ? 'selected' : ''}>1%</option>
-                  <option value="2" ${retTdsTax === 2 ? 'selected' : ''}>2%</option>
-                  <option value="5" ${retTdsTax === 5 ? 'selected' : ''}>5%</option>
-                  <option value="10" ${retTdsTax === 10 ? 'selected' : ''}>10%</option>
-                </select>
-                <span id="ret-tds-amt" style="font-weight:600;min-width:60px;text-align:right;">- 0.00</span>
-              </div>
-            </div>
-
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <div style="border:1px dashed var(--bd);border-radius:4px;padding:4px 10px;font-size:12px;font-weight:500;color:var(--tx);">Adjustment</div>
-                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;" title="Add or subtract adjustment amount"></i>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <input type="number" step="0.01" class="in" id="ret-adj-val" name="adjustment" value="${retAdj}" style="width:110px;text-align:right;">
-                <span id="ret-adj-display" style="font-weight:600;min-width:60px;text-align:right;">0.00</span>
-              </div>
-            </div>
-
             <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
               <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
               <span id="ret-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
             </div>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-weight:600;font-size:13px;color:var(--tx);">Additional Fields</div>
+            <button type="button" class="btn" id="btn-ret-additional-field" style="font-size:12px;background:#fff;cursor:pointer;">+ Add Field</button>
+          </div>
+          <div id="ret-additional-fields-container" style="display:flex;flex-direction:column;gap:8px;">
+            ${retAdditionalFields.map(additionalFieldRowHtml).join('')}
           </div>
         </div>
 
@@ -13089,24 +13030,29 @@ ${renderStockQuantityCell(l, items, whList)}
               <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
             </div>
             <div style="font-size:11.5px;color:#64748b;margin-top:2px;" id="ret-sig-desc">
-              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (window.APP && window.APP.org && window.APP.org.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this retainer invoice.')}
+              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (retOrg.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this retainer invoice.')}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:12px;">
             <div id="ret-sig-preview-box" style="height:44px;min-width:90px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:2px 8px;">
-              <img id="ret-sig-preview" src="${esc((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data) || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'block' : 'none'};">
-              <span id="ret-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'none' : 'inline'};">None</span>
+              <img id="ret-sig-preview" src="${esc((rec && rec.signature_data) || retOrg.signature_data || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || retOrg.signature_data) ? 'block' : 'none'};">
+              <span id="ret-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || retOrg.signature_data) ? 'none' : 'inline'};">None</span>
             </div>
             <input type="hidden" id="ret-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
             <input type="hidden" id="ret-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
             <input type="hidden" id="ret-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
             <button type="button" class="btn btn-doc-sign" id="btn-ret-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
-              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Retainer Invoice'}
+              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || retOrg.signature_data) ? 'Change Signature' : 'Sign Retainer Invoice'}
             </button>
           </div>
         </div>
 
         ${renderPaymentGatewayBanner()}
+
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:16px;font-size:12px;color:#475569;">
+          <span>PDF Template: ${esc(retPdfTemplateName)}</span>
+          <button type="button" class="btn" id="btn-ret-template-change" style="border:0;background:transparent;color:#2563eb;padding:2px 4px;cursor:pointer;">Change</button>
+        </div>
 
         <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
           <div style="display:flex;align-items:center;gap:10px;">
@@ -13118,7 +13064,6 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
           <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
             <span>Total Amount: <span id="ret-bar-total-amount">₹ 0.00</span></span>
-            <span>Total Quantity: <span id="ret-bar-total-qty">0</span></span>
           </div>
         </div>
       </form>
@@ -13127,13 +13072,22 @@ ${renderStockQuantityCell(l, items, whList)}
 
   const form = $('#retainer-form-element', target);
   const tbody = $('#retainer-line-tbody', form);
-  const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
-  const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRetainer());
+  const projectSaveButtons = [$('#btn-ret-save-draft', form), $('#btn-ret-save-send', form)].filter(Boolean);
+
+  async function refreshRetainerProjects(customerId, selectedProject = '') {
+    const projectCustomerId = /^\d+$/.test(String(customerId || '')) ? customerId : '';
+    projectSaveButtons.forEach(button => { button.disabled = true; });
+    try {
+      await setupProjectSelectorForCustomer($('#ret-project', form), projectCustomerId, selectedProject);
+    } finally {
+      projectSaveButtons.forEach(button => { button.disabled = false; });
+    }
+  }
 
   createSalespersonCustomDropdown($('#ret-salesperson-container', form), retSalesperson, () => {});
-  setupProjectSelectorForCustomer($('#ret-project', form), retCustomer, retProject);
-  $('#ret-customer', form)?.addEventListener('change', (e) => {
-    setupProjectSelectorForCustomer($('#ret-project', form), e.target.value);
+  await refreshRetainerProjects(retCustomer, retProject);
+  $('#ret-customer', form)?.addEventListener('change', e => {
+    void refreshRetainerProjects(e.target.value);
   });
 
   $('#btn-ret-num-pref', form)?.addEventListener('click', () => {
@@ -13178,14 +13132,12 @@ ${renderStockQuantityCell(l, items, whList)}
     const isTaxInclusive = ($('#ret-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalTax = 0;
-    let totalQty = 0;
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
       const qty = num($('.l-qty', tr).value) || 0;
       const rate = num($('.l-rate', tr).value) || 0;
       const discVal = num($('.l-disc', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value;
       const gross = qty * rate;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      const disc = gross * discVal / 100;
       const net = Math.max(0, gross - disc);
       const gstRate = num($('.l-gst', tr).value) || 0;
 
@@ -13203,32 +13155,29 @@ ${renderStockQuantityCell(l, items, whList)}
         lineTot = taxable + tax;
       }
 
-      $('.l-amt', tr).textContent = (lineTot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (document.activeElement !== $('.l-amount', tr)) {
+        $('.l-amount', tr).value = lineTot.toFixed(2);
+      }
       subtotal += taxable;
       totalTax += tax;
-      totalQty += qty;
     });
 
-    const taxType = form.querySelector('input[name="ret_tax_type"]:checked')?.value || 'tds';
-    const tdsRate = num($('#ret-tds-tax', form).value) || 0;
-    const tdsAmt = subtotal * tdsRate / 100;
-    const adj = num($('#ret-adj-val', form).value) || 0;
-
-    $('#ret-tds-amt', form).textContent = `${taxType === 'tds' ? '-' : '+'} ${tdsAmt.toFixed(2)}`;
-    $('#ret-adj-display', form).textContent = adj.toFixed(2);
-
-    let grand = subtotal + totalTax;
-    if (taxType === 'tds') {
-      grand -= tdsAmt;
-    } else {
-      grand += tdsAmt;
-    }
-    grand = Math.max(0, grand + adj);
+    const grand = subtotal + totalTax;
 
     $('#ret-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#ret-grandtotal-val', form).textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#ret-bar-total-amount', form).textContent = inr(grand);
-    $('#ret-bar-total-qty', form).textContent = totalQty;
+  }
+
+  function updateRateFromAmount(tr) {
+    const amountInput = $('.l-amount', tr);
+    const quantity = num($('.l-qty', tr).value) || 1;
+    const discount = Math.min(100, Math.max(0, num($('.l-disc', tr).value))) / 100;
+    const gstRate = Math.max(0, num($('.l-gst', tr).value));
+    const inclusive = $('#ret-tax-pricing', form).value === 'tax_inclusive';
+    const taxFactor = inclusive ? 1 : 1 + gstRate / 100;
+    const divisor = quantity * (1 - discount) * taxFactor;
+    $('.l-rate', tr).value = divisor > 0 ? (num(amountInput.value) / divisor).toFixed(6) : '0';
   }
 
   function renderAttach() {
@@ -13273,6 +13222,7 @@ ${renderStockQuantityCell(l, items, whList)}
         sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
         sel.value = newCust.id;
         if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+        void refreshRetainerProjects(newCust.id);
       }
     });
   });
@@ -13282,6 +13232,7 @@ ${renderStockQuantityCell(l, items, whList)}
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
         if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+        void refreshRetainerProjects(newCust.id);
         if (newCust.payment_terms) {
           const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
           if (termsMap[newCust.payment_terms]) {
@@ -13348,45 +13299,26 @@ ${renderStockQuantityCell(l, items, whList)}
     });
   });
 
-  tbody.addEventListener('change', e => {
-    if (e.target.classList.contains('l-item')) {
-      if (e.target.value === '__new_item__') {
-        handleQuickCreateSelect(e.target, newItem => {
-          items.push(newItem);
-          byId[String(newItem.id)] = newItem;
-          calcRetainer();
-        });
-        return;
-      }
-      const it = byId[e.target.value];
-      const tr = e.target.closest('tr');
-      if (it && tr) {
-        $('.l-desc', tr).value = it.name;
-        $('.l-hsn', tr).value = it.hsn_sac || '';
-        $('.l-rate', tr).value = it.selling_price || 0;
-        $('.l-gst', tr).value = String(num(it.gst_rate) || 18);
-        stockTracker.updateRow(tr, true);
-      }
-      calcRetainer();
-    }
+  form.addEventListener('input', e => {
+    const tr = e.target.closest('.ln-retainer-invoice');
+    if (tr && e.target.classList.contains('l-amount')) updateRateFromAmount(tr);
+    calcRetainer();
   });
-
-  form.addEventListener('input', () => calcRetainer());
   form.addEventListener('change', () => calcRetainer());
 
   $('#btn-ret-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
-    stockTracker.updateRow(tbody.lastElementChild, false);
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
     calcRetainer();
   });
 
-  $('#btn-ret-bulk-items', form).addEventListener('click', () => {
-    bulkItemPickerModal(items, (selectedItems) => {
-      selectedItems.forEach(it => {
-        tbody.insertAdjacentHTML('beforeend', rowHtml(it));
-      });
-      calcRetainer();
-    });
+  const additionalFieldsContainer = $('#ret-additional-fields-container', form);
+  $('#btn-ret-additional-field', form).addEventListener('click', () => {
+    additionalFieldsContainer.insertAdjacentHTML('beforeend', additionalFieldRowHtml());
+    additionalFieldsContainer.lastElementChild?.querySelector('.ret-additional-field-label')?.focus();
+  });
+  additionalFieldsContainer.addEventListener('click', e => {
+    const removeButton = e.target.closest('[data-rm-ret-additional-field]');
+    if (removeButton) removeButton.closest('.ret-additional-field-row')?.remove();
   });
 
   tbody.addEventListener('click', e => {
@@ -13463,8 +13395,15 @@ ${renderStockQuantityCell(l, items, whList)}
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
       const itVal = $('.l-item', tr).value;
       const descVal = $('.l-desc', tr).value.trim();
+      const amountRaw = $('.l-amount', tr).value.trim();
+      const amountVal = amountRaw ? num(amountRaw) : 0;
       const qtyVal = num($('.l-qty', tr).value) || 0;
       const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal && !amountRaw) return;
+      if (amountVal < 0) {
+        lineErr = true;
+        return;
+      }
       if (!descVal && !itVal) {
         lineErr = true;
         return;
@@ -13474,7 +13413,7 @@ ${renderStockQuantityCell(l, items, whList)}
         warehouse: $('.l-wh-select', tr)?.value || null,
         warehouse_id: $('.l-wh-select', tr)?.value || null,
         warehouse_code: $('.l-wh-code', tr)?.value || '',
-        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Item line'),
+        description: descVal || 'Item line',
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
@@ -13484,23 +13423,31 @@ ${renderStockQuantityCell(l, items, whList)}
     });
 
     if (lineErr || !lines.length) {
-      toast('Please enter a description or select an item for each row.', 'err');
+      toast(lineErr ? 'Enter a description for each non-empty row and use non-negative amounts.' : 'Add at least one description row.', 'err');
       return;
     }
 
-    if (!isDraft && !(APP.org && APP.org.allow_negative_stock)) {
-      const stockCheck = stockTracker.validate();
-      if (!stockCheck.valid) {
-        toast(stockCheck.error, 'err');
+    const customFields = Object.create(null);
+    for (const row of $$('.ret-additional-field-row', form)) {
+      const label = $('.ret-additional-field-label', row).value.trim();
+      const value = $('.ret-additional-field-value', row).value;
+      if (!label && !value) continue;
+      if (!label) {
+        toast('Enter a name for each additional field.', 'err');
         return;
       }
+      if (Object.prototype.hasOwnProperty.call(customFields, label)) {
+        toast(`Additional field "${label}" is duplicated.`, 'err');
+        return;
+      }
+      customFields[label] = value;
     }
 
     const payload = {
       customer: custId,
       customer_id: custId,
       number: numVal,
-      order_number: ($('#ret-order-number', form)?.value || '').trim(),
+      reference: ($('#ret-reference', form)?.value || '').trim(),
       location: $('#ret-location', form)?.value || 'HO Kottayam',
       transaction_series: $('#ret-series', form)?.value || 'Default Transaction Series',
       accounts_receivable: $('#ret-accounts-receivable', form)?.value || 'Accounts Receivable',
@@ -13508,13 +13455,14 @@ ${renderStockQuantityCell(l, items, whList)}
       due_date: $('#ret-due-date', form).value || dt,
       tax_pricing_type: $('#ret-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#ret-customer-type', form)?.value || 'b2b',
-      terms: $('#ret-terms', form).value,
       salesperson: (form.querySelector('#ret-salesperson-container select.sp-select')?.value || $('#ret-salesperson', form)?.value || ''),
       project_name: $('#ret-project', form)?.value || '',
       purpose: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       subject: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       place_of_supply: $('#ret-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
-      notes: $('#ret-notes', form).value.trim(),
+      notes: $('#ret-notes', form).value,
+      terms_conditions: $('#ret-terms-text', form).value,
+      custom_fields_data: customFields,
       signature_data: $('#ret-signature-data', form)?.value || '',
       signed_by: $('#ret-signed-by', form)?.value || '',
       signature_title: $('#ret-signature-title', form)?.value || '',
@@ -13574,6 +13522,9 @@ ${renderStockQuantityCell(l, items, whList)}
 
   $('#btn-ret-save-draft', target).addEventListener('click', () => saveRetainerInvoice(true));
   $('#btn-ret-save-send', target).addEventListener('click', () => saveRetainerInvoice(false));
+  $('#btn-ret-template-change', form).addEventListener('click', () => {
+    openTemplateCustomizer({ number: retNum }, 'retainer-invoices', () => {});
+  });
 
   const handleRetClose = () => {
     if (onDone) onDone();

@@ -18,6 +18,14 @@ function bindDocumentNumberPreview(form, options) {
       const value = selector ? form.querySelector(selector)?.value : '';
       if (value) params.set(name, value);
     });
+    if (options.locationId) {
+      const locationId = form.querySelector(options.locationId)?.value;
+      if (locationId) params.set('business_location_id', locationId);
+    }
+    if (options.customerId) {
+      const customerId = form.querySelector(options.customerId)?.value;
+      if (customerId) params.set('customer_id', customerId);
+    }
     const gstin = options.getGstin ? options.getGstin() : '';
     if (gstin) params.set('gstin', gstin);
 
@@ -35,7 +43,7 @@ function bindDocumentNumberPreview(form, options) {
     }
   };
 
-  [options.date, options.customerType, options.location, options.party]
+  [options.date, options.customerType, options.location, options.locationId, options.party, options.customerId]
     .filter(Boolean)
     .forEach(selector => {
       form.querySelector(selector)?.addEventListener('change', refresh);
@@ -12873,9 +12881,9 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, whList, nextNum, rec] = await Promise.all([
+  const [parties, retLocations, nextNum, rec] = await Promise.all([
     api('lookup/customers/').catch(() => []),
-    api('lookup/warehouses/').catch(() => []),
+    api('lookup/retainer-locations/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
     id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
@@ -12890,9 +12898,25 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     minimal: 'Minimal Template'
   }[retPdfTheme] || retPdfTheme;
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
-  const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
+  const currentLocation = rec && rec.business_location_id
+    ? retLocations.find(location => String(location.id) === String(rec.business_location_id))
+    : null;
+  const defaultLocation = retLocations.find(location => location.is_default) || retLocations[0];
+  const retLocationId = rec
+    ? (rec.business_location_id || (retLocations.find(location => location.name === rec.location)?.id || ''))
+    : (defaultLocation?.id || '');
+  const retLocation = rec ? (rec.location || currentLocation?.name || 'HO Kottayam') : (defaultLocation?.name || 'HO Kottayam');
+  const retLocationOptions = retLocations.map(location => `
+    <option value="${location.id}" ${String(retLocationId) === String(location.id) ? 'selected' : ''}>
+      ${esc(location.name)}${location.is_default ? ' (Default)' : ''}
+    </option>
+  `).join('') + (
+    rec && rec.business_location_id && !currentLocation
+      ? `<option value="${rec.business_location_id}" selected>${esc(retLocation)} (Inactive)</option>`
+      : ''
+  );
+  const retParty = parties.find(party => String(party.id) === String(retCustomer));
   const retBranch = rec ? (rec.branch || '') : '';
-  const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const retProject = rec ? (rec.project_name || '') : '';
   const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
@@ -12904,7 +12928,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const retNotes = rec ? (rec.notes != null ? rec.notes : '') : (retOrg.notes_default || 'Thanks for your business.');
   const retTermsText = rec ? (rec.terms != null ? rec.terms : '') : (retOrg.terms_default || '');
   const retTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
-  const retCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
+  const retCustType = retParty?.customer_type === 'individual' ? 'b2c' : 'b2b';
   const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
   const retAdditionalFields = rec && rec.custom_fields_data && typeof rec.custom_fields_data === 'object' && !Array.isArray(rec.custom_fields_data)
     ? Object.entries(rec.custom_fields_data).map(([label, value]) => ({ label, value }))
@@ -12978,19 +13002,20 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
             <div>
               <select class="in" id="ret-location" name="location" style="width:260px;">
-                ${whList.map(w => `<option value="${esc(w.name)}" ${(retLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+                ${retLocations.length ? `<option value="">Select a business location</option>${retLocationOptions}` : `<option value="" selected>${esc(retLocation)} (legacy location)</option>${retLocationOptions}`}
               </select>
               <div id="ret-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
                 Source of Supply: ${esc(retPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+                <span id="ret-location-gstin" style="margin-left:8px;">Location GSTIN: ${esc(currentLocation?.gstin || rec?.business_location_gstin || 'Not provided')}</span>
               </div>
-              <input class="in" id="ret-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(retBranch)}" style="width:260px;margin-top:6px;">
+              <input type="hidden" id="ret-branch" name="branch" value="${esc(retBranch)}">
             </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
             <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="ret-customer-type" name="customer_type" style="width:260px;">
+              <select class="in" id="ret-customer-type" name="customer_type" disabled aria-label="Customer type derived from selected customer" style="width:260px;background:#f8fafc;">
                 <option value="b2b" ${retCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
                 <option value="b2c" ${retCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
               </select>
@@ -13004,16 +13029,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Number*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="ret-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(retSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${retSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${retSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${retSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
-              </select>
               <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
             </div>
           </div>
 
@@ -13210,25 +13226,34 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     }
   }
 
+  function applyRetainerCustomerContext(customer) {
+    const gstinEl = $('#ret-customer-gstin', form);
+    const custTypeEl = $('#ret-customer-type', form);
+    if (customer?.state) $('#ret-place-of-supply', form).value = customer.state;
+    if (gstinEl) gstinEl.textContent = customer?.gstin || 'Not provided';
+    if (custTypeEl) custTypeEl.value = customer?.customer_type === 'individual' ? 'b2c' : 'b2b';
+  }
+
+  function applyRetainerLocationContext() {
+    const locationId = $('#ret-location', form)?.value;
+    const selectedLocation = retLocations.find(location => String(location.id) === String(locationId));
+    const gstin = selectedLocation?.gstin || (
+      rec && String(rec.business_location_id || '') === String(locationId)
+        ? rec.business_location_gstin
+        : ''
+    );
+    const gstinEl = $('#ret-location-gstin', form);
+    if (gstinEl) gstinEl.textContent = `Location GSTIN: ${gstin || 'Not provided'}`;
+  }
+
   createSalespersonCustomDropdown($('#ret-salesperson-container', form), retSalesperson, () => {});
   await refreshRetainerProjects(retCustomer, retProject);
   $('#ret-customer', form)?.addEventListener('change', e => {
     void refreshRetainerProjects(e.target.value);
+    applyRetainerCustomerContext(parties.find(party => String(party.id) === String(e.target.value)));
   });
-
-  $('#btn-ret-num-pref', form)?.addEventListener('click', () => {
-    openDocNumberPreferencesModal({
-      kind: 'retainer-invoices',
-      series: $('#ret-series', form)?.value || 'Default Transaction Series',
-      location: $('#ret-location', form)?.value || 'HO Kottayam',
-      branch: $('#ret-branch', form)?.value || '',
-      onSave: (res) => {
-        if (res && res.preview_formatted) {
-          $('#ret-number', form).value = res.preview_formatted;
-        }
-      }
-    });
-  });
+  $('#ret-location', form)?.addEventListener('change', applyRetainerLocationContext);
+  applyRetainerLocationContext();
 
   function updateDueDate() {
     const dVal = $('#ret-date', form).value;
@@ -13348,8 +13373,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         const sel = $('#ret-customer', form);
         sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
         sel.value = newCust.id;
-        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+        applyRetainerCustomerContext(newCust);
         void refreshRetainerProjects(newCust.id);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
       }
     });
   });
@@ -13358,8 +13384,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     if (e.target.value === '__new_customer__') {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
+        applyRetainerCustomerContext(newCust);
         void refreshRetainerProjects(newCust.id);
+        e.target.dispatchEvent(new Event('change', { bubbles: true }));
         if (newCust.payment_terms) {
           const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
           if (termsMap[newCust.payment_terms]) {
@@ -13372,18 +13399,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     }
     const custId = $('#ret-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
+    applyRetainerCustomerContext(cust);
     if (cust) {
-      if (cust.state) $('#ret-place-of-supply', form).value = cust.state;
-      const gstinEl = $('#ret-customer-gstin', form);
-      const custTypeEl = $('#ret-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cust.gstin && cust.gstin.trim()) {
-          custTypeEl.value = 'b2b';
-        } else if (cust.customer_type === 'individual') {
-          custTypeEl.value = 'b2c';
-        }
-      }
       if (cust.payment_terms) {
         const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
         if (termsMap[cust.payment_terms]) {
@@ -13516,6 +13533,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       toast('Please enter a retainer date.', 'err');
       return;
     }
+    const businessLocationId = $('#ret-location', form)?.value || '';
+    if (retLocations.length && !businessLocationId) {
+      toast('Please select a business location.', 'err');
+      $('#ret-location', form)?.focus();
+      return;
+    }
 
     const lines = [];
     let lineErr = false;
@@ -13575,9 +13598,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       customer_id: custId,
       number: numVal,
       reference: ($('#ret-reference', form)?.value || '').trim(),
-      location: $('#ret-location', form)?.value || 'HO Kottayam',
+      business_location_id: businessLocationId || null,
+      location: retLocations.find(location => String(location.id) === String(businessLocationId))?.name || rec?.location || 'HO Kottayam',
       branch: $('#ret-branch', form)?.value || '',
-      transaction_series: $('#ret-series', form)?.value || 'Default Transaction Series',
       accounts_receivable: $('#ret-accounts-receivable', form)?.value || 'Accounts Receivable',
       date: dt,
       due_date: $('#ret-due-date', form).value || dt,
@@ -13671,9 +13694,10 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       date: '#ret-date',
       customerType: '#ret-customer-type',
       branch: '#ret-branch',
-      location: '#ret-location',
+      locationId: '#ret-location',
+      customerId: '#ret-customer',
       party: '#ret-customer',
-      getGstin: () => parties.find(p => String(p.id) === String($('#ret-customer', form)?.value))?.gstin || ''
+      getGstin: () => retLocations.find(location => String(location.id) === String($('#ret-location', form)?.value))?.gstin || ''
     });
   }
   renderAttach();

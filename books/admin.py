@@ -4,6 +4,12 @@ from django.contrib.auth.models import User, Group
 
 from . import models
 
+def _platform_admin_permission(request):
+    return bool(request.user.is_active and request.user.is_staff and request.user.is_superuser)
+
+
+admin.site.has_permission = _platform_admin_permission
+
 # ==============================================================================
 # USER MANAGEMENT & TENANT ROLE INLINE
 # ==============================================================================

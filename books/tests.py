@@ -21,7 +21,7 @@ from books import services
 from books.services import advance_recurring_date
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
-    Bill, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
+    Bill, BusinessLocation, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
     UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project
 )
@@ -1196,6 +1196,23 @@ class TestQABugReportFixes(BaseAccountingTestCase):
 
 
 class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
+    def test_django_admin_is_restricted_to_platform_superusers(self):
+        staff_user = User.objects.create_user(
+            username='tenant_staff_admin',
+            password='TestPassword123!',
+            is_staff=True,
+        )
+        UserProfile.objects.create(
+            user=staff_user,
+            organization=self.org,
+            role=UserProfile.ADMIN,
+        )
+        self.client.force_login(staff_user)
+        self.assertEqual(self.client.get('/admin/').status_code, 302)
+
+        self.client.force_login(self.admin_user)
+        self.assertEqual(self.client.get('/admin/').status_code, 200)
+
     def test_settings_all_endpoint(self):
         self.client.force_login(self.admin_user)
         res = self.client.get('/api/settings/all/')
@@ -1370,6 +1387,184 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertEqual(updated['custom_fields_data'], {'Engagement code': 'ENG-43'})
         self.assertEqual(updated['project_name'], project.name)
         self.assertEqual(Decimal(str(updated['total'])), Decimal('210.00'))
+
+    def test_retainer_location_and_number_series_round_trip(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Kochi Office',
+            gstin='32AANCC9298C1ZE',
+            state='Kerala',
+            is_default=True,
+        )
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Kochi B2B Retainers',
+            document_type='retainer_invoices',
+            customer_type='b2b',
+            location=location.name,
+            business_location=location,
+            gstin=location.gstin,
+            prefix='RET-%FY%',
+            separator='-',
+            starting_number=8,
+            next_number=8,
+            padding=4,
+            is_default=True,
+        )
+
+        preview = self.client.get(
+            f'/api/lookup/next-retainer-number/?customer_id={self.customer.pk}'
+            f'&business_location_id={location.pk}&date={date.today()}'
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertTrue(preview.json()['next_number'].startswith('RET-'))
+        self.assertTrue(preview.json()['next_number'].endswith('0008'))
+
+        consumer = Customer.objects.create(
+            organization=self.org,
+            name='Individual Retainer Customer',
+            customer_type='individual',
+        )
+        no_match = self.client.get(
+            f'/api/lookup/next-retainer-number/?customer_id={consumer.pk}'
+            f'&business_location_id={location.pk}&date={date.today()}'
+        )
+        self.assertEqual(no_match.status_code, 400)
+
+        response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'business_location_id': location.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'lines': [{'description': 'Kochi retainer', 'quantity': 1, 'rate': '150.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()['number'].startswith('RET-'))
+        self.assertEqual(
+            DocumentNumberAllocation.objects.get(number=response.json()['number']).series_id,
+            series.pk,
+        )
+
+        detail = self.client.get(f"/api/retainer-invoices/{response.json()['id']}/").json()
+        self.assertEqual(detail['business_location_id'], location.pk)
+        self.assertEqual(detail['business_location_gstin'], location.gstin)
+        self.assertEqual(detail['location'], location.name)
+
+    def test_retainer_location_and_series_apis_are_organization_scoped(self):
+        other_org = Organization.objects.create(name='Other Location Org')
+        other_location = BusinessLocation.objects.create(
+            organization=other_org, name='Private Location', gstin='29AANCC9298C1ZE'
+        )
+        other_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Invoice Only',
+            document_type='invoices',
+            prefix='INV',
+        )
+
+        locations = self.client.get('/api/settings/locations/')
+        self.assertEqual(locations.status_code, 200)
+        self.assertEqual(locations.json()['locations'], [])
+        self.assertEqual(self.client.get('/api/settings/retainer-number-series/').json()['series'], [])
+
+        forbidden_location = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'business_location_id': other_location.pk,
+                'date': str(date.today()),
+                'lines': [{'description': 'Invalid location', 'rate': '1.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(forbidden_location.status_code, 400)
+
+        self.assertEqual(
+            self.client.delete(f'/api/settings/retainer-number-series/{other_series.pk}/').status_code,
+            404,
+        )
+
+    def test_retainer_location_without_gstin_does_not_inherit_organization_gstin(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org,
+            name='GSTIN-free Office',
+            gstin='',
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Incorrect Organization GSTIN Series',
+            document_type='retainer_invoices',
+            customer_type='b2b',
+            location=location.name,
+            gstin=self.org.gstin,
+            business_location=location,
+            prefix='RET',
+        )
+
+        preview = self.client.get(
+            f'/api/lookup/next-retainer-number/?customer_id={self.customer.pk}'
+            f'&business_location_id={location.pk}&date={date.today()}'
+        )
+        self.assertEqual(preview.status_code, 400)
+
+    def test_retainer_business_location_settings_validate_gstin_and_default(self):
+        invalid = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({'name': 'Invalid GSTIN Location', 'gstin': 'bad'}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+        created = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({
+                'name': 'Default Office',
+                'gstin': '32AANCC9298C1ZE',
+                'is_default': True,
+                'warehouse_ids': [],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        location = created.json()['location']
+        self.assertTrue(location['is_default'])
+
+        configured_series = self.client.post(
+            '/api/settings/retainer-number-series/',
+            data=json.dumps({
+                'name': 'Default Retainer Series',
+                'customer_type': 'b2b',
+                'business_location_id': location['id'],
+                'prefix': 'RET-%FY%',
+                'separator': '-',
+                'starting_number': 1,
+                'next_number': 1,
+                'padding': 5,
+                'is_default': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(configured_series.status_code, 201, configured_series.content)
+        self.assertEqual(configured_series.json()['series']['business_location_id'], location['id'])
+        self.assertTrue(configured_series.json()['series']['is_default'])
+
+        inactive_default = self.client.put(
+            f"/api/settings/locations/{location['id']}/",
+            data=json.dumps({
+                'name': 'Default Office',
+                'gstin': '32AANCC9298C1ZE',
+                'is_default': True,
+                'active': False,
+                'warehouse_ids': [],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(inactive_default.status_code, 400)
+
 
     def test_retainer_custom_fields_are_organization_scoped(self):
         response = self.client.post(
@@ -1793,21 +1988,30 @@ class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
             line_total=Decimal('11800.00')
         )
 
+    @override_settings(
+        PASSWORD_RESET_EMAIL_CONFIGURED=True,
+        DEFAULT_FROM_EMAIL='billing@example.com',
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'
+    )
     def test_invoice_email_and_sms(self):
-        # Email action
         res = self.client.post(
             f'/api/invoices/{self.inv.id}/email/',
             data=json.dumps({
                 'to_email': 'client@example.com',
+                'cc': 'audit@example.com',
                 'subject': 'Your Invoice INV-ACT-001',
-                'message': 'Please find invoice attached.'
+                'message': 'Please review your invoice.'
             }),
             content_type='application/json'
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['status'], 'ok')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['client@example.com'])
+        self.assertEqual(mail.outbox[0].cc, ['audit@example.com'])
+        self.assertIn('Invoice INV-ACT-001', mail.outbox[0].body)
+        self.assertEqual(self.customer.email, '')
 
-        # SMS action
         res_sms = self.client.post(
             f'/api/invoices/{self.inv.id}/sms/',
             data=json.dumps({
@@ -1816,8 +2020,24 @@ class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
             }),
             content_type='application/json'
         )
-        self.assertEqual(res_sms.status_code, 200)
-        self.assertEqual(res_sms.json()['status'], 'ok')
+        self.assertEqual(res_sms.status_code, 503)
+        self.assertIn('SMS gateway', res_sms.json()['error'])
+
+    @override_settings(PASSWORD_RESET_EMAIL_CONFIGURED=False)
+    def test_invoice_email_fails_explicitly_without_smtp(self):
+        res = self.client.post(
+            f'/api/invoices/{self.inv.id}/email/',
+            data=json.dumps({
+                'to_email': 'client@example.com',
+                'subject': 'Your Invoice INV-ACT-001',
+                'message': 'Please review your invoice.'
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 503)
+        self.assertIn('SMTP is not configured', res.json()['error'])
+        self.assertEqual(self.customer.email, '')
+        self.assertFalse(AuditLog.objects.filter(action='send_email', entity_id=str(self.inv.pk)).exists())
 
     def test_invoice_share_link(self):
         res = self.client.post(f'/api/invoices/{self.inv.id}/share/', data=json.dumps({}), content_type='application/json')
@@ -1826,18 +2046,24 @@ class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
         self.assertEqual(data['status'], 'ok')
         self.assertIn('share_url', data)
 
+    @override_settings(
+        PASSWORD_RESET_EMAIL_CONFIGURED=True,
+        DEFAULT_FROM_EMAIL='billing@example.com',
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'
+    )
     def test_invoice_reminders_and_expected_date(self):
-        # Send reminder
+        self.customer.email = 'client@example.com'
+        self.customer.save(update_fields=['email'])
         res_remind = self.client.post(f'/api/invoices/{self.inv.id}/remind/', data=json.dumps({}), content_type='application/json')
         self.assertEqual(res_remind.status_code, 200)
         self.assertEqual(res_remind.json()['status'], 'ok')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('outstanding balance', mail.outbox[0].body)
 
-        # Stop reminders
         res_stop = self.client.post(f'/api/invoices/{self.inv.id}/stop-reminders/', data=json.dumps({}), content_type='application/json')
-        self.assertEqual(res_stop.status_code, 200)
-        self.assertEqual(res_stop.json()['status'], 'ok')
+        self.assertEqual(res_stop.status_code, 503)
+        self.assertIn('no reminder scheduler', res_stop.json()['error'])
 
-        # Expected payment date
         exp_date = (date.today() + timedelta(days=5)).isoformat()
         res_exp = self.client.post(
             f'/api/invoices/{self.inv.id}/expected-payment-date/',
@@ -1995,30 +2221,46 @@ class TestBooksSubscriptionAndBilling(TestCase):
         self.assertIn('books_user', user_addon_ids)
         self.assertNotIn('crm_user', user_addon_ids)
 
-    def test_plan_upgrade_and_billing_invoice_generation(self):
-        # Upgrade to Professional
+    def test_paid_plan_change_requires_verified_payment(self):
+        from books.models import SubscriptionInvoice, TenantSubscription
+
+        sub = TenantSubscription.objects.get(organization=self.org)
         res = self.client.post(
             '/api/subscription/update/',
             data=json.dumps({'tier': 'professional', 'billing_cycle': 'annual'}),
             content_type='application/json'
         )
+        self.assertEqual(res.status_code, 503)
+        self.assertIn('payment provider', res.json()['error'])
+        sub.refresh_from_db()
+        self.assertEqual(sub.tier, 'free')
+        self.assertEqual(sub.record_limit, 100)
+        self.assertFalse(SubscriptionInvoice.objects.filter(organization=self.org).exists())
+
+    def test_free_plan_change_does_not_create_payment_history(self):
+        from books.models import SubscriptionInvoice, TenantSubscription
+
+        res = self.client.post(
+            '/api/subscription/update/',
+            data=json.dumps({'tier': 'free', 'billing_cycle': 'annual'}),
+            content_type='application/json'
+        )
         self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data['tier'], 'professional')
-        self.assertEqual(data['usage']['records']['limit'], 500000)
-        self.assertEqual(data['usage']['user_seats']['limit'], 2)
+        self.assertEqual(res.json()['tier'], 'free')
+        self.assertFalse(SubscriptionInvoice.objects.filter(organization=self.org).exists())
+        self.assertEqual(TenantSubscription.objects.get(organization=self.org).payment_method, '')
 
-        # Check SubscriptionInvoice
-        from books.models import SubscriptionInvoice
-        inv = SubscriptionInvoice.objects.filter(organization=self.org).first()
-        self.assertIsNotNone(inv)
-        self.assertEqual(inv.amount, Decimal('5000.00'))
-        self.assertEqual(inv.status, 'Paid')
-
-        # Download receipt
-        res_rcpt = self.client.get(f'/api/subscription/invoices/{inv.id}/receipt/')
-        self.assertEqual(res_rcpt.status_code, 200)
-        self.assertIn(inv.invoice_no, res_rcpt.content.decode('utf-8'))
+    def test_invalid_plan_and_billing_cycle_are_rejected(self):
+        for payload in (
+            {'tier': 'not-a-plan', 'billing_cycle': 'annual'},
+            {'tier': 'free', 'billing_cycle': 'monthly'}
+        ):
+            res = self.client.post(
+                '/api/subscription/update/',
+                data=json.dumps(payload),
+                content_type='application/json'
+            )
+            self.assertEqual(res.status_code, 400)
 
     def test_free_trial_activation(self):
         res = self.client.post(
@@ -2031,29 +2273,32 @@ class TestBooksSubscriptionAndBilling(TestCase):
         self.assertTrue(data['is_trial'])
         self.assertEqual(data['status'], 'Trial')
         self.assertGreaterEqual(data['trial_days_remaining'], 44)
+        repeated = self.client.post(
+            '/api/subscription/trial/',
+            data=json.dumps({'tier': 'professional'}),
+            content_type='application/json'
+        )
+        self.assertEqual(repeated.status_code, 400)
 
-    def test_addon_purchases_and_validation(self):
-        # Purchase Books user seat pack
+    def test_addon_purchases_require_verified_payment(self):
+        from books.models import SubscriptionInvoice, TenantSubscription
+
+        sub = TenantSubscription.objects.get(organization=self.org)
         res_usr = self.client.post(
             '/api/subscription/addon/',
             data=json.dumps({'addon_key': 'books_user', 'quantity': 2}),
             content_type='application/json'
         )
-        self.assertEqual(res_usr.status_code, 200)
-        data_usr = res_usr.json()
-        self.assertEqual(data_usr['usage']['user_seats']['addons'], 2)
+        self.assertEqual(res_usr.status_code, 503)
+        self.assertIn('payment provider', res_usr.json()['error'])
 
-        # Purchase feature add-on: custom_reports
         res_feat = self.client.post(
             '/api/subscription/addon/',
             data=json.dumps({'addon_key': 'custom_reports'}),
             content_type='application/json'
         )
-        self.assertEqual(res_feat.status_code, 200)
-        data_feat = res_feat.json()
-        self.assertTrue(data_feat['purchased_addons'].get('custom_reports'))
+        self.assertEqual(res_feat.status_code, 503)
 
-        # Reject Coming Soon add-on purchase
         res_cs = self.client.post(
             '/api/subscription/addon/',
             data=json.dumps({'addon_key': 'hrms_user'}),
@@ -2061,6 +2306,72 @@ class TestBooksSubscriptionAndBilling(TestCase):
         )
         self.assertEqual(res_cs.status_code, 400)
         self.assertIn('Coming Soon', res_cs.json()['error'])
+        sub.refresh_from_db()
+        self.assertEqual(sub.purchased_books_users, 0)
+        self.assertEqual(sub.purchased_addons, {})
+        self.assertFalse(SubscriptionInvoice.objects.filter(organization=self.org).exists())
+
+    def test_subscription_summary_does_not_create_fake_paid_invoice(self):
+        from books.models import SubscriptionInvoice
+
+        self.assertFalse(SubscriptionInvoice.objects.filter(organization=self.org).exists())
+        res = self.client.get('/api/subscription/summary/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['invoices_history'], [])
+
+    def test_subscription_receipt_does_not_label_pending_amount_as_paid(self):
+        from books.models import SubscriptionInvoice
+
+        inv = SubscriptionInvoice.objects.create(
+            organization=self.org,
+            invoice_no='INV-SUB-PENDING',
+            description='Professional Plan',
+            amount=Decimal('5000.00'),
+            status='Pending'
+        )
+        res = self.client.get(f'/api/subscription/invoices/{inv.id}/receipt/')
+        self.assertEqual(res.status_code, 200)
+        receipt = res.content.decode('utf-8')
+        self.assertIn('Amount:', receipt)
+        self.assertNotIn('Total Paid:', receipt)
+        self.assertIn('Payment Method : Not verified', receipt)
+
+    def test_auto_renew_requires_payment_provider_and_explicit_value(self):
+        from books.models import TenantSubscription
+
+        sub = TenantSubscription.objects.get(organization=self.org)
+        sub.auto_renew = False
+        sub.save(update_fields=['auto_renew'])
+        for payload, expected_status in (({'auto_renew': True}, 503), ({}, 400)):
+            res = self.client.post(
+                '/api/subscription/autorenew/',
+                data=json.dumps(payload),
+                content_type='application/json'
+            )
+            self.assertEqual(res.status_code, expected_status)
+        sub.refresh_from_db()
+        self.assertFalse(sub.auto_renew)
+
+    def test_legacy_paid_subscription_invoice_is_not_treated_as_verified(self):
+        from books.models import SubscriptionInvoice
+
+        inv = SubscriptionInvoice.objects.create(
+            organization=self.org,
+            invoice_no='INV-SUB-LEGACY',
+            description='Legacy plan record',
+            amount=Decimal('5000.00'),
+            status='Paid',
+            payment_method='Visa ending in 4242'
+        )
+        summary = self.client.get('/api/subscription/summary/').json()
+        history = next(item for item in summary['invoices_history'] if item['id'] == inv.id)
+        self.assertEqual(history['status'], 'Unverified (no provider reference)')
+        self.assertEqual(history['payment_method'], '')
+
+        receipt = self.client.get(f'/api/subscription/invoices/{inv.id}/receipt/').content.decode('utf-8')
+        self.assertIn('Status         : Unverified (no provider reference)', receipt)
+        self.assertIn('Amount:', receipt)
+        self.assertNotIn('Total Paid:', receipt)
 
     def test_record_and_user_limit_enforcement(self):
         from books.models import TenantSubscription, Customer

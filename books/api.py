@@ -12,7 +12,7 @@ from functools import wraps
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Max, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -29,7 +29,7 @@ from .models import (
     StockTransfer, StockTransferLine,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
-    CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
+    BusinessLocation, CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
     DeliveryChallanLine, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
@@ -2084,7 +2084,7 @@ class DocResource(Resource):
     def extra_detail(self, o):
         return {}
 
-    def extra_clean(self, c):
+    def extra_clean(self, c, user_org=None):
         return {}
 
     def parse(self, data, user=None):
@@ -2131,7 +2131,7 @@ class DocResource(Resource):
             head['signed_by'] = str(data.get('signed_by') or '')
         if 'signature_title' in data:
             head['signature_title'] = str(data.get('signature_title') or '')
-        head.update(self.extra_clean(c))
+        head.update(self.extra_clean(c, user_org=user_org))
         c.done()
         return head, parse_lines(data.get('lines'), org=user_org)
 
@@ -2170,14 +2170,18 @@ class DocResource(Resource):
         series_configured = services.has_document_number_series(pfx, org=user_org)
         if not num or num_exists or series_configured:
             party = head.get(self.party_attr)
-            explicit_customer_type = str(data.get('customer_type') or '').strip().lower()
+            explicit_customer_type = str(head.get('customer_type') or data.get('customer_type') or '').strip().lower()
             customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else (
                 'b2b' if getattr(party, 'gstin', '') else 'b2c'
             )
             num = services.next_document_number(
                 pfx, org=user_org, date=head['date'], customer_type=customer_type,
                 branch=head.get('branch', ''), location=head.get('location', ''),
-                gstin=data.get('gstin') or (getattr(user_org, 'gstin', '') if user_org else ''),
+                gstin=(
+                    head.get('business_location_gstin', '')
+                    if 'business_location' in head
+                    else data.get('gstin') or (getattr(user_org, 'gstin', '') if user_org else '')
+                ),
                 series_id=data.get('numbering_series_id'), user=user,
             )
         else:
@@ -2262,7 +2266,8 @@ class DocResource(Resource):
             to_email = b.get('to_email') or b.get('email')
             subject = b.get('subject', '')
             message = b.get('message', '')
-            res = services.send_document_email(obj, to_email, subject, message, request.user)
+            cc = b.get('cc', '')
+            res = services.send_document_email(obj, to_email, subject, message, request.user, cc=cc)
             return j(res)
         elif name in ('sms', 'send-sms'):
             b = body(request)
@@ -2323,7 +2328,7 @@ class InvoiceResource(DocResource):
     def get_template_sample(self):
         return ['INV-00101', 'Acme Infotech Ltd', '2026-10-15', '2026-11-14', 'Ergonomic Mesh Chair', 'Ergonomic office chair with lumbar support', '940310', '2', '8500.00', '18.00', 'Thanks for your business.']
 
-    def extra_clean(self, c):
+    def extra_clean(self, c, user_org=None):
         return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
 
     def extra_detail(self, o):
@@ -2393,7 +2398,7 @@ class RetainerInvoiceResource(DocResource):
                 ('Status', 'status'), ('Taxable', 'subtotal'), ('Total', 'total'),
                 ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
 
-    def extra_clean(self, c):
+    def extra_clean(self, c, user_org=None):
         res = {
             'terms': c.text('terms_conditions' if 'terms_conditions' in c.d else 'terms', max_len=2000),
             'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60)
@@ -2416,12 +2421,49 @@ class RetainerInvoiceResource(DocResource):
             res['subject'] = purpose
             if 'notes' not in c.d:
                 res['notes'] = purpose
+
+        customer_id = c.d.get('customer') or c.d.get('customer_id')
+        try:
+            customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            customer_id = None
+        customer = Customer.objects.filter(pk=customer_id, organization=user_org).first() if customer_id and user_org else None
+        if customer:
+            res['customer_type'] = 'b2c' if customer.customer_type == 'individual' else 'b2b'
+
+        location_id = c.integer('business_location_id', lo=1)
+        if location_id is None and c.d.get('business_location') not in (None, ''):
+            location_id = c.integer('business_location', lo=1)
+        location_name = str(c.d.get('location') or '').strip()
+        location_qs = BusinessLocation.objects.filter(organization=user_org) if user_org else BusinessLocation.objects.none()
+        location = location_qs.filter(pk=location_id).first() if location_id else None
+        if not location and location_name:
+            location = location_qs.filter(name__iexact=location_name).first()
+        if location:
+            res.update({
+                'business_location': location,
+                'location': location.name,
+                'business_location_gstin': location.gstin,
+            })
+        elif user_org and location_qs.filter(active=True).exists() and (location_id or location_name or 'business_location_id' in c.d or 'business_location' in c.d):
+            c.err('business_location_id', 'Select an active business location belonging to your organization.')
+        elif user_org and location_qs.filter(active=True).exists() and 'retainer-invoices' in getattr(self, 'name', ''):
+            c.err('business_location_id', 'Select a business location before creating a retainer invoice.')
         return res
 
     def extra_detail(self, o):
         paid = q2(getattr(o, 'paid_sum', o.paid_amount))
         applied = q2(getattr(o, 'applied_sum', o.applied_amount))
         return {
+            'business_location_id': o.business_location_id,
+            'business_location_gstin': o.business_location_gstin,
+            'business_location_details': ({
+                'name': o.business_location.name,
+                'address': o.business_location.address,
+                'city': o.business_location.city,
+                'state': o.business_location.state,
+                'pincode': o.business_location.pincode,
+            } if o.business_location_id else None),
             'terms': getattr(o, 'terms', ''),
             'order_number': o.order_number,
             'reference': o.order_number,
@@ -2432,6 +2474,27 @@ class RetainerInvoiceResource(DocResource):
             'applied_amount': applied,
             'available_balance': max(Z, paid - applied)
         }
+
+    def _validate_business_location(self, data, user, current=None):
+        location_id = data.get('business_location_id') or data.get('business_location')
+        if not location_id:
+            return
+        try:
+            location_id = int(location_id)
+        except (TypeError, ValueError):
+            return
+        org = get_user_org(user)
+        location = BusinessLocation.objects.filter(organization=org, pk=location_id).first() if org else None
+        if location and not location.active and (current is None or location.pk != current.business_location_id):
+            raise ApiError(400, 'Choose an active business location.')
+
+    def create(self, data, user):
+        self._validate_business_location(data, user)
+        return super().create(data, user)
+
+    def update(self, obj, data, user):
+        self._validate_business_location(data, user, current=obj)
+        return super().update(obj, data, user)
 
     def action(self, request, obj, name):
         if name == 'send':
@@ -2513,7 +2576,7 @@ class QuoteResource(DocResource):
     def get_template_sample(self):
         return ['EST-00050', 'Acme Infotech Ltd', '2026-10-12', '2026-11-12', 'Consulting Services', 'Software audit and advisory', '1', '45000.00', '18.00', 'Valid for 30 days']
 
-    def extra_clean(self, c):
+    def extra_clean(self, c, user_org=None):
         tds_val = c.d.get('tds_tcs_tax')
         if isinstance(tds_val, str) and ('%' in tds_val or '(' in tds_val):
             import re
@@ -2708,7 +2771,7 @@ class BillResource(DocResource):
     def get_template_sample(self):
         return ['BILL-00201', 'Reliable Hardware Supplies', '2026-10-10', '2026-11-09', 'Ergonomic Mesh Chair', 'Raw frame materials', '940310', '10', '5200.00', '18.00', 'Standard supplies bill']
 
-    def extra_clean(self, c):
+    def extra_clean(self, c, user_org=None):
         return {'vendor_ref': c.text('vendor_ref', max_len=60), 'order_number': c.text('order_number', max_len=60)}
 
     def extra_detail(self, o):
@@ -6930,6 +6993,15 @@ def lookup(request, name):
                  'parent_name': o.parent.name if o.parent else '',
                  'shared_database': o.shared_database}
                 for o in wh_qs]
+    elif name in ('business-locations', 'retainer-locations'):
+        locations = org_filter(BusinessLocation.objects.filter(active=True)).order_by('name')
+        data = [{
+            'id': item.pk,
+            'name': item.name,
+            'gstin': item.gstin,
+            'state': item.state,
+            'is_default': item.is_default,
+        } for item in locations]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
                 for o in org_filter(PriceList.objects.filter(active=True)).order_by('name')]
@@ -6990,11 +7062,32 @@ def lookup(request, name):
         )
     elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):
         org = user_org or Organization.get()
+        location_id = request.GET.get('business_location_id')
+        business_location = None
+        if location_id:
+            business_location = BusinessLocation.objects.filter(
+                organization=org, pk=location_id, active=True
+            ).first()
+            if not business_location:
+                raise ApiError(400, 'Select an active business location belonging to your organization.')
+        customer_id = request.GET.get('customer_id')
+        customer = None
+        if customer_id:
+            customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first()
+            if not customer:
+                raise ApiError(400, 'Select an active customer belonging to your organization.')
+        customer_type = (
+            'b2c' if customer and customer.customer_type == 'individual'
+            else 'b2b' if customer
+            else request.GET.get('customer_type')
+        )
         data = services.preview_document_number(
             'RET', org=org, date=request.GET.get('date'),
-            customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'), location=request.GET.get('location'),
-            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            customer_type=customer_type,
+            branch=request.GET.get('branch'),
+            location=business_location.name if business_location else request.GET.get('location'),
+            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
+            series_id=request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-po-number', 'next-purchase-order-number'):
@@ -8429,7 +8522,10 @@ def subscription_addon_view(request):
     org = get_user_org(request.user)
     d = body(request)
     addon_key = d.get('addon_key') or d.get('addon_id') or ''
-    qty = int(d.get('quantity') or 1)
+    try:
+        qty = int(d.get('quantity') or 1)
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Add-on quantity must be a whole number.')
     res = services.purchase_subscription_addon(org=org, addon_key=addon_key, quantity=qty, user=request.user)
     return j(res)
 
@@ -8451,13 +8547,17 @@ def subscription_receipt_download_view(request, pk):
     if not inv:
         raise ApiError(404, 'Subscription invoice receipt not found.')
 
+    payment_verified = False
+    receipt_status = 'Unverified (no provider reference)' if inv.status.lower() == 'paid' else inv.status
+    payment_label = 'Total Paid' if payment_verified else 'Amount'
+    payment_method = inv.payment_method if payment_verified and inv.payment_method else 'Not verified'
     receipt_text = f"""CONVOSIS TECHNOLOGIES PRIVATE LIMITED
 TAX INVOICE / SUBSCRIPTION RECEIPT
 ------------------------------------------------------------
 Receipt Number : {inv.invoice_no}
 Billing Date   : {inv.date.strftime('%d %b %Y')}
-Status         : {inv.status}
-Payment Method : {inv.payment_method}
+Status         : {receipt_status}
+Payment Method : {payment_method}
 Organization   : {org.name if org else 'Convosis Books'}
 GSTIN          : {org.gstin if org else '32AANCC9298C1ZE'}
 ------------------------------------------------------------
@@ -8465,7 +8565,7 @@ Item Description                                      Amount
 ------------------------------------------------------------
 {inv.description[:45]:<45}   INR {inv.amount:>10.2f}
 ------------------------------------------------------------
-Total Paid:                                    INR {inv.amount:>10.2f}
+{payment_label}:                                    INR {inv.amount:>10.2f}
 ------------------------------------------------------------
 This is a computer-generated tax receipt. No physical signature required.
 convosis.com | support@convosis.com
@@ -9393,6 +9493,134 @@ def settings_organization_view(request):
     services.log_audit(request.user, 'update', 'Organization', org.pk, f"Updated organization settings for {org.name}")
     return j(org_json(org))
 
+def _business_location_payload(location):
+    return {
+        'id': location.pk,
+        'name': location.name,
+        'gstin': location.gstin,
+        'address': location.address,
+        'city': location.city,
+        'state': location.state,
+        'pincode': location.pincode,
+        'is_default': location.is_default,
+        'active': location.active,
+        'warehouses': [{
+            'id': warehouse.pk,
+            'name': warehouse.name,
+            'code': warehouse.code,
+        } for warehouse in location.warehouses.filter(active=True).order_by('name')],
+    }
+
+
+@api_view
+def settings_locations_view(request, location_id=None):
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user)
+    if not org:
+        raise ApiError(403, 'An organization is required to manage business locations.')
+
+    queryset = BusinessLocation.objects.filter(organization=org)
+    if request.method == 'GET':
+        if location_id:
+            location = queryset.filter(pk=location_id).first()
+            if not location:
+                raise ApiError(404, 'Business location not found.')
+            return j(_business_location_payload(location))
+        return j({'locations': [_business_location_payload(item) for item in queryset]})
+
+    if request.method == 'DELETE':
+        location = queryset.filter(pk=location_id).first() if location_id else None
+        if not location:
+            raise ApiError(404, 'Business location not found.')
+        if location.retainer_invoices.exists() or location.document_number_series.exists():
+            raise ApiError(409, 'This location is in use by retainer invoices or numbering series. Deactivate it instead.')
+        if location.warehouses.exists():
+            raise ApiError(409, 'Unlink the associated warehouses before deleting this location.')
+        name = location.name
+        location.delete()
+        services.log_audit(
+            request.user, 'delete', 'BusinessLocation', location_id,
+            f'Deleted unused business location {name}.', org=org,
+            module='settings', submodule='locations',
+        )
+        return j({'status': 'deleted', 'id': location_id})
+
+    if request.method not in ('POST', 'PUT', 'PATCH'):
+        raise ApiError(405, 'Method not allowed.')
+
+    data = body(request)
+    name = str(data.get('name') or '').strip()
+    if not name or len(name) > 120:
+        raise ApiError(400, 'Location name must be between 1 and 120 characters.')
+    gstin = str(data.get('gstin') or '').strip().upper()
+    if gstin and not GSTIN_RE.fullmatch(gstin):
+        raise ApiError(400, 'Enter a valid 15-character GSTIN.')
+    warehouse_ids = data.get('warehouse_ids', [])
+    if not isinstance(warehouse_ids, list) or any(not str(value).isdigit() for value in warehouse_ids):
+        raise ApiError(400, 'Warehouse associations must be a list of warehouse IDs.')
+    warehouse_ids = list(dict.fromkeys(int(value) for value in warehouse_ids))
+    warehouses = list(Warehouse.objects.filter(organization=org, pk__in=warehouse_ids))
+    if len(warehouses) != len(warehouse_ids):
+        raise ApiError(400, 'Choose only warehouses belonging to your organization.')
+    address = str(data.get('address') or '').strip()
+    city = str(data.get('city') or '').strip()
+    state = str(data.get('state') or '').strip()
+    pincode = str(data.get('pincode') or '').strip()
+    if len(address) > 4000 or len(city) > 100 or len(state) > 60 or len(pincode) > 20:
+        raise ApiError(400, 'Location address details exceed the allowed length.')
+    active = bool(data.get('active', True))
+    is_default = bool(data.get('is_default', False))
+    if is_default and not active:
+        raise ApiError(400, 'An inactive business location cannot be the default location.')
+
+    with transaction.atomic():
+        location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
+        if location_id and not location:
+            raise ApiError(404, 'Business location not found.')
+        duplicate = queryset.filter(name__iexact=name)
+        if location:
+            duplicate = duplicate.exclude(pk=location.pk)
+        if duplicate.exists():
+            raise ApiError(409, 'A business location with this name already exists.')
+        if gstin:
+            duplicate_gstin = queryset.filter(gstin=gstin)
+            if location:
+                duplicate_gstin = duplicate_gstin.exclude(pk=location.pk)
+            if duplicate_gstin.exists():
+                raise ApiError(409, 'This GSTIN is already associated with another business location.')
+        for warehouse in warehouses:
+            if warehouse.business_location_id and (not location or warehouse.business_location_id != location.pk):
+                raise ApiError(409, f'Warehouse {warehouse.name} is already associated with another business location.')
+
+        if is_default:
+            queryset.exclude(pk=location.pk if location else None).filter(is_default=True).update(is_default=False)
+        if location is None:
+            location = BusinessLocation(organization=org)
+        location.name = name
+        location.gstin = gstin
+        location.address = address
+        location.city = city
+        location.state = state
+        location.pincode = pincode
+        location.is_default = is_default
+        location.active = active
+        try:
+            location.save()
+        except IntegrityError:
+            raise ApiError(409, 'The business location conflicts with another location or default setting.')
+
+        Warehouse.objects.filter(organization=org, business_location=location).exclude(pk__in=warehouse_ids).update(business_location=None)
+        Warehouse.objects.filter(organization=org, pk__in=warehouse_ids).update(business_location=location)
+        current = _business_location_payload(location)
+        services.log_audit(
+            request.user, 'update' if location_id else 'create', 'BusinessLocation', location.pk,
+            f"{'Updated' if location_id else 'Created'} business location {location.name}.",
+            org=org, module='settings', submodule='locations',
+            new_values=current,
+        )
+    return j({'status': 'ok', 'location': current}, status=200 if location_id else 201)
+
+
 @api_view
 def settings_currencies_view(request, currency_id=None):
     """Manage currencies."""
@@ -9580,6 +9808,7 @@ def _number_series_payload(series):
         'customer_type': series.customer_type,
         'branch': series.branch,
         'location': series.location,
+        'business_location_id': series.business_location_id,
         'gstin': series.gstin,
         'prefix': series.prefix,
         'separator': series.separator,
@@ -9589,6 +9818,7 @@ def _number_series_payload(series):
         'financial_year': series.financial_year,
         'reset_annually': series.reset_annually,
         'active': series.active,
+        'is_default': series.is_default,
         'gst_compliant': series.gst_compliant,
         'allow_manual_selection': series.allow_manual_selection,
         'document_count': allocations.count(),
@@ -9601,7 +9831,7 @@ def _number_series_payload(series):
 
 
 @api_view
-def settings_document_number_series_view(request, series_id=None):
+def settings_document_number_series_view(request, series_id=None, retainer_only=False):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     document_types = {
@@ -9609,9 +9839,11 @@ def settings_document_number_series_view(request, series_id=None):
         'sales_orders', 'credit_notes', 'delivery_challans', 'bills',
         'purchase_orders', 'expenses', 'debit_notes',
     }
+    queryset = DocumentNumberSeries.objects.filter(organization=org)
+    if retainer_only:
+        queryset = queryset.filter(document_type='retainer_invoices')
 
     if request.method == 'GET':
-        queryset = DocumentNumberSeries.objects.filter(organization=org)
         if series_id:
             series = queryset.filter(pk=series_id).first()
             if not series:
@@ -9622,7 +9854,7 @@ def settings_document_number_series_view(request, series_id=None):
     if request.method == 'DELETE':
         if not series_id:
             raise ApiError(400, 'Numbering series ID is required.')
-        series = DocumentNumberSeries.objects.filter(organization=org, pk=series_id).first()
+        series = queryset.filter(pk=series_id).first()
         if not series:
             raise ApiError(404, 'Numbering series not found.')
         previous = _number_series_payload(series)
@@ -9641,6 +9873,8 @@ def settings_document_number_series_view(request, series_id=None):
 
     data = body(request)
     document_type = str(data.get('document_type') or '').strip().lower().replace('-', '_')
+    if retainer_only:
+        document_type = 'retainer_invoices'
     if document_type not in document_types:
         raise ApiError(400, 'Choose a supported document type.')
     name = str(data.get('name') or '').strip()
@@ -9652,6 +9886,30 @@ def settings_document_number_series_view(request, series_id=None):
     branch = str(data.get('branch') or '').strip()
     location = str(data.get('location') or '').strip()
     gstin = str(data.get('gstin') or '').strip().upper()
+    business_location_id = data.get('business_location_id')
+    business_location = None
+    if document_type == 'retainer_invoices':
+        if not customer_type:
+            raise ApiError(400, 'Choose B2B or B2C for this retainer invoice series.')
+        try:
+            business_location_id = int(business_location_id)
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Choose a business location for this retainer invoice series.')
+        business_location = BusinessLocation.objects.filter(
+            organization=org, pk=business_location_id
+        ).first()
+        existing_series = queryset.filter(pk=series_id).first() if series_id else None
+        if not business_location or (
+            not business_location.active
+            and (not existing_series or existing_series.business_location_id != business_location.pk)
+        ):
+            raise ApiError(400, 'Choose an active business location belonging to your organization.')
+        if gstin and gstin != business_location.gstin:
+            raise ApiError(400, 'The series GSTIN must match the selected business location.')
+        location = business_location.name
+        gstin = business_location.gstin
+    elif business_location_id:
+        raise ApiError(400, 'Business location mapping is only supported for Retainer Invoice series.')
     if len(branch) > 120 or len(location) > 120:
         raise ApiError(400, 'Branch and location names cannot exceed 120 characters.')
     if gstin and (len(gstin) != 15 or not re.fullmatch(r'[0-9A-Z]{15}', gstin)):
@@ -9677,9 +9935,12 @@ def settings_document_number_series_view(request, series_id=None):
     active = bool(data.get('active', True))
     gst_compliant = bool(data.get('gst_compliant', False))
     allow_manual_selection = bool(data.get('allow_manual_selection', False))
+    is_default = bool(data.get('is_default', False))
+    if is_default and document_type != 'retainer_invoices':
+        raise ApiError(400, 'Only Retainer Invoice series can be marked as the default series here.')
 
     with transaction.atomic():
-        series = DocumentNumberSeries.objects.filter(organization=org, pk=series_id).first() if series_id else None
+        series = queryset.filter(pk=series_id).first() if series_id else None
         if series_id and not series:
             raise ApiError(404, 'Numbering series not found.')
         if series and series.document_type != document_type and series.allocations.exists():
@@ -9701,13 +9962,18 @@ def settings_document_number_series_view(request, series_id=None):
 
         defaults = {
             'name': name, 'document_type': document_type, 'customer_type': customer_type,
-            'branch': branch, 'location': location, 'gstin': gstin,
+            'branch': branch, 'location': location, 'business_location': business_location, 'gstin': gstin,
             'prefix': prefix, 'separator': separator,
             'starting_number': starting_number, 'next_number': next_number,
             'padding': padding, 'financial_year': financial_year,
             'reset_annually': reset_annually, 'active': active,
             'gst_compliant': gst_compliant, 'allow_manual_selection': allow_manual_selection,
+            'is_default': is_default,
         }
+        if document_type == 'retainer_invoices' and is_default:
+            DocumentNumberSeries.objects.filter(
+                organization=org, document_type='retainer_invoices', is_default=True
+            ).exclude(pk=series.pk if series else None).update(is_default=False)
         if series:
             for field, value in defaults.items():
                 setattr(series, field, value)

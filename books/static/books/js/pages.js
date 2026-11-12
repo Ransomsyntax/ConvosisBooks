@@ -2046,11 +2046,20 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const partyState = party.state ? `<div>State: ${esc(party.state)}</div>` : '';
 
   const companyIdLine = org.company_id ? `<div>Company ID : <b>${esc(org.company_id)}</b></div>` : '';
-  const orgAddrHtml = org.address ? org.address.split('\n').map(l => `<div>${esc(l)}</div>`).join('') : '';
-  const cityStateParts = [org.city, org.state, org.pincode].filter(Boolean).map(esc).join(' ');
+  const businessLocation = isRetainer ? (d.business_location_details || {}) : {};
+  const orgAddress = businessLocation.address || org.address || '';
+  const orgAddrHtml = orgAddress ? orgAddress.split('\n').map(l => `<div>${esc(l)}</div>`).join('') : '';
+  const cityStateParts = [
+    businessLocation.city || org.city,
+    businessLocation.state || org.state,
+    businessLocation.pincode || org.pincode
+  ].filter(Boolean).map(esc).join(' ');
   const orgCityState = cityStateParts ? `<div>${cityStateParts}</div>` : '';
   const orgCountry = org.country ? `<div>${esc(org.country)}</div>` : '';
-  const orgGstin = org.gstin ? `<div>GSTIN <b>${esc(org.gstin)}</b></div>` : '';
+  const documentGstin = isRetainer && d.business_location_id
+    ? (d.business_location_gstin || '')
+    : org.gstin;
+  const orgGstin = documentGstin ? `<div>GSTIN <b>${esc(documentGstin)}</b></div>` : '';
   const orgPhone = org.phone ? `<div>${esc(org.phone)}</div>` : '';
   const orgEmail = org.email ? `<div>${esc(org.email)}</div>` : '';
   const orgWeb = org.website ? `<div>${esc(org.website)}</div>` : '';
@@ -2100,6 +2109,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
+            ${isRetainer && d.location ? `<tr><td>Business Location</td><td>: ${esc(d.location)}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
             ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
@@ -2620,7 +2630,7 @@ function openSendEmailModal(doc, kind, onDone) {
   const partyName = doc.party || party.name || 'Valued Customer';
   const orgName = (APP.org && APP.org.name) || 'Convosis';
   const defaultSubj = `Invoice ${doc.number} from ${orgName}`;
-  const defaultBody = `Dear ${partyName},\n\nPlease find attached invoice ${doc.number} for the amount of ${inr(doc.total)}.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
+  const defaultBody = `Dear ${partyName},\n\nInvoice ${doc.number} for the amount of ${inr(doc.total)} has been issued.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
 
   formModal({
     title: `Send Invoice · ${esc(doc.number)}`,
@@ -2638,7 +2648,7 @@ function openSendEmailModal(doc, kind, onDone) {
         ${fld({ name: 'message', label: 'Message', type: 'textarea', req: 1, value: defaultBody, col: 'c2' })}
         <div style="grid-column:span 2;font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:4px;">
           <i class="fa-solid fa-paperclip"></i>
-          <span>PDF invoice <b>${esc(doc.number)}.pdf</b> will be attached automatically.</span>
+          <span>This email includes document details. PDF attachments are not available yet.</span>
         </div>
       </div>
     `,
@@ -8583,13 +8593,13 @@ async function subscriptionBillingPage(root) {
                 `}
               </div>
               <div class="sub" style="font-size:12.5px;margin-top:3px;">
-                Billed ${esc(data.billing_cycle || 'annually')} · Auto-renews on <b>${esc(data.period_end || 'Next billing cycle')}</b> via ${esc(data.payment_method || 'Visa ending in 4242')}
+                Billed ${esc(data.billing_cycle || 'annually')} · Auto-renew setting: ${data.auto_renew ? 'ON (not processed)' : 'OFF'} · ${data.payment_method ? `Payment method: ${esc(data.payment_method)}` : 'Online billing is not configured'}
               </div>
             </div>
           </div>
           <div style="display:flex;gap:10px;align-items:center;">
-            <button class="btn" id="btnToggleAutoRenew" type="button" style="font-size:12px;">
-              ${data.auto_renew ? 'Auto-Renew: ON' : 'Auto-Renew: OFF'}
+            <button class="btn" id="btnToggleAutoRenew" type="button" ${data.auto_renew ? '' : 'disabled'} style="font-size:12px;">
+              ${data.auto_renew ? 'Turn renewal setting off' : 'Auto-Renew unavailable'}
             </button>
             <button class="btn" id="btnUpdatePaymentMethod" type="button" style="font-size:12px;">Update Payment Method</button>
           </div>
@@ -8694,7 +8704,7 @@ async function subscriptionBillingPage(root) {
             ` : curTier === 'free' && !isTrial ? `
               <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="startTrialAction('professional')">Start 45 days free trial</button>
             ` : `
-              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('professional')">Upgrade to Professional</button>
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('professional')">Online checkout unavailable</button>
             `}
           </div>
         </div>
@@ -8735,7 +8745,7 @@ async function subscriptionBillingPage(root) {
             ` : curTier === 'free' && !isTrial ? `
               <button class="btn" style="width:100%;border-radius:24px;padding:11px;font-weight:600;" onclick="startTrialAction('premium')">Start 45 days free trial</button>
             ` : `
-              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('premium')">Upgrade to Premium</button>
+              <button class="btn p" style="width:100%;border-radius:24px;padding:11px;font-weight:700;background:#2563eb;color:#fff;" onclick="choosePlanAction('premium')">Online checkout unavailable</button>
             `}
           </div>
         </div>
@@ -8776,7 +8786,7 @@ async function subscriptionBillingPage(root) {
                   ` : isPurchased ? `
                     <span class="pastel-chip chip-indigo" style="font-size:11px;padding:3px 9px;">Active</span>
                   ` : `
-                    <button class="btn" type="button" style="font-size:12px;padding:4px 12px;border-radius:14px;" onclick="purchaseAddonAction('${addon.id}', '${esc(addon.name)}', ${addon.price})">+ Add</button>
+                    <button class="btn" type="button" disabled style="font-size:12px;padding:4px 12px;border-radius:14px;opacity:0.6;">Checkout unavailable</button>
                   `}
                 </div>
               </div>
@@ -8807,7 +8817,7 @@ async function subscriptionBillingPage(root) {
                   ${isComingSoon ? `
                     <button class="btn" disabled style="font-size:11px;padding:4px 10px;border-radius:14px;opacity:0.6;">Coming Soon</button>
                   ` : `
-                    <button class="btn p" type="button" style="font-size:12px;padding:4px 12px;border-radius:14px;background:#2563eb;" onclick="purchaseUserAddonAction('${addon.id}', '${esc(addon.name)}', ${addon.price})">+ Add Pack</button>
+                    <button class="btn p" type="button" disabled style="font-size:12px;padding:4px 12px;border-radius:14px;background:#2563eb;opacity:0.6;">Checkout unavailable</button>
                   `}
                 </div>
               </div>
@@ -8848,7 +8858,7 @@ async function subscriptionBillingPage(root) {
       <!-- Billing Invoices & Payment Statements -->
       <div style="margin-top:54px;margin-bottom:20px;">
         <h2 style="font-size:20px;font-weight:800;color:var(--tx-main);margin:0 0 6px;">Billing Invoices & Payment Statements</h2>
-        <p style="font-size:13px;color:var(--tx-muted);margin:0 0 16px;">Download GST compliant subscription receipts and track past payment transactions.</p>
+        <p style="font-size:13px;color:var(--tx-muted);margin:0 0 16px;">Download subscription receipts and track recorded payment transactions.</p>
 
         <div class="card" style="padding:0;overflow:hidden;border-radius:16px;border:1px solid var(--bd);">
           <table style="width:100%;border-collapse:collapse;">
@@ -8858,7 +8868,7 @@ async function subscriptionBillingPage(root) {
                 <th style="padding:14px 14px;text-align:left;">Billing Date</th>
                 <th style="padding:14px 14px;text-align:left;">Description</th>
                 <th style="padding:14px 14px;text-align:left;">Status</th>
-                <th style="padding:14px 18px;text-align:right;">Amount Paid</th>
+                <th style="padding:14px 18px;text-align:right;">Amount</th>
                 <th style="padding:14px 18px;text-align:right;">Action</th>
               </tr>
             </thead>
@@ -8868,7 +8878,7 @@ async function subscriptionBillingPage(root) {
                   <td style="padding:14px 18px;"><b>${esc(inv.invoice_no)}</b></td>
                   <td style="padding:14px 14px;color:var(--tx-muted);">${esc(inv.date)}</td>
                   <td style="padding:14px 14px;color:var(--tx-main);">${esc(inv.description)}</td>
-                  <td style="padding:14px 14px;"><span class="st ok">${esc(inv.status)}</span></td>
+                  <td style="padding:14px 14px;"><span class="st">${esc(inv.status)}</span></td>
                   <td style="padding:14px 18px;text-align:right;"><b>${esc(inv.amount)}</b></td>
                   <td style="padding:14px 18px;text-align:right;">
                     <button class="btn" type="button" style="font-size:11.5px;padding:4px 11px;border-radius:8px;" onclick="downloadReceiptAction(${inv.id || 0}, '${esc(inv.invoice_no)}')">
@@ -8885,52 +8895,7 @@ async function subscriptionBillingPage(root) {
 
     // Global Action Handlers
     window.choosePlanAction = async (targetTier) => {
-      const planNames = { free: 'Free Plan', professional: 'Professional Plan', premium: 'Premium Plan' };
-      const planPrices = { free: '₹0/yr', professional: '₹5,000/yr', premium: '₹20,000/yr' };
-      
-      Modal.open({
-        title: `Switch to ${planNames[targetTier]}`,
-        body: `
-          <div style="padding:10px 0;">
-            <p style="font-size:14px;color:var(--tx-main);margin-bottom:16px;">
-              You are selecting the <b>${planNames[targetTier]}</b> (${planPrices[targetTier]}).
-            </p>
-            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;margin-bottom:16px;">
-              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
-                <span>Plan Subscription:</span>
-                <b>${planPrices[targetTier]}</b>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
-                <span>Payment Mode:</span>
-                <span>UPI / Credit Card / NetBanking</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--tx-muted);">
-                <span>Billing Period:</span>
-                <span>Annual (365 days)</span>
-              </div>
-            </div>
-            <p style="font-size:12px;color:var(--tx-muted);margin:0;">
-              By confirming, your plan quotas and access privileges will be updated immediately.
-            </p>
-          </div>
-        `,
-        footer: `
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn p" id="btnConfirmPlanSwitch" style="background:#2563eb;">Confirm & Switch Plan</button>
-        `
-      });
-
-      $('#btnConfirmPlanSwitch').addEventListener('click', async () => {
-        try {
-          Modal.close();
-          toast('Processing subscription update…', 'info');
-          const res = await api('subscription/update/', { method: 'POST', body: { tier: targetTier, billing_cycle: 'annual' } });
-          toast(`Successfully updated subscription to ${res.tier_display}!`, 'ok');
-          subscriptionBillingPage(root);
-        } catch (e) {
-          toast(e.message, 'err');
-        }
-      });
+      toast('Paid plan checkout is unavailable until a payment provider is configured.', 'err');
     };
 
     window.startTrialAction = async (targetTier) => {
@@ -8946,96 +8911,11 @@ async function subscriptionBillingPage(root) {
     };
 
     window.purchaseAddonAction = async (addonId, addonName, price) => {
-      Modal.open({
-        title: `Add Feature: ${addonName}`,
-        body: `
-          <div style="padding:10px 0;">
-            <p style="font-size:13.5px;color:var(--tx-main);margin-bottom:14px;">
-              Add <b>${addonName}</b> to your current organization subscription.
-            </p>
-            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;margin-bottom:14px;">
-              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;">
-                <span>Module:</span>
-                <b>${addonName}</b>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:13px;">
-                <span>Annual Add-on Cost:</span>
-                <b>₹${Number(price).toLocaleString()} / year</b>
-              </div>
-            </div>
-            <p style="font-size:12px;color:var(--tx-muted);margin:0;">
-              A GST invoice receipt will be generated and added to your billing history.
-            </p>
-          </div>
-        `,
-        footer: `
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn p" id="btnConfirmAddon" style="background:#2563eb;">Confirm & Add</button>
-        `
-      });
-
-      $('#btnConfirmAddon').addEventListener('click', async () => {
-        try {
-          Modal.close();
-          toast(`Purchasing ${addonName}…`, 'info');
-          await api('subscription/addon/', { method: 'POST', body: { addon_key: addonId, quantity: 1 } });
-          toast(`${addonName} activated successfully!`, 'ok');
-          subscriptionBillingPage(root);
-        } catch (e) {
-          toast(e.message, 'err');
-        }
-      });
+      toast('Add-on checkout is unavailable until a payment provider is configured.', 'err');
     };
 
     window.purchaseUserAddonAction = async (addonId, addonName, unitPrice) => {
-      Modal.open({
-        title: `Add ${addonName} Pack`,
-        body: `
-          <div style="padding:10px 0;">
-            <div class="fg" style="margin-bottom:14px;">
-              <label>Number of User Packs</label>
-              <select class="in" id="addonPackQty">
-                <option value="1">1 Pack (₹${Number(unitPrice).toLocaleString()}/yr)</option>
-                <option value="2">2 Packs (₹${Number(unitPrice * 2).toLocaleString()}/yr)</option>
-                <option value="5">5 Packs (₹${Number(unitPrice * 5).toLocaleString()}/yr)</option>
-                <option value="10">10 Packs (₹${Number(unitPrice * 10).toLocaleString()}/yr)</option>
-              </select>
-            </div>
-            <div class="card" style="background:var(--surface);padding:14px;border-radius:10px;">
-              <div style="display:flex;justify-content:space-between;font-size:13px;">
-                <span>Total Annual Amount:</span>
-                <b id="addonPackTotal" style="color:#2563eb;">₹${Number(unitPrice).toLocaleString()} / yr</b>
-              </div>
-            </div>
-          </div>
-        `,
-        footer: `
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn p" id="btnConfirmUserPack" style="background:#2563eb;">Confirm & Purchase</button>
-        `
-      });
-
-      const qtySelect = $('#addonPackQty');
-      const totalDisplay = $('#addonPackTotal');
-      if (qtySelect && totalDisplay) {
-        qtySelect.addEventListener('change', () => {
-          const q = parseInt(qtySelect.value, 10) || 1;
-          totalDisplay.textContent = `₹${Number(unitPrice * q).toLocaleString()} / yr`;
-        });
-      }
-
-      $('#btnConfirmUserPack').addEventListener('click', async () => {
-        const qty = parseInt(qtySelect.value, 10) || 1;
-        try {
-          Modal.close();
-          toast(`Purchasing user seats…`, 'info');
-          await api('subscription/addon/', { method: 'POST', body: { addon_key: addonId, quantity: qty } });
-          toast(`User seats added successfully! Quota updated.`, 'ok');
-          subscriptionBillingPage(root);
-        } catch (e) {
-          toast(e.message, 'err');
-        }
-      });
+      toast('Add-on checkout is unavailable until a payment provider is configured.', 'err');
     };
 
     window.downloadReceiptAction = (invId, invNo) => {
@@ -9063,31 +8943,12 @@ async function subscriptionBillingPage(root) {
         title: 'Update Billing & Payment Method',
         body: `
           <div style="padding:10px 0;">
-            <p class="sub" style="margin-bottom:14px;">Select your preferred corporate payment gateway or UPI handle:</p>
-            <div class="fg" style="margin-bottom:12px;">
-              <label>Payment Mode</label>
-              <select class="in" id="selPayMode">
-                <option value="UPI">UPI AutoPay (Google Pay, PhonePe, Paytm)</option>
-                <option value="Card">Corporate Credit / Debit Card (Visa, Mastercard, RuPay)</option>
-                <option value="NetBanking">Direct Net Banking (HDFC, ICICI, SBI, Axis)</option>
-              </select>
-            </div>
-            <div class="fg">
-              <label>VPA / Card Details / Account Reference</label>
-              <input type="text" class="in" id="txtPayRef" placeholder="e.g. accounts@okaxis or Card ending 4242" value="${esc(data.payment_method || '')}">
-            </div>
+            <p class="sub" style="margin-bottom:14px;">Payment methods cannot be saved until an online payment provider is configured.</p>
           </div>
         `,
         footer: `
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn p" id="btnSavePaymentMethod" style="background:#2563eb;">Save Payment Details</button>
+          <button class="btn" data-close>Close</button>
         `
-      });
-
-      $('#btnSavePaymentMethod').addEventListener('click', () => {
-        const ref = $('#txtPayRef').value.trim() || 'UPI AutoPay';
-        toast(`Payment details updated to: ${ref}`, 'ok');
-        Modal.close();
       });
     });
 

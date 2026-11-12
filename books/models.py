@@ -763,6 +763,8 @@ class RecurringInvoice(models.Model):
 
 class RetainerInvoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='retainer_invoices')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='retainer_invoices')
+    business_location_gstin = models.CharField(max_length=15, blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)
     applied_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
@@ -997,12 +999,51 @@ class PriceList(models.Model):
     def __str__(self):
         return self.name
 
+class BusinessLocation(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='business_locations')
+    name = models.CharField(max_length=120)
+    gstin = models.CharField(max_length=15, blank=True, default='')
+    address = models.TextField(blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=60, blank=True, default='')
+    pincode = models.CharField(max_length=20, blank=True, default='')
+    is_default = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'name'], name='uniq_org_business_location_name'),
+            models.UniqueConstraint(
+                fields=['organization', 'gstin'],
+                condition=~models.Q(gstin=''),
+                name='uniq_org_business_location_gstin',
+            ),
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=models.Q(is_default=True),
+                name='uniq_org_default_business_location',
+            ),
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.gstin and not re.fullmatch(r'\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]', self.gstin.upper()):
+            raise ValidationError({'gstin': 'Enter a valid 15-character GSTIN.'})
+
+    def __str__(self):
+        return self.name
+
+
 class Warehouse(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='warehouses')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=30)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_warehouses')
+    business_location = models.ForeignKey(BusinessLocation, null=True, blank=True, on_delete=models.SET_NULL, related_name='warehouses')
     address = models.TextField(blank=True)
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=60, blank=True)
@@ -1539,8 +1580,8 @@ class TenantSubscription(models.Model):
     trial_ends_at = models.DateField(null=True, blank=True)
     period_start = models.DateField(null=True, blank=True)
     period_end = models.DateField(null=True, blank=True)
-    auto_renew = models.BooleanField(default=True)
-    payment_method = models.CharField(max_length=50, default='Visa ending in 4242')
+    auto_renew = models.BooleanField(default=False)
+    payment_method = models.CharField(max_length=50, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property
@@ -1568,8 +1609,8 @@ class SubscriptionInvoice(models.Model):
     date = models.DateField(default=timezone.localdate)
     description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
-    status = models.CharField(max_length=30, default='Paid')
-    payment_method = models.CharField(max_length=50, default='Visa ending in 4242')
+    status = models.CharField(max_length=30, default='Pending')
+    payment_method = models.CharField(max_length=50, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1802,6 +1843,7 @@ class DocumentNumberSeries(models.Model):
     customer_type = models.CharField(max_length=10, choices=CUSTOMER_TYPES, blank=True, default='')
     branch = models.CharField(max_length=120, blank=True, default='')
     location = models.CharField(max_length=120, blank=True, default='')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='document_number_series')
     gstin = models.CharField(max_length=15, blank=True, default='')
     prefix = models.CharField(max_length=100, blank=True, default='')
     separator = models.CharField(max_length=5, default='/')
@@ -1813,6 +1855,7 @@ class DocumentNumberSeries(models.Model):
     active = models.BooleanField(default=True)
     gst_compliant = models.BooleanField(default=False)
     allow_manual_selection = models.BooleanField(default=False)
+    is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1820,6 +1863,11 @@ class DocumentNumberSeries(models.Model):
         ordering = ['document_type', 'name']
         constraints = [
             models.UniqueConstraint(fields=['organization', 'document_type', 'name'], name='uniq_doc_num_series_name'),
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=models.Q(document_type='retainer_invoices', is_default=True),
+                name='uniq_org_default_retainer_number_series',
+            ),
         ]
 
     def __str__(self):

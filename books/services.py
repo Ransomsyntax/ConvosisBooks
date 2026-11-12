@@ -6,14 +6,19 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import struct
 import time
+from smtplib import SMTPException
 import urllib.error
 import urllib.request
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.mail import EmailMessage
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
@@ -36,6 +41,7 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
+logger = logging.getLogger(__name__)
 
 def paid_expr():
     return Coalesce(Sum('allocations__amount'), Value(Z), output_field=DEC)
@@ -246,7 +252,7 @@ def _series_context_matches(series_obj, context):
     return True
 
 
-def _select_document_number_series(module_or_pfx, org, date, customer_type='', branch='', location='', gstin='', series_id=None, user=None):
+def _select_document_number_series(module_or_pfx, org, date, customer_type='', branch='', location='', gstin=None, series_id=None, user=None):
     if not org:
         return None
     doc_type = _number_series_doc_type(module_or_pfx)
@@ -254,11 +260,12 @@ def _select_document_number_series(module_or_pfx, org, date, customer_type='', b
     query = DocumentNumberSeries.objects.filter(
         organization=org, document_type=doc_type, active=True
     ).filter(Q(financial_year='') | Q(financial_year=fy))
+    gstin_context = org.gstin if gstin is None or (not gstin and doc_type != 'retainer_invoices') else (gstin or '')
     context = {
         'customer_type': (customer_type or '').strip().lower(),
         'branch': (branch or '').strip(),
         'location': (location or '').strip(),
-        'gstin': (gstin or org.gstin or '').strip().upper(),
+        'gstin': gstin_context.strip().upper(),
     }
     if series_id:
         selected = query.filter(pk=series_id).first()
@@ -287,11 +294,14 @@ def _select_document_number_series(module_or_pfx, org, date, customer_type='', b
     specificity = max(sum(bool(getattr(item, field)) for field in ('customer_type', 'branch', 'location', 'gstin')) for item in matches)
     best = [item for item in matches if sum(bool(getattr(item, field)) for field in ('customer_type', 'branch', 'location', 'gstin')) == specificity]
     if len(best) != 1:
-        raise ApiError(409, f'Multiple active numbering series match {doc_type} for FY {fy}. Refine the series configuration to make the match unique.')
+        defaults = [item for item in best if item.is_default]
+        if len(defaults) == 1:
+            return defaults[0]
+        raise ApiError(409, f'Multiple active numbering series match {doc_type} for FY {fy}. Refine the series configuration or choose a default series.')
     return best[0]
 
 
-def _format_series_number(series_obj, value, org, date, branch='', location='', gstin='', customer_type=''):
+def _format_series_number(series_obj, value, org, date, branch='', location='', gstin=None, customer_type=''):
     import datetime
     if isinstance(date, str):
         date = datetime.date.fromisoformat(date[:10])
@@ -301,6 +311,7 @@ def _format_series_number(series_obj, value, org, date, branch='', location='', 
     year = date.year
     start_yy, end_yy = fy.split('-')
     prefix = series_obj.prefix or org.get_code()
+    gstin_value = org.gstin if gstin is None or (not gstin and series_obj.document_type != 'retainer_invoices') else (gstin or '')
     replacements = {
         '%FYS_YY%': start_yy, '${FYS_YY}': start_yy,
         '%FYE_YY%': end_yy, '${FYE_YY}': end_yy,
@@ -308,7 +319,7 @@ def _format_series_number(series_obj, value, org, date, branch='', location='', 
         '%ORG%': org.get_code(), '${ORG}': org.get_code(),
         '%BRANCH%': branch or series_obj.branch, '${BRANCH}': branch or series_obj.branch,
         '%LOCATION%': location or series_obj.location, '${LOCATION}': location or series_obj.location,
-        '%GSTIN%': gstin or org.gstin, '${GSTIN}': gstin or org.gstin,
+        '%GSTIN%': gstin_value, '${GSTIN}': gstin_value,
         '%CUSTOMER_TYPE%': (customer_type or series_obj.customer_type).upper(),
         '${CUSTOMER_TYPE}': (customer_type or series_obj.customer_type).upper(),
     }
@@ -326,7 +337,7 @@ def _format_series_number(series_obj, value, org, date, branch='', location='', 
     return candidate
 
 
-def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin='', series_id=None, user=None):
+def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None):
     """
     Generate an atomic, collision-free organization-wise document number.
     Format:
@@ -468,7 +479,7 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
                         pass
                 return candidate
 
-def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin='', series_id=None, user=None, use_configured_series=True):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True):
     """
     Preview the next document number without incrementing the sequence counter.
     """
@@ -516,7 +527,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             series_id=series_id, user=user
         ) if use_configured_series else None
     except ApiError as exc:
-        if series_id is not None or exc.status not in (400, 409):
+        if series_id is not None or (doc_type == 'retainer_invoices' and context_available) or exc.status not in (400, 409):
             raise
         selected_series = None
     if selected_series:
@@ -1245,38 +1256,66 @@ def clone_document(doc, user=None):
     return new_doc
 
 
-def send_document_email(doc, to_email, subject='', message='', user=None):
+def send_document_email(doc, to_email, subject='', message='', user=None, cc=''):
     org = getattr(doc, 'organization', None) or (get_user_org(user) if user else Organization.get())
+    if to_email is not None and not isinstance(to_email, str):
+        raise ApiError(400, 'Recipient email address must be text.')
     to_email = (to_email or '').strip()
-    if not to_email or '@' not in to_email:
+    if not to_email:
         party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
         to_email = getattr(party, 'email', '') if party else ''
-    if not to_email or '@' not in to_email:
+    try:
+        validate_email(to_email)
+    except ValidationError:
         raise ApiError(400, 'Valid recipient email address is required.')
 
-    party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
-    if party and not party.email:
-        party.email = to_email
-        party.save(update_fields=['email'])
+    if cc is not None and not isinstance(cc, str):
+        raise ApiError(400, 'CC email address must be text.')
+    cc = (cc or '').strip()
+    if cc:
+        try:
+            validate_email(cc)
+        except ValidationError:
+            raise ApiError(400, 'Valid CC email address is required.')
+    if not settings.PASSWORD_RESET_EMAIL_CONFIGURED:
+        raise ApiError(503, 'Email delivery is unavailable because SMTP is not configured.')
 
-    subj = subject or f"{doc.__class__.__name__} {doc.number} from {org.name if org else 'Convosis'}"
+    if not isinstance(subject, str) or not isinstance(message, str):
+        raise ApiError(400, 'Email subject and message must be text.')
+    subj = (subject or f"{doc.__class__.__name__} {doc.number} from {org.name if org else 'Convosis'}").strip()
+    if '\r' in subj or '\n' in subj:
+        raise ApiError(400, 'Email subject must be a single line.')
+    if len(subj) > 200 or len(message or '') > 10000:
+        raise ApiError(400, 'Email subject or message is too long.')
+    amount = getattr(doc, 'total', None)
+    date_value = getattr(doc, 'date', None)
+    document_details = f"Document: {doc.__class__.__name__} {doc.number}"
+    if date_value:
+        document_details += f"\nDate: {date_value}"
+    if amount is not None:
+        document_details += f"\nTotal: {amount}"
+    body = f"{message or ''}\n\n{document_details}".strip()
+    email = EmailMessage(
+        subject=subj,
+        body=body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[to_email],
+        cc=[cc] if cc else []
+    )
+    try:
+        sent_count = email.send(fail_silently=False)
+    except (OSError, SMTPException):
+        logger.exception('Document email delivery failed for document %s', doc.pk)
+        raise ApiError(503, 'Email delivery failed. Verify SMTP configuration and try again.')
+    if sent_count != 1:
+        raise ApiError(503, 'Email delivery did not complete. Verify SMTP configuration and try again.')
     log_audit(user, 'send_email', doc.__class__.__name__, doc.pk,
               f"Sent email for {doc.number} to {to_email}. Subject: {subj}", org=org)
-    return {'status': 'ok', 'recipient': to_email, 'message': f'Document {doc.number} emailed to {to_email} successfully.'}
+    return {'status': 'ok', 'recipient': to_email, 'message': f"Email sent for {doc.number} to {to_email}."}
 
 
 def send_document_sms(doc, to_phone, message='', user=None):
-    org = getattr(doc, 'organization', None) or (get_user_org(user) if user else Organization.get())
-    to_phone = (to_phone or '').strip()
-    if not to_phone:
-        party = getattr(doc, 'customer', getattr(doc, 'vendor', None))
-        to_phone = getattr(party, 'phone', '') if party else ''
-    if not to_phone:
-        raise ApiError(400, 'Valid phone number is required to send SMS.')
-
-    log_audit(user, 'send_sms', doc.__class__.__name__, doc.pk,
-              f"Sent SMS for {doc.number} to {to_phone}", org=org)
-    return {'status': 'ok', 'recipient': to_phone, 'message': f'SMS notification sent to {to_phone} successfully.'}
+    raise ApiError(503, 'SMS delivery is unavailable because no SMS gateway is configured.')
 
 
 def send_payment_reminder(inv, user=None):
@@ -1285,17 +1324,32 @@ def send_payment_reminder(inv, user=None):
         raise ApiError(400, 'Cannot send payment reminder for a settled, void, or cancelled invoice.')
     party_email = getattr(inv.customer, 'email', '')
     party_phone = getattr(inv.customer, 'phone', '')
-    dest = party_email or party_phone or inv.customer.name
+    if party_email:
+        send_document_email(
+            inv,
+            party_email,
+            subject=f"Payment reminder for invoice {inv.number}",
+            message=f"Your invoice {inv.number} has an outstanding balance of {inv.balance_due}.",
+            user=user
+        )
+        dest = party_email
+    elif party_phone:
+        dest = party_phone
+        send_document_sms(
+            inv,
+            party_phone,
+            f"Payment reminder for invoice {inv.number}: outstanding balance {inv.balance_due}.",
+            user=user
+        )
+    else:
+        raise ApiError(400, 'A customer email address or phone number is required.')
     log_audit(user, 'send_reminder', 'Invoice', inv.pk,
               f"Sent payment reminder for invoice {inv.number} (Balance Due: ₹{inv.balance_due}) to {dest}", org=org)
-    return {'status': 'ok', 'message': f'Payment reminder for invoice {inv.number} sent to customer.'}
+    return {'status': 'ok', 'message': f'Payment reminder for invoice {inv.number} sent to {dest}.'}
 
 
 def stop_payment_reminders(inv, user=None):
-    org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
-    log_audit(user, 'stop_reminders', 'Invoice', inv.pk,
-              f"Stopped automated payment reminders for invoice {inv.number}", org=org)
-    return {'status': 'ok', 'message': f'Automated payment reminders stopped for invoice {inv.number}.'}
+    raise ApiError(503, 'Automated payment reminders are unavailable because no reminder scheduler is configured.')
 
 
 def set_expected_payment_date(inv, dt, user=None):
@@ -6050,8 +6104,7 @@ def get_tenant_subscription_summary(org=None):
                 purchased_books_users=0,
                 purchased_addons={},
                 period_start=today,
-                period_end=today + timedelta(days=365),
-                payment_method='Visa ending in 4242'
+                period_end=today + timedelta(days=365)
             )
 
     # Normalize tier if legacy
@@ -6101,21 +6154,9 @@ def get_tenant_subscription_summary(org=None):
     storage_limit = sub.storage_limit_mb or spec['storage_limit_mb']
 
     # Billing history
-    invoices_history_qs = SubscriptionInvoice.objects.filter(organization=org).order_by('-date', '-id')
-    if not invoices_history_qs.exists():
-        # Provide clean initial statement
-        init_amount = Decimal(str(spec['price_annual']))
-        init_desc = f"Convosis Books {spec['name']} Plan (Annual Subscription)"
-        init_inv = SubscriptionInvoice.objects.create(
-            organization=org,
-            invoice_no=f"INV-SUB-{today.year}-001",
-            date=sub.period_start or today,
-            description=init_desc,
-            amount=init_amount,
-            status='Paid',
-            payment_method=sub.payment_method or 'Visa ending in 4242'
-        )
-        invoices_history_qs = [init_inv]
+    invoices_history_qs = SubscriptionInvoice.objects.filter(
+        organization=org
+    ).order_by('-date', '-id')
 
     invoices_history = [
         {
@@ -6124,8 +6165,8 @@ def get_tenant_subscription_summary(org=None):
             'date': inv.date.strftime('%d %b %Y') if inv.date else '',
             'description': inv.description,
             'amount': f"₹{inv.amount:,.2f}",
-            'status': inv.status,
-            'payment_method': inv.payment_method
+            'status': 'Unverified (no provider reference)' if inv.status.lower() == 'paid' else inv.status,
+            'payment_method': ''
         }
         for inv in invoices_history_qs[:15]
     ]
@@ -6143,7 +6184,7 @@ def get_tenant_subscription_summary(org=None):
         'period_start': sub.period_start.isoformat() if sub.period_start else '',
         'period_end': sub.period_end.isoformat() if sub.period_end else '',
         'auto_renew': sub.auto_renew,
-        'payment_method': sub.payment_method,
+        'payment_method': '',
         'usage': {
             'records': {
                 'used': total_records,
@@ -6181,8 +6222,15 @@ def update_tenant_subscription(org=None, tier='professional', billing_cycle='ann
     if not org:
         org = Organization.get()
 
+    tier_key = str(tier or '').strip().lower()
+    if tier_key not in {'free', 'professional', 'premium', 'starter', 'growth', 'enterprise'}:
+        raise ApiError(400, 'Unrecognized subscription plan.')
     norm_tier = normalize_subscription_tier(tier)
-    spec = BOOKS_SUBSCRIPTION_PLANS.get(norm_tier, BOOKS_SUBSCRIPTION_PLANS['professional'])
+    if str(billing_cycle or '').strip().lower() != 'annual':
+        raise ApiError(400, 'Only annual billing is currently supported.')
+    if norm_tier != 'free':
+        raise ApiError(503, 'Paid plan changes are unavailable until a payment provider is configured.')
+    spec = BOOKS_SUBSCRIPTION_PLANS[norm_tier]
     today = timezone.localdate()
 
     sub = TenantSubscription.objects.filter(organization=org).first()
@@ -6190,10 +6238,9 @@ def update_tenant_subscription(org=None, tier='professional', billing_cycle='ann
         sub = TenantSubscription(organization=org)
 
     sub.tier = norm_tier
-    sub.billing_cycle = billing_cycle
+    sub.billing_cycle = 'annual'
     sub.status = 'active'
     sub.is_trial = False
-    sub.trial_ends_at = None
     sub.record_limit = spec['record_limit']
     sub.invoice_limit = spec['record_limit']
     sub.user_seat_limit = spec['books_users']
@@ -6202,21 +6249,8 @@ def update_tenant_subscription(org=None, tier='professional', billing_cycle='ann
     sub.period_end = today + timedelta(days=365)
     sub.save()
 
-    # Record subscription invoice if price > 0
-    if spec['price_annual'] > 0:
-        inv_count = SubscriptionInvoice.objects.filter(organization=org).count() + 1
-        SubscriptionInvoice.objects.create(
-            organization=org,
-            invoice_no=f"INV-SUB-{today.year}-{inv_count:03d}",
-            date=today,
-            description=f"Convosis Books {spec['name']} Plan ({billing_cycle.title()} Subscription)",
-            amount=Decimal(str(spec['price_annual'])),
-            status='Paid',
-            payment_method=sub.payment_method or 'Visa ending in 4242'
-        )
-
     if user:
-        log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Upgraded/switched subscription to {spec['name']} Plan")
+        log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Changed subscription to {spec['name']} Plan")
 
     return get_tenant_subscription_summary(org=org)
 
@@ -6224,13 +6258,18 @@ def start_subscription_trial(org=None, tier='professional', user=None):
     if not org:
         org = Organization.get()
 
+    tier_key = str(tier or '').strip().lower()
+    if tier_key not in {'professional', 'premium', 'growth', 'enterprise'}:
+        raise ApiError(400, 'Select a supported paid plan for the free trial.')
     norm_tier = normalize_subscription_tier(tier)
-    spec = BOOKS_SUBSCRIPTION_PLANS.get(norm_tier, BOOKS_SUBSCRIPTION_PLANS['professional'])
+    spec = BOOKS_SUBSCRIPTION_PLANS[norm_tier]
     today = timezone.localdate()
 
     sub = TenantSubscription.objects.filter(organization=org).first()
     if not sub:
         sub = TenantSubscription(organization=org)
+    elif sub.is_trial or sub.trial_ends_at:
+        raise ApiError(400, 'The free trial has already been used for this organization.')
 
     sub.tier = norm_tier
     sub.status = 'trial'
@@ -6250,76 +6289,33 @@ def start_subscription_trial(org=None, tier='professional', user=None):
     return get_tenant_subscription_summary(org=org)
 
 def purchase_subscription_addon(org=None, addon_key='', quantity=1, user=None):
-    if not org:
-        org = Organization.get()
-
-    sub = TenantSubscription.objects.filter(organization=org).first()
-    if not sub:
-        get_tenant_subscription_summary(org=org)
-        sub = TenantSubscription.objects.filter(organization=org).first()
-
-    today = timezone.localdate()
-    quantity = max(1, int(quantity or 1))
-
-    if addon_key == 'books_user':
-        sub.purchased_books_users = (sub.purchased_books_users or 0) + quantity
-        amount = Decimal('2500.00') * quantity
-        desc = f"Books User Add-on ({quantity} seat{'s' if quantity > 1 else ''})"
-    elif addon_key == 'portal_user':
-        addons = dict(sub.purchased_addons or {})
-        addons['portal_user'] = addons.get('portal_user', 0) + (100 * quantity)
-        sub.purchased_addons = addons
-        amount = Decimal('10000.00') * quantity
-        desc = f"Customer Portal Users Pack ({100 * quantity} users)"
-    else:
-        # Check coming soon user addons
-        coming_soon_addons = {'hrms_user': 'HRMS user', 'projects_user': 'Projects user', 'payroll_user': 'Payroll user'}
-        if addon_key in coming_soon_addons:
-            raise ApiError(400, f"{coming_soon_addons[addon_key]} is Coming Soon and cannot be purchased yet.")
-
-        # Check feature addons
-        feature_dict = {f['id']: f for f in SUBSCRIPTION_FEATURE_ADDONS}
-        if addon_key in feature_dict:
-            finfo = feature_dict[addon_key]
-            addons = dict(sub.purchased_addons or {})
-            addons[addon_key] = True
-            sub.purchased_addons = addons
-            amount = Decimal(str(finfo['price'])) * quantity
-            desc = f"Feature Add-on: {finfo['name']}"
-        else:
-            raise ApiError(400, f"Unrecognized add-on module: {addon_key}")
-
-    sub.save()
-
-    # Generate billing invoice
-    inv_count = SubscriptionInvoice.objects.filter(organization=org).count() + 1
-    SubscriptionInvoice.objects.create(
-        organization=org,
-        invoice_no=f"INV-ADD-{today.year}-{inv_count:03d}",
-        date=today,
-        description=desc,
-        amount=amount,
-        status='Paid',
-        payment_method=sub.payment_method or 'Visa ending in 4242'
-    )
-
-    if user:
-        log_audit(user, 'create', 'TenantSubscriptionAddon', sub.pk, f"Purchased add-on {desc}")
-
-    return get_tenant_subscription_summary(org=org)
+    coming_soon_addons = {
+        'hrms_user': 'HRMS user',
+        'projects_user': 'Projects user',
+        'payroll_user': 'Payroll user'
+    }
+    if addon_key in coming_soon_addons:
+        raise ApiError(400, f"{coming_soon_addons[addon_key]} is Coming Soon and cannot be purchased yet.")
+    valid_addons = {'books_user', 'portal_user'} | {
+        addon['id'] for addon in SUBSCRIPTION_FEATURE_ADDONS
+    }
+    if addon_key not in valid_addons:
+        raise ApiError(400, f"Unrecognized add-on module: {addon_key}")
+    raise ApiError(503, 'Add-on purchases are unavailable until a payment provider is configured.')
 
 def toggle_subscription_autorenew(org=None, auto_renew=None, user=None):
     if not org:
         org = Organization.get()
+    if not isinstance(auto_renew, bool):
+        raise ApiError(400, 'Auto-renew requires an explicit boolean value.')
+    if auto_renew:
+        raise ApiError(503, 'Auto-renew is unavailable until a payment provider is configured.')
     sub = TenantSubscription.objects.filter(organization=org).first()
     if not sub:
         get_tenant_subscription_summary(org=org)
         sub = TenantSubscription.objects.filter(organization=org).first()
 
-    if auto_renew is None:
-        sub.auto_renew = not sub.auto_renew
-    else:
-        sub.auto_renew = bool(auto_renew)
+    sub.auto_renew = False
     sub.save(update_fields=['auto_renew'])
     if user:
         log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Set auto-renew to {sub.auto_renew}")

@@ -5622,13 +5622,17 @@ class RecurringInvoiceResource(Resource):
         freq = c.choice('frequency', self.FREQUENCIES, default='monthly')
         repeat_every = c.integer('repeat_every', lo=1, default=1)
         sdate = c.date('start_date', required=True)
-        never_ends = c.boolean('never_ends', default=False)
+        never_ends = c.boolean('never_ends', default=not bool(data.get('end_date')))
         edate = None if never_ends else c.date('end_date')
         next_d = c.date('next_date', default=sdate)
         if sdate and next_d and next_d < sdate:
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
+        if not never_ends and not edate:
+            c.err('end_date', 'An end date is required unless Never Expires is selected.')
         if not never_ends and sdate and edate and edate < sdate:
             c.err('end_date', 'End date cannot be earlier than start date.')
+        if not never_ends and edate and next_d and next_d > edate:
+            c.err('next_date', 'Next invoice date cannot be later than the end date.')
         tot = c.number('total', lo=Decimal('0.01'), default=Decimal('0.00'))
         status_val = c.choice('status', self.STATUSES, default='active')
         payment_terms = c.integer('payment_terms', lo=0, default=getattr(cust, 'payment_terms', 30) or 30)
@@ -5736,6 +5740,10 @@ class RecurringInvoiceResource(Resource):
             obj.next_date = c.date('next_date', default=obj.start_date)
         if obj.start_date and obj.next_date and obj.next_date < obj.start_date:
             c.err('next_date', 'Next invoice date cannot be earlier than start date.')
+        if not obj.never_ends and not obj.end_date:
+            c.err('end_date', 'An end date is required unless Never Expires is selected.')
+        if not obj.never_ends and obj.end_date and obj.next_date and obj.next_date > obj.end_date:
+            c.err('next_date', 'Next invoice date cannot be later than the end date.')
         if 'status' in data:
             obj.status = c.choice('status', self.STATUSES, default=obj.status)
         if 'tax_pricing_type' in data:
@@ -5793,7 +5801,11 @@ class RecurringInvoiceResource(Resource):
 
     def action(self, request, obj, name):
         if name in ('generate', 'generate-invoice', 'create-invoice'):
-            inv = services.generate_invoice_from_recurring_profile(obj, user=request.user)
+            data = body(request)
+            inv = services.generate_invoice_from_recurring_profile(
+                obj, scheduled_date=data.get('scheduled_date'), user=request.user
+            )
+            obj.refresh_from_db()
             return j({
                 'success': True,
                 'status': 'ok',
@@ -5804,20 +5816,33 @@ class RecurringInvoiceResource(Resource):
                 'message': f"Generated invoice {inv.number} successfully."
             })
         elif name == 'pause':
-            obj.status = 'paused'
-            obj.save(update_fields=['status'])
-            services.log_audit(request.user, 'pause', 'RecurringInvoice', obj.pk, f"Paused recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
-            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile paused.'})
+            profile = RecurringInvoice.objects.select_for_update().get(pk=obj.pk)
+            if profile.status != 'active':
+                raise ApiError(409, 'Only active recurring invoices can be paused.')
+            profile.status = 'paused'
+            profile.save(update_fields=['status'])
+            services.log_audit(request.user, 'pause', 'RecurringInvoice', profile.pk, f"Paused recurring profile {profile.profile_name}", org=profile.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': profile.status, 'message': 'Profile paused.'})
         elif name == 'resume':
-            obj.status = 'active'
-            obj.save(update_fields=['status'])
-            services.log_audit(request.user, 'resume', 'RecurringInvoice', obj.pk, f"Resumed recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
-            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile resumed.'})
+            profile = RecurringInvoice.objects.select_for_update().get(pk=obj.pk)
+            if profile.status != 'paused':
+                raise ApiError(409, 'Only paused recurring invoices can be resumed.')
+            if not profile.never_ends and (
+                not profile.end_date or profile.next_date > profile.end_date
+            ):
+                raise ApiError(409, 'This recurring invoice has reached its end date and cannot be resumed.')
+            profile.status = 'active'
+            profile.save(update_fields=['status'])
+            services.log_audit(request.user, 'resume', 'RecurringInvoice', profile.pk, f"Resumed recurring profile {profile.profile_name}", org=profile.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': profile.status, 'message': 'Profile resumed.'})
         elif name == 'cancel':
-            obj.status = 'cancelled'
-            obj.save(update_fields=['status'])
-            services.log_audit(request.user, 'cancel', 'RecurringInvoice', obj.pk, f"Cancelled recurring profile {obj.profile_name}", org=obj.organization, module='sales', submodule='recurring_invoices')
-            return j({'status': 'ok', 'profile_status': obj.status, 'message': 'Profile cancelled.'})
+            profile = RecurringInvoice.objects.select_for_update().get(pk=obj.pk)
+            if profile.status not in ('active', 'paused'):
+                raise ApiError(409, 'Only active or paused recurring invoices can be cancelled.')
+            profile.status = 'cancelled'
+            profile.save(update_fields=['status'])
+            services.log_audit(request.user, 'cancel', 'RecurringInvoice', profile.pk, f"Cancelled recurring profile {profile.profile_name}", org=profile.organization, module='sales', submodule='recurring_invoices')
+            return j({'status': 'ok', 'profile_status': profile.status, 'message': 'Profile cancelled.'})
         raise ApiError(404, 'Unknown action.')
 
 class DeliveryChallanResource(Resource):

@@ -2094,6 +2094,176 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertEqual(res_del.status_code, 204)
         self.assertFalse(RecurringInvoice.objects.filter(pk=rec_id).exists())
 
+    def test_recurring_pause_blocks_generation_and_resume_is_idempotent(self):
+        scheduled = date.today()
+        recurring = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Pause and Resume Service',
+            frequency='monthly',
+            start_date=scheduled,
+            next_date=scheduled,
+            never_ends=True,
+            payment_terms=15,
+            lines_data={
+                'repeat_every': 1,
+                'lines': [{
+                    'description': 'Managed service',
+                    'quantity': 2,
+                    'rate': '100.00',
+                    'discount_percent': '0',
+                    'gst_rate': '18',
+                }],
+            },
+        )
+
+        paused = self.client.post(
+            f'/api/recurring-invoices/{recurring.pk}/pause/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(paused.status_code, 200, paused.content)
+        self.assertTrue(AuditLog.objects.filter(
+            entity_type='RecurringInvoice',
+            entity_id=str(recurring.pk),
+            action='pause',
+        ).exists())
+        recurring.refresh_from_db()
+        self.assertEqual(recurring.status, 'paused')
+        self.assertEqual(
+            services.process_due_recurring_invoices(as_of_date=scheduled, org=self.org),
+            [],
+        )
+        self.assertFalse(Invoice.objects.filter(recurring_invoice=recurring).exists())
+
+        rejected = self.client.post(
+            f'/api/recurring-invoices/{recurring.pk}/generate-invoice/',
+            data=json.dumps({'scheduled_date': str(scheduled)}),
+            content_type='application/json',
+        )
+        self.assertEqual(rejected.status_code, 409)
+
+        resumed = self.client.post(
+            f'/api/recurring-invoices/{recurring.pk}/resume/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(resumed.status_code, 200, resumed.content)
+        generated = services.process_due_recurring_invoices(as_of_date=scheduled, org=self.org)
+        self.assertEqual(len(generated), 1)
+
+        invoice = generated[0]
+        self.assertEqual(invoice.recurring_invoice_id, recurring.pk)
+        self.assertEqual(invoice.customer_id, self.customer.pk)
+        self.assertEqual(invoice.due_date, scheduled + timedelta(days=15))
+        self.assertEqual(invoice.total, Decimal('236.00'))
+        self.assertEqual(invoice.lines.count(), 1)
+        expected_next = advance_recurring_date(scheduled, 'monthly', 1)
+        recurring.refresh_from_db()
+        self.assertEqual(recurring.next_date, expected_next)
+
+        duplicate = self.client.post(
+            f'/api/recurring-invoices/{recurring.pk}/generate-invoice/',
+            data=json.dumps({'scheduled_date': str(scheduled)}),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 200, duplicate.content)
+        self.assertEqual(duplicate.json()['invoice_id'], invoice.pk)
+        self.assertEqual(Invoice.objects.filter(recurring_invoice=recurring).count(), 1)
+        recurring.refresh_from_db()
+        self.assertEqual(recurring.next_date, expected_next)
+
+        signed = self.client.post(
+            f'/api/invoices/{invoice.pk}/sign/',
+            data=json.dumps({
+                'signature_data': 'data:image/png;base64,c2lnbmF0dXJl',
+                'signed_by': 'Test Signer',
+                'signature_title': 'Director',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(signed.status_code, 200, signed.content)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.signature_data, 'data:image/png;base64,c2lnbmF0dXJl')
+        self.assertEqual(
+            self.client.get(f'/api/invoices/{invoice.pk}/').json()['signature_data'],
+            invoice.signature_data,
+        )
+
+    def test_recurring_non_draft_generation_posts_invoice_accounting(self):
+        scheduled = date.today()
+        recurring = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Auto Post Service',
+            start_date=scheduled,
+            next_date=scheduled,
+            never_ends=True,
+            create_as_draft=False,
+            lines_data={
+                'lines': [{'description': 'Monthly service', 'quantity': 1, 'rate': '125.00'}],
+            },
+        )
+
+        generated = self.client.post(
+            f'/api/recurring-invoices/{recurring.pk}/generate-invoice/',
+            data=json.dumps({'scheduled_date': str(scheduled)}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(generated.status_code, 200, generated.content)
+        invoice = Invoice.objects.get(pk=generated.json()['invoice_id'])
+        self.assertEqual(invoice.status, 'sent')
+        self.assertIsNotNone(invoice.sent_at)
+        self.assertTrue(Journal.objects.filter(
+            organization=self.org,
+            entry_type='invoice',
+            reference=invoice.number,
+        ).exists())
+
+    def test_recurring_generation_rejects_cancelled_and_respects_end_date(self):
+        scheduled = date.today()
+        cancelled = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Cancelled Service',
+            start_date=scheduled,
+            next_date=scheduled,
+            never_ends=True,
+            status='cancelled',
+        )
+        response = self.client.post(
+            f'/api/recurring-invoices/{cancelled.pk}/generate-invoice/',
+            data=json.dumps({'scheduled_date': str(scheduled)}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(Invoice.objects.filter(recurring_invoice=cancelled).exists())
+
+        final_occurrence = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Finite Service',
+            frequency='monthly',
+            start_date=scheduled,
+            end_date=scheduled,
+            next_date=scheduled,
+            never_ends=False,
+            lines_data={'lines': [{'description': 'Final service', 'quantity': 1, 'rate': '50.00'}]},
+        )
+        generated = self.client.post(
+            f'/api/recurring-invoices/{final_occurrence.pk}/generate-invoice/',
+            data=json.dumps({'scheduled_date': str(scheduled)}),
+            content_type='application/json',
+        )
+        self.assertEqual(generated.status_code, 200, generated.content)
+        final_occurrence.refresh_from_db()
+        self.assertEqual(final_occurrence.status, 'completed')
+        self.assertFalse(services.process_due_recurring_invoices(
+            as_of_date=advance_recurring_date(scheduled, 'monthly', 1),
+            org=self.org,
+        ))
+
     def test_recurring_invoices_management_command(self):
         """
         Test python manage.py generate_recurring_invoices
@@ -2112,6 +2282,17 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
                 'lines': [{'description': 'Daily Health Check', 'quantity': 1, 'rate': 250, 'gst_rate': 0}]
             }
         )
+        expired = RecurringInvoice.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            profile_name='Expired Recurring Profile',
+            frequency='daily',
+            start_date=date.today() - timedelta(days=2),
+            next_date=date.today() - timedelta(days=1),
+            end_date=date.today() - timedelta(days=2),
+            never_ends=False,
+            status='active',
+        )
 
         # Run command with --dry-run
         call_command('generate_recurring_invoices', dry_run=True)
@@ -2122,6 +2303,8 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         call_command('generate_recurring_invoices', org_id=self.org.id)
         rec.refresh_from_db()
         self.assertEqual(rec.next_date, date.today() + timedelta(days=1))
+        expired.refresh_from_db()
+        self.assertEqual(expired.status, 'completed')
 
         # Check that invoice was created
         gen_inv = Invoice.objects.filter(customer=self.customer, order_number=f"REC-{rec.pk}").first()

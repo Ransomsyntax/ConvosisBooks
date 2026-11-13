@@ -1,5 +1,6 @@
 import datetime
 from django.core.management.base import BaseCommand
+from django.db.models import F, Q
 from django.utils import timezone
 from books import services
 from books.models import Organization, RecurringInvoice
@@ -44,6 +45,16 @@ class Command(BaseCommand):
         qs = RecurringInvoice.objects.filter(status='active', next_date__lte=target_date)
         if org:
             qs = qs.filter(organization=org)
+
+        if not dry_run:
+            expired = RecurringInvoice.objects.filter(
+                status='active', never_ends=False, end_date__isnull=False,
+                next_date__gt=F('end_date')
+            )
+            if org:
+                expired = expired.filter(organization=org)
+            expired.update(status='completed')
+        qs = qs.filter(Q(never_ends=True) | Q(end_date__gte=F('next_date')))
 
         total_due = qs.count()
         self.stdout.write(f"Found {total_due} active recurring profile(s) due.")

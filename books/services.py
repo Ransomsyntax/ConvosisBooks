@@ -1763,6 +1763,9 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     from datetime import timedelta
     from .models import Invoice, InvoiceLine, Item, Organization
 
+    profile = RecurringInvoice.objects.select_for_update().select_related(
+        'customer', 'organization'
+    ).get(pk=profile.pk)
     org = profile.organization or Organization.get()
     target_date = scheduled_date or kwargs.get('date') or kwargs.get('invoice_date') or profile.next_date
     if not isinstance(target_date, datetime.date):
@@ -1776,21 +1779,37 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
 
     rec_order_no = getattr(profile, 'order_number', None) or f"REC-{profile.pk}"
     existing_inv = Invoice.objects.filter(
-        organization=org, customer=profile.customer, order_number=rec_order_no, date=target_date
+        date=target_date
+    ).filter(
+        Q(recurring_invoice=profile) |
+        Q(organization=org, customer=profile.customer, order_number=rec_order_no)
     ).first()
     if existing_inv:
-        repeat_every = meta.get('repeat_every', 1)
-        next_d = advance_recurring_date(target_date, profile.frequency, repeat_every)
         if profile.next_date <= target_date:
-            profile.next_date = next_d
-            if profile.end_date and profile.next_date > profile.end_date:
+            profile.next_date = advance_recurring_date(
+                target_date, profile.frequency,
+                meta.get('repeat_every', profile.repeat_every)
+            )
+            if not profile.never_ends and profile.end_date and profile.next_date > profile.end_date:
                 profile.status = 'completed'
             profile.save(update_fields=['next_date', 'status'])
         return existing_inv
 
+    if profile.status != 'active':
+        raise ApiError(409, 'Only active recurring invoices can generate invoices.')
+    if target_date < profile.start_date:
+        raise ApiError(400, 'The scheduled invoice date cannot be earlier than the start date.')
+    if target_date != profile.next_date:
+        raise ApiError(409, 'The scheduled invoice date has changed. Refresh the recurring invoice and try again.')
+    if not profile.never_ends:
+        if not profile.end_date:
+            raise ApiError(400, 'An end date is required when Never Expires is disabled.')
+        if target_date > profile.end_date:
+            raise ApiError(409, 'The recurring invoice has passed its end date.')
+
     payment_terms_days = meta.get('payment_terms')
     if payment_terms_days is None:
-        payment_terms_days = getattr(profile.customer, 'payment_terms', 30) or 30
+        payment_terms_days = profile.payment_terms
     due_date = target_date + timedelta(days=int(payment_terms_days))
 
     pos = getattr(profile.customer, 'place_of_supply', None) or profile.customer.state or (org.state if org else '')
@@ -1863,7 +1882,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         sgst=tot['sgst'],
         igst=tot['igst'],
         total=tot['total'],
-        status='draft' if getattr(profile, 'create_as_draft', True) else 'sent'
+        status='draft'
     )
 
     InvoiceLine.objects.bulk_create([
@@ -1884,12 +1903,8 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         for l in comp
     ])
 
-    auto_send = meta.get('auto_send', False)
-    if auto_send:
-        try:
-            send_invoice(inv, user)
-        except Exception:
-            pass
+    if not profile.create_as_draft or meta.get('auto_send', False):
+        send_invoice(inv, user)
 
     history = meta.get('history', [])
     history.insert(0, {
@@ -1908,11 +1923,11 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     occurrences_count = int(meta.get('occurrences_count', 0)) + 1
     meta['occurrences_count'] = occurrences_count
 
-    repeat_every = meta.get('repeat_every', 1)
+    repeat_every = meta.get('repeat_every', profile.repeat_every)
     next_d = advance_recurring_date(target_date, profile.frequency, repeat_every)
     profile.next_date = next_d
 
-    if profile.end_date and profile.next_date > profile.end_date:
+    if not profile.never_ends and profile.end_date and profile.next_date > profile.end_date:
         profile.status = 'completed'
     max_occ = meta.get('max_occurrences')
     if max_occ and occurrences_count >= int(max_occ):
@@ -1941,12 +1956,24 @@ def process_due_recurring_invoices(as_of_date=None, org=None, user=None):
     if org:
         qs = qs.filter(organization=org)
 
+    expired = RecurringInvoice.objects.filter(
+        status='active', never_ends=False, end_date__isnull=False,
+        next_date__gt=F('end_date')
+    )
+    if org:
+        expired = expired.filter(organization=org)
+    expired.update(status='completed')
+    qs = qs.filter(Q(never_ends=True) | Q(end_date__gte=F('next_date')))
+
     generated = []
     for profile in qs.select_related('customer', 'organization'):
         try:
             inv = generate_invoice_from_recurring_profile(profile, scheduled_date=profile.next_date, user=user)
             generated.append(inv)
         except Exception:
+            logger.exception(
+                'Failed to generate recurring invoice for profile %s', profile.pk
+            )
             continue
     return generated
 

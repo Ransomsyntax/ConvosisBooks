@@ -2939,6 +2939,15 @@ function openInvoicePreferencesModal(onDone) {
 }
 
 async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {}) {
+  const previousListeners = root._docMasterDetailListeners || [];
+  previousListeners.forEach(({ type, handler }) => root.removeEventListener(type, handler));
+  const rootListeners = [];
+  root._docMasterDetailListeners = rootListeners;
+  const addRootListener = (type, handler) => {
+    root.addEventListener(type, handler);
+    rootListeners.push({ type, handler });
+  };
+
   const KIND_CONFIG = {
     'invoices': {
       title: 'Invoices',
@@ -3549,7 +3558,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     `;
   }
 
-  root.addEventListener('change', e => {
+  addRootListener('change', e => {
     if (e.target.id === 'master-cb-all') {
       const checked = e.target.checked;
       root.querySelectorAll('.master-doc-cb').forEach(cb => {
@@ -3570,7 +3579,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     }
   });
 
-  root.addEventListener('click', async e => {
+  addRootListener('click', async e => {
     const bulkDel = e.target.closest('#master-bulk-del-btn');
     if (bulkDel) {
       const count = masterSelectedIds.size;
@@ -3754,33 +3763,51 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
 
       // Recurring Profile actions
       if (act === 'gen-rec-inv') {
+        actBtn.disabled = true;
         try {
-          const res = await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'generate-invoice' } });
+          const res = await api(`recurring-invoices/${d.id}/generate-invoice/`, {
+            method: 'POST',
+            body: { scheduled_date: d.next_date }
+          });
           toast(res.message || 'Invoice generated successfully!', 'ok');
+          await loadList(false);
           if (res.invoice_id) {
             docMasterDetail($('#pg'), 'invoices', res.invoice_id);
           } else {
             loadDetail(d.id);
           }
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+          actBtn.disabled = false;
+        }
         return;
       }
       if (act === 'pause-rec' || act === 'resume-rec') {
         const nextAct = act === 'pause-rec' ? 'pause' : 'resume';
+        actBtn.disabled = true;
         try {
-          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: nextAct } });
+          await api(`recurring-invoices/${d.id}/${nextAct}/`, { method: 'POST', body: {} });
           toast(`Recurring profile ${nextAct === 'pause' ? 'paused' : 'resumed'}.`, 'ok');
+          await loadList(false);
           loadDetail(d.id);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+          actBtn.disabled = false;
+        }
         return;
       }
       if (act === 'cancel-rec') {
         if (!(await confirmBox({ title: `Cancel Profile ${d.profile_name}?`, message: 'No more invoices will be generated automatically.', okText: 'Cancel Profile', danger: true }))) return;
+        actBtn.disabled = true;
         try {
-          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'cancel' } });
+          await api(`recurring-invoices/${d.id}/cancel/`, { method: 'POST', body: {} });
           toast('Recurring profile cancelled.', 'ok');
+          await loadList(false);
           loadDetail(d.id);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+          actBtn.disabled = false;
+        }
         return;
       }
       if (act === 'clone-rec') {
@@ -4019,7 +4046,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       e.stopPropagation();
       expPop.style.display = expPop.style.display === 'none' ? 'block' : 'none';
     });
-    root.addEventListener('click', e => {
+    addRootListener('click', e => {
       if (!e.target.closest('.export-dropdown-wrap')) expPop.style.display = 'none';
     });
   }

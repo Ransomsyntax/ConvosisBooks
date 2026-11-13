@@ -1707,7 +1707,10 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
     return null;
   }
 
-  $('#btn-sig-save', m.el)?.addEventListener('click', async () => {
+  const saveButton = $('#btn-sig-save', m.el);
+  let savingSignature = false;
+  saveButton?.addEventListener('click', async () => {
+    if (savingSignature) return;
     const sigData = getSignatureDataUrl() || currentSig;
     if (!sigData) {
       return toast('Please draw, type, or upload a signature first.', 'err');
@@ -1715,6 +1718,8 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
     const signerName = $('#sig-meta-name', m.el)?.value.trim() || '';
     const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || '';
 
+    savingSignature = true;
+    saveButton.disabled = true;
     try {
       if (isOrgSetting) {
         await api('organization/', {
@@ -1749,6 +1754,9 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
       }
     } catch (err) {
       toast(err.message, 'err');
+    } finally {
+      savingSignature = false;
+      if (!m.closed) saveButton.disabled = false;
     }
   });
 

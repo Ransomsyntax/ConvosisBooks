@@ -2101,6 +2101,62 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertIsNotNone(gen_inv)
         self.assertEqual(gen_inv.lines.first().description, 'Daily Health Check')
 
+    def test_recurring_invoice_end_date_persists_and_validates(self):
+        start = date.today()
+        end = start + timedelta(days=30)
+        created = self.client.post(
+            '/api/recurring-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'profile_name': 'Dated Recurring Profile',
+                'frequency': 'monthly',
+                'start_date': str(start),
+                'next_date': str(start),
+                'end_date': str(end),
+                'never_ends': False,
+                'lines': [{'description': 'Monthly service', 'quantity': 1, 'rate': '100.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        recurring_id = created.json()['id']
+
+        recurring = RecurringInvoice.objects.get(pk=recurring_id)
+        self.assertEqual(recurring.end_date, end)
+        self.assertFalse(recurring.never_ends)
+        detail = self.client.get(f'/api/recurring-invoices/{recurring_id}/')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()['end_date'], str(end))
+
+        updated_end = start + timedelta(days=60)
+        updated = self.client.put(
+            f'/api/recurring-invoices/{recurring_id}/',
+            data=json.dumps({'end_date': str(updated_end), 'never_ends': False}),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        recurring.refresh_from_db()
+        self.assertEqual(recurring.end_date, updated_end)
+
+        invalid = self.client.put(
+            f'/api/recurring-invoices/{recurring_id}/',
+            data=json.dumps({'end_date': str(start - timedelta(days=1)), 'never_ends': False}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid.status_code, 400)
+        recurring.refresh_from_db()
+        self.assertEqual(recurring.end_date, updated_end)
+
+        no_expiry = self.client.put(
+            f'/api/recurring-invoices/{recurring_id}/',
+            data=json.dumps({'never_ends': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(no_expiry.status_code, 200, no_expiry.content)
+        recurring.refresh_from_db()
+        self.assertIsNone(recurring.end_date)
+        self.assertTrue(recurring.never_ends)
+
 
 class TestInvoiceActionsAndPrinting(BaseAccountingTestCase):
     """

@@ -7751,7 +7751,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   const rStartDate = rec ? (rec.start_date || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10))) : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const rNextDate = rec ? (rec.next_date || rStartDate) : rStartDate;
   const rEndDate = rec ? (rec.end_date || '') : '';
-  const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : true;
+  const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : false;
   const rTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const rCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const rPaymentTerms = rec ? (rec.payment_terms != null ? Number(rec.payment_terms) : 30) : 30;
@@ -7888,7 +7888,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:150px;">
 
             <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Ends On</label>
-            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:150px;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
+            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" min="${rStartDate}" style="width:150px;${rNeverEnds ? 'opacity:0.5;' : ''}" ${rNeverEnds ? 'disabled' : ''}>
 
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;cursor:pointer;margin-left:10px;">
               <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''}> Never Expires
@@ -8064,6 +8064,13 @@ ${renderStockQuantityCell(l, items, whList)}
       $('#rec-start-date', form).focus();
       return;
     }
+    const neverEnds = $('#rec-never-ends', form).checked;
+    const endDate = neverEnds ? null : ($('#rec-end-date', form).value || null);
+    if (endDate && endDate < sd) {
+      toast('End Date cannot be earlier than Start Date.', 'err');
+      $('#rec-end-date', form).focus();
+      return;
+    }
 
     const lines = [];
     $$('.ln-rec', tbody).forEach((tr, idx) => {
@@ -8115,8 +8122,8 @@ ${renderStockQuantityCell(l, items, whList)}
       frequency: $('#rec-frequency', form)?.value || 'monthly',
       repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
       start_date: sd,
-      end_date: $('#rec-never-ends', form).checked ? null : ($('#rec-end-date', form).value || null),
-      never_ends: $('#rec-never-ends', form).checked,
+      end_date: endDate,
+      never_ends: neverEnds,
       payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
       tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#rec-customer-type', form)?.value || 'b2b',
@@ -8158,6 +8165,14 @@ ${renderStockQuantityCell(l, items, whList)}
 
   const neverEndsCb = $('#rec-never-ends', form);
   const endDateIn = $('#rec-end-date', form);
+  const startDateIn = $('#rec-start-date', form);
+  if (endDateIn && startDateIn) {
+    const updateEndDateMinimum = () => {
+      endDateIn.min = startDateIn.value || '';
+    };
+    startDateIn.addEventListener('change', updateEndDateMinimum);
+    updateEndDateMinimum();
+  }
   if (neverEndsCb && endDateIn) {
     neverEndsCb.addEventListener('change', () => {
       if (neverEndsCb.checked) {
@@ -8344,139 +8359,6 @@ ${renderStockQuantityCell(l, items, whList)}
 
   $('#btn-rec-close-x', target)?.addEventListener('click', handleClose);
   $('#btn-rec-cancel', target)?.addEventListener('click', handleClose);
-
-  async function saveRecurring(isDraft = false) {
-    const pName = ($('#rec-profile-name', form).value || '').trim();
-    if (!pName) {
-      toast('Profile Name is required.', 'err');
-      $('#rec-profile-name', form).focus();
-      return;
-    }
-    if (/[#@!$%^*+=~`<>?[\]\{}]/.test(pName)) {
-      toast('Profile Name contains invalid special characters.', 'err');
-      $('#rec-profile-name', form).focus();
-      return;
-    }
-
-    const custId = $('#rec-customer', form).value;
-    if (!custId || custId === '__new_customer__') {
-      toast('Please select a customer.', 'err');
-      $('#rec-customer', form).focus();
-      return;
-    }
-
-    const sDateVal = $('#rec-start-date', form).value;
-    if (!sDateVal) {
-      toast('Please enter a start date.', 'err');
-      $('#rec-start-date', form).focus();
-      return;
-    }
-
-    const nextDateVal = $('#rec-next-date', form).value || sDateVal;
-    if (sDateVal && nextDateVal && new Date(nextDateVal) < new Date(sDateVal)) {
-      toast('Next Invoice Date cannot be earlier than Start Date.', 'err');
-      $('#rec-next-date', form).focus();
-      return;
-    }
-
-    const neverEnds = !!(neverEndsCb && neverEndsCb.checked);
-    const edVal = neverEnds ? null : ($('#rec-end-date', form).value || null);
-    if (!neverEnds && edVal && sDateVal && new Date(edVal) < new Date(sDateVal)) {
-      toast('End Date cannot be earlier than Start Date.', 'err');
-      $('#rec-end-date', form).focus();
-      return;
-    }
-
-    const lines = [];
-    $$('.ln-rec', tbody).forEach((tr, idx) => {
-      const itVal = $('.l-item', tr).value;
-      const descVal = $('.l-desc', tr).value.trim();
-      const qVal = num($('.l-qty', tr).value) || 1;
-      const rVal = num($('.l-rate', tr).value) || 0;
-      const dVal = num($('.l-disc', tr).value) || 0;
-      const gVal = num($('.l-gst', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value || 'percent';
-
-      let taxable = qVal * rVal;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - dVal) / 100;
-      } else {
-        taxable = Math.max(0, taxable - dVal);
-      }
-      taxable = r2(taxable);
-      const lTot = r2(taxable * (1 + gVal / 100));
-
-      lines.push({
-        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
-        warehouse: $('.l-wh-select', tr)?.value || null,
-        warehouse_id: $('.l-wh-select', tr)?.value || null,
-        warehouse_code: $('.l-wh-code', tr)?.value || '',
-        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
-        hsn_sac: $('.l-hsn', tr).value.trim(),
-        quantity: qVal,
-        rate: rVal,
-        discount_percent: dVal,
-        gst_rate: gVal,
-        line_total: lTot,
-        position: idx
-      });
-    });
-
-    if (!lines.length) {
-      toast('At least one line item is required.', 'err');
-      return;
-    }
-
-    const totals = calcRecTotals();
-
-    const payload = {
-      profile_name: pName,
-      customer: Number(custId),
-      frequency: $('#rec-frequency', form).value,
-      branch: ($('#rec-branch', form)?.value || '').trim(),
-      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
-      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
-      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
-      start_date: sDateVal,
-      next_date: nextDateVal,
-      end_date: edVal,
-      never_ends: neverEnds,
-      payment_terms: Number($('#rec-payment-terms', form).value) || 0,
-      status: isDraft ? 'paused' : ($('#rec-status', form).value || 'active'),
-      auto_send: !!($('#rec-auto-send', form) && $('#rec-auto-send', form).checked),
-      notes: $('#rec-notes', form).value.trim(),
-      terms: $('#rec-terms', form).value.trim(),
-      lines: lines,
-      total: totals.totalGrand.toFixed(2)
-    };
-
-    const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
-    actionBtns.forEach(b => { if (b) b.disabled = true; });
-
-    try {
-      let saved;
-      if (id) {
-        saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
-        toast('Recurring profile updated successfully!', 'ok');
-      } else {
-        saved = await api('recurring-invoices/', { method: 'POST', body: payload });
-        toast('Recurring profile created successfully!', 'ok');
-      }
-
-      if (onDone) onDone(saved);
-      else {
-        location.hash = '#/sales/recurring-invoices';
-        if (typeof route === 'function') route();
-      }
-    } catch (err) {
-      toast(err.message, 'err');
-    } finally {
-      actionBtns.forEach(b => { if (b) b.disabled = false; });
-    }
-  }
-
-  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurring(false));
-  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurring(true));
 
   calcRecTotals();
 }

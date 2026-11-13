@@ -303,6 +303,7 @@ class Invoice(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='invoices')
     source_quote = models.ForeignKey('Quote', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
     source_sales_order = models.ForeignKey('SalesOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
+    source_delivery_challan = models.ForeignKey('DeliveryChallan', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices')
     recurring_invoice = models.ForeignKey('RecurringInvoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_invoices')
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
@@ -351,6 +352,7 @@ class Line(models.Model):
     quantity = models.DecimalField(**QTY)
     rate = models.DecimalField(**MONEY)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    discount_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     taxable = models.DecimalField(**MONEY)
     tax_amount = models.DecimalField(**MONEY)
@@ -363,6 +365,7 @@ class Line(models.Model):
 
 class InvoiceLine(Line):
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='lines')
+    source_delivery_challan_line = models.ForeignKey('DeliveryChallanLine', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoice_lines')
 
 class BillLine(Line):
     bill = models.ForeignKey(Bill, on_delete=models.CASCADE, related_name='lines')
@@ -825,21 +828,41 @@ class RetainerInvoiceAllocation(models.Model):
 class DeliveryChallan(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='delivery_challans')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
-    CHALLAN_TYPES = [('supply_on_approval', 'Supply on Approval'), ('job_work', 'Job Work'), ('other', 'Other')]
+    CHALLAN_TYPES = [
+        ('relocating_goods', 'Relocating Goods'),
+        ('delivering_goods', 'Delivering Goods'),
+        ('supply_on_approval', 'Supply on Approval'),
+        ('job_work', 'Job Work'),
+        ('other', 'Other'),
+    ]
     number = models.CharField(max_length=60, unique=True)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='delivery_challans')
     date = models.DateField()
+    reference_number = models.CharField(max_length=60, blank=True, default='')
     branch = models.CharField(max_length=120, blank=True, default='')
     location = models.CharField(max_length=120, default='HO Kottayam', blank=True)
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='delivery_challans')
+    source_warehouse = models.ForeignKey('Warehouse', null=True, blank=True, on_delete=models.PROTECT, related_name='outgoing_delivery_challans')
+    destination_warehouse = models.ForeignKey('Warehouse', null=True, blank=True, on_delete=models.PROTECT, related_name='incoming_delivery_challans')
     challan_type = models.CharField(max_length=40, choices=CHALLAN_TYPES, default='other')
     status = models.CharField(max_length=20, default='open')
+    customer_type = models.CharField(max_length=20, blank=True, default='')
+    gstin = models.CharField(max_length=15, blank=True, default='')
+    currency = models.CharField(max_length=10, blank=True, default='INR')
+    subtotal = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    adjustment = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    total = models.DecimalField(default=Decimal('0.00'), **MONEY)
     vehicle_number = models.CharField(max_length=50, blank=True)
     notes = models.TextField(blank=True)
+    terms = models.TextField(blank=True, default='')
     signature_data = models.TextField(blank=True, default='')
     signed_by = models.CharField(max_length=150, blank=True, default='')
     signed_at = models.DateTimeField(null=True, blank=True)
     signature_title = models.CharField(max_length=100, blank=True, default='Authorized Signature')
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 class DeliveryChallanLine(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
@@ -850,6 +873,17 @@ class DeliveryChallanLine(models.Model):
     description = models.CharField(max_length=500)
     hsn_sac = models.CharField(max_length=10, blank=True)
     quantity = models.DecimalField(**QTY)
+    rate = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    discount_type = models.CharField(max_length=12, default='percentage', choices=[('percentage', 'Percentage'), ('amount', 'Amount')])
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    discount_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    taxable = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    line_total = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    delivered_quantity = models.DecimalField(default=Decimal('0.000'), **QTY)
+    returned_quantity = models.DecimalField(default=Decimal('0.000'), **QTY)
+    position = models.PositiveSmallIntegerField(default=0)
 
 class CreditNote(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='credit_notes')

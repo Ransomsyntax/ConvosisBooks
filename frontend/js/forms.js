@@ -7447,42 +7447,454 @@ async function stockMoveModal() {
 }
 
 async function challanModal(id) {
-  const [custs, rec] = await Promise.all([
-    api('lookup/customers/').catch(() => []),
-    id ? api(`delivery-challans/${id}/`).catch(() => null) : Promise.resolve(null)
+  const [custs, items, warehouses, locations, rec] = await Promise.all([
+    api('lookup/customers/'),
+    api('lookup/items/'),
+    api('lookup/warehouses/'),
+    api('lookup/business-locations/'),
+    id ? api(`delivery-challans/${id}/`) : Promise.resolve(null)
   ]);
-  const o = rec || { customer_id: '', date: APP.today, challan_type: 'other', vehicle_number: '', notes: '', branch: '', location: 'HO Kottayam' };
+  const o = rec || {
+    customer_id: '', date: APP.today, challan_type: 'delivering_goods',
+    vehicle_number: '', notes: '', terms: '', branch: '', location: '',
+    lines: [], attachments: []
+  };
+  const money = value => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let pendingFiles = [];
+  let modal;
+  const warehouseOptions = [['', 'Select warehouse…'], ...warehouses.map(warehouse => [warehouse.id, `${warehouse.name} (${warehouse.code})`])];
+  const itemOptions = [['', 'Select an item…'], ...items.map(item => [item.id, `${item.name}${item.sku ? ` · ${item.sku}` : ''}`])];
+  const rowHtml = line => `
+    <tr class="dc-line" data-id="${line.id || ''}">
+      <td><select class="in dc-item" aria-label="Item details">${opts(itemOptions, line.item_id || line.item || '')}</select></td>
+      <td><input class="in dc-quantity" type="number" min="0.001" step="0.001" value="${esc(line.quantity || '')}" aria-label="Quantity"></td>
+      <td><input class="in dc-rate" type="number" min="0" step="0.01" value="${esc(line.rate || '')}" aria-label="Rate"></td>
+      <td style="display:flex;gap:4px;align-items:center">
+        <input class="in dc-discount" type="number" min="0" step="0.01" value="${esc(line.discount_amount ? line.discount_amount : line.discount_percent || 0)}" aria-label="Discount">
+        <select class="in dc-discount-type" aria-label="Discount type">
+          ${opts([['percentage', '%'], ['amount', '₹']], line.discount_amount ? 'amount' : 'percentage')}
+        </select>
+      </td>
+      <td><select class="in dc-tax" aria-label="Tax rate">${opts([['0', '0%'], ['0.25', '0.25%'], ['3', '3%'], ['5', '5%'], ['12', '12%'], ['18', '18%'], ['28', '28%'], ['40', '40%']], line.gst_rate || 0)}</select></td>
+      <td class="dc-amount" style="text-align:right;font-weight:600">0.00</td>
+      <td><button type="button" class="btn dc-remove-row" aria-label="Remove row" title="Remove row">×</button></td>
+    </tr>`;
+  const section = title => `<h3 style="margin:18px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--bd);font-size:14px">${title}</h3>`;
+  const body = `
+    ${section('Basic Information')}
+    <div class="g">
+      ${fld({ name: 'customer', label: 'Customer Name', type: 'select', req: true, opts: [['', 'Select or add a customer…'], ...custs.map(customer => [customer.id, customer.name])], value: o.customer_id || '', col: 's6' })}
+      ${fld({ name: 'currency_display', label: 'Currency', value: o.currency || APP.org?.base_currency || 'INR', attrs: 'readonly', col: 's3' })}
+      <div class="zb-form-row fg s3"><label class="zb-form-label">Delivery Challan Number</label><div class="zb-form-ctrl"><input class="in" id="dc-number-preview" readonly placeholder="Generated from Transaction Serial Numbers"><div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px">Assigned automatically when saved</div></div></div>
+      ${fld({ name: 'reference_number', label: 'Reference Number', value: o.reference_number || '', col: 's4' })}
+      ${fld({ name: 'date', label: 'Delivery Challan Date', type: 'date', req: true, value: o.date || APP.today, col: 's4' })}
+      ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', req: true, opts: [['relocating_goods', 'Relocating Goods'], ['delivering_goods', 'Delivering Goods']], value: ['relocating_goods', 'delivering_goods'].includes(o.challan_type) ? o.challan_type : 'delivering_goods', col: 's4' })}
+    </div>
+    ${section('Additional Transaction Information')}
+    <div class="g">
+      ${fld({ name: 'customer_type', label: 'Customer Type', value: o.customer_type || '', attrs: 'readonly', col: 's3' })}
+      ${fld({ name: 'gstin', label: 'GSTIN', value: o.gstin || '', attrs: 'readonly', col: 's3' })}
+      ${fld({ name: 'business_location_id', label: 'Business Location', type: 'select', opts: [['', 'Select location…'], ...locations.map(location => [location.id, location.name])], value: o.business_location_id || '', col: 's3' })}
+      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', col: 's3' })}
+      <div class="fg s6 dc-source-wrap">${fld({ name: 'source_warehouse_id', label: 'Source Warehouse', type: 'select', req: o.challan_type === 'relocating_goods', opts: warehouseOptions, value: o.source_warehouse_id || '', col: 's12' })}</div>
+      <div class="fg s6 dc-destination-wrap">${fld({ name: 'destination_warehouse_id', label: 'Destination Warehouse', type: 'select', req: o.challan_type === 'relocating_goods', opts: warehouseOptions, value: o.destination_warehouse_id || '', col: 's12' })}</div>
+    </div>
+    ${section('Item Details')}
+    <div class="tw" style="overflow-x:auto">
+      <table style="min-width:880px">
+        <thead><tr><th>Item Details</th><th>Quantity</th><th>Rate</th><th>Discount</th><th>Tax</th><th style="text-align:right">Amount</th><th></th></tr></thead>
+        <tbody id="dc-lines"></tbody>
+      </table>
+    </div>
+    <div class="er" data-err="lines" role="alert"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button type="button" class="btn" id="dc-add-row">＋ Add New Row</button>
+      <button type="button" class="btn" id="dc-add-bulk">＋ Add Items in Bulk</button>
+    </div>
+    <div class="g" style="margin-top:16px">
+      ${fld({ name: 'notes', label: 'Customer Notes', type: 'textarea', rows: 3, value: o.notes || '', col: 's6' })}
+      <div class="s6" style="background:var(--surface-subtle,#f8fafc);padding:14px;border-radius:8px">
+        <div style="display:flex;justify-content:space-between"><b>Subtotal</b><span id="dc-subtotal">0.00</span></div>
+        ${fld({ name: 'adjustment', label: 'Adjustment', type: 'number', value: o.adjustment || 0, col: 's6' })}
+        <div style="display:flex;justify-content:space-between;border-top:1px solid var(--bd);padding-top:10px;margin-top:8px;font-size:16px"><b>Total Amount</b><b id="dc-total">0.00</b></div>
+      </div>
+      ${fld({ name: 'terms', label: 'Terms & Conditions', type: 'textarea', rows: 3, value: o.terms || '', col: 's6' })}
+      <div class="fg s6"><label class="zb-form-label" for="dc-attach">Attach Files</label><div class="zb-form-ctrl">
+        <input class="in" id="dc-attach" type="file" multiple>
+        <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:4px">Maximum 5 files, 10 MB each</div>
+        <div id="dc-attachments" style="margin-top:8px"></div>
+      </div></div>
+    </div>`;
   formModal({
     title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
-    body: `<div class="g">
-      ${fld({ name: 'customer', label: 'Customer', type: 'select', req: true, opts: [['', 'Select Customer…'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || '', col: 's6' })}
-      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
-      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', ph: 'Optional branch', col: 's6' })}
-      ${fld({ name: 'location', label: 'Location', value: o.location || 'HO Kottayam', col: 's6' })}
-      ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', opts: [['job_work', 'Job Work'], ['supply_on_approval', 'Supply on Approval'], ['other', 'Other Delivery']], value: o.challan_type, col: 's6' })}
-      ${fld({ name: 'vehicle_number', label: 'Vehicle Number', value: o.vehicle_number || '', col: 's6', ph: 'KL-05-AB-1234' })}
-      ${fld({ name: 'notes', label: 'Notes / Transportation Memo', type: 'textarea', value: o.notes || '', col: 's12' })}
-    </div>`,
-    onSubmit: async d => {
-      if (!d.customer || d.customer === '__new_customer__') {
-        throw new ApiErr(400, { customer: 'Please select a customer.' }, 'Please select a customer.');
-      }
-      d.customer = Number(d.customer);
-
-      const vNum = (d.vehicle_number || '').trim().toUpperCase();
-      if (vNum) {
-        const vClean = vNum.replace(/[\s-]/g, '');
-        if (!/^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/.test(vClean)) {
-          throw new ApiErr(400, { vehicle_number: 'Enter a valid vehicle registration number format (e.g. KL-05-AB-1234).' }, 'Invalid vehicle registration number format.');
+    body,
+    submit: 'Save as Draft',
+    onReady: (form, m) => {
+      modal = m;
+      const customerSelect = form.elements.customer;
+      const customerType = form.elements.customer_type;
+      const gstin = form.elements.gstin;
+      const currency = form.elements.currency_display;
+      const updateCustomer = () => {
+        const customer = custs.find(value => String(value.id) === customerSelect.value);
+        customerType.value = customer ? (customer.gstin || customer.customer_type === 'business' ? 'B2B' : 'B2C') : '';
+        const selectedLocation = locations.find(value => String(value.id) === form.elements.business_location_id.value);
+        gstin.value = selectedLocation && selectedLocation.gstin ? selectedLocation.gstin : customer ? customer.gstin || '' : '';
+        currency.value = customer ? customer.currency || APP.org?.base_currency || 'INR' : APP.org?.base_currency || 'INR';
+        updateNumberPreview();
+      };
+      let previewRequest = 0;
+      const updateNumberPreview = async () => {
+        const seq = ++previewRequest;
+        const query = new URLSearchParams({
+          date: form.elements.date.value || APP.today,
+          customer_id: customerSelect.value || '',
+          branch: form.elements.branch.value || '',
+          location: form.elements.business_location_id.value || '',
+          business_location_id: form.elements.business_location_id.value || ''
+        });
+        try {
+          const preview = await api(`lookup/next-delivery-challan-number/?${query}`);
+          if (seq === previewRequest) $('#dc-number-preview', form).value = preview.formatted || preview.next_number || '';
+        } catch (error) {
+          if (seq === previewRequest) $('#dc-number-preview', form).value = 'Generated automatically when saved';
+          console.error('Delivery challan number preview failed:', error);
         }
-        d.vehicle_number = vNum;
-      }
+      };
+      setupSearchableSelect(customerSelect, {
+        placeholder: 'Search or select a customer…',
+        onNew: () => partyForm('customers', null, newCustomer => {
+          if (!newCustomer || !newCustomer.id) return;
+          custs.push(newCustomer);
+          customerSelect.add(new Option(newCustomer.name, newCustomer.id));
+          customerSelect.value = String(newCustomer.id);
+          customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        })
+      });
+      customerSelect.addEventListener('change', updateCustomer);
+      form.elements.date.addEventListener('change', updateNumberPreview);
+      form.elements.branch.addEventListener('input', updateNumberPreview);
+      form.elements.business_location_id.addEventListener('change', updateNumberPreview);
 
-      if (id) await api(`delivery-challans/${id}/`, { method: 'PUT', body: d });
-      else await api('delivery-challans/', { method: 'POST', body: d });
-      toast(id ? 'Delivery Challan updated' : 'Delivery Challan created');
+      const tbody = $('#dc-lines', form);
+      const recalc = () => {
+        let subtotal = 0;
+        $$('.dc-line', tbody).forEach(row => {
+          const quantity = Number($('.dc-quantity', row).value) || 0;
+          const rate = Number($('.dc-rate', row).value) || 0;
+          const discount = Number($('.dc-discount', row).value) || 0;
+          const discountType = $('.dc-discount-type', row).value;
+          const taxRate = Number($('.dc-tax', row).value) || 0;
+          const gross = quantity * rate;
+          const discountAmount = discountType === 'percentage' ? gross * discount / 100 : discount;
+          const taxable = Math.max(0, gross - discountAmount);
+          const amount = taxable + taxable * taxRate / 100;
+          $('.dc-amount', row).textContent = money(amount);
+          subtotal += taxable;
+        });
+        const taxTotal = $$('.dc-line', tbody).reduce((sum, row) => {
+          const quantity = Number($('.dc-quantity', row).value) || 0;
+          const rate = Number($('.dc-rate', row).value) || 0;
+          const discount = Number($('.dc-discount', row).value) || 0;
+          const discountAmount = $('.dc-discount-type', row).value === 'percentage' ? quantity * rate * discount / 100 : discount;
+          const taxable = Math.max(0, quantity * rate - discountAmount);
+          return sum + taxable * (Number($('.dc-tax', row).value) || 0) / 100;
+        }, 0);
+        $('#dc-subtotal', form).textContent = `${currency.value || 'INR'} ${money(subtotal)}`;
+        $('#dc-total', form).textContent = `${currency.value || 'INR'} ${money(Math.max(0, subtotal + taxTotal + (Number(form.elements.adjustment.value) || 0)))}`;
+      };
+      const addRow = (line = {}) => {
+        tbody.insertAdjacentHTML('beforeend', rowHtml(line));
+        const row = tbody.lastElementChild;
+        const select = $('.dc-item', row);
+        setupSearchableSelect(select, {
+          placeholder: 'Search item…',
+          onNew: () => itemForm(null, newItem => {
+            if (!newItem || !newItem.id) return;
+            items.push(newItem);
+            itemOptions.push([newItem.id, `${newItem.name}${newItem.sku ? ` · ${newItem.sku}` : ''}`]);
+            select.add(new Option(newItem.name, newItem.id));
+            select.value = String(newItem.id);
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+          })
+        });
+        select.addEventListener('change', () => {
+          const item = items.find(value => String(value.id) === select.value);
+          if (!item) return;
+          $('.dc-rate', row).value = item.selling_price || 0;
+          $('.dc-tax', row).value = String(item.gst_rate || 0);
+          recalc();
+        });
+        row.addEventListener('input', recalc);
+        row.addEventListener('change', recalc);
+      };
+      (o.lines && o.lines.length ? o.lines : [{}]).forEach(addRow);
+      $('#dc-add-row', form).addEventListener('click', () => addRow());
+      $('#dc-add-bulk', form).addEventListener('click', () => {
+        bulkItemPickerModal(items, selected => selected.forEach(item => addRow({
+          item_id: item.id, description: item.name, rate: item.selling_price || 0, gst_rate: item.gst_rate || 0, quantity: 1
+        })));
+      });
+      tbody.addEventListener('click', event => {
+        const button = event.target.closest('.dc-remove-row');
+        if (!button) return;
+        button.closest('.dc-line').remove();
+        if (!tbody.children.length) addRow();
+        recalc();
+      });
+      form.elements.adjustment.addEventListener('input', recalc);
+      const typeSelect = form.elements.challan_type;
+      const updateType = () => {
+        const relocation = typeSelect.value === 'relocating_goods';
+        $('.dc-source-wrap', form).style.display = '';
+        $('.dc-destination-wrap', form).style.display = relocation ? '' : 'none';
+        form.elements.source_warehouse_id.required = relocation;
+        form.elements.destination_warehouse_id.required = relocation;
+      };
+      typeSelect.addEventListener('change', updateType);
+      const attachmentBox = $('#dc-attachments', form);
+      const renderAttachments = () => {
+        const saved = (o.attachments || []).map(file => `<div class="attach-file-badge" data-saved-att="${file.id}">📎 ${esc(file.filename)} <button type="button" data-delete-att="${file.id}" aria-label="Remove attachment">×</button></div>`).join('');
+        const added = pendingFiles.map(file => `<div class="attach-file-badge">📎 ${esc(file.name)} <button type="button" data-remove-file="${esc(file.name)}" aria-label="Remove attachment">×</button></div>`).join('');
+        attachmentBox.innerHTML = saved + added;
+      };
+      $('#dc-attach', form).addEventListener('change', event => {
+        const selectedFiles = Array.from(event.target.files || []);
+        if (selectedFiles.length + pendingFiles.length + (o.attachments || []).length > 5) {
+          toast('A delivery challan can have at most 5 attachments.', 'err');
+          event.target.value = '';
+          return;
+        }
+        selectedFiles.forEach(file => {
+          if (file.size > 10 * 1024 * 1024) {
+            toast(`${file.name} exceeds the 10 MB file limit.`, 'err');
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = result => {
+            pendingFiles.push({ name: file.name, size: file.size, type: file.type, data: result.target.result });
+            renderAttachments();
+            m.markDirty();
+          };
+          reader.readAsDataURL(file);
+        });
+        event.target.value = '';
+      });
+      attachmentBox.addEventListener('click', async event => {
+        const deleteButton = event.target.closest('[data-delete-att]');
+        if (deleteButton) {
+          if (!(await confirmBox({ title: 'Remove attachment?', message: 'This will permanently remove the file.', okText: 'Remove', danger: true }))) return;
+          try {
+            await api(`attachments/${deleteButton.dataset.deleteAtt}/`, { method: 'DELETE' });
+            o.attachments = o.attachments.filter(file => String(file.id) !== deleteButton.dataset.deleteAtt);
+            renderAttachments();
+          } catch (error) {
+            toast(error.message || 'Unable to remove attachment.', 'err');
+          }
+        }
+        const removeButton = event.target.closest('[data-remove-file]');
+        if (removeButton) {
+          pendingFiles = pendingFiles.filter(file => file.name !== removeButton.dataset.removeFile);
+          renderAttachments();
+        }
+      });
+      form.elements.business_location_id.addEventListener('change', () => {
+        const location = locations.find(value => String(value.id) === form.elements.business_location_id.value);
+        if (location) form.elements.branch.value = form.elements.branch.value || location.name;
+        updateCustomer();
+      });
+      updateCustomer();
+      updateType();
+      renderAttachments();
+      recalc();
+      updateNumberPreview();
+    },
+    onSubmit: async (d, action, form) => {
+      if (!d.customer) {
+        throw new ApiErr(400, { customer: 'Select a customer.' }, 'Customer is required.');
+      }
+      const lines = $$('.dc-line', form).map(row => {
+        const quantity = Number($('.dc-quantity', row).value);
+        const rate = Number($('.dc-rate', row).value);
+        const discount = Number($('.dc-discount', row).value) || 0;
+        const discountType = $('.dc-discount-type', row).value;
+        const line = {
+          item: Number($('.dc-item', row).value),
+          quantity, rate,
+          discount, discount_type: discountType,
+          gst_rate: Number($('.dc-tax', row).value) || 0
+        };
+        if (discountType === 'percentage') line.discount_percent = discount;
+        return line;
+      });
+      const invalid = lines.find(line => !line.item || !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.rate) || line.rate < 0);
+      if (invalid) {
+        throw new ApiErr(400, { lines: 'Select an item and enter a quantity greater than zero and a valid rate for each row.' }, 'Correct the item details.');
+      }
+      const payload = {
+        customer: Number(d.customer),
+        date: d.date,
+        challan_type: d.challan_type,
+        reference_number: d.reference_number,
+        business_location_id: d.business_location_id ? Number(d.business_location_id) : '',
+        branch: d.branch,
+        location: locations.find(location => String(location.id) === d.business_location_id)?.name || '',
+        source_warehouse_id: d.source_warehouse_id ? Number(d.source_warehouse_id) : '',
+        destination_warehouse_id: d.destination_warehouse_id ? Number(d.destination_warehouse_id) : '',
+        adjustment: Number(d.adjustment || 0),
+        notes: d.notes,
+        terms: d.terms,
+        lines
+      };
+      if (payload.challan_type === 'relocating_goods' && (!payload.source_warehouse_id || !payload.destination_warehouse_id)) {
+        throw new ApiErr(400, {
+          source_warehouse_id: 'Select the source warehouse.',
+          destination_warehouse_id: 'Select the destination warehouse.'
+        }, 'Both warehouses are required for relocating goods.');
+      }
+      const saved = id
+        ? await api(`delivery-challans/${id}/`, { method: 'PUT', body: payload })
+        : await api('delivery-challans/', { method: 'POST', body: payload });
+      const uploadErrors = [];
+      for (const file of pendingFiles) {
+        try {
+          await api('attachments/', {
+            method: 'POST',
+            body: {
+              entity_type: 'delivery_challan', entity_id: saved.id,
+              filename: file.name, file_size: file.size,
+              mime_type: file.type, file_data: file.data
+            }
+          });
+        } catch (error) {
+          uploadErrors.push(`${file.name}: ${error.message || 'upload failed'}`);
+        }
+      }
+      toast(id ? 'Delivery Challan draft updated' : 'Delivery Challan draft created');
+      if (uploadErrors.length) toast(`Challan saved, but attachment upload failed: ${uploadErrors.join('; ')}`, 'err');
       refresh();
     }
+  });
+}
+
+async function challanAction(id, action) {
+  if (action === 'print') {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast('Allow pop-ups to print this delivery challan.', 'err');
+      return;
+    }
+    try {
+      challanPrint(await api(`delivery-challans/${id}/`), printWindow);
+    } catch (error) {
+      printWindow.close();
+      toast(error.message || 'Unable to load delivery challan for printing.', 'err');
+    }
+    return;
+  }
+  if (action === 'edit') return challanModal(id);
+  const record = await api(`delivery-challans/${id}/`);
+  if (action === 'delete') return deleteRecord('delivery-challans', record, 'delivery challan');
+  if (action === 'sign') return openSignatureModal(record, 'delivery-challans', () => refresh());
+  if (action === 'mark-as-delivered') {
+    const lines = (record.lines || []).filter(line => Number(line.quantity) > Number(line.delivered_quantity || 0));
+    const formRows = lines.map(line => {
+      const remaining = Number(line.quantity) - Number(line.delivered_quantity || 0);
+      return `<div class="g" style="align-items:center;padding:8px 0;border-bottom:1px solid var(--bd)">
+        <div class="s6"><b>${esc(line.description)}</b><div class="sub">Remaining: ${remaining}</div></div>
+        <label class="s6">Delivered quantity<input class="in dc-action-qty" type="number" min="0" max="${remaining}" step="0.001" value="${remaining}" data-id="${line.id}" aria-label="Delivered quantity for ${esc(line.description)}"></label>
+      </div>`;
+    }).join('');
+    formModal({
+      title: 'Mark as Delivered',
+      submit: 'Mark as Delivered',
+      body: `<div>${formRows}<div class="er" data-err="lines" role="alert"></div></div>`,
+      onSubmit: async (_data, _submitAction, form) => {
+        const quantities = $$('.dc-action-qty', form).map(input => ({
+          id: Number(input.dataset.id), quantity: Number(input.value || 0)
+        })).filter(line => line.quantity > 0);
+        if (!quantities.length) {
+          throw new ApiErr(400, { lines: 'Enter a delivered quantity greater than zero.' }, 'Enter at least one quantity.');
+        }
+        await api(`delivery-challans/${id}/mark-as-delivered/`, { method: 'POST', body: { lines: quantities } });
+        toast('Goods marked as delivered', 'ok');
+        refresh();
+      }
+    });
+    return;
+  }
+  if (action === 'mark-as-returned') {
+    if (!(await confirmBox({ title: 'Confirm delivery challan', message: 'Are you sure you want to mark this challan as returned?', okText: 'Continue', danger: true }))) return;
+    await api(`delivery-challans/${id}/${action}/`, { method: 'POST', body: {} });
+    toast('Goods marked as returned', 'ok');
+    refresh();
+    return;
+  }
+  if (action === 'convert-to-invoice') {
+    const result = await api(`delivery-challans/${id}/convert-to-invoice/`, { method: 'POST', body: {} });
+    toast(result.message || `Invoice ${result.invoice_number} created`, 'ok');
+    refresh();
+    location.hash = '#/sales/invoices';
+    return;
+  }
+  if (action === 'invoice-partially' || action === 'record-partial-returns') {
+    const isInvoice = action === 'invoice-partially';
+    const lines = (record.lines || []).map(line => {
+      const invoiced = Number(line.invoiced_quantity || 0);
+      const maximum = isInvoice
+        ? Math.max(0, Number(record.delivered_at ? line.delivered_quantity : line.quantity) - Number(line.returned_quantity || 0) - invoiced)
+        : Math.max(0, Number(line.delivered_quantity || 0) - Number(line.returned_quantity || 0) - invoiced);
+      return { ...line, maximum };
+    }).filter(line => line.maximum > 0);
+    if (!lines.length) {
+      toast(isInvoice ? 'No uninvoiced quantity remains.' : 'No unreturned quantity remains.', 'err');
+      return;
+    }
+    const formRows = lines.map((line, index) => `
+      <div class="g" style="align-items:center;padding:8px 0;border-bottom:1px solid var(--bd)">
+        <div class="s6"><b>${esc(line.description)}</b><div class="sub">Remaining: ${line.maximum}</div></div>
+        <label class="s6">Quantity<input class="in dc-action-qty" type="number" min="0" max="${line.maximum}" step="0.001" value="0" data-id="${line.id}" aria-label="Quantity for ${esc(line.description)}"></label>
+      </div>`).join('');
+    formModal({
+      title: isInvoice ? 'Invoice Partially' : 'Record Partial Returns',
+      submit: isInvoice ? 'Create Invoice' : 'Record Returns',
+      body: `<div>${formRows}<div class="er" data-err="lines" role="alert"></div></div>`,
+      onSubmit: async (_data, _submitAction, form) => {
+        const quantities = $$('.dc-action-qty', form).map(input => ({
+          id: Number(input.dataset.id), quantity: Number(input.value || 0)
+        })).filter(line => line.quantity > 0);
+        if (!quantities.length) {
+          throw new ApiErr(400, { lines: 'Enter a quantity greater than zero.' }, 'Enter at least one quantity.');
+        }
+        const result = await api(`delivery-challans/${id}/${action}/`, { method: 'POST', body: { lines: quantities } });
+        toast(isInvoice ? result.message : 'Partial returns recorded', 'ok');
+        refresh();
+        if (isInvoice && result.invoice_id) location.hash = '#/sales/invoices';
+      }
+    });
+  }
+}
+
+function challanPrint(record, printWindow) {
+  const render = data => {
+    const rows = (data.lines || []).map(line => `
+      <tr><td>${esc(line.description)}</td><td>${esc(line.hsn_sac || '')}</td><td class="num">${esc(line.quantity)}</td>
+      <td class="num">${esc(line.rate)}</td><td class="num">${esc(line.line_total)}</td></tr>`).join('');
+    const logo = APP.org.logo_data ? `<img src="${esc(APP.org.logo_data)}" alt="" style="max-height:64px;max-width:180px">` : '';
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html><html><head><title>${esc(data.number)} - Delivery Challan</title>
+      <style>body{font:14px Arial,sans-serif;color:#172033;margin:32px}header{display:flex;justify-content:space-between;border-bottom:2px solid #2563eb;padding-bottom:16px}h1{font-size:22px;margin:0 0 8px}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{text-align:left;padding:9px;border-bottom:1px solid #dbe1ea}.num{text-align:right}.summary{margin:20px 0 0 auto;width:280px}.summary div{display:flex;justify-content:space-between;padding:5px}.foot{margin-top:30px;color:#526174;white-space:pre-wrap}@media print{body{margin:16mm}}</style></head>
+      <body><header><div>${logo}<div>${esc(APP.org.name || '')}</div></div><div><h1>Delivery Challan</h1><b>${esc(data.number)}</b><div>${esc(data.date || '')}</div><div>${esc(data.reference_number || '')}</div></div></header>
+      <p><b>Customer:</b> ${esc(data.customer_name || '')}<br><b>GSTIN:</b> ${esc(data.gstin || '')}<br><b>Branch / Location:</b> ${esc(data.branch || data.location || '')}</p>
+      <p><b>Type:</b> ${esc(data.challan_type || '')}</p><table><thead><tr><th>Item Details</th><th>HSN/SAC</th><th class="num">Quantity</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="summary"><div><b>Subtotal</b><span>${esc(data.subtotal)}</span></div><div><span>Adjustment</span><span>${esc(data.adjustment)}</span></div><div><b>Total Amount (${esc(data.currency || '')})</b><b>${esc(data.total)}</b></div></div>
+      <div class="foot">${esc(data.notes || '')}${data.terms ? `\\n\\n${esc(data.terms)}` : ''}</div><script>window.onload=()=>window.print();</script></body></html>`);
+    printWindow.document.close();
+  };
+  if (record.lines) render(record);
+  else api(`delivery-challans/${record.id}/`).then(render).catch(error => {
+    printWindow.close();
+    toast(error.message || 'Unable to load delivery challan for printing.', 'err');
   });
 }
 

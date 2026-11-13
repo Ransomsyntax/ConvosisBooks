@@ -805,13 +805,52 @@ def apply_stock(doc, sign, kind, user):
         wcode = wh_code or (wh.code if wh else (it.warehouse_code if it else ''))
         move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wcode)
 
+def sync_delivery_challan_invoice_status(challan):
+    from .models import InvoiceLine
+    if challan.status in ('returned', 'partially_returned', 'cancelled', 'closed'):
+        return
+    invoiced_by_line = {
+        row['source_delivery_challan_line_id']: row['quantity'] or Decimal('0')
+        for row in InvoiceLine.objects.filter(
+            source_delivery_challan_line__challan=challan,
+            invoice__status__in=('draft', 'sent'),
+        ).values('source_delivery_challan_line_id').annotate(quantity=Sum('quantity'))
+    }
+    lines = list(challan.lines.all())
+    invoiced_any = any(invoiced_by_line.values())
+    fully_accounted = bool(lines) and all(
+        invoiced_by_line.get(line.pk, Decimal('0')) + line.returned_quantity >= line.quantity
+        for line in lines
+    )
+    if fully_accounted and invoiced_any:
+        challan.status = 'invoiced'
+    elif invoiced_any:
+        challan.status = 'partially_invoiced'
+    elif challan.delivered_at:
+        challan.status = 'delivered' if all(
+            line.delivered_quantity >= line.quantity for line in lines
+        ) else 'partially_delivered'
+    elif challan.status not in ('draft', 'open'):
+        challan.status = 'open'
+    challan.save(update_fields=['status', 'updated_at'])
+
 @transaction.atomic
 def send_invoice(inv, user):
     check_transaction_lock(inv.date)
     if inv.status != 'draft':
         raise ApiError(409, 'Only draft invoices can be sent.')
+    delivery_challan = inv.source_delivery_challan
+    if delivery_challan:
+        if not delivery_challan.delivered_at or delivery_challan.status in ('returned', 'cancelled', 'closed'):
+            raise ApiError(409, 'Mark the delivery challan goods as delivered before sending this invoice.')
+        for line in inv.lines.select_related('source_delivery_challan_line'):
+            challan_line = line.source_delivery_challan_line
+            if not challan_line or challan_line.challan_id != delivery_challan.pk:
+                raise ApiError(409, 'The invoice has an invalid delivery challan line link.')
+            if line.quantity > challan_line.delivered_quantity - challan_line.returned_quantity:
+                raise ApiError(409, 'The invoice quantity exceeds the delivered quantity remaining on the challan.')
     org = inv.organization or (inv.customer.organization if inv.customer else None)
-    if org and not getattr(org, 'allow_negative_stock', False):
+    if not delivery_challan and org and not getattr(org, 'allow_negative_stock', False):
         for (item_id, wh_id, wh_code), qty in stock_totals(inv).items():
             avail = get_item_warehouse_stock(item_id, wh_id or wh_code, org=org)
             if qty > avail:
@@ -821,11 +860,14 @@ def send_invoice(inv, user):
                 item_name = it.name if it else 'Item'
                 unit_str = f" {it.unit}" if it and it.unit else " Nos"
                 raise ApiError(400, f"Insufficient Stock for {item_name}. Available quantity in {wh_name}: {fmt_qty(avail)}{unit_str}. Requested quantity: {fmt_qty(qty)}{unit_str}.")
-    apply_stock(inv, -1, 'sale', user)
+    if not delivery_challan:
+        apply_stock(inv, -1, 'sale', user)
     inv.status = 'sent'
     inv.sent_at = timezone.now()
     inv.save(update_fields=['status', 'sent_at'])
     post_invoice_journal(inv, user)
+    if delivery_challan:
+        sync_delivery_challan_invoice_status(delivery_challan)
     log_audit(user, 'send', 'Invoice', inv.pk, f'Invoice {inv.number} posted and sent to {inv.customer.name} (₹{inv.total})')
 
 @transaction.atomic
@@ -835,9 +877,12 @@ def void_invoice(inv, user):
         raise ApiError(409, 'Only sent invoices can be voided (delete drafts instead).')
     if inv.allocations.exists():
         raise ApiError(409, 'Payments are applied to this invoice. Delete those payments first.')
-    apply_stock(inv, +1, 'sale_void', user)
+    if not inv.source_delivery_challan_id:
+        apply_stock(inv, +1, 'sale_void', user)
     inv.status = 'void'
     inv.save(update_fields=['status'])
+    if inv.source_delivery_challan:
+        sync_delivery_challan_invoice_status(inv.source_delivery_challan)
     mark_document_number_cancelled(inv.organization, 'invoices', inv.number)
     post_invoice_void_journal(inv, user)
     log_audit(user, 'void', 'Invoice', inv.pk, f'Invoice {inv.number} voided and reversed in ledger')

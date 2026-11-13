@@ -22,10 +22,12 @@ def compute(lines, intra, is_tax_inclusive=False):
     tot = {'subtotal': ZERO, 'cgst': ZERO, 'sgst': ZERO, 'igst': ZERO}
     for ln in lines:
         gross = ln['quantity'] * ln['rate']
+        discount_amount = ln.get('discount_amount', ZERO) or ZERO
+        discounted_gross = max(ZERO, gross - discount_amount)
         disc_factor = (Decimal(100) - ln['discount_percent']) / Decimal(100)
         gst_r = ln['gst_rate']
         if is_tax_inclusive and gst_r > 0:
-            net_entered = q2(gross * disc_factor)
+            net_entered = q2(discounted_gross if discount_amount else gross * disc_factor)
             taxable = q2(net_entered / (Decimal(1) + (gst_r / Decimal(100))))
             tax_amount = net_entered - taxable
             if intra:
@@ -37,7 +39,7 @@ def compute(lines, intra, is_tax_inclusive=False):
                 ig = tax_amount
             line_total = net_entered
         else:
-            taxable = q2(gross * disc_factor)
+            taxable = q2(discounted_gross if discount_amount else gross * disc_factor)
             tax = taxable * gst_r / Decimal(100)
             if intra:
                 cg = sg = q2(tax / 2)

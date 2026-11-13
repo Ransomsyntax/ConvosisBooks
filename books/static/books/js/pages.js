@@ -1792,13 +1792,33 @@ const LISTS = {
   },
   'delivery-challans': {
     api: 'delivery-challans', title: 'Delivery Challans', bc: 'Sales', newLabel: 'New delivery challan', onNew: () => challanModal(), ordering: '-date', empty: 'No delivery challans yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Challan#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.customer_name) }, { h: 'Type', f: r => esc(r.challan_type) }, { h: 'Vehicle#', f: r => esc(r.vehicle_number || '—') }, { h: 'Status', f: r => badge(r.status) }],
-    actions: r => [['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign'], ['delete', 'Delete', 'd']],
-    onAction: (a, r) => {
-      if (a === 'edit') challanModal(r.id);
-      else if (a === 'sign') openSignatureModal(r, 'delivery-challans', () => refresh());
-      else if (a === 'delete') deleteRecord('delivery-challans', r, 'delivery challan');
+    cols: [
+      { h: 'Date', s: 'date', f: r => fd(r.date) },
+      { h: 'Challan#', s: 'number', f: r => `<button class="lk" type="button" data-act="${r.status === 'draft' ? 'edit' : 'print'}" data-id="${r.id}">${esc(r.number)}</button>` },
+      { h: 'Customer', f: r => esc(r.customer_name) },
+      { h: 'Type', f: r => esc(r.challan_type === 'relocating_goods' ? 'Relocating Goods' : r.challan_type === 'delivering_goods' ? 'Delivering Goods' : r.challan_type) },
+      { h: 'Total', ...money(r => `${esc(r.currency || '')} ${inr(r.total || 0)}`) },
+      { h: 'Status', f: r => badge(r.status) }
+    ],
+    actions: r => {
+      const actions = [['print', 'PDF / Print']];
+      if (r.status === 'draft') actions.unshift(['edit', 'Edit'], ['delete', 'Delete', 'd']);
+      if (!['returned', 'cancelled', 'closed'].includes(r.status)) {
+        const remainingToDeliver = Number(r.total_quantity || 0) - Number(r.delivered_quantity || 0);
+        if (!r.delivered_quantity || remainingToDeliver > 0) actions.push(['mark-as-delivered', 'Mark as Delivered']);
+        const returnable = Number(r.delivered_quantity || 0) > Number(r.returned_quantity || 0) + Number(r.invoiced_quantity || 0);
+        if (!r.delivered_quantity || returnable) actions.push(['mark-as-returned', 'Mark as Returned']);
+        const invoiceable = Number(r.total_quantity || 0) > Number(r.returned_quantity || 0) + Number(r.invoiced_quantity || 0);
+        if (r.challan_type === 'delivering_goods' && invoiceable) {
+          actions.push(['convert-to-invoice', 'Convert to Invoice']);
+          actions.push(['invoice-partially', 'Invoice Partially']);
+        }
+        if (returnable) actions.push(['record-partial-returns', 'Record Partial Returns']);
+      }
+      actions.push(['sign', r.signature_data ? 'Signed ✓' : 'Sign']);
+      return actions;
     },
+    onAction: (a, r) => challanAction(r.id, a),
   },
   'credit-notes': {
     api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',

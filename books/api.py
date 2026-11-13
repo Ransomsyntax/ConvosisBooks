@@ -678,6 +678,8 @@ class Resource:
                 if dup_mode not in ('skip', 'update', 'auto_sku', 'error', 'create'):
                     dup_mode = 'skip'
 
+                user_org = get_user_org(request.user)
+                self.current_user_org = user_org
                 records = self.preprocess_import_records(records)
 
                 created_count = 0
@@ -687,8 +689,6 @@ class Resource:
                 errors = []
                 seen_identifiers_in_file = set()
                 seen_objs_in_file = {}
-                user_org = get_user_org(request.user)
-                self.current_user_org = user_org
 
                 for idx, raw_item in enumerate(records):
                     try:
@@ -753,7 +753,10 @@ class Resource:
 
                         # Create new record
                         with transaction.atomic():
-                            created_obj = self.create(clean_item, request.user)
+                            if hasattr(self, 'create_import_record'):
+                                created_obj = self.create_import_record(clean_item, request.user)
+                            else:
+                                created_obj = self.create(clean_item, request.user)
                             if hasattr(created_obj, 'organization') and not getattr(created_obj, 'organization_id', None):
                                 try:
                                     if user_org:
@@ -1603,6 +1606,11 @@ def parse_lines(raw, org=None):
         disc = c.number('discount_percent', lo=Decimal('0'), hi=Decimal('100'))
         if disc == Decimal('0') and 'discount' in r:
             disc = c.number('discount', lo=Decimal('0'), hi=Decimal('100'))
+        discount_amount = c.number('discount_amount', lo=Decimal('0'), hi=Decimal('999999999'))
+        if discount_amount and disc:
+            c.err('discount', 'Enter a discount as either a percentage or an amount, not both.')
+        if discount_amount > qty * rate:
+            c.err('discount_amount', 'Discount cannot exceed the line amount.')
         gst = c.number('gst_rate', default=Decimal('0'))
         if gst == Decimal('0') and 'tax_rate' in r:
             gst = c.number('tax_rate', default=Decimal('0'))
@@ -1631,7 +1639,8 @@ def parse_lines(raw, org=None):
         else:
             out.append({'item': item, 'warehouse': warehouse, 'warehouse_code': wh_code,
                         'description': desc, 'hsn_sac': hsn, 'quantity': qty, 'rate': rate,
-                        'discount_percent': disc, 'gst_rate': gst, 'position': i})
+                        'discount_percent': disc, 'discount_amount': discount_amount,
+                        'gst_rate': gst, 'position': i})
     if errors:
         raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
     return out
@@ -1984,6 +1993,17 @@ class DocResource(Resource):
         related_documents = []
         if isinstance(o, Invoice):
             sq = getattr(o, 'source_quote', None) or (getattr(o, 'source_quotes', None).first() if hasattr(o, 'source_quotes') else None)
+            source_challan = getattr(o, 'source_delivery_challan', None)
+            if source_challan:
+                source_type = 'delivery_challan'
+                source_number = source_challan.number
+                source_label = f'Delivery Challan {source_challan.number}'
+                related_documents.append({
+                    'kind': 'delivery-challans', 'type': 'Delivery Challan',
+                    'id': source_challan.pk, 'number': source_challan.number,
+                    'date': source_challan.date.isoformat(), 'total': source_challan.total,
+                    'status': source_challan.status, 'relation': 'Source Delivery Challan',
+                })
             if sq:
                 source_type = 'quote'
                 source_number = sq.number
@@ -2073,6 +2093,8 @@ class DocResource(Resource):
                   'attachments': attachments, 'party_details': party_info,
                   'lines': [{'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
                              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+                             'discount_amount': l.discount_amount,
+                             'source_delivery_challan_line_id': getattr(l, 'source_delivery_challan_line_id', None),
                              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
                              'line_total': l.line_total,
                              'warehouse_id': getattr(l, 'warehouse_id', None) or (l.item.warehouse_id if l.item else None),
@@ -2090,9 +2112,9 @@ class DocResource(Resource):
     def extra_clean(self, c, user_org=None):
         return {}
 
-    def parse(self, data, user=None):
+    def parse(self, data, user=None, user_org=None):
         c = Cleaner(data)
-        user_org = get_user_org(user) if user else None
+        user_org = user_org or (get_user_org(user) if user else None)
         org = user_org or Organization.get()
         pid = c.integer(self.party_attr, lo=1)
         if not pid:
@@ -2138,8 +2160,8 @@ class DocResource(Resource):
         c.done()
         return head, parse_lines(data.get('lines'), org=user_org)
 
-    def write(self, obj, head, lines, user=None):
-        user_org = get_user_org(user) if user else getattr(obj, 'organization', None)
+    def write(self, obj, head, lines, user=None, user_org=None):
+        user_org = user_org or (get_user_org(user) if user else getattr(obj, 'organization', None))
         org_state = user_org.state if user_org else (Organization.get().state if Organization.get() else '')
         intra = is_intra_state(head['place_of_supply'], org_state)
         is_tax_inclusive = (head.get('tax_pricing_type') or getattr(obj, 'tax_pricing_type', 'tax_exclusive')) == 'tax_inclusive'
@@ -2158,14 +2180,21 @@ class DocResource(Resource):
                                                  warehouse_code=l.get('warehouse_code', ''),
                                                  description=l['description'],
                                                  hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                                 discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                                                 discount_percent=l['discount_percent'],
+                                                 discount_amount=l.get('discount_amount', Z),
+                                                 gst_rate=l['gst_rate'],
                                                  taxable=l['taxable'], tax_amount=l['tax_amount'],
                                                  line_total=l['line_total'], position=l['position']) for l in comp])
 
     def create(self, data, user):
-        user_org = get_user_org(user)
+        return self._create(data, user, get_user_org(user))
+
+    def create_for_request(self, data, user, request):
+        return self._create(data, user, get_user_org(user, request))
+
+    def _create(self, data, user, user_org):
         services.check_subscription_limits(user_org, 'record')
-        head, lines = self.parse(data, user=user)
+        head, lines = self.parse(data, user=user, user_org=user_org)
         services.check_transaction_lock(head['date'], org=user_org)
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
@@ -2202,12 +2231,14 @@ class DocResource(Resource):
         obj = self.Model(number=num, status='draft')
         if hasattr(self.Model, 'organization'):
             obj.organization = user_org
-        self.write(obj, head, lines, user=user)
+        self.write(obj, head, lines, user=user, user_org=user_org)
         return obj
 
     def update(self, obj, data, user):
-        user_org = get_user_org(user)
+        user_org = obj.organization or get_user_org(user)
         services.check_transaction_lock(obj.date, org=user_org)
+        if isinstance(obj, Invoice) and obj.source_delivery_challan_id:
+            raise ApiError(409, 'Edit the delivery challan and recreate its draft invoice to preserve the source quantities.')
         submitted_number = str(data.get('number') or '').strip()
         if obj.status != 'draft' and submitted_number and submitted_number != obj.number:
             raise ApiError(400, 'Issued document numbers cannot be changed. Void the document and create a new one.')
@@ -2220,17 +2251,17 @@ class DocResource(Resource):
                 services.apply_stock(obj, +1, 'sale_void', user)
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, -1, 'purchase_void', user)
-            head, lines = self.parse(data, user=user)
+            head, lines = self.parse(data, user=user, user_org=user_org)
             services.check_transaction_lock(head['date'], org=user_org)
-            self.write(obj, head, lines, user=user)
+            self.write(obj, head, lines, user=user, user_org=user_org)
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, -1, 'sale', user)
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, +1, 'purchase', user)
             return
-        head, lines = self.parse(data, user=user)
+        head, lines = self.parse(data, user=user, user_org=user_org)
         services.check_transaction_lock(head['date'], org=user_org)
-        self.write(obj, head, lines, user=user)
+        self.write(obj, head, lines, user=user, user_org=user_org)
 
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
@@ -2248,6 +2279,7 @@ class DocResource(Resource):
             Attachment.objects.filter(entity_type='retainer_invoice', entity_id=obj.pk).delete()
             obj.delete()
             return
+        source_delivery_challan = obj.source_delivery_challan if is_inv else None
         if obj.status != 'draft':
             if is_inv and obj.status == 'sent':
                 services.apply_stock(obj, +1, 'sale_void', None)
@@ -2256,6 +2288,8 @@ class DocResource(Resource):
             obj.allocations.all().delete()
         Attachment.objects.filter(entity_type='invoice' if is_inv else 'bill', entity_id=obj.pk).delete()
         obj.delete()
+        if source_delivery_challan:
+            services.sync_delivery_challan_invoice_status(source_delivery_challan)
 
     def action(self, request, obj, name):
         if name == 'sign':
@@ -5852,16 +5886,20 @@ class DeliveryChallanResource(Resource):
     default_ordering = ('-date', '-id')
 
     def prepare_import_record(self, rec):
+        org = getattr(self, 'current_user_org', None)
         cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client') or rec.get('party')
         if cust_val and not str(cust_val).isdigit():
             c_str = str(cust_val).strip()
-            c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str)).first()
-            if not c:
-                org = Organization.get()
+            c = Customer.objects.filter(
+                Q(name__iexact=c_str) | Q(company__iexact=c_str) | Q(email__iexact=c_str),
+                organization=org,
+            ).first() if org else None
+            if not c and org:
                 c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
-            rec['customer'] = c.pk
+            if c:
+                rec['customer'] = c.pk
         elif not cust_val:
-            first_c = Customer.objects.first()
+            first_c = Customer.objects.filter(organization=org).first() if org else None
             if first_c:
                 rec['customer'] = first_c.pk
 
@@ -5879,21 +5917,29 @@ class DeliveryChallanResource(Resource):
         desc = r.get('description') or r.get('line_description') or r.get('desc') or ''
         qty = r.get('quantity') or r.get('qty') or r.get('opening_stock') or Decimal('1.000')
         hsn = r.get('hsn_sac') or r.get('hsn') or ''
+        org = getattr(self, 'current_user_org', None)
 
         it = None
-        if item_val:
-            it = Item.objects.filter(Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip())).first()
+        if item_val and org:
+            it = Item.objects.filter(
+                Q(name__iexact=str(item_val).strip()) | Q(sku__iexact=str(item_val).strip()),
+                organization=org,
+            ).first()
 
         if not desc:
-            desc = it.name if it else 'Goods item'
+            desc = it.name if it else (str(item_val).strip() if item_val else 'Goods item')
         if it and not hsn:
             hsn = it.hsn_sac or ''
+        rate = r.get('rate') or r.get('price') or r.get('unit_price') or r.get('selling_price')
+        gst_rate = r.get('gst_rate') or r.get('tax_rate')
 
         return {
             'item': it.pk if it else None,
             'description': str(desc)[:500],
             'hsn_sac': str(hsn)[:10],
-            'quantity': qty
+            'quantity': qty,
+            'rate': rate if rate is not None else (it.selling_price if it else Decimal('0.00')),
+            'gst_rate': gst_rate if gst_rate is not None else (it.gst_rate if it else Decimal('0.00')),
         }
 
     def preprocess_import_records(self, records):
@@ -5916,13 +5962,33 @@ class DeliveryChallanResource(Resource):
         return grouped
 
     def row(self, o):
+        lines = list(o.lines.all())
+        invoiced_by_line = {
+            entry['source_delivery_challan_line_id']: entry['quantity'] or Decimal('0')
+            for entry in InvoiceLine.objects.filter(
+                source_delivery_challan_line__challan=o,
+                invoice__status__in=('draft', 'sent'),
+            ).values('source_delivery_challan_line_id').annotate(quantity=Sum('quantity'))
+        }
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'date': o.date,
+            'reference_number': o.reference_number,
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'business_location_id': o.business_location_id,
+            'source_warehouse_id': o.source_warehouse_id,
+            'destination_warehouse_id': o.destination_warehouse_id,
             'challan_type': o.challan_type, 'status': o.status,
+            'customer_type': o.customer_type, 'gstin': o.gstin, 'currency': o.currency,
+            'subtotal': o.subtotal, 'adjustment': o.adjustment, 'total': o.total,
             'vehicle_number': o.vehicle_number, 'notes': o.notes,
+            'terms': o.terms,
+            'invoiced_quantity': sum(invoiced_by_line.values(), Decimal('0.000')),
+            'total_quantity': sum((line.quantity for line in lines), Decimal('0.000')),
+            'delivered_quantity': sum((line.delivered_quantity for line in lines), Decimal('0.000')),
+            'returned_quantity': sum((line.returned_quantity for line in lines), Decimal('0.000')),
+            'delivered_at': o.delivered_at.isoformat() if o.delivered_at else None,
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
@@ -5932,106 +5998,562 @@ class DeliveryChallanResource(Resource):
     def detail(self, o):
         r = self.row(o)
         r['lines'] = [
-            {'id': l.pk, 'item_id': l.item_id, 'description': l.description,
-             'hsn_sac': l.hsn_sac, 'quantity': l.quantity}
-            for l in o.lines.all()
+            {
+                'id': line.pk,
+                'item_id': line.item_id,
+                'description': line.description,
+                'hsn_sac': line.hsn_sac,
+                'quantity': line.quantity,
+                'rate': line.rate,
+                'discount_type': line.discount_type,
+                'discount_percent': line.discount_percent,
+                'discount_amount': line.discount_amount,
+                'gst_rate': line.gst_rate,
+                'taxable': line.taxable,
+                'tax_amount': line.tax_amount,
+                'line_total': line.line_total,
+                'warehouse_id': line.warehouse_id,
+                'warehouse_code': line.warehouse_code,
+                'delivered_quantity': line.delivered_quantity,
+                'returned_quantity': line.returned_quantity,
+                'invoiced_quantity': line.invoice_lines.filter(invoice__status__in=('draft', 'sent')).aggregate(
+                    quantity=Sum('quantity')
+                )['quantity'] or Decimal('0.000'),
+            }
+            for line in o.lines.select_related('item', 'warehouse')
+        ]
+        r['attachments'] = [
+            {'id': attachment.pk, 'filename': attachment.filename, 'file_size': attachment.file_size,
+             'mime_type': attachment.mime_type, 'url': attachment.file.url if attachment.file else attachment.file_data,
+             'file_data': attachment.file_data}
+            for attachment in Attachment.objects.filter(
+                organization=o.organization, entity_type='delivery_challan', entity_id=o.pk
+            )
+        ]
+        r['invoices'] = [
+            {'id': invoice.pk, 'number': invoice.number, 'status': invoice.status, 'total': invoice.total}
+            for invoice in o.invoices.all().order_by('id')
         ]
         return r
 
+    def _parse_lines(self, raw_lines, org, challan_type, source_warehouse=None, allow_unmatched_items=False):
+        if not isinstance(raw_lines, list) or not raw_lines:
+            raise ApiError(400, 'Add at least one item.', {'lines': 'Add at least one item.'})
+        if len(raw_lines) > 200:
+            raise ApiError(400, 'Too many items (maximum 200).', {'lines': 'Too many items (maximum 200).'})
+        parsed = []
+        errors = []
+        for index, raw in enumerate(raw_lines, 1):
+            c = Cleaner(raw)
+            item_id = c.integer('item', lo=1) or c.integer('item_id', lo=1)
+            item_qs = Item.objects.filter(pk=item_id, organization=org, active=True) if org and item_id else Item.objects.none()
+            item = item_qs.select_related('warehouse').first()
+            if not item and (
+                not allow_unmatched_items or item_id is not None
+                or challan_type in ('relocating_goods', 'delivering_goods')
+            ):
+                c.err('item', 'Select an item from your organization.')
+            quantity = c.number('quantity', required=True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
+            rate = c.number('rate', required=True, lo=Decimal('0'), hi=Decimal('999999999'))
+            discount_type = c.choice('discount_type', ('percentage', 'amount'), default='percentage')
+            discount_value = c.number('discount', lo=Decimal('0'), hi=Decimal('999999999'))
+            discount_percent = c.number('discount_percent', lo=Decimal('0'), hi=Decimal('100'))
+            discount_amount = c.number('discount_amount', lo=Decimal('0'), hi=Decimal('999999999'))
+            if discount_value and 'discount' in raw:
+                if discount_type == 'percentage':
+                    discount_percent = discount_value
+                else:
+                    discount_percent = Decimal('0')
+                    discount_amount = discount_value
+            elif discount_amount:
+                discount_type = 'amount'
+                discount_percent = Decimal('0')
+            if discount_amount and discount_percent:
+                c.err('discount', 'Enter either a percentage or an amount discount.')
+            if discount_amount and discount_amount > quantity * rate:
+                c.err('discount', 'Discount cannot exceed the line amount.')
+            if discount_value and discount_type == 'amount' and discount_value > quantity * rate:
+                c.err('discount', 'Discount cannot exceed the line amount.')
+            gst_rate = c.number('gst_rate', lo=Decimal('0'), hi=Decimal('100'))
+            if 'gst_rate' not in raw and 'tax_rate' in raw:
+                gst_rate = c.number('tax_rate', lo=Decimal('0'), hi=Decimal('100'))
+            description = c.text('description', max_len=500) or (item.name if item else '')
+            hsn = c.text('hsn_sac', max_len=10) or (item.hsn_sac if item else '')
+            warehouse_id = c.integer('warehouse_id', lo=1) or c.integer('warehouse', lo=1)
+            warehouse = None
+            if warehouse_id:
+                warehouse = Warehouse.objects.filter(pk=warehouse_id, organization=org, active=True).first()
+                if not warehouse:
+                    c.err('warehouse_id', 'Select an active warehouse in your organization.')
+            if warehouse is None:
+                warehouse = source_warehouse or (item.warehouse if item else None)
+            warehouse_code = warehouse.code if warehouse else (item.warehouse_code if item else '')
+            if c.errors:
+                errors.append(f'Item {index}: ' + '; '.join(c.errors.values()))
+                continue
+            if discount_value and discount_type == 'amount':
+                discount_amount = discount_value
+            gross = quantity * rate
+            effective_discount = discount_amount if discount_type == 'amount' else q2(gross * discount_percent / Decimal('100'))
+            if effective_discount > gross:
+                errors.append(f'Item {index}: Discount cannot exceed the line amount.')
+                continue
+            taxable = q2(gross - effective_discount)
+            tax_amount = q2(taxable * gst_rate / Decimal('100'))
+            line_total = taxable + tax_amount
+            parsed.append({
+                'item': item, 'quantity': quantity, 'rate': rate,
+                'discount_type': discount_type, 'discount_percent': discount_percent,
+                'discount_amount': discount_amount,
+                'gst_rate': gst_rate, 'taxable': taxable, 'tax_amount': tax_amount,
+                'line_total': line_total, 'description': description, 'hsn_sac': hsn,
+                'warehouse': warehouse, 'warehouse_code': warehouse_code, 'position': index,
+            })
+        if errors:
+            raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
+        if challan_type == 'delivering_goods':
+            for line in parsed:
+                item = line['item']
+                if not item or not item.track_inventory or item.item_type != Item.GOODS or getattr(org, 'allow_negative_stock', False):
+                    continue
+                available = services.get_item_warehouse_stock(
+                    item, line['warehouse'] or line['warehouse_code'], org=org
+                ) if line['warehouse'] or line['warehouse_code'] else item.stock
+                if line['quantity'] > available:
+                    raise ApiError(400, f'Insufficient stock for {item.name}. Available: {available}.')
+        return parsed
+
     def create(self, data, user):
+        return self._create(data, user, get_user_org(user))
+
+    def create_for_request(self, data, user, request):
+        return self._create(data, user, get_user_org(user, request))
+
+    def create_import_record(self, data, user):
+        return self._create(data, user, get_user_org(user), allow_unmatched_items=True)
+
+    def _create(self, data, user, user_org, allow_unmatched_items=False):
         c = Cleaner(data)
         cid = c.integer('customer', required=True, lo=1)
-        cust = Customer.objects.filter(pk=cid).first()
+        cust = Customer.objects.filter(pk=cid, organization=user_org, active=True).first() if user_org else None
         if not cust:
-            raise ApiError(404, 'Customer not found.')
+            c.err('customer', 'Select a customer from your organization.')
         dt = c.date('date', required=True)
-        ctype = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default='other')
+        ctype = c.choice(
+            'challan_type',
+            ['relocating_goods', 'delivering_goods', 'supply_on_approval', 'job_work', 'other'],
+            required=True,
+        )
+        if not ctype:
+            c.err('challan_type', REQUIRED)
+        reference = c.text('reference_number', max_len=60)
         branch = c.text('branch', max_len=120)
-        location = c.text('location', max_len=120) or 'HO Kottayam'
+        location = c.text('location', max_len=120)
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(pk=business_location_id, organization=user_org, active=True).first() if business_location_id and user_org else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        source_warehouse_id = c.integer('source_warehouse_id', lo=1)
+        destination_warehouse_id = c.integer('destination_warehouse_id', lo=1)
+        source_warehouse = Warehouse.objects.filter(pk=source_warehouse_id, organization=user_org, active=True).first() if source_warehouse_id and user_org else None
+        destination_warehouse = Warehouse.objects.filter(pk=destination_warehouse_id, organization=user_org, active=True).first() if destination_warehouse_id and user_org else None
+        if source_warehouse_id and not source_warehouse:
+            c.err('source_warehouse_id', 'Select an active source warehouse in your organization.')
+        if destination_warehouse_id and not destination_warehouse:
+            c.err('destination_warehouse_id', 'Select an active destination warehouse in your organization.')
+        if ctype == 'relocating_goods':
+            if not source_warehouse:
+                c.err('source_warehouse_id', 'A source warehouse is required for relocation.')
+            if not destination_warehouse:
+                c.err('destination_warehouse_id', 'A destination warehouse is required for relocation.')
+            if source_warehouse and destination_warehouse and source_warehouse.pk == destination_warehouse.pk:
+                c.err('destination_warehouse_id', 'Source and destination warehouses must be different.')
+        adjustment = c.number('adjustment', lo=Decimal('-999999999'), hi=Decimal('999999999'))
+        notes = c.text('notes', max_len=2000)
+        terms = c.text('terms', max_len=2000)
         vnum = c.text('vehicle_number', max_len=50)
-        if vnum:
-            v_clean = re.sub(r'[\s\-]', '', vnum).upper()
-            if not re.match(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$', v_clean):
-                c.err('vehicle_number', 'Invalid vehicle number format (e.g. KL-07-AB-1234).')
-        notes = c.text('notes', max_len=1000)
         c.done()
-
-        user_org = get_user_org(user) if user else None
-        num = (data.get('number') or '').strip()
-        num_exists = DeliveryChallan.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (DeliveryChallan.objects.filter(number=num).exists() if num else False)
-        if not num or num_exists or services.has_document_number_series('DC', org=user_org):
-            num = services.next_document_number(
-                'DC', org=user_org, date=dt, branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), user=user
-            )
+        if not user_org:
+            raise ApiError(403, 'Organization required.')
+        currency = (cust.currency or getattr(user_org, 'base_currency', '') or 'INR').upper()
+        customer_type = 'b2b' if cust.gstin or cust.customer_type == 'business' else 'b2c'
+        lines = self._parse_lines(
+            data.get('lines'), user_org, ctype, source_warehouse,
+            allow_unmatched_items=allow_unmatched_items,
+        )
+        num = services.next_document_number(
+            'DC', org=user_org, date=dt, customer_type=customer_type,
+            branch=branch, location=location,
+            gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or user_org.gstin),
+            business_location_id=business_location.pk if business_location else None,
+            user=user,
+        )
+        subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
+        total = max(Decimal('0.00'), subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + adjustment)
         dc = DeliveryChallan.objects.create(
             organization=user_org,
-            number=num, customer=cust, date=dt, challan_type=ctype,
-            branch=branch, location=location,
-            vehicle_number=vnum, notes=notes, status='open'
+            number=num, customer=cust, date=dt, reference_number=reference,
+            challan_type=ctype, branch=branch, location=location or (business_location.name if business_location else ''),
+            business_location=business_location, source_warehouse=source_warehouse,
+            destination_warehouse=destination_warehouse, customer_type=customer_type,
+            gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or ''),
+            currency=currency, subtotal=subtotal,
+            adjustment=adjustment, total=total, vehicle_number=vnum, notes=notes,
+            terms=terms, status='draft',
         )
-        for l in data.get('lines', []):
-            DeliveryChallanLine.objects.create(
-                challan=dc,
-                description=l.get('description', 'Item'),
-                hsn_sac=l.get('hsn_sac', ''),
-                quantity=Decimal(str(l.get('quantity', 1)))
-            )
+        DeliveryChallanLine.objects.bulk_create([
+            DeliveryChallanLine(
+                challan=dc, item=line['item'], warehouse=line['warehouse'],
+                warehouse_code=line['warehouse_code'], description=line['description'],
+                hsn_sac=line['hsn_sac'], quantity=line['quantity'], rate=line['rate'],
+                discount_type=line['discount_type'], discount_percent=line['discount_percent'],
+                discount_amount=line['discount_amount'],
+                gst_rate=line['gst_rate'], taxable=line['taxable'], tax_amount=line['tax_amount'],
+                line_total=line['line_total'], position=line['position'],
+            ) for line in lines
+        ])
         services.log_audit(user, 'create', 'DeliveryChallan', dc.number, f"Created delivery challan {dc.number}")
         return dc
 
     def update(self, obj, data, user):
+        if obj.status != 'draft':
+            raise ApiError(409, 'Only draft delivery challans can be edited.')
         c = Cleaner(data)
+        user_org = obj.organization
         if 'customer' in data:
             cid = c.integer('customer', required=True, lo=1)
-            cust = Customer.objects.filter(pk=cid).first()
+            cust = Customer.objects.filter(pk=cid, organization=user_org, active=True).first() if user_org else None
             if not cust:
-                raise ApiError(404, 'Customer not found.')
+                c.err('customer', 'Select a customer from your organization.')
             obj.customer = cust
         if 'date' in data:
             obj.date = c.date('date', required=True)
+        if 'reference_number' in data:
+            obj.reference_number = c.text('reference_number', max_len=60)
         if 'branch' in data:
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
-            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+            obj.location = c.text('location', max_len=120)
         if 'challan_type' in data:
-            obj.challan_type = c.choice('challan_type', ['supply_on_approval', 'job_work', 'other'], default=obj.challan_type)
+            obj.challan_type = c.choice(
+                'challan_type',
+                ['relocating_goods', 'delivering_goods', 'supply_on_approval', 'job_work', 'other'],
+                default=obj.challan_type, required=True,
+            )
+        if 'business_location_id' in data:
+            business_location_id = c.integer('business_location_id', lo=1)
+            obj.business_location = BusinessLocation.objects.filter(
+                pk=business_location_id, organization=user_org, active=True
+            ).first() if business_location_id and user_org else None
+            if business_location_id and not obj.business_location:
+                c.err('business_location_id', 'Select an active business location in your organization.')
+        for field in ('source_warehouse_id', 'destination_warehouse_id'):
+            if field in data:
+                warehouse_id = c.integer(field, lo=1)
+                warehouse = Warehouse.objects.filter(
+                    pk=warehouse_id, organization=user_org, active=True
+                ).first() if warehouse_id and user_org else None
+                if warehouse_id and not warehouse:
+                    c.err(field, 'Select an active warehouse in your organization.')
+                setattr(obj, 'source_warehouse' if field == 'source_warehouse_id' else 'destination_warehouse', warehouse)
+        if obj.challan_type == 'relocating_goods':
+            if not obj.source_warehouse_id:
+                c.err('source_warehouse_id', 'A source warehouse is required for relocation.')
+            if not obj.destination_warehouse_id:
+                c.err('destination_warehouse_id', 'A destination warehouse is required for relocation.')
+            if obj.source_warehouse_id and obj.source_warehouse_id == obj.destination_warehouse_id:
+                c.err('destination_warehouse_id', 'Source and destination warehouses must be different.')
+        if 'adjustment' in data:
+            obj.adjustment = c.number('adjustment', lo=Decimal('-999999999'), hi=Decimal('999999999'))
         if 'vehicle_number' in data:
-            vnum = c.text('vehicle_number', max_len=50)
-            if vnum:
-                v_clean = re.sub(r'[\s\-]', '', vnum).upper()
-                if not re.match(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$', v_clean):
-                    c.err('vehicle_number', 'Invalid vehicle number format (e.g. KL-07-AB-1234).')
-            obj.vehicle_number = vnum
+            obj.vehicle_number = c.text('vehicle_number', max_len=50)
         if 'notes' in data:
-            obj.notes = c.text('notes', max_len=1000)
-        previous_status = obj.status
-        if 'status' in data:
-            obj.status = c.choice('status', ['open', 'closed', 'cancelled'], default=obj.status)
+            obj.notes = c.text('notes', max_len=2000)
+        if 'terms' in data:
+            obj.terms = c.text('terms', max_len=2000)
         c.done()
+        obj.customer_type = 'b2b' if obj.customer.gstin or obj.customer.customer_type == 'business' else 'b2c'
+        obj.gstin = (
+            obj.business_location.gstin if obj.business_location and obj.business_location.gstin
+            else obj.customer.gstin or ''
+        )
+        obj.currency = (obj.customer.currency or getattr(user_org, 'base_currency', '') or 'INR').upper()
+        lines = self._parse_lines(data['lines'], user_org, obj.challan_type, obj.source_warehouse) if 'lines' in data else None
+        if lines:
+            obj.subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
+            obj.total = max(Decimal('0.00'), obj.subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + obj.adjustment)
         obj.save()
-        if obj.status == 'cancelled' and previous_status != 'cancelled':
-            services.mark_document_number_cancelled(obj.organization, 'delivery_challans', obj.number)
-
-        if 'lines' in data:
+        if lines is not None:
             obj.lines.all().delete()
-            for l in data.get('lines', []):
-                item_id = l.get('item') or l.get('item_id')
-                DeliveryChallanLine.objects.create(
-                    challan=obj,
-                    item_id=item_id if item_id else None,
-                    description=l.get('description', 'Item'),
-                    hsn_sac=l.get('hsn_sac', ''),
-                    quantity=Decimal(str(l.get('quantity', 1)))
-                )
+            DeliveryChallanLine.objects.bulk_create([
+                DeliveryChallanLine(
+                    challan=obj, item=line['item'], warehouse=line['warehouse'],
+                    warehouse_code=line['warehouse_code'], description=line['description'],
+                    hsn_sac=line['hsn_sac'], quantity=line['quantity'], rate=line['rate'],
+                    discount_type=line['discount_type'], discount_percent=line['discount_percent'],
+                    discount_amount=line['discount_amount'],
+                    gst_rate=line['gst_rate'], taxable=line['taxable'], tax_amount=line['tax_amount'],
+                    line_total=line['line_total'], position=line['position'],
+                ) for line in lines
+            ])
+        elif 'adjustment' in data:
+            obj.total = max(Decimal('0.00'), obj.subtotal + sum((line.tax_amount for line in obj.lines.all()), Decimal('0.00')) + obj.adjustment)
+            obj.save(update_fields=['total', 'updated_at'])
         services.log_audit(user, 'update', 'DeliveryChallan', obj.number, f"Updated delivery challan {obj.number}")
         return obj
 
+    def destroy(self, obj):
+        if obj.status != 'draft' or obj.invoices.exists() or obj.lines.filter(delivered_quantity__gt=0).exists():
+            raise ApiError(409, 'Only draft delivery challans with no invoices or stock movements can be deleted.')
+        Attachment.objects.filter(
+            organization=obj.organization, entity_type='delivery_challan', entity_id=obj.pk
+        ).delete()
+        services.mark_document_number_cancelled(obj.organization, 'delivery_challans', obj.number)
+        obj.delete()
+
+    def _line_for_action(self, obj, line_id):
+        line = obj.lines.select_related('item', 'warehouse').filter(pk=line_id).first()
+        if not line:
+            raise ApiError(400, 'A line item does not belong to this delivery challan.')
+        return line
+
+    def _stock_change(self, obj, line, quantity, direction, user, return_transfer=False):
+        item = Item.objects.select_for_update().get(pk=line.item_id, organization=obj.organization)
+        if item.item_type != Item.GOODS or not item.track_inventory:
+            return
+        services.check_transaction_lock(obj.date, org=obj.organization)
+        source = line.warehouse or obj.source_warehouse or item.warehouse
+        source_code = line.warehouse_code or (source.code if source else item.warehouse_code)
+        if obj.challan_type == 'relocating_goods':
+            src = obj.destination_warehouse if return_transfer else obj.source_warehouse
+            dst = obj.source_warehouse if return_transfer else obj.destination_warehouse
+            if not src or not dst:
+                raise ApiError(400, 'Source and destination warehouses are required for relocation.')
+            available = services.get_item_warehouse_stock(item, src, org=obj.organization)
+            if quantity > available and not getattr(obj.organization, 'allow_negative_stock', False):
+                raise ApiError(400, f'Insufficient stock for {item.name} in {src.name}. Available: {available}.')
+            if item.stock < quantity and not getattr(obj.organization, 'allow_negative_stock', False):
+                raise ApiError(400, f'Insufficient stock for {item.name}. Available: {item.stock}.')
+            StockMovement.objects.create(
+                organization=obj.organization, item=item, date=obj.date,
+                warehouse=src, warehouse_code=src.code, to_warehouse=dst,
+                to_warehouse_code=dst.code, kind='transfer', reference=obj.number,
+                change=quantity, balance_after=item.stock,
+                reason='Delivery Challan relocation', notes=obj.notes,
+                created_by=user,
+            )
+            item.warehouse = dst
+            item.warehouse_code = dst.code
+            item.save(update_fields=['warehouse', 'warehouse_code'])
+            return
+        signed_quantity = quantity * direction
+        if direction < 0 and not getattr(obj.organization, 'allow_negative_stock', False):
+            warehouse = source or source_code
+            available = services.get_item_warehouse_stock(item, warehouse, org=obj.organization) if warehouse else item.stock
+            if quantity > available:
+                raise ApiError(400, f'Insufficient stock for {item.name}. Available in the selected warehouse: {available}.')
+        updated_stock = item.stock + signed_quantity
+        if updated_stock < 0 and not getattr(obj.organization, 'allow_negative_stock', False):
+            raise ApiError(400, f'Insufficient stock for {item.name}. Available: {item.stock}.')
+        item.stock = updated_stock
+        item.save(update_fields=['stock'])
+        StockMovement.objects.create(
+            organization=obj.organization, item=item, date=obj.date,
+            warehouse=source, warehouse_code=source_code, kind='sale' if direction < 0 else 'sale_void',
+            reference=obj.number, change=signed_quantity, balance_after=updated_stock,
+            reason='Delivery Challan delivery' if direction < 0 else 'Delivery Challan return',
+            notes=obj.notes, created_by=user,
+        )
+
+    def _record_returns(self, obj, raw_lines, user):
+        if not isinstance(raw_lines, list) or not raw_lines:
+            raise ApiError(400, 'Enter the returned quantity for at least one item.', {'lines': 'Enter returned quantities.'})
+        seen_lines = set()
+        for entry in raw_lines:
+            c = Cleaner(entry)
+            line_id = c.integer('id', lo=1) or c.integer('line_id', lo=1)
+            quantity = c.number('quantity', required=True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
+            c.done('Invalid return quantity.')
+            if line_id in seen_lines:
+                raise ApiError(400, 'A returned quantity was entered more than once for the same item.')
+            seen_lines.add(line_id)
+            line = self._line_for_action(obj, line_id)
+            already_invoiced = line.invoice_lines.filter(invoice__status__in=('draft', 'sent')).aggregate(
+                quantity=Sum('quantity')
+            )['quantity'] or Decimal('0.000')
+            returnable = line.delivered_quantity - line.returned_quantity - already_invoiced
+            if quantity > returnable:
+                raise ApiError(400, f'Return quantity for {line.description} exceeds its unreturned, uninvoiced quantity.')
+            self._stock_change(obj, line, quantity, 1, user, return_transfer=True)
+            line.returned_quantity += quantity
+            line.save(update_fields=['returned_quantity'])
+        obj.returned_at = timezone.now()
+        if all(line.returned_quantity >= line.delivered_quantity for line in obj.lines.all()):
+            obj.status = 'returned'
+        else:
+            obj.status = 'partially_returned'
+        obj.save(update_fields=['status', 'returned_at', 'updated_at'])
+        services.log_audit(user, 'return', 'DeliveryChallan', obj.number, f'Recorded returned goods for delivery challan {obj.number}')
+
     def action(self, request, obj, name):
+        if name not in ('sign', 'unsign'):
+            obj = DeliveryChallan.objects.select_for_update().get(
+                pk=obj.pk, organization=obj.organization
+            )
         if name == 'sign':
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
+        elif name == 'mark-as-delivered':
+            if obj.challan_type not in ('relocating_goods', 'delivering_goods'):
+                raise ApiError(400, 'Choose a supported challan type before marking goods delivered.')
+            if obj.status in ('returned', 'cancelled', 'closed'):
+                raise ApiError(409, 'This delivery challan cannot be marked delivered in its current status.')
+            challan_lines = list(obj.lines.all())
+            if challan_lines and all(line.delivered_quantity >= line.quantity for line in challan_lines):
+                raise ApiError(409, 'Goods have already been marked delivered.')
+            raw_lines = body(request).get('lines')
+            if raw_lines is not None and not isinstance(raw_lines, list):
+                raise ApiError(400, 'Invalid delivered quantities.')
+            quantities = {}
+            for entry in raw_lines or []:
+                c = Cleaner(entry)
+                line_id = c.integer('id', lo=1) or c.integer('line_id', lo=1)
+                quantity = c.number('quantity', required=True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
+                c.done('Invalid delivered quantity.')
+                line = self._line_for_action(obj, line_id)
+                if quantity > line.quantity:
+                    raise ApiError(400, f'Delivered quantity for {line.description} cannot exceed the challan quantity.')
+                if line.pk in quantities:
+                    raise ApiError(400, f'Delivered quantity for {line.description} was entered more than once.')
+                quantities[line.pk] = quantity
+            lines = list(obj.lines.select_related('item', 'warehouse'))
+            if not raw_lines:
+                quantities = {line.pk: line.quantity - line.delivered_quantity for line in lines}
+            for line in lines:
+                quantity = quantities.get(line.pk, Decimal('0'))
+                if quantity <= 0:
+                    continue
+                if quantity > line.quantity - line.delivered_quantity:
+                    raise ApiError(400, f'Delivered quantity for {line.description} exceeds its remaining quantity.')
+                self._stock_change(obj, line, quantity, -1, request.user)
+                line.delivered_quantity += quantity
+                line.save(update_fields=['delivered_quantity'])
+            if not obj.delivered_at:
+                obj.delivered_at = timezone.now()
+            obj.status = 'delivered' if all(
+                line.delivered_quantity >= line.quantity for line in obj.lines.all()
+            ) else 'partially_delivered'
+            obj.save(update_fields=['status', 'delivered_at', 'updated_at'])
+            services.sync_delivery_challan_invoice_status(obj)
+            services.log_audit(request.user, 'deliver', 'DeliveryChallan', obj.number, f'Marked delivery challan {obj.number} as delivered')
+            return j(self.detail(obj))
+        elif name == 'mark-as-returned':
+            if obj.status in ('returned', 'cancelled', 'closed'):
+                raise ApiError(409, 'This delivery challan has already been returned or closed.')
+            if obj.delivered_at:
+                lines = []
+                for line in obj.lines.all():
+                    already_invoiced = line.invoice_lines.filter(invoice__status__in=('draft', 'sent')).aggregate(
+                        quantity=Sum('quantity')
+                    )['quantity'] or Decimal('0.000')
+                    quantity = line.delivered_quantity - line.returned_quantity - already_invoiced
+                    if quantity > 0:
+                        lines.append({'id': line.pk, 'quantity': quantity})
+                if lines:
+                    self._record_returns(obj, lines, request.user)
+                else:
+                    raise ApiError(409, 'No un-invoiced quantities remain to return.')
+            else:
+                if obj.invoices.filter(status__in=('draft', 'sent')).exists():
+                    raise ApiError(409, 'Delete or void linked invoices before returning this undelivered challan.')
+                for line in obj.lines.all():
+                    line.returned_quantity = line.quantity
+                    line.save(update_fields=['returned_quantity'])
+                obj.status = 'returned'
+                obj.returned_at = timezone.now()
+                obj.save(update_fields=['status', 'returned_at', 'updated_at'])
+            services.log_audit(request.user, 'return', 'DeliveryChallan', obj.number, f'Marked delivery challan {obj.number} as returned')
+            return j(self.detail(obj))
+        elif name == 'record-partial-returns':
+            if not obj.delivered_at:
+                raise ApiError(409, 'Mark goods as delivered before recording returns.')
+            self._record_returns(obj, body(request).get('lines'), request.user)
+            return j(self.detail(obj))
+        elif name in ('convert-to-invoice', 'invoice-partially'):
+            if obj.challan_type != 'delivering_goods':
+                raise ApiError(400, 'Only customer delivery challans can be converted to invoices.')
+            if obj.status in ('returned', 'cancelled', 'closed'):
+                raise ApiError(409, 'Returned or cancelled challans cannot be invoiced.')
+            data = body(request)
+            requested_lines = data.get('lines')
+            if requested_lines is not None and not isinstance(requested_lines, list):
+                raise ApiError(400, 'Invalid invoice quantities.')
+            if name == 'invoice-partially' and not requested_lines:
+                raise ApiError(400, 'Enter at least one partial invoice quantity.', {'lines': 'Enter at least one quantity.'})
+            requested = {}
+            for entry in requested_lines or []:
+                c = Cleaner(entry)
+                line_id = c.integer('id', lo=1) or c.integer('line_id', lo=1)
+                quantity = c.number('quantity', required=True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
+                c.done('Invalid invoice quantity.')
+                if line_id in requested:
+                    raise ApiError(400, 'An invoice quantity was entered more than once for the same item.')
+                requested[line_id] = quantity
+            invoice_lines = []
+            line_map = []
+            for line in obj.lines.select_related('item', 'warehouse'):
+                invoiced = line.invoice_lines.filter(invoice__status__in=('draft', 'sent')).aggregate(
+                    quantity=Sum('quantity')
+                )['quantity'] or Decimal('0.000')
+                deliverable = line.delivered_quantity if obj.delivered_at else line.quantity
+                available = deliverable - line.returned_quantity - invoiced
+                quantity = requested.get(line.pk, available if not requested else Decimal('0'))
+                if quantity < 0 or quantity > available:
+                    raise ApiError(400, f'Invoice quantity for {line.description} exceeds the uninvoiced available quantity.')
+                if quantity == 0:
+                    continue
+                allocated_discount = (
+                    q2(line.discount_amount * quantity / line.quantity)
+                    if line.discount_type == 'amount' and line.quantity
+                    else Decimal('0.00')
+                )
+                invoice_lines.append({
+                    'item': line.item_id, 'description': line.description, 'hsn_sac': line.hsn_sac,
+                    'quantity': quantity, 'rate': line.rate, 'discount_percent': line.discount_percent,
+                    'discount_amount': allocated_discount,
+                    'gst_rate': line.gst_rate,
+                    'warehouse_id': line.warehouse_id, 'warehouse_code': line.warehouse_code,
+                })
+                line_map.append(line)
+            if not invoice_lines:
+                raise ApiError(409, 'There are no uninvoiced quantities remaining.')
+            customer = obj.customer
+            org_state = getattr(obj.organization, 'state', '')
+            invoice = InvoiceResource().create_for_request({
+                'customer': customer.pk, 'date': obj.date.isoformat(),
+                'due_date': (obj.date + timedelta(days=customer.payment_terms or 30)).isoformat(),
+                'place_of_supply': customer.state or org_state, 'branch': obj.branch,
+                'location': obj.location, 'customer_type': obj.customer_type,
+                'notes': obj.notes, 'terms': obj.terms, 'number': '',
+                'lines': invoice_lines,
+            }, request.user, request)
+            invoice.source_delivery_challan = obj
+            invoice.save(update_fields=['source_delivery_challan'])
+            created_lines = list(invoice.lines.order_by('position', 'id'))
+            for invoice_line, challan_line in zip(created_lines, line_map):
+                invoice_line.source_delivery_challan_line = challan_line
+            InvoiceLine.objects.bulk_update(created_lines, ['source_delivery_challan_line'])
+            invoice_total = sum((
+                line.invoice_lines.filter(invoice__status__in=('draft', 'sent')).aggregate(quantity=Sum('quantity'))['quantity']
+                or Decimal('0.000')
+                for line in obj.lines.all()
+            ), Decimal('0.000'))
+            remaining_total = sum((line.quantity - line.returned_quantity for line in obj.lines.all()), Decimal('0.000'))
+            obj.status = 'invoiced' if invoice_total >= remaining_total else 'partially_invoiced'
+            obj.save(update_fields=['status', 'updated_at'])
+            services.log_audit(request.user, 'convert', 'DeliveryChallan', obj.number, f'Created invoice {invoice.number} from delivery challan {obj.number}')
+            return j({'status': 'ok', 'invoice_id': invoice.pk, 'invoice_number': invoice.number, 'message': f'Invoice {invoice.number} created from delivery challan {obj.number}.'}, 201)
         raise ApiError(404, 'Unknown action.')
 
 class EWayBillResource(Resource):
@@ -6981,6 +7503,7 @@ def lookup(request, name):
         data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms,
                  'company': o.company, 'gstin': o.gstin, 'gst_treatment': o.gst_treatment,
                  'customer_type': getattr(o, 'customer_type', 'business'),
+                 'currency': o.currency,
                  'billing_address': o.billing_address, 'shipping_address': getattr(o, 'shipping_address', ''),
                  'place_of_supply': getattr(o, 'place_of_supply', '') or o.state}
                 for o in org_filter(Customer.objects.filter(active=True)).order_by('name')]
@@ -7154,6 +7677,30 @@ def lookup(request, name):
             customer_type=request.GET.get('customer_type'),
             branch=request.GET.get('branch'), location=request.GET.get('location'),
             gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            user=request.user,
+        )
+    elif name in ('next-delivery-challan-number', 'next-dc-number'):
+        org = user_org or Organization.get()
+        customer_id = request.GET.get('customer_id')
+        customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first() if customer_id and org else None
+        location_id = request.GET.get('business_location_id')
+        business_location = BusinessLocation.objects.filter(
+            organization=org, pk=location_id, active=True
+        ).first() if location_id and org else None
+        if customer_id and not customer:
+            raise ApiError(400, 'Select an active customer belonging to your organization.')
+        if location_id and not business_location:
+            raise ApiError(400, 'Select an active business location belonging to your organization.')
+        data = services.preview_document_number(
+            'DC', org=org, date=request.GET.get('date'),
+            customer_type=(
+                'b2b' if customer and (customer.gstin or customer.customer_type == 'business')
+                else 'b2c' if customer else request.GET.get('customer_type', '')
+            ),
+            branch=request.GET.get('branch'),
+            location=business_location.name if business_location else request.GET.get('location'),
+            gstin=business_location.gstin if business_location else (customer.gstin if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else None,
             user=request.user,
         )
     elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):

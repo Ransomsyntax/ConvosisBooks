@@ -3165,7 +3165,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     </div>
   `;
 
-  async function loadList() {
+  async function loadList(refreshDetail = true) {
     try {
       const qParams = { page_size: 100, ordering: (isRec ? '-created_at' : '-date') };
       if (curFilter) qParams.status = curFilter;
@@ -3173,6 +3173,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       const res = await api(`${kind}/?` + qs(qParams));
       docs = res.results || [];
       renderMasterList();
+      if (!refreshDetail) return;
       if (selectedId === 'new') {
         openForm(null);
         return;
@@ -3446,6 +3447,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
               </div>
             ` : isRetainer ? `
               <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
+              ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send-retainer"><i class="fa-regular fa-paper-plane" style="font-size:11px;margin-right:4px;"></i> Mark as Sent</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices"><i class="fa-solid fa-hand-holding-dollar" style="font-size:11px;margin-right:4px;"></i> Apply to Invoices</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-act="refund-retainer" title="Refund available retainer balance">Refund</button>` : ''}
@@ -3647,6 +3649,30 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
       const act = actBtn.dataset.act;
       const d = curDoc;
+
+      if (act === 'send-retainer') {
+        if (d.raw_status !== 'draft') return;
+        if (!(await confirmBox({
+          title: 'Mark Retainer Invoice as Sent?',
+          message: 'Are you sure you want to mark this Retainer Invoice as Sent?',
+          okText: 'Mark as Sent'
+        }))) return;
+        actBtn.disabled = true;
+        try {
+          await api(`${kind}/${d.id}/send/`, { method: 'POST', body: {} });
+          toast(`Retainer Invoice ${d.number} marked as sent.`, 'ok');
+          await loadList(false);
+          await loadDetail(d.id);
+        } catch (err) {
+          toast(err.message || 'Could not mark the Retainer Invoice as sent.', 'err');
+          actBtn.disabled = false;
+          if (err.status === 409) {
+            await loadList(false);
+            await loadDetail(d.id);
+          }
+        }
+        return;
+      }
 
       // Conversions
       if (act === 'convert-so') {

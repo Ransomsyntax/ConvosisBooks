@@ -8,6 +8,7 @@ Comprehensive automated tests for ConvosisBooks:
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -1320,7 +1321,44 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
 class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
     def setUp(self):
         super().setUp()
+        self.admin_user.is_superuser = False
+        self.admin_user.save(update_fields=['is_superuser'])
         self.client.force_login(self.admin_user)
+
+    @override_settings(PASSWORD_RESET_EMAIL_CONFIGURED=True)
+    @patch('books.services.EmailMessage.send', return_value=0)
+    def test_retainer_email_rejection_is_audited_without_marking_invoice_sent(self, send_email):
+        created = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'date': str(date.today()),
+                'lines': [{'description': 'Advance', 'amount': '100.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        retainer_id = created.json()['id']
+
+        rejected = self.client.post(
+            f'/api/retainer-invoices/{retainer_id}/email/',
+            data=json.dumps({'to_email': 'client@example.com'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(rejected.status_code, 503)
+        send_email.assert_called_once()
+        retainer = RetainerInvoice.objects.get(pk=retainer_id)
+        self.assertEqual(retainer.status, 'draft')
+        self.assertIsNone(retainer.sent_at)
+        self.assertEqual(retainer.payments.count(), 0)
+        failed_delivery = AuditLog.objects.get(
+            action='send_email',
+            entity_type='RetainerInvoice',
+            entity_id=str(retainer_id),
+        )
+        self.assertEqual(failed_delivery.status, 'failure')
+        self.assertEqual(failed_delivery.details['delivery_status'], 'failed')
 
     def test_retainer_invoice_form_fields_round_trip(self):
         project = Project.objects.create(
@@ -1719,6 +1757,30 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertEqual(res_send.status_code, 200)
         ret.refresh_from_db()
         self.assertEqual(ret.status, 'sent')
+        self.assertIsNotNone(ret.sent_at)
+        detail_after_send = self.client.get(f'/api/retainer-invoices/{ret_id}/').json()
+        self.assertEqual(detail_after_send['raw_status'], 'sent')
+        self.assertIsNotNone(detail_after_send['sent_at'])
+        self.assertEqual(ret.payments.count(), 0)
+        self.assertEqual(
+            AuditLog.objects.filter(
+                action='send', entity_type='RetainerInvoice', entity_id=str(ret_id)
+            ).count(),
+            1,
+        )
+        duplicate_send = self.client.post(
+            f'/api/retainer-invoices/{ret_id}/send/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate_send.status_code, 409)
+        ret.refresh_from_db()
+        self.assertEqual(ret.payments.count(), 0)
+        listed = self.client.get('/api/retainer-invoices/').json()['results']
+        self.assertIn(
+            str(ret_id),
+            {str(row['id']) for row in listed if str(row.get('raw_status', row.get('status', '')).lower()) == 'sent'},
+        )
 
         # 2. Record Payment: 100,000 received into bank
         initial_bank_bal = self.bank_hdfc.current_balance
@@ -2534,6 +2596,150 @@ class TestBooksSubscriptionAndBilling(TestCase):
 
 
 class TestConfiguredDocumentNumberSeries(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin_user.is_superuser = False
+        self.admin_user.save(update_fields=['is_superuser'])
+        self.client.force_login(self.admin_user)
+
+    def test_retainer_series_selects_by_customer_type_and_business_location(self):
+        north = BusinessLocation.objects.create(
+            organization=self.org, name='North Office', gstin=self.org.gstin
+        )
+        south = BusinessLocation.objects.create(
+            organization=self.org, name='South Office', gstin='27AABCU9603R1ZM'
+        )
+        self.client.force_login(self.admin_user)
+
+        payloads = [
+            ('North B2B', 'b2b', north, 'CONVO/NORTH/RET/%FY%'),
+            ('North B2C', 'b2c', north, 'CONVO/NORTH-B2C/RET/%FY%'),
+            ('South B2B', 'b2b', south, 'CONVO/SOUTH/RET/%FY%'),
+        ]
+        created = {}
+        for name, customer_type, location, prefix in payloads:
+            response = self.client.post(
+                '/api/settings/retainer-number-series/',
+                data=json.dumps({
+                    'name': name,
+                    'customer_type': customer_type,
+                    'business_location_id': location.pk,
+                    'gstin': location.gstin,
+                    'prefix': prefix,
+                    'starting_number': 1,
+                    'next_number': 1,
+                    'padding': 5,
+                    'reset_annually': True,
+                    'active': True,
+                }),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            created[name] = response.json()['series']
+
+        duplicate = self.client.post(
+            '/api/settings/retainer-number-series/',
+            data=json.dumps({
+                'name': 'Duplicate North B2B',
+                'customer_type': 'b2b',
+                'business_location_id': north.pk,
+                'gstin': north.gstin,
+                'prefix': 'CONVO/DUP/RET/%FY%',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 409)
+
+        b2c_customer = Customer.objects.create(
+            organization=self.org, name='Individual Retainer Customer',
+            customer_type='individual', state='Kerala',
+        )
+        invoice_payload = {
+            'date': '2026-10-15',
+            'due_date': '2026-11-15',
+            'lines': [{'description': 'Advance', 'amount': '100.00'}],
+        }
+        documents = []
+        for customer, location in (
+            (self.customer, north),
+            (b2c_customer, north),
+            (self.customer, south),
+        ):
+            payload = dict(invoice_payload, customer=customer.pk, business_location_id=location.pk)
+            response = self.client.post(
+                '/api/retainer-invoices/',
+                data=json.dumps(payload),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            documents.append(response.json())
+
+        self.assertTrue(documents[0]['number'].startswith('CONVO/NORTH/RET/26-27/'))
+        self.assertTrue(documents[1]['number'].startswith('CONVO/NORTH-B2C/RET/26-27/'))
+        self.assertTrue(documents[2]['number'].startswith('CONVO/SOUTH/RET/26-27/'))
+
+        north_b2b = created['North B2B']
+        north_b2b.update(next_number=20)
+        updated = self.client.put(
+            f"/api/settings/retainer-number-series/{north_b2b['id']}/",
+            data=json.dumps(north_b2b),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        next_invoice = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps(dict(invoice_payload, customer=self.customer.pk, business_location_id=north.pk)),
+            content_type='application/json',
+        )
+        self.assertEqual(next_invoice.status_code, 201, next_invoice.content)
+        self.assertTrue(next_invoice.json()['number'].endswith('/00020'))
+        self.assertEqual(RetainerInvoice.objects.get(pk=documents[0]['id']).number, documents[0]['number'])
+
+        deactivated = self.client.delete(f"/api/settings/retainer-number-series/{north_b2b['id']}/")
+        self.assertEqual(deactivated.status_code, 200)
+        self.assertFalse(DocumentNumberSeries.objects.get(pk=north_b2b['id']).active)
+        self.assertTrue(DocumentNumberAllocation.objects.filter(number=documents[0]['number']).exists())
+
+    def test_annual_retainer_series_resets_without_rewriting_configuration(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='Annual Office', gstin=self.org.gstin
+        )
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Annual Retainer',
+            document_type='retainer_invoices',
+            customer_type='b2b',
+            location=location.name,
+            business_location=location,
+            gstin=location.gstin,
+            prefix='CONVO/RET/%FY%',
+            starting_number=3,
+            next_number=3,
+            padding=5,
+            reset_annually=True,
+        )
+
+        first = services.next_document_number(
+            'RET', org=self.org, date=date(2026, 10, 15),
+            customer_type='b2b', location=location.name,
+            gstin=location.gstin, business_location_id=location.pk,
+            user=self.admin_user,
+        )
+        second = services.next_document_number(
+            'RET', org=self.org, date=date(2027, 5, 15),
+            customer_type='b2b', location=location.name,
+            gstin=location.gstin, business_location_id=location.pk,
+            user=self.admin_user,
+        )
+        series.refresh_from_db()
+
+        self.assertTrue(first.endswith('/00003'))
+        self.assertIn('/26-27/', first)
+        self.assertTrue(second.endswith('/00003'))
+        self.assertIn('/27-28/', second)
+        self.assertEqual(series.financial_year, '')
+        self.assertEqual(series.counters.count(), 2)
+
     def test_preview_falls_back_until_required_series_context_is_available(self):
         from books.models import DocumentNumberSeries
 

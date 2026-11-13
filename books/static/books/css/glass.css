@@ -1269,7 +1269,7 @@ tr:hover td {
   border: 1px solid var(--bd-glass);
   border-radius: 12px;
   box-shadow: var(--shadow-glass-lg), var(--specular-sheen);
-  z-index: 60;
+  z-index: var(--layer-dropdown, 60);
   min-width: 230px;
   padding: 6px;
   display: none;
@@ -1477,9 +1477,15 @@ button, .btn, .mi, .av, .ib, .plus, .theme-toggle-btn, .sw {
 
 #toast, .toast-container {
   position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 24px;
+  right: 24px;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  max-width: min(440px, calc(100vw - 48px));
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  pointer-events: none;
   background: var(--surface-glass-solid);
   backdrop-filter: blur(24px) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(24px) saturate(var(--glass-sat));
@@ -1488,18 +1494,23 @@ button, .btn, .mi, .av, .ib, .plus, .theme-toggle-btn, .sw {
   border-radius: 12px;
   border: 1px solid var(--bd-glass);
   box-shadow: var(--shadow-glass-lg), var(--specular-sheen);
-  z-index: 200;
+  z-index: var(--layer-notification, 10000);
   display: none;
   font-weight: 500;
   font-size: 13.5px;
   animation: toastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes toastIn {
-  from { opacity: 0; transform: translate(-50%, 15px); }
-  to   { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 #toast.err {
   background: rgba(225, 29, 72, 0.92);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+#toast.ok {
+  background: rgba(5, 150, 105, 0.96);
   color: #fff;
   border-color: rgba(255, 255, 255, 0.4);
 }

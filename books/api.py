@@ -928,8 +928,11 @@ class Resource:
         if request.method not in ('POST', 'GET') if name in ('view-journal', 'journals', 'journal-entries') else request.method != 'POST':
             raise ApiError(405, 'Method not allowed.')
         obj = self.get_object(pk, request)
-        with transaction.atomic():
+        if name in ('email', 'send-email'):
             res = self.action(request, obj, name)
+        else:
+            with transaction.atomic():
+                res = self.action(request, obj, name)
         if self.name != 'stock-transfers':
             try:
                 user_org = get_user_org(request.user)
@@ -2177,6 +2180,7 @@ class DocResource(Resource):
             num = services.next_document_number(
                 pfx, org=user_org, date=head['date'], customer_type=customer_type,
                 branch=head.get('branch', ''), location=head.get('location', ''),
+                business_location_id=getattr(head.get('business_location'), 'pk', None),
                 gstin=(
                     head.get('business_location_gstin', '')
                     if 'business_location' in head
@@ -2491,6 +2495,7 @@ class RetainerInvoiceResource(DocResource):
             'terms': getattr(o, 'terms', ''),
             'order_number': o.order_number,
             'reference': o.order_number,
+            'sent_at': o.sent_at,
             'purpose': getattr(o, 'subject', '') or '',
             'subject': getattr(o, 'subject', '') or '',
             'custom_fields_data': o.custom_fields_data or {},
@@ -7155,6 +7160,7 @@ def lookup(request, name):
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
             series_id=request.GET.get('numbering_series_id'),
             user=request.user,
+            business_location_id=business_location.pk if business_location else None,
         )
     elif name in ('next-po-number', 'next-purchase-order-number'):
         org = user_org or Organization.get()
@@ -10006,11 +10012,42 @@ def settings_document_number_series_view(request, series_id=None, retainer_only=
         raise ApiError(400, 'Only Retainer Invoice series can be marked as the default series here.')
 
     with transaction.atomic():
-        series = queryset.filter(pk=series_id).first() if series_id else None
+        Organization.objects.select_for_update().get(pk=org.pk)
+        series = queryset.select_for_update().filter(pk=series_id).first() if series_id else None
         if series_id and not series:
             raise ApiError(404, 'Numbering series not found.')
         if series and series.document_type != document_type and series.allocations.exists():
             raise ApiError(409, 'Document type cannot be changed after this series has allocated numbers.')
+        same_name = queryset.filter(document_type=document_type, name=name)
+        if series:
+            same_name = same_name.exclude(pk=series.pk)
+        if same_name.exists():
+            raise ApiError(409, 'A series with this name already exists for the selected document type.')
+
+        if active:
+            matching_context = queryset.filter(
+                document_type=document_type,
+                active=True,
+                customer_type=customer_type,
+                branch=branch,
+                location=location,
+                gstin=gstin,
+            )
+            matching_context = matching_context.filter(
+                Q(financial_year='') | Q(financial_year=financial_year)
+            ) if financial_year else matching_context
+            if business_location:
+                matching_context = matching_context.filter(business_location=business_location)
+            else:
+                matching_context = matching_context.filter(business_location__isnull=True)
+            if series:
+                matching_context = matching_context.exclude(pk=series.pk)
+            if matching_context.exists():
+                raise ApiError(
+                    409,
+                    'An active serial number series already matches this document type and configuration.',
+                )
+
         if series:
             previous = _number_series_payload(series)
             high_water_mark = series.counters.aggregate(value=Max('next_number'))['value'] or series.starting_number
@@ -10021,10 +10058,8 @@ def settings_document_number_series_view(request, series_id=None, retainer_only=
                 raise ApiError(409, 'Starting number cannot be changed after this series has allocated numbers.')
         else:
             previous = {}
-            if next_number < starting_number:
-                raise ApiError(400, 'Next number cannot be lower than the starting number.')
-            if DocumentNumberSeries.objects.filter(organization=org, document_type=document_type, name=name).exists():
-                raise ApiError(409, 'A series with this name already exists for the selected document type.')
+        if next_number < starting_number:
+            raise ApiError(400, 'Next number cannot be lower than the starting number.')
 
         defaults = {
             'name': name, 'document_type': document_type, 'customer_type': customer_type,
@@ -10044,6 +10079,10 @@ def settings_document_number_series_view(request, series_id=None, retainer_only=
             for field, value in defaults.items():
                 setattr(series, field, value)
             series.save()
+            latest_counter = series.counters.order_by('-updated_at', '-pk').first()
+            if latest_counter and next_number > latest_counter.next_number:
+                latest_counter.next_number = next_number
+                latest_counter.save(update_fields=['next_number', 'updated_at'])
         else:
             try:
                 series = DocumentNumberSeries.objects.create(organization=org, **defaults)

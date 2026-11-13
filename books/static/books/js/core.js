@@ -51,7 +51,9 @@ const pref = {
 function toast(msg, kind) {
   const t = $('#toast');
   t.textContent = msg;
-  t.className = kind === 'err' ? 'err' : '';
+  t.className = kind === 'err' || kind === 'error'
+    ? 'err'
+    : kind === 'ok' || kind === 'success' ? 'ok' : '';
   t.style.display = 'block';
   clearTimeout(toast.t);
   toast.t = setTimeout(() => { t.style.display = 'none'; }, kind === 'err' ? 5000 : 2600);

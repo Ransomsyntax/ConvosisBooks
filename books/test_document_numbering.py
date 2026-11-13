@@ -33,7 +33,7 @@ class DocumentNumberingAndUUIDTests(TestCase):
         )
 
         # Admin user in Org 1
-        self.user1 = User.objects.create_user(username='admin_abc', password='Password123!', is_staff=True, is_superuser=True)
+        self.user1 = User.objects.create_user(username='admin_abc', password='Password123!', is_staff=True, is_superuser=False)
         self.profile1 = UserProfile.objects.create(user=self.user1, role=UserProfile.ADMIN, organization=self.org1)
 
         # Accounts

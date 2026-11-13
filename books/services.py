@@ -19,7 +19,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -244,6 +244,10 @@ def mark_document_number_cancelled(org, document_type, number):
 
 
 def _series_context_matches(series_obj, context):
+    required_location_id = series_obj.business_location_id
+    actual_location_id = context.get('business_location_id')
+    if required_location_id and str(required_location_id) != str(actual_location_id or ''):
+        return False
     for field in ('customer_type', 'branch', 'location', 'gstin'):
         required = getattr(series_obj, field)
         actual = context.get(field, '')
@@ -252,7 +256,7 @@ def _series_context_matches(series_obj, context):
     return True
 
 
-def _select_document_number_series(module_or_pfx, org, date, customer_type='', branch='', location='', gstin=None, series_id=None, user=None):
+def _select_document_number_series(module_or_pfx, org, date, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
     if not org:
         return None
     doc_type = _number_series_doc_type(module_or_pfx)
@@ -266,6 +270,7 @@ def _select_document_number_series(module_or_pfx, org, date, customer_type='', b
         'branch': (branch or '').strip(),
         'location': (location or '').strip(),
         'gstin': gstin_context.strip().upper(),
+        'business_location_id': business_location_id,
     }
     if series_id:
         selected = query.filter(pk=series_id).first()
@@ -337,7 +342,7 @@ def _format_series_number(series_obj, value, org, date, branch='', location='', 
     return candidate
 
 
-def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None):
+def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
     """
     Generate an atomic, collision-free organization-wise document number.
     Format:
@@ -378,19 +383,40 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
 
     selected_series = _select_document_number_series(
         module_or_pfx, org, date_val, customer_type, branch, location, gstin,
-        series_id=series_id, user=user
+        series_id=series_id, user=user, business_location_id=business_location_id
     )
     if selected_series:
         doc_type = _number_series_doc_type(module_or_pfx)
         counter_period = fy if selected_series.reset_annually else '*'
         with transaction.atomic():
             selected_series = type(selected_series).objects.select_for_update().get(pk=selected_series.pk)
+            if (
+                not selected_series.active
+                or selected_series.document_type != doc_type
+                or selected_series.financial_year not in ('', fy)
+            ):
+                raise ApiError(409, 'The selected numbering series changed while the document was being created. Please retry.')
+            context = {
+                'customer_type': (customer_type or '').strip().lower(),
+                'branch': (branch or '').strip(),
+                'location': (location or '').strip(),
+                'gstin': (gstin or '').strip().upper(),
+                'business_location_id': business_location_id,
+            }
+            if not _series_context_matches(selected_series, context):
+                raise ApiError(409, 'The selected numbering series no longer matches this document. Please retry.')
+            if series_id:
+                profile = getattr(user, 'profile', None) if user else None
+                if not (profile and profile.role == 'admin' and selected_series.allow_manual_selection):
+                    raise ApiError(403, 'Manual numbering-series selection is not permitted.')
+            has_prior_counter = selected_series.counters.exists()
+            initial_number = selected_series.next_number
+            if selected_series.reset_annually and has_prior_counter and selected_series.financial_year != fy:
+                initial_number = selected_series.starting_number
             counter, _ = DocumentNumberSeriesCounter.objects.select_for_update().get_or_create(
                 series=selected_series,
                 financial_year=counter_period,
-                defaults={
-                    'next_number': selected_series.next_number if selected_series.financial_year in ('', fy) else selected_series.starting_number
-                },
+                defaults={'next_number': initial_number},
             )
             while True:
                 value = counter.next_number
@@ -406,21 +432,28 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
                 counter.save(update_fields=['next_number', 'updated_at'])
                 if selected_series.financial_year in ('', fy):
                     selected_series.next_number = value + 1
-                    selected_series.financial_year = fy
-                    selected_series.save(update_fields=['next_number', 'financial_year', 'updated_at'])
+                    selected_series.save(update_fields=['next_number', 'updated_at'])
                 if collision or allocation_exists:
                     continue
-                DocumentNumberAllocation.objects.create(
-                    organization=org,
-                    series=selected_series,
-                    document_type=doc_type,
-                    number=candidate,
-                    financial_year=fy,
-                    branch=branch or '',
-                    location=location or '',
-                    gstin=gstin or org.gstin or '',
-                    customer_type=customer_type or '',
-                )
+                try:
+                    with transaction.atomic():
+                        DocumentNumberAllocation.objects.create(
+                            organization=org,
+                            series=selected_series,
+                            document_type=doc_type,
+                            number=candidate,
+                            financial_year=fy,
+                            branch=branch or '',
+                            location=location or '',
+                            gstin=(gstin or '') if doc_type == 'retainer_invoices' else (gstin or org.gstin or ''),
+                            customer_type=customer_type or '',
+                        )
+                except IntegrityError:
+                    if DocumentNumberAllocation.objects.filter(
+                        organization=org, document_type=doc_type, number=candidate
+                    ).exists():
+                        continue
+                    raise
                 return candidate
 
     pref = get_doc_number_preference(module_or_pfx, org=org, series=series)
@@ -479,7 +512,7 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
                         pass
                 return candidate
 
-def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None):
     """
     Preview the next document number without incrementing the sequence counter.
     """
@@ -514,17 +547,21 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
     model = cfg.get('model')
     field = cfg.get('field', 'number')
 
-    context_available = any((customer_type, branch, location, gstin, series_id))
+    context_available = any((customer_type, branch, location, gstin, series_id, business_location_id))
     doc_type = _number_series_doc_type(module_or_pfx)
     if not context_available and DocumentNumberSeries.objects.filter(
         organization=org, document_type=doc_type, active=True
-    ).filter(Q(customer_type__gt='') | Q(branch__gt='') | Q(location__gt='') | Q(gstin__gt='')).exists():
+    ).filter(
+        Q(customer_type__gt='') | Q(branch__gt='') | Q(location__gt='') |
+        Q(gstin__gt='') | Q(business_location__isnull=False)
+    ).exists():
         use_configured_series = False
 
     try:
         selected_series = _select_document_number_series(
             module_or_pfx, org, date_val, customer_type, branch, location, gstin,
-            series_id=series_id, user=user
+            series_id=series_id, user=user,
+            business_location_id=business_location_id,
         ) if use_configured_series else None
     except ApiError as exc:
         if series_id is not None or (doc_type == 'retainer_invoices' and context_available) or exc.status not in (400, 409):
@@ -832,13 +869,13 @@ def void_bill(bill, user):
 
 @transaction.atomic
 def send_retainer_invoice(retainer, user):
+    retainer = RetainerInvoice.objects.select_for_update().get(pk=retainer.pk)
     check_transaction_lock(retainer.date)
     if retainer.status != 'draft':
         raise ApiError(409, 'Only draft retainer invoices can be sent.')
     retainer.status = 'sent'
     retainer.sent_at = timezone.now()
     retainer.save(update_fields=['status', 'sent_at'])
-    log_audit(user, 'send', 'RetainerInvoice', retainer.pk, f'Retainer invoice {retainer.number} sent to {retainer.customer.name} (₹{retainer.total})')
 
 @transaction.atomic
 def void_retainer_invoice(retainer, user):
@@ -1312,11 +1349,24 @@ def send_document_email(doc, to_email, subject='', message='', user=None, cc='')
         sent_count = email.send(fail_silently=False)
     except (OSError, SMTPException):
         logger.exception('Document email delivery failed for document %s', doc.pk)
+        log_audit(
+            user, 'send_email', doc.__class__.__name__, doc.pk,
+            f'Email delivery failed for {doc.number} to {to_email}.',
+            details={'recipient': to_email, 'subject': subj, 'delivery_status': 'failed'},
+            org=org, status='failure',
+        )
         raise ApiError(503, 'Email delivery failed. Verify SMTP configuration and try again.')
     if sent_count != 1:
+        log_audit(
+            user, 'send_email', doc.__class__.__name__, doc.pk,
+            f'Email delivery failed for {doc.number} to {to_email}.',
+            details={'recipient': to_email, 'subject': subj, 'delivery_status': 'failed'},
+            org=org, status='failure',
+        )
         raise ApiError(503, 'Email delivery did not complete. Verify SMTP configuration and try again.')
     log_audit(user, 'send_email', doc.__class__.__name__, doc.pk,
-              f"Sent email for {doc.number} to {to_email}. Subject: {subj}", org=org)
+              f"Sent email for {doc.number} to {to_email}. Subject: {subj}", org=org,
+              details={'recipient': to_email, 'subject': subj, 'delivery_status': 'delivered'})
     return {'status': 'ok', 'recipient': to_email, 'message': f"Email sent for {doc.number} to {to_email}."}
 
 

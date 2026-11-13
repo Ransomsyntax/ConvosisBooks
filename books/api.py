@@ -1665,7 +1665,7 @@ def sign_document_action(obj, request):
     b = body(request)
     sig_data = b.get('signature_data', '')
     signed_by = b.get('signed_by', '')
-    title = b.get('signature_title', '') or getattr(obj, 'signature_title', '') or 'Authorized Signatory'
+    title = b.get('signature_title', '') or getattr(obj, 'signature_title', '') or ''
     if not sig_data:
         raise ApiError(400, 'Signature data is required.')
     obj.signature_data = sig_data

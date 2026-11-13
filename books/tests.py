@@ -1360,6 +1360,33 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         self.assertEqual(failed_delivery.status, 'failure')
         self.assertEqual(failed_delivery.details['delivery_status'], 'failed')
 
+    def test_retainer_signature_does_not_persist_placeholder_title(self):
+        created = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'date': str(date.today()),
+                'lines': [{'description': 'Advance', 'amount': '100.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        retainer_id = created.json()['id']
+
+        signed = self.client.post(
+            f'/api/retainer-invoices/{retainer_id}/sign/',
+            data=json.dumps({
+                'signature_data': 'data:image/png;base64,c2lnbmF0dXJl',
+                'signed_by': 'Test Signer',
+                'signature_title': '',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(signed.status_code, 200, signed.content)
+        self.assertEqual(signed.json()['signature_title'], '')
+        self.assertEqual(RetainerInvoice.objects.get(pk=retainer_id).signature_title, '')
+
     def test_retainer_invoice_form_fields_round_trip(self):
         project = Project.objects.create(
             organization=self.org,

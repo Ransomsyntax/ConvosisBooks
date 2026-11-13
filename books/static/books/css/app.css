@@ -2368,6 +2368,22 @@ body.in-settings .pg {
   font-size: 13px !important;
   box-sizing: border-box;
 }
+.sig-meta-input::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+#ret-customer.in-error {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.15) !important;
+}
+#ret-customer-error {
+  margin-top: 4px;
+  color: #dc2626;
+  font-size: 12px;
+}
+#ret-customer-error[hidden] {
+  display: none;
+}
 .md:has(.sig-modal-container) {
   max-width: 760px;
 }

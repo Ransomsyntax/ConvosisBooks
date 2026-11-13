@@ -1435,7 +1435,8 @@ document.addEventListener('click', e => {
 
 function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
   const currentSig = doc.signature_data || '';
-  const currentTitle = doc.signature_title || (window.APP && window.APP.org && window.APP.org.signature_title) || 'Authorized Signatory';
+  const orgTitle = window.APP && window.APP.org && window.APP.org.signature_title;
+  const currentTitle = doc.signature_title || (orgTitle === 'Authorized Signatory' ? '' : orgTitle) || '';
   const currentName = doc.signed_by || (window.APP && window.APP.user && (window.APP.user.name || window.APP.user.username)) || '';
   const isOrgSetting = kind === 'organization';
   const docTitle = isOrgSetting ? 'Company Default Signature' : `${doc.number ? doc.number : (kind || 'Document').replace('-', ' ').toUpperCase()} Signature`;
@@ -1520,7 +1521,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
             </div>
             <div class="fg sig-meta-field">
               <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Designation / Title</label>
-              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory">
+              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="Authorized Signatory">
             </div>
           </div>
         </div>
@@ -1712,7 +1713,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
       return toast('Please draw, type, or upload a signature first.', 'err');
     }
     const signerName = $('#sig-meta-name', m.el)?.value.trim() || '';
-    const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || 'Authorized Signatory';
+    const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || '';
 
     try {
       if (isOrgSetting) {
@@ -12853,7 +12854,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Retainer Invoice' : 'New Retainer Invoice'}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-ret-settings" title="Settings" aria-label="Retainer Invoice settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
           <button type="button" class="btn ic" id="btn-ret-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
@@ -12864,16 +12865,19 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="ret-customer" name="customer" required style="flex:1;">
-                <option value="">Select or add a customer</option>
-                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+            <div style="flex:1;max-width:480px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="ret-customer" name="customer" required aria-describedby="ret-customer-error" aria-invalid="false" style="flex:1;">
+                  <option value="">Select or add a customer</option>
+                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                </button>
+                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+              </div>
+              <div id="ret-customer-error" role="alert" hidden></div>
             </div>
           </div>
 
@@ -13041,6 +13045,19 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const form = $('#retainer-form-element', target);
   const tbody = $('#retainer-line-tbody', form);
   const projectSaveButtons = [$('#btn-ret-save-draft', form), $('#btn-ret-save-send', form)].filter(Boolean);
+  const customerSelect = $('#ret-customer', form);
+  const customerError = $('#ret-customer-error', form);
+  const isValidRetainerCustomer = customerId => parties.some(party => String(party.id) === String(customerId));
+  const clearRetainerCustomerError = () => {
+    if (!customerSelect || !customerError) return;
+    customerSelect.classList.remove('in-error');
+    customerSelect.setAttribute('aria-invalid', 'false');
+    customerError.hidden = true;
+    customerError.textContent = '';
+  };
+  customerSelect?.addEventListener('change', () => {
+    if (isValidRetainerCustomer(customerSelect.value)) clearRetainerCustomerError();
+  });
 
   async function refreshRetainerProjects(customerId, selectedProject = '') {
     const projectCustomerId = /^\d+$/.test(String(customerId || '')) ? customerId : '';
@@ -13278,12 +13295,17 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   });
 
   const saveRetainerInvoice = async (isDraft) => {
-    const custId = $('#ret-customer', form).value;
-    if (!custId) {
-      toast('Please select a customer.', 'err');
-      $('#ret-customer', form).focus();
+    const custId = customerSelect.value;
+    if (!isValidRetainerCustomer(custId)) {
+      customerSelect.classList.add('in-error');
+      customerSelect.setAttribute('aria-invalid', 'true');
+      customerError.textContent = 'Please select a customer.';
+      customerError.hidden = false;
+      customerSelect.focus();
+      customerSelect.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
+    clearRetainerCustomerError();
     const numVal = $('#ret-number', form).value.trim();
     if (!numVal) {
       toast('Please enter a retainer invoice number.', 'err');
@@ -13424,9 +13446,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
   $('#btn-ret-save-draft', target).addEventListener('click', () => saveRetainerInvoice(true));
   $('#btn-ret-save-send', target).addEventListener('click', () => saveRetainerInvoice(false));
-  $('#btn-ret-template-change', form).addEventListener('click', () => {
+  const openRetainerSettings = () => {
+    if (Modal.count()) return;
     openTemplateCustomizer({ number: retNum }, 'retainer-invoices', () => {});
-  });
+  };
+  $('#btn-ret-settings', target)?.addEventListener('click', openRetainerSettings);
+  $('#btn-ret-template-change', form).addEventListener('click', openRetainerSettings);
 
   const handleRetClose = () => {
     if (onDone) onDone();

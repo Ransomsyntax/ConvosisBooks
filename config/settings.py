@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
 ]
 
 MIDDLEWARE = [
@@ -83,7 +84,9 @@ if DATABASE_URL:
             "default": dj_database_url.config(
                 default=DATABASE_URL,
                 conn_max_age=600,
-                ssl_require=True,
+                ssl_require=os.environ.get(
+                    "DATABASE_SSL_REQUIRE", "1" if is_render else "0"
+                ) == "1",
             )
         }
     except ImportError:
@@ -146,6 +149,43 @@ LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+REDIS_URL = os.environ.get('REDIS_URL', '').strip()
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        },
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'convosibooks-local',
+        },
+    }
+
+CELERY_BROKER_URL = os.environ.get(
+    'CELERY_BROKER_URL', REDIS_URL or 'redis://127.0.0.1:6379/0'
+)
+CELERY_RESULT_BACKEND = os.environ.get(
+    'CELERY_RESULT_BACKEND', REDIS_URL or 'redis://127.0.0.1:6379/0'
+)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

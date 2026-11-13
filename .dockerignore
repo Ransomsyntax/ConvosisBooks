@@ -1,0 +1,15 @@
+.git
+.venv
+venv
+env
+node_modules
+frontend/node_modules
+staticfiles
+media
+db.sqlite3
+*.sqlite3
+__pycache__
+*.py[cod]
+.env
+.env.*
+!.env.example

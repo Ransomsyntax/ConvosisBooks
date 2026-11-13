@@ -1,0 +1,66 @@
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #1d2b3f;
+  background: #f3f6fa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+.migration-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.migration-card {
+  width: min(100%, 560px);
+  padding: 36px;
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgb(20 45 78 / 8%);
+}
+
+.migration-eyebrow {
+  margin: 0 0 12px;
+  color: #4775a8;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: #142d4e;
+  font-size: clamp(1.6rem, 5vw, 2rem);
+}
+
+.migration-card > p:not(.migration-eyebrow) {
+  margin: 16px 0 24px;
+  line-height: 1.6;
+}
+
+.migration-link {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  padding: 0 18px;
+  border-radius: 6px;
+  background: #215b9a;
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.migration-link:hover,
+.migration-link:focus-visible {
+  background: #174878;
+}

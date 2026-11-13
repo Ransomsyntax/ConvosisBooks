@@ -1,8 +1,9 @@
 from django.urls import path
 
-from . import api
+from . import api, api_v2
 
 urlpatterns = [
+    path('v2/health/', api_v2.health_check, name='api_v2_health'),
     path('health/', api.health_view),
     path('auth/register/', api.api_register_view),
     path('register/', api.api_register_view),

@@ -708,3 +708,170 @@ loadMe().then(() => {
 }).catch(err => {
   $('#pg').innerHTML = errBox('Could not load the application: ' + err.message, false);
 });
+
+window.openChangeContactModal = function(initialType = 'email') {
+  let activeType = initialType;
+  let targetValue = '';
+
+  const currentEmail = (window.APP && APP.user && APP.user.email) || '';
+  const currentPhone = (window.APP && APP.user && APP.user.phone) || '';
+
+  const m = Modal.show({
+    title: 'Update Contact Information',
+    width: '480px',
+    body: `
+      <div class="change-contact-wrap">
+        <div class="contact-tab-switcher" style="display:flex;gap:6px;background:rgba(0,0,0,0.05);padding:4px;border-radius:10px;margin-bottom:18px;">
+          <button type="button" id="tabEmailUpdate" class="btn ${activeType === 'email' ? 'p' : ''}" style="flex:1;font-size:13px;padding:7px 10px;">Update Email</button>
+          <button type="button" id="tabMobileUpdate" class="btn ${activeType === 'mobile' ? 'p' : ''}" style="flex:1;font-size:13px;padding:7px 10px;">Update Mobile</button>
+        </div>
+
+        <div id="contactRequestStep">
+          <div class="form-group" style="margin-bottom:14px;">
+            <div id="lblCurrentContact" style="font-size:12.5px;color:var(--tx-muted,#64748b);">Current Email: <strong>${esc(currentEmail || 'Not set')}</strong></div>
+          </div>
+          <div class="form-group">
+            <label id="lblNewContact" style="font-weight:600;font-size:13px;">New Email Address*</label>
+            <input type="email" id="txtNewContact" class="in" placeholder="new.email@company.com" style="width:100%;margin-top:6px;">
+          </div>
+          <div style="margin-top:20px;display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="btn" id="btnCancelContact">Cancel</button>
+            <button type="button" class="btn p" id="btnSendContactOtp">Send Verification OTP</button>
+          </div>
+        </div>
+
+        <div id="contactVerifyStep" style="display:none;">
+          <div style="background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.2);padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px;text-align:center;">
+            A 6-digit verification code was sent to <strong id="lblContactMasked"></strong>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:center;margin:18px 0;" id="contactOtpRow">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+            <input type="text" class="contact-otp-box in" maxlength="1" inputmode="numeric" style="width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;border-radius:8px;">
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" class="btn" id="btnContactBack">Back</button>
+            <button type="button" class="btn p" id="btnContactVerify">Verify & Update</button>
+          </div>
+        </div>
+      </div>
+    `
+  });
+
+  const tabEmail = m.find('#tabEmailUpdate');
+  const tabMobile = m.find('#tabMobileUpdate');
+  const lblCurrent = m.find('#lblCurrentContact');
+  const lblNew = m.find('#lblNewContact');
+  const txtNew = m.find('#txtNewContact');
+  const reqStep = m.find('#contactRequestStep');
+  const verStep = m.find('#contactVerifyStep');
+  const btnSend = m.find('#btnSendContactOtp');
+  const btnVerify = m.find('#btnContactVerify');
+  const btnBack = m.find('#btnContactBack');
+  const btnCancel = m.find('#btnCancelContact');
+  const boxes = Array.from(m.el.querySelectorAll('.contact-otp-box'));
+
+  function updateTypeView() {
+    if (activeType === 'email') {
+      tabEmail.classList.add('p');
+      tabMobile.classList.remove('p');
+      lblCurrent.innerHTML = `Current Email: <strong>${esc((window.APP && APP.user && APP.user.email) || 'Not set')}</strong>`;
+      lblNew.textContent = 'New Work Email*';
+      txtNew.type = 'email';
+      txtNew.placeholder = 'new.email@company.com';
+    } else {
+      tabMobile.classList.add('p');
+      tabEmail.classList.remove('p');
+      lblCurrent.innerHTML = `Current Mobile: <strong>${esc((window.APP && APP.user && APP.user.phone) || 'Not set')}</strong>`;
+      lblNew.textContent = 'New Mobile Number*';
+      txtNew.type = 'tel';
+      txtNew.placeholder = '+91 98765 43210';
+    }
+    txtNew.value = '';
+    reqStep.style.display = 'block';
+    verStep.style.display = 'none';
+  }
+
+  tabEmail.addEventListener('click', () => { activeType = 'email'; updateTypeView(); });
+  tabMobile.addEventListener('click', () => { activeType = 'mobile'; updateTypeView(); });
+  btnCancel.addEventListener('click', () => m.close());
+  btnBack.addEventListener('click', () => { reqStep.style.display = 'block'; verStep.style.display = 'none'; });
+
+  boxes.forEach((box, idx) => {
+    box.addEventListener('input', () => {
+      const val = box.value.replace(/\D/g, '');
+      box.value = val ? val[val.length - 1] : '';
+      if (box.value && idx < boxes.length - 1) boxes[idx + 1].focus();
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !box.value && idx > 0) {
+        e.preventDefault();
+        boxes[idx - 1].focus();
+        boxes[idx - 1].value = '';
+      }
+    });
+    box.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const p = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '').slice(0, 6);
+      for (let i = 0; i < boxes.length; i++) boxes[i].value = p[i] || '';
+      if (boxes[Math.min(p.length, 5)]) boxes[Math.min(p.length, 5)].focus();
+    });
+  });
+
+  async function triggerSend() {
+    targetValue = txtNew.value.trim();
+    if (!targetValue) {
+      toast(`Please enter a valid new ${activeType}.`, 'error');
+      return;
+    }
+    btnSend.disabled = true;
+    try {
+      const r = await api('auth/change-contact/', {
+        method: 'POST',
+        body: JSON.stringify({ type: activeType, step: 'request', new_value: targetValue })
+      });
+      m.find('#lblContactMasked').textContent = r.masked_target || targetValue;
+      reqStep.style.display = 'none';
+      verStep.style.display = 'block';
+      boxes.forEach(b => b.value = '');
+      setTimeout(() => boxes[0] && boxes[0].focus(), 50);
+      toast(r.message || 'Verification code sent.', 'info');
+    } catch (err) {
+      toast(err.message || 'Failed to send verification code.', 'error');
+    } finally {
+      btnSend.disabled = false;
+    }
+  }
+
+  btnSend.addEventListener('click', triggerSend);
+
+  btnVerify.addEventListener('click', async () => {
+    const code = boxes.map(b => b.value.trim()).join('');
+    if (code.length !== 6) {
+      toast('Please enter the full 6-digit code.', 'error');
+      return;
+    }
+    btnVerify.disabled = true;
+    try {
+      const r = await api('auth/change-contact/', {
+        method: 'POST',
+        body: JSON.stringify({ type: activeType, step: 'verify', new_value: targetValue, otp: code })
+      });
+      toast(r.message || 'Contact updated successfully.', 'success');
+      if (activeType === 'email') {
+        if (window.APP && APP.user) APP.user.email = targetValue;
+        const uce = $('#userCardEmail'); if (uce) uce.textContent = targetValue;
+      } else {
+        if (window.APP && APP.user) APP.user.phone = targetValue;
+      }
+      m.close();
+    } catch (err) {
+      toast(err.message || 'Verification failed.', 'error');
+    } finally {
+      btnVerify.disabled = false;
+    }
+  });
+};

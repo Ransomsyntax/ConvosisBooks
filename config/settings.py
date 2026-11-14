@@ -139,6 +139,21 @@ EMAIL_BACKEND = (
 )
 PASSWORD_RESET_TIMEOUT = int(os.environ.get('PASSWORD_RESET_TIMEOUT', '3600'))
 
+# OTP, Brevo Email & MSG91 SMS Configuration
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '').strip()
+BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply@convosis.com')).strip()
+BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'CONVOSIS Books').strip()
+
+MSG91_AUTH_KEY = os.environ.get('MSG91_AUTH_KEY', '').strip()
+MSG91_TEMPLATE_ID = os.environ.get('MSG91_TEMPLATE_ID', '').strip()
+MSG91_SENDER_ID = os.environ.get('MSG91_SENDER_ID', 'CONVOS').strip()
+MSG91_OTP_EXPIRY_MINUTES = int(os.environ.get('MSG91_OTP_EXPIRY_MINUTES', '5'))
+
+OTP_EXPIRY_MINUTES = int(os.environ.get('OTP_EXPIRY_MINUTES', '5'))
+OTP_MAX_FAILED_ATTEMPTS = int(os.environ.get('OTP_MAX_FAILED_ATTEMPTS', '5'))
+OTP_RESEND_COOLDOWN_SECONDS = int(os.environ.get('OTP_RESEND_COOLDOWN_SECONDS', '60'))
+OTP_MAX_PER_HOUR = int(os.environ.get('OTP_MAX_PER_HOUR', '5'))
+
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True

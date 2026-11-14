@@ -12,6 +12,7 @@ from functools import lru_cache, wraps
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
@@ -20,6 +21,8 @@ from django.db.models import Count, F, Max, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.text import slugify
+
+User = get_user_model()
 
 slug = slugify
 REQUIRED = 'This field is required.'
@@ -39,7 +42,7 @@ from .models import (
     PriceList, Project, ProjectMilestone, ProjectStaff, ProjectTask, ProjectTaskAssignment,
     PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
-    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, Vendor, VendorCredit,
+    SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, OTPVerification, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
@@ -8806,6 +8809,8 @@ def me(request):
             'role': role,
             'role_display': dict(UserProfile.ROLES).get(role, role.title() if role else 'Administrator'),
             'phone': profile.phone if profile else '',
+            'is_email_verified': getattr(profile, 'is_email_verified', False) if profile else False,
+            'is_mobile_verified': getattr(profile, 'is_mobile_verified', False) if profile else False,
             'is_superuser': u.is_superuser,
             'is_staff': u.is_staff,
             'permissions': {
@@ -13325,3 +13330,537 @@ def api_register_view(request):
         return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
     except Exception as e:
         return j({'error': str(e), 'message': str(e)}, 400)
+
+
+def api_otp_send_view(request):
+    """
+    Public/Protected endpoint to dispatch OTP for signup, password reset, or contact change.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        from . import otp_service
+        data = body(request)
+        target_type = (data.get('target_type') or 'email').strip().lower()
+        target_value = (data.get('target_value') or data.get('email') or data.get('mobile') or data.get('phone') or '').strip()
+        purpose = (data.get('purpose') or OTPVerification.PURPOSE_SIGNUP).strip()
+        ip_addr = get_client_ip(request)
+
+        if not target_value:
+            raise ApiError(400, f'A valid {target_type} is required.')
+
+        user = None
+        org = None
+
+        if purpose == OTPVerification.PURPOSE_SIGNUP:
+            norm_email = otp_service.normalize_email(target_value) if target_type == 'email' else ''
+            if norm_email:
+                if User.objects.filter(email__iexact=norm_email).exists() or UserProfile.objects.filter(normalized_email=norm_email).exists():
+                    raise ApiError(400, 'An account with this email address already exists. Please log in instead.')
+            elif target_type == 'mobile':
+                clean_phone = otp_service.normalize_phone(target_value)
+                if UserProfile.objects.filter(phone=clean_phone).exists():
+                    raise ApiError(400, 'An account with this mobile number already exists. Please log in instead.')
+
+        elif purpose == OTPVerification.PURPOSE_FORGOT_PASSWORD:
+            norm_email = otp_service.normalize_email(target_value)
+            user = User.objects.filter(email__iexact=norm_email).first()
+            if not user:
+                # Security: do not leak whether user exists, return generic success
+                return j({
+                    'status': 'ok',
+                    'message': 'If an account exists with this email address, a verification code has been dispatched.',
+                    'masked_target': otp_service.mask_identifier(norm_email, 'email'),
+                    'cooldown_seconds': getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60),
+                })
+            org = getattr(getattr(user, 'profile', None), 'organization', None)
+
+        elif purpose in (OTPVerification.PURPOSE_CHANGE_EMAIL, OTPVerification.PURPOSE_CHANGE_MOBILE, OTPVerification.PURPOSE_VERIFY_MOBILE):
+            if not request.user or not request.user.is_authenticated:
+                raise ApiError(401, 'Authentication required to update contact details.')
+            user = request.user
+            org = get_user_org(user, request)
+            if purpose == OTPVerification.PURPOSE_CHANGE_EMAIL:
+                norm_email = otp_service.normalize_email(target_value)
+                if User.objects.filter(email__iexact=norm_email).exclude(pk=user.pk).exists() or UserProfile.objects.filter(normalized_email=norm_email).exclude(user=user).exists():
+                    raise ApiError(400, 'This email address is already associated with another account.')
+            elif purpose in (OTPVerification.PURPOSE_CHANGE_MOBILE, OTPVerification.PURPOSE_VERIFY_MOBILE):
+                clean_phone = otp_service.normalize_phone(target_value)
+                if UserProfile.objects.filter(phone=clean_phone).exclude(user=user).exists():
+                    raise ApiError(400, 'This mobile number is already associated with another account.')
+
+        record, dispatch_info = otp_service.create_and_send_otp(
+            target_type=target_type,
+            target_value=target_value,
+            purpose=purpose,
+            user=user,
+            organization=org,
+            metadata=data.get('metadata') or {},
+            ip_address=ip_addr,
+            recipient_name=user.get_full_name() if user else (data.get('name') or '')
+        )
+
+        return j({
+            'status': 'ok',
+            'message': f"Verification code sent to {dispatch_info['masked_target']}.",
+            'masked_target': dispatch_info['masked_target'],
+            'target_type': target_type,
+            'purpose': purpose,
+            'expires_in_seconds': dispatch_info['expires_in_seconds'],
+            'cooldown_seconds': dispatch_info['cooldown_seconds'],
+        })
+    except otp_service.OTPServiceError as oe:
+        return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)
+
+
+def api_otp_verify_view(request):
+    """
+    Public/Protected endpoint to verify user-entered OTP.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        from . import otp_service
+        data = body(request)
+        target_value = (data.get('target_value') or data.get('email') or data.get('mobile') or data.get('phone') or '').strip()
+        purpose = (data.get('purpose') or OTPVerification.PURPOSE_SIGNUP).strip()
+        otp_code = str(data.get('otp') or data.get('code') or '').strip()
+
+        if not target_value:
+            raise ApiError(400, 'Target email or mobile number is required.')
+        if not otp_code:
+            raise ApiError(400, 'Please enter the 6-digit verification code.')
+
+        success, msg, record = otp_service.verify_otp_attempt(target_value, purpose, otp_code)
+        if not success:
+            return j({'error': msg, 'message': msg, 'verified': False}, 400)
+
+        result = {
+            'status': 'ok',
+            'verified': True,
+            'message': msg,
+            'token': record.token,
+            'purpose': purpose,
+        }
+
+        # Handle specific actions on verified OTP
+        if purpose == OTPVerification.PURPOSE_SIGNUP:
+            target_norm = otp_service.normalize_email(target_value)
+            user = User.objects.filter(email__iexact=target_norm).first()
+            if user:
+                user.is_active = True
+                user.save(update_fields=['is_active'])
+                profile = getattr(user, 'profile', None)
+                if profile:
+                    profile.is_email_verified = True
+                    profile.status = UserProfile.STATUS_ACTIVE
+                    profile.save(update_fields=['is_email_verified', 'status'])
+                from django.contrib.auth import login as auth_login
+                try:
+                    auth_login(request, user)
+                except Exception:
+                    pass
+                result['user_id'] = user.id
+                result['redirect'] = '/'
+                result['message'] = 'Account verified and activated successfully!'
+
+        elif purpose == OTPVerification.PURPOSE_FORGOT_PASSWORD:
+            result['reset_token'] = record.token
+
+        elif purpose == OTPVerification.PURPOSE_CHANGE_EMAIL:
+            if request.user and request.user.is_authenticated:
+                norm_email = otp_service.normalize_email(target_value)
+                request.user.email = norm_email
+                request.user.save(update_fields=['email'])
+                profile = getattr(request.user, 'profile', None)
+                if profile:
+                    profile.normalized_email = norm_email
+                    profile.is_email_verified = True
+                    profile.save(update_fields=['normalized_email', 'is_email_verified'])
+                result['message'] = 'Email address verified and updated successfully.'
+
+        elif purpose in (OTPVerification.PURPOSE_CHANGE_MOBILE, OTPVerification.PURPOSE_VERIFY_MOBILE):
+            if request.user and request.user.is_authenticated:
+                clean_phone = otp_service.normalize_phone(target_value)
+                profile = getattr(request.user, 'profile', None)
+                if profile:
+                    profile.phone = clean_phone
+                    profile.is_mobile_verified = True
+                    profile.save(update_fields=['phone', 'is_mobile_verified'])
+                result['message'] = 'Mobile number verified and updated successfully.'
+
+        return j(result)
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)
+
+
+def api_otp_resend_view(request):
+    """
+    Resend verification code with cooldown and rate-limit enforcement.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    return api_otp_send_view(request)
+
+
+def api_register_with_otp_view(request):
+    """
+    Registration flow that validates inputs, checks email/phone duplicates,
+    creates pending account, and dispatches 6-digit email OTP.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        from . import otp_service
+        data = body(request)
+        email = otp_service.normalize_email(data.get('email') or data.get('signup_email') or '')
+        mobile = otp_service.normalize_phone(data.get('mobile') or data.get('phone') or data.get('signup_mobile') or '')
+        username = (data.get('username') or data.get('signup_username') or '').strip()
+        password = data.get('password') or data.get('signup_password') or ''
+        confirm_password = data.get('confirm_password') or data.get('signup_confirm_password') or ''
+        name = (data.get('name') or data.get('signup_name') or '').strip()
+        org_name = (data.get('org_name') or data.get('signup_org') or '').strip()
+
+        if not email:
+            raise ApiError(400, 'Email address is required.', {'email': 'Email address is required.'})
+        if '@' not in email or '.' not in email.split('@')[-1]:
+            raise ApiError(400, 'Please enter a valid email address.', {'email': 'Please enter a valid email address.'})
+        if not username or not password:
+            raise ApiError(400, 'Username and password are required.')
+        if len(username) < 3:
+            raise ApiError(400, 'Username must be at least 3 characters long.')
+        if len(password) < 4:
+            raise ApiError(400, 'Password must be at least 4 characters long.')
+        if confirm_password and password != confirm_password:
+            raise ApiError(400, 'Passwords do not match.', {'password': 'Passwords do not match.'})
+
+        if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
+            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
+
+        if mobile:
+            if len(re.sub(r'\D', '', mobile)) < 7:
+                raise ApiError(400, 'Please enter a valid mobile number.', {'mobile': 'Please enter a valid mobile number.'})
+            if UserProfile.objects.filter(phone=mobile).exists():
+                raise ApiError(400, 'An account with this mobile number already exists. Please log in instead.', {'mobile': 'An account with this mobile number already exists. Please log in instead.'})
+
+        if User.objects.filter(username__iexact=username).exists():
+            raise ApiError(400, f'Username "{username}" is already registered. Please sign in.', {'username': f'Username "{username}" is already registered. Please sign in.'})
+
+        # Create user in inactive status until email OTP is verified
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=name,
+                is_active=False
+            )
+            company_title = org_name or (f"{name}'s Company" if name else f"{username}'s Company")
+            org = Organization.objects.create(
+                name=company_title,
+                owner=user,
+                email=email,
+                phone=mobile,
+                state='Kerala'
+            )
+            profile = UserProfile.objects.create(
+                user=user,
+                role=UserProfile.ADMIN,
+                organization=org,
+                normalized_email=email,
+                phone=mobile,
+                status=UserProfile.STATUS_INACTIVE,
+                is_email_verified=False,
+                is_mobile_verified=False
+            )
+            services.ensure_default_accounts(org)
+
+            ip_addr = get_client_ip(request)
+            record, dispatch_info = otp_service.create_and_send_otp(
+                target_type='email',
+                target_value=email,
+                purpose=OTPVerification.PURPOSE_SIGNUP,
+                user=user,
+                organization=org,
+                metadata={'username': username, 'name': name, 'phone': mobile},
+                ip_address=ip_addr,
+                recipient_name=name
+            )
+
+        return j({
+            'status': 'ok',
+            'step': 'verify_otp',
+            'email': email,
+            'mobile': mobile,
+            'masked_target': dispatch_info['masked_target'],
+            'expires_in_seconds': dispatch_info['expires_in_seconds'],
+            'cooldown_seconds': dispatch_info['cooldown_seconds'],
+            'message': f"Account registered. A 6-digit verification code has been sent to {dispatch_info['masked_target']}."
+        }, 201)
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)
+
+
+def api_signup_verify_otp_view(request):
+    """
+    Verifies email OTP for signup and activates the user account.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    return api_otp_verify_view(request)
+
+
+def api_forgot_password_view(request):
+    """
+    Dispatches 6-digit OTP to user's registered email for password reset.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        from . import otp_service
+        data = body(request)
+        email = otp_service.normalize_email(data.get('email') or '')
+        if not email or '@' not in email:
+            raise ApiError(400, 'A valid email address is required.')
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            # Generic response to prevent user enumeration
+            return j({
+                'status': 'ok',
+                'message': 'If an account exists with this email address, a verification code has been sent.',
+                'masked_target': otp_service.mask_identifier(email, 'email'),
+                'cooldown_seconds': getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60),
+            })
+
+        org = getattr(getattr(user, 'profile', None), 'organization', None)
+        ip_addr = get_client_ip(request)
+
+        record, dispatch_info = otp_service.create_and_send_otp(
+            target_type='email',
+            target_value=email,
+            purpose=OTPVerification.PURPOSE_FORGOT_PASSWORD,
+            user=user,
+            organization=org,
+            ip_address=ip_addr,
+            recipient_name=user.get_full_name() or user.username
+        )
+
+        return j({
+            'status': 'ok',
+            'message': f"A 6-digit verification code has been sent to {dispatch_info['masked_target']}.",
+            'masked_target': dispatch_info['masked_target'],
+            'expires_in_seconds': dispatch_info['expires_in_seconds'],
+            'cooldown_seconds': dispatch_info['cooldown_seconds'],
+        })
+    except otp_service.OTPServiceError as oe:
+        return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)
+
+
+def api_reset_password_view(request):
+    """
+    Resets password after verifying reset token.
+    Invalidates existing user sessions and dispatches confirmation email.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    try:
+        from . import otp_service
+        data = body(request)
+        email = otp_service.normalize_email(data.get('email') or '')
+        reset_token = (data.get('reset_token') or data.get('token') or '').strip()
+        new_password = data.get('new_password') or data.get('password') or ''
+        confirm_password = data.get('confirm_password') or ''
+
+        if not email or not reset_token:
+            raise ApiError(400, 'Email and verification token are required.')
+        if not new_password:
+            raise ApiError(400, 'New password is required.')
+        if len(new_password) < 6:
+            raise ApiError(400, 'Password must be at least 6 characters long.')
+        if confirm_password and new_password != confirm_password:
+            raise ApiError(400, 'Passwords do not match.')
+
+        # Validate reset token against verified record within 15 minutes
+        fifteen_mins_ago = timezone.now() - datetime.timedelta(minutes=15)
+        record = OTPVerification.objects.filter(
+            target_value=email,
+            purpose=OTPVerification.PURPOSE_FORGOT_PASSWORD,
+            token=reset_token,
+            is_verified=True,
+            created_at__gte=fifteen_mins_ago
+        ).first()
+
+        if not record:
+            raise ApiError(400, 'The password reset token is invalid or has expired. Please request a new verification code.')
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            raise ApiError(404, 'User account not found.')
+
+        user.set_password(new_password)
+        user.save()
+
+        # Invalidate reset token
+        record.token = ''
+        record.save(update_fields=['token'])
+
+        # Invalidate existing user sessions
+        from django.contrib.sessions.models import Session
+        for s in Session.objects.all():
+            try:
+                s_data = s.get_decoded()
+                if str(s_data.get('_auth_user_id')) == str(user.id):
+                    s.delete()
+            except Exception:
+                pass
+
+        # Send password change confirmation notification
+        try:
+            subj = "Password Changed Successfully - CONVOSIS Books"
+            msg = f"Hello {user.get_full_name() or user.username},\n\nYour password for CONVOSIS Books was changed successfully on {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}.\n\nIf you did not perform this change, please contact your administrator immediately."
+            otp_service.send_brevo_email(user.email, subj, f"<p>{msg.replace(chr(10), '<br>')}</p>", msg)
+        except Exception:
+            pass
+
+        services.log_audit(user, 'reset_password', 'User', user.id, f"User {user.username} reset their password via OTP")
+
+        return j({
+            'status': 'ok',
+            'message': 'Password has been reset successfully. Please log in with your new password.',
+            'redirect': '/accounts/login/'
+        })
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)
+
+
+def api_change_contact_view(request):
+    """
+    Authenticated endpoint to initiate or verify change of email / mobile number via OTP.
+    """
+    if request.method != 'POST':
+        return j({'error': 'Method not allowed.'}, 405)
+    if not request.user or not request.user.is_authenticated:
+        return j({'error': 'Authentication required.'}, 401)
+
+    try:
+        from . import otp_service
+        data = body(request)
+        contact_type = (data.get('type') or 'email').strip().lower()
+        step = (data.get('step') or 'request').strip().lower()
+        new_val = (data.get('new_value') or data.get('value') or '').strip()
+        user = request.user
+        profile = getattr(user, 'profile', None)
+        org = get_user_org(user, request)
+        ip_addr = get_client_ip(request)
+
+        if step == 'request':
+            if contact_type == 'email':
+                norm_email = otp_service.normalize_email(new_val)
+                if not norm_email or '@' not in norm_email:
+                    raise ApiError(400, 'A valid email address is required.')
+                if User.objects.filter(email__iexact=norm_email).exclude(pk=user.pk).exists() or UserProfile.objects.filter(normalized_email=norm_email).exclude(user=user).exists():
+                    raise ApiError(400, 'This email address is already in use by another account.')
+
+                record, dispatch_info = otp_service.create_and_send_otp(
+                    target_type='email',
+                    target_value=norm_email,
+                    purpose=OTPVerification.PURPOSE_CHANGE_EMAIL,
+                    user=user,
+                    organization=org,
+                    ip_address=ip_addr,
+                    recipient_name=user.get_full_name() or user.username
+                )
+                return j({
+                    'status': 'ok',
+                    'message': f"Verification code sent to {dispatch_info['masked_target']}.",
+                    'masked_target': dispatch_info['masked_target'],
+                    'cooldown_seconds': dispatch_info['cooldown_seconds'],
+                })
+
+            elif contact_type in ('mobile', 'phone'):
+                clean_phone = otp_service.normalize_phone(new_val)
+                if not clean_phone or len(re.sub(r'\D', '', clean_phone)) < 7:
+                    raise ApiError(400, 'A valid mobile number is required.')
+                if UserProfile.objects.filter(phone=clean_phone).exclude(user=user).exists():
+                    raise ApiError(400, 'This mobile number is already in use by another account.')
+
+                record, dispatch_info = otp_service.create_and_send_otp(
+                    target_type='mobile',
+                    target_value=clean_phone,
+                    purpose=OTPVerification.PURPOSE_CHANGE_MOBILE,
+                    user=user,
+                    organization=org,
+                    ip_address=ip_addr,
+                    recipient_name=user.get_full_name() or user.username
+                )
+                return j({
+                    'status': 'ok',
+                    'message': f"SMS verification code sent to {dispatch_info['masked_target']}.",
+                    'masked_target': dispatch_info['masked_target'],
+                    'cooldown_seconds': dispatch_info['cooldown_seconds'],
+                })
+            else:
+                raise ApiError(400, f'Unsupported contact type: {contact_type}')
+
+        elif step == 'verify':
+            otp_code = str(data.get('otp') or data.get('code') or '').strip()
+            if not otp_code:
+                raise ApiError(400, 'Please enter the 6-digit verification code.')
+
+            purpose = OTPVerification.PURPOSE_CHANGE_EMAIL if contact_type == 'email' else OTPVerification.PURPOSE_CHANGE_MOBILE
+            target_val = otp_service.normalize_email(new_val) if contact_type == 'email' else otp_service.normalize_phone(new_val)
+
+            success, msg, record = otp_service.verify_otp_attempt(target_val, purpose, otp_code)
+            if not success:
+                return j({'error': msg, 'message': msg, 'verified': False}, 400)
+
+            if contact_type == 'email':
+                user.email = target_val
+                user.save(update_fields=['email'])
+                if profile:
+                    profile.normalized_email = target_val
+                    profile.is_email_verified = True
+                    profile.save(update_fields=['normalized_email', 'is_email_verified'])
+                services.log_audit(user, 'update_email', 'User', user.id, f"User {user.username} updated email to {target_val} via OTP")
+                return j({
+                    'status': 'ok',
+                    'verified': True,
+                    'message': 'Email address verified and updated successfully.',
+                    'new_email': target_val
+                })
+            else:
+                if profile:
+                    profile.phone = target_val
+                    profile.is_mobile_verified = True
+                    profile.save(update_fields=['phone', 'is_mobile_verified'])
+                services.log_audit(user, 'update_mobile', 'User', user.id, f"User {user.username} updated phone to {target_val} via SMS OTP")
+                return j({
+                    'status': 'ok',
+                    'verified': True,
+                    'message': 'Mobile number verified and updated successfully.',
+                    'new_mobile': target_val
+                })
+        else:
+            raise ApiError(400, f'Unsupported step: {step}')
+
+    except otp_service.OTPServiceError as oe:
+        return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
+    except ApiError as ae:
+        return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
+    except Exception as exc:
+        return j({'error': str(exc), 'message': str(exc)}, 400)

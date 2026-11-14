@@ -1544,6 +1544,8 @@ class UserProfile(models.Model):
     backup_codes = models.JSONField(default=list, blank=True)
     last_active_ip = models.CharField(max_length=50, blank=True)
     is_locked = models.BooleanField(default=False)
+    is_email_verified = models.BooleanField(default=False)
+    is_mobile_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1583,6 +1585,54 @@ class UserProfile(models.Model):
     def __str__(self):
         r_name = self.custom_role.name if self.custom_role else self.role
         return f'{self.user.username} ({r_name})'
+
+class OTPVerification(models.Model):
+    PURPOSE_SIGNUP = 'signup'
+    PURPOSE_FORGOT_PASSWORD = 'forgot_password'
+    PURPOSE_CHANGE_EMAIL = 'change_email'
+    PURPOSE_CHANGE_MOBILE = 'change_mobile'
+    PURPOSE_VERIFY_MOBILE = 'verify_mobile'
+
+    PURPOSE_CHOICES = [
+        (PURPOSE_SIGNUP, 'Signup Verification'),
+        (PURPOSE_FORGOT_PASSWORD, 'Forgot Password'),
+        (PURPOSE_CHANGE_EMAIL, 'Change Email'),
+        (PURPOSE_CHANGE_MOBILE, 'Change Mobile Number'),
+        (PURPOSE_VERIFY_MOBILE, 'Verify Mobile Number'),
+    ]
+
+    TARGET_EMAIL = 'email'
+    TARGET_MOBILE = 'mobile'
+    TARGET_CHOICES = [
+        (TARGET_EMAIL, 'Email'),
+        (TARGET_MOBILE, 'Mobile Number'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='otp_verifications')
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='otp_verifications')
+    target_type = models.CharField(max_length=10, choices=TARGET_CHOICES, default=TARGET_EMAIL, db_index=True)
+    target_value = models.CharField(max_length=254, db_index=True)
+    purpose = models.CharField(max_length=32, choices=PURPOSE_CHOICES, db_index=True)
+    hashed_otp = models.CharField(max_length=255)
+    token = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+    is_verified = models.BooleanField(default=False, db_index=True)
+    is_consumed = models.BooleanField(default=False, db_index=True)
+    failed_attempts = models.IntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['target_value', 'purpose', 'is_consumed', 'is_verified']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"OTP({self.purpose}, {self.target_type}:{self.target_value}, verified={self.is_verified})"
 
 class OrganizationMembership(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)

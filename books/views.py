@@ -70,6 +70,7 @@ def login_view(request, tab=None):
             username = request.POST.get('signup_username', '').strip()
             name = request.POST.get('signup_name', '').strip()
             raw_email = request.POST.get('signup_email', '').strip()
+            mobile = request.POST.get('signup_mobile', '').strip()
             normalized_email = raw_email.lower()
             org_name = request.POST.get('signup_org', '').strip()
             password = request.POST.get('signup_password', '')
@@ -89,6 +90,8 @@ def login_view(request, tab=None):
                 signup_error = 'Passwords do not match.'
             elif User.objects.filter(email__iexact=normalized_email).exists() or UserProfile.objects.filter(normalized_email=normalized_email).exists():
                 signup_error = 'An account with this email address already exists. Please log in instead.'
+            elif mobile and UserProfile.objects.filter(phone=mobile).exists():
+                signup_error = 'An account with this mobile number already exists. Please log in instead.'
             elif User.objects.filter(username__iexact=username).exists():
                 signup_error = f'Username "{username}" is already registered. Please sign in.'
             else:
@@ -97,6 +100,8 @@ def login_view(request, tab=None):
                         # Final concurrency check inside transaction lock
                         if User.objects.filter(email__iexact=normalized_email).exists() or UserProfile.objects.filter(normalized_email=normalized_email).exists():
                             raise ValidationError('An account with this email address already exists. Please log in instead.')
+                        if mobile and UserProfile.objects.filter(phone=mobile).exists():
+                            raise ValidationError('An account with this mobile number already exists. Please log in instead.')
                         if User.objects.filter(username__iexact=username).exists():
                             raise ValidationError(f'Username "{username}" is already registered. Please sign in.')
 
@@ -111,12 +116,14 @@ def login_view(request, tab=None):
                             name=company_title,
                             owner=user,
                             email=normalized_email,
+                            phone=mobile,
                             state='Kerala'
                         )
                         UserProfile.objects.create(
                             user=user,
                             role=UserProfile.ADMIN,
                             organization=org,
+                            phone=mobile,
                             normalized_email=normalized_email
                         )
                         from . import services
@@ -145,6 +152,7 @@ def login_view(request, tab=None):
                     'signup_username': username,
                     'signup_name': name,
                     'signup_email': raw_email,
+                    'signup_mobile': mobile,
                     'signup_org': org_name,
                     'next': request.GET.get('next') or request.POST.get('next') or '/',
                 }, status=status_code)

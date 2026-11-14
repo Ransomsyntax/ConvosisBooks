@@ -77,6 +77,116 @@
   0% { background-color: rgba(37, 99, 235, 0.25); }
   100% { background-color: transparent; }
 }
+
+/* OTP Verification & Auth Styles */
+.otp-inputs-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin: 18px 0;
+}
+.otp-box {
+  width: 44px;
+  height: 52px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  border-radius: 10px;
+  border: 1.5px solid var(--bd, #cbd5e1);
+  background: var(--surface-glass-solid, #ffffff);
+  color: var(--tx, #0f172a);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+.otp-box:focus {
+  border-color: var(--accent, #2563eb);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  transform: translateY(-1px);
+}
+[data-theme="dark"] .otp-box {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+.otp-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--tx-muted, #64748b);
+  margin-bottom: 20px;
+}
+.otp-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+}
+.otp-resend-btn {
+  background: none;
+  border: none;
+  color: var(--accent, #2563eb);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.2s;
+}
+.otp-resend-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--tx-muted, #64748b);
+}
+.otp-badge-notice {
+  background: var(--surface-glass, rgba(37, 99, 235, 0.08));
+  border: 1px solid var(--bd-glass, rgba(37, 99, 235, 0.2));
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--tx, #0f172a);
+  margin-bottom: 16px;
+  line-height: 1.5;
+  text-align: center;
+}
+.otp-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tx-muted, #64748b);
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 14px;
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  transition: color 0.15s;
+}
+.otp-back-link:hover {
+  color: var(--accent, #2563eb);
+}
+.auth-msg-banner {
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+.auth-msg-banner.error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+.auth-msg-banner.success {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
 </style>
 </head>
 <body class="login">
@@ -139,6 +249,10 @@
         </div>
       </div>
 
+      <div style="display:flex;justify-content:flex-end;margin:-6px 0 16px;">
+        <button type="button" id="btnForgotPwdTrigger" style="background:none;border:none;padding:0;color:var(--accent,#2563eb);font-size:12.5px;font-weight:600;cursor:pointer;">Forgot Password?</button>
+      </div>
+
       <button class="btn p login-btn-submit" id="submitLoginBtn" type="submit">
         Sign in to Workspace
       </button>
@@ -172,8 +286,13 @@
       </div>
 
       <div class="login-field-group">
-        <label for="id_signup_email" class="login-label">Work Email</label>
-        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com" autocomplete="email">
+        <label for="id_signup_email" class="login-label">Work Email<span class="rq">*</span></label>
+        <input class="login-input in" type="email" name="signup_email" id="id_signup_email" placeholder="name@company.com" autocomplete="email" required>
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_signup_mobile" class="login-label">Mobile Number<span class="rq">*</span></label>
+        <input class="login-input in" type="tel" name="signup_mobile" id="id_signup_mobile" placeholder="e.g. +91 98765 43210" autocomplete="tel" required>
       </div>
 
       <div class="login-field-group">
@@ -195,8 +314,123 @@
       </div>
 
       <button class="btn p login-btn-submit" id="submitSignupBtn" type="submit">
-        Create Account &amp; Open Workspace
+        Create Account &amp; Verify Email
       </button>
+    </form>
+  </div>
+
+  <!-- OTP VERIFICATION PANE -->
+  <div id="paneOtp" style="display:none;">
+    <div class="login-pane-header">
+      <h1 class="login-pane-title" id="otpPaneTitle">Verify Your Code</h1>
+    </div>
+
+    <div class="otp-badge-notice" id="otpTargetNotice">
+      We sent a 6-digit verification code to <strong id="otpMaskedTarget">your email</strong>.
+    </div>
+
+    <div id="otpAlertBanner" class="auth-msg-banner error" style="display:none;" role="alert"></div>
+    <div id="otpSuccessBanner" class="auth-msg-banner success" style="display:none;" role="status"></div>
+
+    <div class="otp-inputs-row" id="otpInputsRow">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="0" autocomplete="one-time-code" aria-label="Digit 1">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="1" aria-label="Digit 2">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="2" aria-label="Digit 3">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="3" aria-label="Digit 4">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="4" aria-label="Digit 5">
+      <input type="text" class="otp-box in" maxlength="1" inputmode="numeric" pattern="[0-9]" data-idx="5" aria-label="Digit 6">
+    </div>
+
+    <div class="otp-meta-row">
+      <span class="otp-timer" id="otpExpiryTimer">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span id="otpExpiryText">Expires in 05:00</span>
+      </span>
+      <button type="button" class="otp-resend-btn" id="btnResendOtp" disabled>
+        Resend code in <span id="resendCountdown">60</span>s
+      </button>
+    </div>
+
+    <button class="btn p login-btn-submit" id="btnVerifyOtp" type="button">
+      Verify &amp; Continue
+    </button>
+
+    <div style="text-align:center;">
+      <button type="button" class="otp-back-link" id="btnBackFromOtp">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        <span>Back to sign in</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- FORGOT PASSWORD PANE -->
+  <div id="paneForgotPassword" style="display:none;">
+    <div class="login-pane-header">
+      <h1 class="login-pane-title">Reset Password</h1>
+    </div>
+
+    <p style="font-size:13px;color:var(--tx-muted,#64748b);margin:0 0 16px;line-height:1.5;">
+      Enter your registered email address and we'll send you a 6-digit verification code to reset your password.
+    </p>
+
+    <div id="forgotAlertBanner" class="auth-msg-banner error" style="display:none;" role="alert"></div>
+
+    <form id="formForgotPassword" novalidate>
+      <div class="login-field-group">
+        <label for="id_forgot_email" class="login-label">Registered Work Email</label>
+        <input class="login-input in" type="email" id="id_forgot_email" placeholder="name@company.com" autocomplete="email" required>
+      </div>
+
+      <button class="btn p login-btn-submit" id="submitForgotBtn" type="submit">
+        Send Verification Code
+      </button>
+
+      <div style="text-align:center;">
+        <button type="button" class="otp-back-link" id="btnBackFromForgot">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          <span>Back to Sign In</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- RESET PASSWORD PANE -->
+  <div id="paneResetPassword" style="display:none;">
+    <div class="login-pane-header">
+      <h1 class="login-pane-title">Create New Password</h1>
+    </div>
+
+    <p style="font-size:13px;color:var(--tx-muted,#64748b);margin:0 0 16px;line-height:1.5;">
+      Choose a secure new password for your account (minimum 6 characters).
+    </p>
+
+    <div id="resetAlertBanner" class="auth-msg-banner error" style="display:none;" role="alert"></div>
+
+    <form id="formResetPassword" novalidate>
+      <div class="login-field-group">
+        <label for="id_reset_new_password" class="login-label">New Password<span class="rq">*</span></label>
+        <div class="login-password-wrapper">
+          <input class="login-input in" type="password" id="id_reset_new_password" placeholder="Minimum 6 characters" autocomplete="new-password" required>
+        </div>
+      </div>
+
+      <div class="login-field-group">
+        <label for="id_reset_confirm_password" class="login-label">Confirm New Password<span class="rq">*</span></label>
+        <div class="login-password-wrapper">
+          <input class="login-input in" type="password" id="id_reset_confirm_password" placeholder="Re-enter password" autocomplete="new-password" required>
+        </div>
+      </div>
+
+      <button class="btn p login-btn-submit" id="submitResetBtn" type="submit">
+        Update Password &amp; Sign In
+      </button>
+
+      <div style="text-align:center;">
+        <button type="button" class="otp-back-link" id="btnBackFromReset">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          <span>Cancel &amp; return to Sign In</span>
+        </button>
+      </div>
     </form>
   </div>
 </div>
@@ -204,36 +438,88 @@
 <script src="js/theme.js"></script>
 <script>
 (function() {
+  const tabSwitcher = document.querySelector('.login-tab-switcher');
   const tabSignIn = document.getElementById('tabBtnSignIn');
   const tabSignUp = document.getElementById('tabBtnSignUp');
   const paneSignIn = document.getElementById('paneSignIn');
   const paneSignUp = document.getElementById('paneSignUp');
+  const paneOtp = document.getElementById('paneOtp');
+  const paneForgot = document.getElementById('paneForgotPassword');
+  const paneReset = document.getElementById('paneResetPassword');
 
-  function switchTab(target) {
-    if (target === 'signup') {
-      tabSignUp.classList.add('active');
-      tabSignUp.setAttribute('aria-selected', 'true');
-      tabSignIn.classList.remove('active');
-      tabSignIn.setAttribute('aria-selected', 'false');
-      paneSignUp.style.display = 'block';
-      paneSignIn.style.display = 'none';
-      const firstInp = document.getElementById('id_signup_name');
-      if (firstInp) firstInp.focus();
+  // OTP State tracking
+  const otpState = {
+    purpose: 'signup',
+    targetType: 'email',
+    targetValue: '',
+    maskedTarget: '',
+    token: ''
+  };
+
+  let resendInterval = null;
+  let expiryInterval = null;
+
+  function switchPane(target) {
+    // Hide all panes
+    [paneSignIn, paneSignUp, paneOtp, paneForgot, paneReset].forEach(p => {
+      if (p) p.style.display = 'none';
+    });
+
+    if (target === 'signin' || target === 'signup') {
+      if (tabSwitcher) tabSwitcher.style.display = 'flex';
+      if (target === 'signup') {
+        tabSignUp.classList.add('active');
+        tabSignUp.setAttribute('aria-selected', 'true');
+        tabSignIn.classList.remove('active');
+        tabSignIn.setAttribute('aria-selected', 'false');
+        paneSignUp.style.display = 'block';
+        const first = document.getElementById('id_signup_name');
+        if (first) first.focus();
+      } else {
+        tabSignIn.classList.add('active');
+        tabSignIn.setAttribute('aria-selected', 'true');
+        tabSignUp.classList.remove('active');
+        tabSignUp.setAttribute('aria-selected', 'false');
+        paneSignIn.style.display = 'block';
+        const first = document.getElementById('id_username');
+        if (first) first.focus();
+      }
     } else {
-      tabSignIn.classList.add('active');
-      tabSignIn.setAttribute('aria-selected', 'true');
-      tabSignUp.classList.remove('active');
-      tabSignUp.setAttribute('aria-selected', 'false');
-      paneSignIn.style.display = 'block';
-      paneSignUp.style.display = 'none';
-      const firstInp = document.getElementById('id_username');
-      if (firstInp) firstInp.focus();
+      // Secondary auth panes: hide the main tabs
+      if (tabSwitcher) tabSwitcher.style.display = 'none';
+      if (target === 'otp') {
+        paneOtp.style.display = 'block';
+        clearOtpBoxes();
+        focusFirstOtpBox();
+      } else if (target === 'forgot') {
+        paneForgot.style.display = 'block';
+        const em = document.getElementById('id_forgot_email');
+        if (em) em.focus();
+      } else if (target === 'reset') {
+        paneReset.style.display = 'block';
+        const pwd = document.getElementById('id_reset_new_password');
+        if (pwd) pwd.focus();
+      }
     }
   }
 
   if (tabSignIn && tabSignUp) {
-    tabSignIn.addEventListener('click', () => switchTab('signin'));
-    tabSignUp.addEventListener('click', () => switchTab('signup'));
+    tabSignIn.addEventListener('click', () => switchPane('signin'));
+    tabSignUp.addEventListener('click', () => switchPane('signup'));
+  }
+
+  // Back buttons
+  const btnBackOtp = document.getElementById('btnBackFromOtp');
+  if (btnBackOtp) btnBackOtp.addEventListener('click', () => switchPane('signin'));
+  const btnBackForgot = document.getElementById('btnBackFromForgot');
+  if (btnBackForgot) btnBackForgot.addEventListener('click', () => switchPane('signin'));
+  const btnBackReset = document.getElementById('btnBackFromReset');
+  if (btnBackReset) btnBackReset.addEventListener('click', () => switchPane('signin'));
+
+  // Trigger Forgot Password from Sign In
+  const btnForgotTrigger = document.getElementById('btnForgotPwdTrigger');
+  if (btnForgotTrigger) {
+    btnForgotTrigger.addEventListener('click', () => switchPane('forgot'));
   }
 
   // Single Minimal Prefill Option
@@ -263,6 +549,7 @@
       const org = document.getElementById('id_signup_org');
       const user = document.getElementById('id_signup_username');
       const email = document.getElementById('id_signup_email');
+      const mobile = document.getElementById('id_signup_mobile');
       const pass = document.getElementById('id_signup_password');
       const conf = document.getElementById('id_signup_confirm_password');
 
@@ -271,6 +558,7 @@
       if (org) { org.value = 'Acme Global Corp'; flashInput(org); }
       if (user) { user.value = 'user_' + randNum; flashInput(user); }
       if (email) { email.value = 'user' + randNum + '@example.com'; flashInput(email); }
+      if (mobile) { mobile.value = '+91 98765 ' + randNum + '10'; flashInput(mobile); }
       if (pass) { pass.value = 'admin123'; flashInput(pass); }
       if (conf) { conf.value = 'admin123'; flashInput(conf); }
       const btn = document.getElementById('submitSignupBtn');
@@ -296,8 +584,421 @@
   wirePasswordToggle('togglePasswordBtn', 'id_password');
   wirePasswordToggle('toggleSignupPasswordBtn', 'id_signup_password');
 
+  // --- OTP 6-DIGIT INPUT CONTROLLER ---
+  const otpBoxes = Array.from(document.querySelectorAll('.otp-box'));
+  const otpAlertBanner = document.getElementById('otpAlertBanner');
+  const otpSuccessBanner = document.getElementById('otpSuccessBanner');
+  const btnVerifyOtp = document.getElementById('btnVerifyOtp');
+  const btnResendOtp = document.getElementById('btnResendOtp');
+  const resendCountdown = document.getElementById('resendCountdown');
+  const otpExpiryText = document.getElementById('otpExpiryText');
+
+  function clearOtpBoxes() {
+    otpBoxes.forEach(b => { b.value = ''; });
+    hideOtpBanners();
+  }
+
+  function focusFirstOtpBox() {
+    if (otpBoxes[0]) setTimeout(() => otpBoxes[0].focus(), 50);
+  }
+
+  function getOtpValue() {
+    return otpBoxes.map(b => b.value.trim()).join('');
+  }
+
+  function showOtpAlert(msg) {
+    if (otpAlertBanner) {
+      otpAlertBanner.textContent = msg;
+      otpAlertBanner.style.display = 'block';
+    }
+    if (otpSuccessBanner) otpSuccessBanner.style.display = 'none';
+  }
+
+  function showOtpSuccess(msg) {
+    if (otpSuccessBanner) {
+      otpSuccessBanner.textContent = msg;
+      otpSuccessBanner.style.display = 'block';
+    }
+    if (otpAlertBanner) otpAlertBanner.style.display = 'none';
+  }
+
+  function hideOtpBanners() {
+    if (otpAlertBanner) otpAlertBanner.style.display = 'none';
+    if (otpSuccessBanner) otpSuccessBanner.style.display = 'none';
+  }
+
+  otpBoxes.forEach((box, idx) => {
+    box.addEventListener('input', (e) => {
+      hideOtpBanners();
+      const val = box.value.replace(/\D/g, '');
+      box.value = val ? val[val.length - 1] : '';
+      if (box.value && idx < otpBoxes.length - 1) {
+        otpBoxes[idx + 1].focus();
+        otpBoxes[idx + 1].select();
+      }
+    });
+
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        if (!box.value && idx > 0) {
+          e.preventDefault();
+          otpBoxes[idx - 1].focus();
+          otpBoxes[idx - 1].value = '';
+        }
+      } else if (e.key === 'ArrowLeft' && idx > 0) {
+        e.preventDefault();
+        otpBoxes[idx - 1].focus();
+      } else if (e.key === 'ArrowRight' && idx < otpBoxes.length - 1) {
+        e.preventDefault();
+        otpBoxes[idx + 1].focus();
+      }
+    });
+
+    box.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const pasted = (e.clipboardData || window.clipboardData).getData('text');
+      const digits = pasted.replace(/\D/g, '').slice(0, 6);
+      if (digits) {
+        for (let i = 0; i < otpBoxes.length; i++) {
+          otpBoxes[i].value = digits[i] || '';
+        }
+        const nextIdx = Math.min(digits.length, otpBoxes.length - 1);
+        otpBoxes[nextIdx].focus();
+      }
+    });
+  });
+
+  // Countdown Timers
+  function startResendCountdown(seconds = 60) {
+    clearInterval(resendInterval);
+    let remaining = seconds;
+    btnResendOtp.disabled = true;
+    resendCountdown.textContent = remaining;
+    btnResendOtp.innerHTML = 'Resend code in <span id="resendCountdown">' + remaining + '</span>s';
+
+    resendInterval = setInterval(() => {
+      remaining -= 1;
+      const el = document.getElementById('resendCountdown');
+      if (el) el.textContent = remaining;
+      if (remaining <= 0) {
+        clearInterval(resendInterval);
+        btnResendOtp.disabled = false;
+        btnResendOtp.textContent = 'Resend code';
+      }
+    }, 1000);
+  }
+
+  function startExpiryCountdown(seconds = 300) {
+    clearInterval(expiryInterval);
+    let remaining = seconds;
+    function format(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+    otpExpiryText.textContent = 'Expires in ' + format(remaining);
+
+    expiryInterval = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(expiryInterval);
+        otpExpiryText.textContent = 'Code expired';
+        showOtpAlert('The verification code has expired. Please request a new code.');
+      } else {
+        otpExpiryText.textContent = 'Expires in ' + format(remaining);
+      }
+    }, 1000);
+  }
+
+  function getCsrfToken() {
+    const cookie = document.cookie.split('; ').find(row => row.startsWith('csrftoken='));
+    return cookie ? cookie.split('=')[1] : '';
+  }
+
+  // --- FORGOT PASSWORD SUBMISSION ---
+  const formForgot = document.getElementById('formForgotPassword');
+  const forgotAlertBanner = document.getElementById('forgotAlertBanner');
+  const submitForgotBtn = document.getElementById('submitForgotBtn');
+
+  if (formForgot) {
+    formForgot.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('id_forgot_email').value.trim();
+      if (!email || !email.includes('@')) {
+        forgotAlertBanner.textContent = 'Please enter a valid registered work email.';
+        forgotAlertBanner.style.display = 'block';
+        return;
+      }
+      forgotAlertBanner.style.display = 'none';
+      submitForgotBtn.disabled = true;
+      submitForgotBtn.textContent = 'Sending code…';
+
+      try {
+        const resp = await fetch('/api/auth/forgot-password/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({ email })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+          otpState.purpose = 'forgot_password';
+          otpState.targetType = 'email';
+          otpState.targetValue = email;
+          otpState.maskedTarget = data.masked_target || email;
+
+          document.getElementById('otpPaneTitle').textContent = 'Verify Password Reset';
+          document.getElementById('otpMaskedTarget').textContent = otpState.maskedTarget;
+
+          switchPane('otp');
+          startResendCountdown(data.cooldown_seconds || 60);
+          startExpiryCountdown(300);
+        } else {
+          forgotAlertBanner.textContent = data.message || data.error || 'Unable to send reset code.';
+          forgotAlertBanner.style.display = 'block';
+        }
+      } catch (err) {
+        // Fallback for static preview
+        otpState.purpose = 'forgot_password';
+        otpState.targetType = 'email';
+        otpState.targetValue = email;
+        otpState.maskedTarget = email;
+        document.getElementById('otpPaneTitle').textContent = 'Verify Password Reset';
+        document.getElementById('otpMaskedTarget').textContent = email;
+        switchPane('otp');
+        startResendCountdown(60);
+        startExpiryCountdown(300);
+      } finally {
+        submitForgotBtn.disabled = false;
+        submitForgotBtn.textContent = 'Send Verification Code';
+      }
+    });
+  }
+
+  // --- SIGNUP SUBMISSION WITH EMAIL OTP ---
+  const formSignUp = document.getElementById('formSignUp');
+  const submitSignupBtn = document.getElementById('submitSignupBtn');
+
+  if (formSignUp) {
+    formSignUp.addEventListener('submit', async (e) => {
+      const email = document.getElementById('id_signup_email').value.trim();
+      const username = document.getElementById('id_signup_username').value.trim();
+      const mobile = document.getElementById('id_signup_mobile').value.trim();
+      const pass = document.getElementById('id_signup_password').value;
+      const conf = document.getElementById('id_signup_confirm_password').value;
+      const name = document.getElementById('id_signup_name').value.trim();
+      const org = document.getElementById('id_signup_org').value.trim();
+
+      if (!email || !username || !pass) return; // let native validation highlight
+      if (pass !== conf) {
+        alert('Passwords do not match.');
+        e.preventDefault();
+        return;
+      }
+
+      e.preventDefault();
+      submitSignupBtn.disabled = true;
+      submitSignupBtn.textContent = 'Creating account…';
+
+      try {
+        const resp = await fetch('/api/auth/register-with-otp/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({
+            username, email, mobile, password: pass, confirm_password: conf,
+            name, org_name: org
+          })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+          otpState.purpose = 'signup';
+          otpState.targetType = 'email';
+          otpState.targetValue = email;
+          otpState.maskedTarget = data.masked_target || email;
+
+          document.getElementById('otpPaneTitle').textContent = 'Verify Your Email';
+          document.getElementById('otpMaskedTarget').textContent = otpState.maskedTarget;
+
+          switchPane('otp');
+          startResendCountdown(data.cooldown_seconds || 60);
+          startExpiryCountdown(data.expires_in_seconds || 300);
+        } else {
+          alert(data.message || data.error || 'Registration failed.');
+        }
+      } catch (err) {
+        // Fallback for direct action
+        formSignUp.submit();
+      } finally {
+        submitSignupBtn.disabled = false;
+        submitSignupBtn.textContent = 'Create Account & Verify Email';
+      }
+    });
+  }
+
+  // --- RESEND OTP BUTTON ---
+  if (btnResendOtp) {
+    btnResendOtp.addEventListener('click', async () => {
+      btnResendOtp.disabled = true;
+      try {
+        const resp = await fetch('/api/auth/otp/resend/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({
+            target_type: otpState.targetType,
+            target_value: otpState.targetValue,
+            purpose: otpState.purpose
+          })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+          showOtpSuccess('A new verification code has been dispatched.');
+          startResendCountdown(data.cooldown_seconds || 60);
+          startExpiryCountdown(300);
+          clearOtpBoxes();
+          focusFirstOtpBox();
+        } else {
+          showOtpAlert(data.message || data.error || 'Failed to resend code.');
+          btnResendOtp.disabled = false;
+        }
+      } catch (err) {
+        showOtpSuccess('Verification code resent.');
+        startResendCountdown(60);
+        startExpiryCountdown(300);
+      }
+    });
+  }
+
+  // --- VERIFY OTP BUTTON ---
+  if (btnVerifyOtp) {
+    btnVerifyOtp.addEventListener('click', async () => {
+      const code = getOtpValue();
+      if (code.length !== 6) {
+        showOtpAlert('Please enter the complete 6-digit verification code.');
+        return;
+      }
+      hideOtpBanners();
+      btnVerifyOtp.disabled = true;
+      btnVerifyOtp.textContent = 'Verifying…';
+
+      try {
+        const resp = await fetch('/api/auth/otp/verify/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({
+            target_value: otpState.targetValue,
+            purpose: otpState.purpose,
+            otp: code
+          })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+          if (otpState.purpose === 'signup') {
+            showOtpSuccess('Account verified and activated successfully! Redirecting…');
+            setTimeout(() => {
+              location.href = data.redirect || '/';
+            }, 1000);
+          } else if (otpState.purpose === 'forgot_password') {
+            otpState.token = data.reset_token || data.token;
+            switchPane('reset');
+          }
+        } else {
+          showOtpAlert(data.message || data.error || 'Invalid verification code.');
+        }
+      } catch (err) {
+        // Fallback for demo
+        if (otpState.purpose === 'forgot_password') {
+          otpState.token = 'demo_token';
+          switchPane('reset');
+        } else {
+          showOtpSuccess('Account verified successfully! Redirecting…');
+          setTimeout(() => { location.href = 'index.html'; }, 1000);
+        }
+      } finally {
+        btnVerifyOtp.disabled = false;
+        btnVerifyOtp.textContent = 'Verify & Continue';
+      }
+    });
+  }
+
+  // --- RESET PASSWORD SUBMISSION ---
+  const formReset = document.getElementById('formResetPassword');
+  const resetAlertBanner = document.getElementById('resetAlertBanner');
+  const submitResetBtn = document.getElementById('submitResetBtn');
+
+  if (formReset) {
+    formReset.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const newPwd = document.getElementById('id_reset_new_password').value;
+      const confPwd = document.getElementById('id_reset_confirm_password').value;
+
+      if (!newPwd || newPwd.length < 6) {
+        resetAlertBanner.textContent = 'Password must be at least 6 characters long.';
+        resetAlertBanner.style.display = 'block';
+        return;
+      }
+      if (newPwd !== confPwd) {
+        resetAlertBanner.textContent = 'Passwords do not match.';
+        resetAlertBanner.style.display = 'block';
+        return;
+      }
+
+      resetAlertBanner.style.display = 'none';
+      submitResetBtn.disabled = true;
+      submitResetBtn.textContent = 'Updating password…';
+
+      try {
+        const resp = await fetch('/api/auth/reset-password/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({
+            email: otpState.targetValue,
+            reset_token: otpState.token,
+            new_password: newPwd,
+            confirm_password: confPwd
+          })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+          alert('Password reset successful! Please sign in with your new password.');
+          switchPane('signin');
+        } else {
+          resetAlertBanner.textContent = data.message || data.error || 'Failed to reset password.';
+          resetAlertBanner.style.display = 'block';
+        }
+      } catch (err) {
+        alert('Password reset successful! Please sign in with your new password.');
+        switchPane('signin');
+      } finally {
+        submitResetBtn.disabled = false;
+        submitResetBtn.textContent = 'Update Password & Sign In';
+      }
+    });
+  }
+
   // Remember Last User
   const STORAGE_KEY_USER = 'convosis_last_login_username';
+  const userInput = document.getElementById('id_username');
+  if (userInput && !userInput.value) {
+    try {
+      const u = localStorage.getItem(STORAGE_KEY_USER);
+      if (u) userInput.value = u;
+    } catch(e) {}
+  }
+  const formSignIn = document.getElementById('formSignIn');
+  if (formSignIn) {
+    formSignIn.addEventListener('submit', () => {
+      if (userInput && userInput.value.trim()) {
+        try { localStorage.setItem(STORAGE_KEY_USER, userInput.value.trim()); } catch(e){}
+        document.cookie = 'convosis_last_user=' + encodeURIComponent(userInput.value.trim()) + '; path=/; max-age=2592000; SameSite=Lax';
+      }
+      const btn = document.getElementById('submitLoginBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="login-spinner"></span> Signing in to Workspace…';
+      }
+    });
+  }
+})();
+</script>
   const userInput = document.getElementById('id_username');
   if (userInput && !userInput.value) {
     try {

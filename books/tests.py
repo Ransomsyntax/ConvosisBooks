@@ -1197,6 +1197,11 @@ class TestQABugReportFixes(BaseAccountingTestCase):
 
 
 class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin_user.is_superuser = False
+        self.admin_user.save(update_fields=['is_superuser'])
+
     def test_django_admin_is_restricted_to_platform_superusers(self):
         staff_user = User.objects.create_user(
             username='tenant_staff_admin',
@@ -1211,7 +1216,12 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(staff_user)
         self.assertEqual(self.client.get('/admin/').status_code, 302)
 
-        self.client.force_login(self.admin_user)
+        platform_user = User.objects.create_superuser(
+            username='platform_admin',
+            email='platform_admin@example.com',
+            password='TestPassword123!',
+        )
+        self.client.force_login(platform_user)
         self.assertEqual(self.client.get('/admin/').status_code, 200)
 
     def test_settings_all_endpoint(self):
@@ -1231,6 +1241,38 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(self.auditor_user)
         res = self.client.get('/api/settings/all/')
         self.assertEqual(res.status_code, 403)
+        organization_settings = self.client.get('/api/settings/organization/')
+        self.assertEqual(organization_settings.status_code, 403)
+        document_number_settings = self.client.post(
+            '/api/settings/doc-number-preferences/',
+            data=json.dumps({
+                'document_type': 'invoices',
+                'transaction_series': 'Default',
+                'prefix': 'INV/',
+                'next_number': 1,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(document_number_settings.status_code, 403)
+        document_number_preferences = self.client.get(
+            '/api/settings/doc-number-preferences/?document_type=invoices'
+        )
+        self.assertEqual(document_number_preferences.status_code, 200)
+
+    def test_settings_do_not_fall_back_to_an_unrelated_organization(self):
+        Organization.objects.create(
+            name='Other Settings Organization',
+            company_id='other-settings-organization',
+        )
+        tenant_user = User.objects.create_user(
+            username='settings_without_org',
+            email='settings_without_org@example.com',
+            password='TestPassword123!',
+        )
+        UserProfile.objects.create(user=tenant_user, role=UserProfile.ADMIN)
+        self.client.force_login(tenant_user)
+        response = self.client.get('/api/settings/all/')
+        self.assertEqual(response.status_code, 403)
 
     def test_users_list_and_invite(self):
         self.client.force_login(self.admin_user)

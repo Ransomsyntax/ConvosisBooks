@@ -9698,11 +9698,18 @@ def serialize_user_entry(u, org):
         'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else ''
     }
 
+def _settings_organization(request):
+    org = get_user_org(request.user, request)
+    if not org:
+        raise ApiError(403, 'An active organization is required to access settings.')
+    return org
+
+
 @api_view
 def settings_all_view(request):
     """Return aggregated settings dashboard data for the user's organization."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
     services.ensure_default_settings(org)
 
     from django.contrib.auth import get_user_model
@@ -9759,7 +9766,7 @@ def settings_all_view(request):
 def settings_roles_view(request, role_id=None):
     """Manage roles: list, create, retrieve, update, delete."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
     services.ensure_default_settings(org)
 
     if request.method == 'GET':
@@ -9854,7 +9861,7 @@ def settings_roles_view(request, role_id=None):
 def settings_role_duplicate_view(request, role_id):
     """Duplicate an existing role into a new customizable role."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     src = Role.objects.filter(organization=org, pk=role_id).first()
     if not src:
@@ -9884,9 +9891,7 @@ def settings_role_duplicate_view(request, role_id):
 def settings_users_view(request, user_id=None):
     """User management: list, add, edit, deactivate, delete."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user, request)
-    if not org:
-        raise ApiError(403, 'Organization required.')
+    org = _settings_organization(request)
 
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -10031,7 +10036,7 @@ def settings_users_view(request, user_id=None):
 def settings_invite_user_view(request):
     """Invite a new user or accountant with role assignment."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
     services.check_subscription_limits(org, 'user')
 
     data = body(request)
@@ -10101,7 +10106,7 @@ def settings_invite_user_view(request):
 def settings_resend_invite_view(request, invite_id):
     """Resend a user invitation."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     inv = UserInvitation.objects.filter(organization=org, pk=invite_id).first()
     if not inv:
@@ -10123,11 +10128,11 @@ def settings_resend_invite_view(request, invite_id):
 @api_view
 def settings_organization_view(request):
     """Get and update complete organization profile and settings."""
-    org = get_user_org(request.user) or Organization.get()
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = _settings_organization(request)
     if request.method == 'GET':
         return j(org_json(org))
 
-    check_permission(request, allowed_roles=[UserProfile.ADMIN])
     data = body(request)
     c = Cleaner(data)
 
@@ -10204,9 +10209,7 @@ def _business_location_payload(location):
 @api_view
 def settings_locations_view(request, location_id=None):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user)
-    if not org:
-        raise ApiError(403, 'An organization is required to manage business locations.')
+    org = _settings_organization(request)
 
     queryset = BusinessLocation.objects.filter(organization=org)
     if request.method == 'GET':
@@ -10314,7 +10317,7 @@ def settings_locations_view(request, location_id=None):
 def settings_currencies_view(request, currency_id=None):
     """Manage currencies."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     if request.method == 'GET':
         qs = CurrencySetting.objects.filter(organization=org).order_by('id')
@@ -10376,7 +10379,7 @@ def settings_currencies_view(request, currency_id=None):
 def settings_payment_terms_view(request, term_id=None):
     """Manage payment terms."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     if request.method == 'GET':
         qs = PaymentTermSetting.objects.filter(organization=org).order_by('days')
@@ -10428,7 +10431,7 @@ def settings_payment_terms_view(request, term_id=None):
 def settings_number_series_view(request):
     """View and configure document numbering series for all modules."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     modules = [
         ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
@@ -10522,7 +10525,7 @@ def _number_series_payload(series):
 @api_view
 def settings_document_number_series_view(request, series_id=None, retainer_only=False):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
     document_types = {
         'invoices', 'retainer_invoices', 'recurring_invoices', 'quotes',
         'sales_orders', 'credit_notes', 'delivery_challans', 'bills',
@@ -10723,7 +10726,9 @@ def doc_number_preferences_view(request):
     Supports auto-generate vs manual mode, custom prefixes with placeholders (${YEAR}, ${FYS_YY}, etc.),
     next sequence number, and fiscal year restarting.
     """
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
+    if request.method != 'GET':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN])
     from .models import DocumentNumberPreference, Sequence
 
     canon_map = {
@@ -10826,7 +10831,7 @@ def doc_number_preferences_view(request):
 def settings_templates_view(request):
     """View and update PDF and invoice templates."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     if request.method == 'GET':
         return j({
@@ -10854,7 +10859,7 @@ def settings_templates_view(request):
 def settings_digital_signature_view(request):
     """View and upload digital signature."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     if request.method == 'GET':
         return j({
@@ -10886,7 +10891,7 @@ def settings_digital_signature_view(request):
 def settings_taxes_view(request):
     """View and update tax settings, tax groups, and direct tax (TDS/TCS) configurations."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN, UserProfile.ACCOUNTANT])
-    org = get_user_org(request.user) or Organization.get()
+    org = _settings_organization(request)
 
     standard_taxes = [
         {'name': 'GST0', 'type': 'Tax Group', 'rate': 0, 'active': True},

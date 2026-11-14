@@ -9454,7 +9454,7 @@ def reports_view(request, name):
     elif name == 'general-ledger':
         acc_id = request.GET.get('account')
         return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org))
-    elif name == 'profit-loss':
+    elif name in ('profit-loss', 'pnl'):
         return j(services.profit_and_loss_report(start, end, org=user_org))
     elif name == 'balance-sheet':
         as_of = request.GET.get('as_of')
@@ -9477,7 +9477,7 @@ def reports_view(request, name):
         return j(services.tax_liability_report(start, end, org=user_org))
     elif name == 'business-overview':
         return j(services.dashboard(start, end, org=user_org))
-    elif name == 'sales-by-customer':
+    elif name in ('sales-by-customer', 'sales-summary'):
         rows = []
         cust_qs = Customer.objects.filter(organization=user_org, active=True) if user_org else Customer.objects.none()
         for cust in cust_qs:
@@ -9500,7 +9500,7 @@ def reports_view(request, name):
                 rows.append({'item': it.name, 'sku': it.sku, 'quantity': qty_sum, 'unit': it.unit, 'total': tot})
         rows.sort(key=lambda x: -x['total'])
         return j({'period': {'start': start, 'end': end}, 'results': rows})
-    elif name == 'purchases-by-vendor':
+    elif name in ('purchases-by-vendor', 'purchase-summary'):
         rows = []
         ven_qs = Vendor.objects.filter(organization=user_org, active=True) if user_org else Vendor.objects.none()
         for ven in ven_qs:
@@ -9656,6 +9656,15 @@ def reports_view(request, name):
         bill_open = list(bill_qs(org=user_org).filter(status='open', paid_sum__lt=F('total')))
         today = timezone.localdate()
         return j({'aging': services._aging(bill_open, today), 'bills': [{'number': b.number, 'vendor': b.vendor.name, 'due_date': b.due_date, 'overdue_days': max(0, (today - b.due_date).days), 'balance': b.total - q2(b.paid_sum)} for b in bill_open]})
+    elif name in ('stock-movement', 'stock-movements'):
+        res_handler = StockMovementResource()
+        qs = res_handler.base_qs().filter(organization=user_org) if user_org else StockMovement.objects.none()
+        qs = res_handler.filter_qs(qs, request)
+        if start and end:
+            qs = qs.filter(date__range=(start, end))
+        return j({'period': {'start': start, 'end': end}, 'results': [res_handler.row(m) for m in qs[:250]]})
+    elif name in ('tax-summary', 'taxes-summary'):
+        return j(services.tax_liability_report(start, end, org=user_org))
     else:
         raise ApiError(404, f"Report '{name}' not found.")
 

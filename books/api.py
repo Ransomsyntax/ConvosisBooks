@@ -6617,6 +6617,32 @@ class ProjectResource(Resource):
                 c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
             rec['customer'] = c.pk
 
+    def _create_project(self, data, user_org):
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to create a project.')
+        c = Cleaner(data)
+        name = c.text('name', required=True, max_len=150)
+        code = c.text('code', max_len=40)
+        cid = c.integer('customer', lo=1)
+        customer = Customer.objects.filter(pk=cid, organization=user_org).first() if cid else None
+        if cid and not customer:
+            c.err('customer', 'Select a customer from your organization.')
+        bmethod = c.text('billing_method', default='hourly_rate', max_len=40)
+        rate = c.number('rate_per_hour', default=Decimal('0.00'))
+        budget = c.number('budget_hours', default=Decimal('0.00'))
+        desc = c.text('description', max_len=1000)
+        c.done()
+        return Project.objects.create(
+            organization=user_org,
+            name=name,
+            code=code,
+            customer=customer,
+            billing_method=bmethod,
+            rate_per_hour=rate,
+            budget_hours=budget,
+            description=desc,
+        )
+
     def row(self, o):
         hours = o.timelogs.aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
         return {
@@ -6628,19 +6654,13 @@ class ProjectResource(Resource):
         }
 
     def create(self, data, user):
-        c = Cleaner(data)
-        name = c.text('name', required=True, max_len=150)
-        code = c.text('code', max_len=40)
-        cid = c.integer('customer', lo=1)
-        cust = Customer.objects.filter(pk=cid).first() if cid else None
-        bmethod = c.text('billing_method', default='hourly_rate', max_len=40)
-        rate = c.number('rate_per_hour', default=Decimal('0.00'))
-        budget = c.number('budget_hours', default=Decimal('0.00'))
-        desc = c.text('description', max_len=1000)
-        c.done()
-        return Project.objects.create(name=name, code=code, customer=cust, billing_method=bmethod, rate_per_hour=rate, budget_hours=budget, description=desc)
+        return self._create_project(data, get_user_org(user))
+
+    def create_for_request(self, data, user, request):
+        return self._create_project(data, get_user_org(user, request))
 
     def update(self, obj, data, user):
+        user_org = obj.organization or get_user_org(user)
         c = Cleaner(data)
         if 'name' in data:
             obj.name = c.text('name', required=True, max_len=150)
@@ -6648,7 +6668,10 @@ class ProjectResource(Resource):
             obj.code = c.text('code', max_len=40)
         if 'customer' in data:
             cid = c.integer('customer', lo=1)
-            obj.customer = Customer.objects.filter(pk=cid).first() if cid else None
+            customer = Customer.objects.filter(pk=cid, organization=user_org).first() if cid and user_org else None
+            if cid and not customer:
+                c.err('customer', 'Select a customer from your organization.')
+            obj.customer = customer
         if 'billing_method' in data:
             obj.billing_method = c.text('billing_method', max_len=40)
         if 'rate_per_hour' in data:
@@ -6671,17 +6694,20 @@ class TimeLogResource(Resource):
     default_ordering = ('-date', '-id')
 
     def prepare_import_record(self, rec):
+        user_org = getattr(self, 'current_user_org', None) or Organization.get()
         proj_val = rec.get('project') or rec.get('project_name') or rec.get('project_code')
         if proj_val and not str(proj_val).isdigit():
             p_str = str(proj_val).strip()
-            p = Project.objects.filter(Q(name__iexact=p_str) | Q(code__iexact=p_str)).first()
+            p = Project.objects.filter(organization=user_org).filter(
+                Q(name__iexact=p_str) | Q(code__iexact=p_str)
+            ).first()
             if not p:
-                p = Project.objects.create(name=p_str)
+                p = Project.objects.create(organization=user_org, name=p_str)
             rec['project'] = p.pk
         elif not proj_val:
-            first_p = Project.objects.first()
+            first_p = Project.objects.filter(organization=user_org).first()
             if not first_p:
-                first_p = Project.objects.create(name='General Project')
+                first_p = Project.objects.create(organization=user_org, name='General Project')
             rec['project'] = first_p.pk
 
         if not rec.get('date'):
@@ -6700,9 +6726,18 @@ class TimeLogResource(Resource):
         }
 
     def create(self, data, user):
+        user_org = getattr(self, 'current_user_org', None) or get_user_org(user)
+        return self._create(data, user, user_org)
+
+    def create_for_request(self, data, user, request):
+        return self._create(data, user, get_user_org(user, request))
+
+    def _create(self, data, user, user_org):
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to log time.')
         c = Cleaner(data)
         pid = c.integer('project', required=True, lo=1)
-        proj = Project.objects.filter(pk=pid).first()
+        proj = Project.objects.filter(pk=pid, organization=user_org).first()
         if not proj:
             raise ApiError(404, 'Project not found.')
         dt = c.date('date', required=True)
@@ -6711,13 +6746,23 @@ class TimeLogResource(Resource):
         bill = c.boolean('billable', default=True)
         notes = c.text('notes', max_len=1000)
         c.done()
-        return TimeLog.objects.create(project=proj, user=user, date=dt, hours=hrs, task=task, billable=bill, notes=notes)
+        return TimeLog.objects.create(
+            organization=user_org,
+            project=proj,
+            user=user,
+            date=dt,
+            hours=hrs,
+            task=task,
+            billable=bill,
+            notes=notes,
+        )
 
     def update(self, obj, data, user):
+        user_org = obj.organization or get_user_org(user)
         c = Cleaner(data)
         if 'project' in data:
             pid = c.integer('project', required=True, lo=1)
-            proj = Project.objects.filter(pk=pid).first()
+            proj = Project.objects.filter(pk=pid, organization=user_org).first() if user_org else None
             if not proj:
                 raise ApiError(404, 'Project not found.')
             obj.project = proj

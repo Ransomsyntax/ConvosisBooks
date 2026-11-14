@@ -24,7 +24,7 @@ from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, BusinessLocation, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
-    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project
+    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project, TimeLog
 )
 
 User = get_user_model()
@@ -1502,6 +1502,155 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 400, response.content)
+
+    def test_retainer_project_create_lookup_and_association_are_organization_scoped(self):
+        other_org = Organization.objects.create(name='Other Project Organization')
+        other_customer = Customer.objects.create(
+            organization=other_org,
+            name='Other Organization Customer',
+            state=other_org.state,
+        )
+        other_project = Project.objects.create(
+            organization=other_org,
+            customer=other_customer,
+            name='Other Organization Project',
+        )
+
+        created_project = self.client.post(
+            '/api/projects/',
+            data=json.dumps({
+                'name': 'Retainer Quick-Created Project',
+                'customer': self.customer.pk,
+                'billing_method': 'hourly_rate',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created_project.status_code, 201, created_project.content)
+        project = Project.objects.get(pk=created_project.json()['id'])
+        self.assertEqual(project.organization, self.org)
+        self.assertEqual(project.customer, self.customer)
+
+        projects = self.client.get('/api/lookup/projects/').json()
+        project_ids = {row['id'] for row in projects}
+        self.assertIn(project.pk, project_ids)
+        self.assertNotIn(other_project.pk, project_ids)
+
+        rejected_project = self.client.post(
+            '/api/projects/',
+            data=json.dumps({
+                'name': 'Cross-Organization Project',
+                'customer': other_customer.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(rejected_project.status_code, 400, rejected_project.content)
+        self.assertFalse(Project.objects.filter(name='Cross-Organization Project').exists())
+
+        rejected_update = self.client.put(
+            f'/api/projects/{project.pk}/',
+            data=json.dumps({'customer': other_customer.pk}),
+            content_type='application/json',
+        )
+        self.assertEqual(rejected_update.status_code, 400, rejected_update.content)
+        project.refresh_from_db()
+        self.assertEqual(project.customer, self.customer)
+
+        foreign_project_retainer = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'project_id': other_project.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'lines': [{'description': 'Invalid project association', 'amount': '10.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(foreign_project_retainer.status_code, 400, foreign_project_retainer.content)
+
+        retainer_response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'project_id': project.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'lines': [{'description': 'Project advance', 'amount': '100.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(retainer_response.status_code, 201, retainer_response.content)
+        retainer = RetainerInvoice.objects.get(pk=retainer_response.json()['id'])
+        self.assertEqual(retainer.project, project)
+        self.assertEqual(retainer.project_name, project.name)
+        detail = self.client.get(f'/api/retainer-invoices/{retainer.pk}/').json()
+        self.assertEqual(detail['project_id'], project.pk)
+        self.assertEqual(detail['project_name'], project.name)
+
+        services.send_retainer_invoice(retainer, self.admin_user)
+        retainer.refresh_from_db()
+        self.assertEqual(retainer.status, 'sent')
+        self.assertEqual(retainer.project, project)
+
+        optional_project_response = self.client.post(
+            '/api/retainer-invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today()),
+                'lines': [{'description': 'Unassigned advance', 'amount': '25.00'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(optional_project_response.status_code, 201, optional_project_response.content)
+        optional_retainer = RetainerInvoice.objects.get(pk=optional_project_response.json()['id'])
+        self.assertIsNone(optional_retainer.project_id)
+
+    def test_timesheet_project_associations_are_organization_scoped(self):
+        own_project = Project.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            name='Timesheet Project',
+        )
+        other_org = Organization.objects.create(name='Other Timesheet Organization')
+        other_project = Project.objects.create(
+            organization=other_org,
+            name='Foreign Timesheet Project',
+        )
+        payload = {
+            'project': other_project.pk,
+            'date': str(date.today()),
+            'hours': '1.5',
+            'task': 'Scoped task',
+        }
+
+        rejected_create = self.client.post(
+            '/api/timelogs/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(rejected_create.status_code, 404, rejected_create.content)
+        self.assertFalse(TimeLog.objects.filter(project=other_project).exists())
+
+        payload['project'] = own_project.pk
+        created = self.client.post(
+            '/api/timelogs/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        time_log = TimeLog.objects.get(pk=created.json()['id'])
+        self.assertEqual(time_log.organization, self.org)
+        self.assertEqual(time_log.project, own_project)
+
+        rejected_update = self.client.put(
+            f'/api/timelogs/{time_log.pk}/',
+            data=json.dumps({'project': other_project.pk}),
+            content_type='application/json',
+        )
+        self.assertEqual(rejected_update.status_code, 404, rejected_update.content)
+        time_log.refresh_from_db()
+        self.assertEqual(time_log.project, own_project)
 
     @override_settings(
         PASSWORD_RESET_EMAIL_CONFIGURED=True,

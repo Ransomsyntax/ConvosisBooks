@@ -593,6 +593,8 @@ class TestUniversalImport(TestCase):
         tl = TimeLog.objects.filter(task='Backend API Optimization').first()
         self.assertIsNotNone(tl)
         self.assertEqual(tl.hours, Decimal('3.5'))
+        self.assertIsNotNone(tl.organization_id)
+        self.assertEqual(tl.project.organization_id, tl.organization_id)
 
     def test_quotes_import(self):
         records = [

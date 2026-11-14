@@ -559,7 +559,13 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
     } else if (entity === 'account') {
       accountForm(null, onCreated);
     } else if (entity === 'project') {
-      projectModal(null, onCreated);
+      const customerId = selectEl.dataset.projectCustomerId || '';
+      await projectModal(null, async newProject => {
+        onCreated(newProject);
+        if (typeof selectEl._onQuickProjectCreated === 'function') {
+          await selectEl._onQuickProjectCreated(newProject);
+        }
+      }, customerId, () => { selectEl._quickCreating = false; });
     } else if (entity === 'unit') {
       unitModal(onCreated);
     } else if (entity === 'tax') {
@@ -4403,28 +4409,36 @@ function createSalespersonCustomDropdown(containerEl, currentVal = '', onSelect)
   };
 }
 
-async function setupProjectSelectorForCustomer(selectEl, customerId, selectedProject = '') {
+async function setupProjectSelectorForCustomer(selectEl, customerId, selectedProject = '', useProjectId = false, onError = null) {
   if (!selectEl) return;
   if (!customerId) {
     selectEl.innerHTML = '<option value="">Select a customer first to view projects</option>';
     selectEl.disabled = true;
-    return;
+    selectEl.dataset.projectCustomerId = '';
+    return [];
   }
+  selectEl.dataset.projectCustomerId = String(customerId);
   try {
-    const projects = await api(`lookup/projects/?customer=${customerId}`).catch(() => []);
-    if (projects && projects.length) {
+    const request = api(`lookup/projects/?customer=${customerId}`);
+    const projects = onError ? await request : await request.catch(() => []);
+    if ((projects && projects.length) || useProjectId) {
       selectEl.disabled = false;
       selectEl.innerHTML = `
         <option value="">Select Project</option>
-        ${projects.map(p => `<option value="${esc(p.name)}" ${p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        ${projects.map(p => `<option value="${useProjectId ? p.id : esc(p.name)}" ${useProjectId ? `data-project-name="${esc(p.name)}"` : ''} ${String(p.id) === String(selectedProject) || p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        ${useProjectId ? '<option value="__new_project__">+ Add New Project…</option>' : ''}
       `;
+      return projects;
     } else {
       selectEl.disabled = true;
       selectEl.innerHTML = '<option value="">There are no active projects for this customer.</option>';
+      return [];
     }
   } catch (e) {
     selectEl.disabled = true;
-    selectEl.innerHTML = '<option value="">There are no active projects for this customer.</option>';
+    selectEl.innerHTML = `<option value="">${onError ? 'Projects could not be loaded.' : 'There are no active projects for this customer.'}</option>`;
+    if (onError) onError(e);
+    return null;
   }
 }
 
@@ -7210,12 +7224,13 @@ async function convobotAiAssistantModal() {
 window.convobotAiAssistantModal = convobotAiAssistantModal;
 window.ziaAiAssistantModal = convobotAiAssistantModal;
 
-async function projectModal(id, onDone) {
+async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
   const custs = await api('lookup/customers/');
-  const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: '', billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
+  const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: defaultCustomerId, billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
     dialog: Boolean(onDone || Modal.count() > 0),
+    onClose,
     body: `<div class="g form-grid-aligned">
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
       ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
@@ -7233,7 +7248,7 @@ async function projectModal(id, onDone) {
       if (id) res = await api(`projects/${id}/`, { method: 'PUT', body: d });
       else res = await api('projects/', { method: 'POST', body: d });
       toast('Project saved');
-      if (onDone) onDone(res || d);
+      if (onDone) await onDone(res || d);
       else refresh();
     }
   });
@@ -13305,7 +13320,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const retBranch = rec ? (rec.branch || '') : '';
   const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
-  const retProject = rec ? (rec.project_name || '') : '';
+  const retProject = rec ? (rec.project_id || rec.project_name || '') : '';
   const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
   const retTerms = rec && ['Due on Receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due end of the month'].includes(rec.terms) ? rec.terms : 'Due on Receipt';
@@ -13469,7 +13484,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label for="ret-project" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Project Name</label>
-            <select class="in" id="ret-project" name="project_name" style="width:260px;" disabled>
+            <select class="in" id="ret-project" name="project_id" style="width:260px;" disabled>
               <option value="">There are no active projects for this customer.</option>
             </select>
           </div>
@@ -13616,7 +13631,21 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     const projectCustomerId = /^\d+$/.test(String(customerId || '')) ? customerId : '';
     projectSaveButtons.forEach(button => { button.disabled = true; });
     try {
-      await setupProjectSelectorForCustomer($('#ret-project', form), projectCustomerId, selectedProject);
+      const projectSelect = $('#ret-project', form);
+      const projects = await setupProjectSelectorForCustomer(
+        projectSelect,
+        projectCustomerId,
+        selectedProject,
+        true,
+        error => toast(`Unable to load projects: ${error.message}`, 'err')
+      );
+      projectSelect._onQuickProjectCreated = async newProject => {
+        const refreshed = await refreshRetainerProjects(projectCustomerId, newProject.id);
+        if (refreshed && !refreshed.some(project => String(project.id) === String(newProject.id))) {
+          toast('Project was created but is not available for this customer. Check its customer and status.', 'err');
+        }
+      };
+      return projects;
     } finally {
       projectSaveButtons.forEach(button => { button.disabled = false; });
     }
@@ -13996,7 +14025,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       tax_pricing_type: $('#ret-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#ret-customer-type', form)?.value || 'b2b',
       salesperson: (form.querySelector('#ret-salesperson-container select.sp-select')?.value || $('#ret-salesperson', form)?.value || ''),
-      project_name: $('#ret-project', form)?.value || '',
+      project_id: /^\d+$/.test($('#ret-project', form)?.value || '') ? $('#ret-project', form).value : null,
+      project_name: $('#ret-project option:checked', form)?.dataset.projectName || '',
       purpose: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       subject: ($('#ret-purpose', form)?.value || $('#ret-subject', form)?.value || '').trim(),
       place_of_supply: $('#ret-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),

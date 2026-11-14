@@ -130,6 +130,7 @@ const ROUTES = {
   'settings': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
   'settings/dashboard': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
   'settings/all': r => typeof renderSettingsDashboard === 'function' ? renderSettingsDashboard(r) : null,
+  'settings/enterprise': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'enterprise-settings', 'Enterprise Settings Registry', renderEnterpriseSettingsPage) : null,
   'settings/organization': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
   'settings/users': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'users', 'Users', renderSettingsUsersPage) : null,
   'settings/roles': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'roles', 'Roles', renderSettingsRolesPage) : null,

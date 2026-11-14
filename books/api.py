@@ -7,7 +7,9 @@ import json
 import re
 import uuid
 from decimal import Decimal
-from functools import wraps
+from functools import lru_cache, wraps
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.paginator import Paginator
@@ -7324,6 +7326,14 @@ def action(request, name, pk, act):
     return res.handle_action(request, pk, act)
 
 def org_json(o):
+    general_settings = getattr(o, 'general_settings', {}) or {}
+    if isinstance(general_settings, dict):
+        general_settings = {
+            key: value for key, value in general_settings.items()
+            if key != 'enterprise_preferences'
+        }
+    else:
+        general_settings = {}
     return {
         'id': o.id,
         'organization_id': getattr(o, 'organization_id', '') or f"ORG-{o.id:06d}",
@@ -7353,7 +7363,7 @@ def org_json(o):
         'app_name': getattr(o, 'app_name', 'ConvosisBooks') or 'ConvosisBooks',
         'login_branding': getattr(o, 'login_branding', '') or '',
         'ai_settings': getattr(o, 'ai_settings', {}) or {},
-        'general_settings': getattr(o, 'general_settings', {}) or {},
+        'general_settings': general_settings,
         'portal_settings': getattr(o, 'portal_settings', {}) or {},
         'reminder_settings': getattr(o, 'reminder_settings', {}) or {},
         'email_settings': getattr(o, 'email_settings', {}) or {},
@@ -9762,6 +9772,172 @@ def settings_all_view(request):
         }
     })
 
+@lru_cache(maxsize=1)
+def _enterprise_settings_registry():
+    registry_path = Path(__file__).with_name('enterprise_settings_registry.json')
+    with registry_path.open(encoding='utf-8') as registry_file:
+        registry = json.load(registry_file)
+    if not isinstance(registry, dict) or not isinstance(registry.get('preferences'), dict):
+        raise RuntimeError('Enterprise settings registry is invalid.')
+    return registry
+
+
+def _validate_enterprise_preferences(group_schema, values):
+    if not isinstance(values, dict):
+        raise ApiError(400, 'Preferences must be a JSON object.')
+
+    fields = {field['key']: field for field in group_schema.get('fields', [])}
+    errors = {}
+    cleaned = {}
+    for key in values.keys() - fields.keys():
+        errors[key] = 'This preference is not supported.'
+
+    for key, value in values.items():
+        field = fields.get(key)
+        if not field:
+            continue
+        if field.get('readOnly'):
+            errors[key] = 'This value is managed by a verified integration or subscription.'
+            continue
+
+        field_type = field.get('type')
+        if field_type == 'toggle':
+            if type(value) is not bool:
+                errors[key] = 'Choose a valid on or off value.'
+            else:
+                cleaned[key] = value
+        elif field_type == 'number':
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                errors[key] = 'Enter a valid number.'
+                continue
+            try:
+                number = Decimal(str(value))
+            except (ArithmeticError, TypeError, ValueError):
+                errors[key] = 'Enter a valid number.'
+                continue
+            maximum = Decimal('100') if ('pct' in key.lower() or 'percentage' in key.lower()) else Decimal('1000000000')
+            if not number.is_finite() or number < 0 or number > maximum:
+                errors[key] = f'Enter a number between 0 and {maximum}.'
+            else:
+                cleaned[key] = float(number)
+        elif field_type == 'select':
+            options = field.get('options') or []
+            if not isinstance(value, str) or not options or value not in options:
+                errors[key] = 'Choose a supported option.'
+            else:
+                cleaned[key] = value
+        elif field_type == 'text':
+            if not isinstance(value, str) or len(value) > 2000:
+                errors[key] = 'Enter text no longer than 2000 characters.'
+                continue
+            value = value.strip()
+            if 'email' in key.lower() and value and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', value):
+                errors[key] = 'Enter a valid email address.'
+                continue
+            if key in ('lockDate', 'migrationCutoverDate') and value:
+                try:
+                    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+                        raise ValueError
+                    datetime.datetime.strptime(value, '%Y-%m-%d')
+                except ValueError:
+                    errors[key] = 'Enter a date in YYYY-MM-DD format.'
+                    continue
+            if 'url' in key.lower() and value:
+                try:
+                    parsed_url = urlsplit(value)
+                except ValueError:
+                    errors[key] = 'Enter a valid HTTPS URL.'
+                    continue
+                if parsed_url.scheme.lower() != 'https' or not parsed_url.hostname or parsed_url.username or parsed_url.password:
+                    errors[key] = 'Enter a valid HTTPS URL.'
+                    continue
+            cleaned[key] = value
+        else:
+            errors[key] = 'This preference type is not supported.'
+
+    if errors:
+        raise ApiError(400, 'One or more preference values are invalid.', errors)
+    return cleaned
+
+
+@api_view
+def settings_enterprise_registry_view(request):
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    if request.method != 'GET':
+        raise ApiError(405, 'Method not allowed.')
+    return j(_enterprise_settings_registry())
+
+
+@api_view
+def settings_enterprise_preferences_view(request, group_key):
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user, request)
+    if not org:
+        raise ApiError(403, 'An organization is required to manage settings.')
+
+    group_schema = _enterprise_settings_registry()['preferences'].get(group_key)
+    if not group_schema:
+        raise ApiError(404, 'Settings preference group not found.')
+
+    if request.method == 'GET':
+        preference_store = (org.general_settings or {}).get('enterprise_preferences') or {}
+        if not isinstance(preference_store, dict):
+            raise ApiError(409, 'Stored enterprise preferences are invalid.')
+        current = preference_store.get(group_key, {})
+        if not isinstance(current, dict):
+            raise ApiError(409, 'Stored enterprise preference values are invalid.')
+        fields = {field['key']: field for field in group_schema.get('fields', [])}
+        current = {
+            key: value for key, value in current.items()
+            if key in fields and not fields[key].get('readOnly')
+        }
+        return j({
+            'group': group_key,
+            'values': current,
+            'integration_status': group_schema.get('integrationStatus', 'requires_workflow_wiring'),
+        })
+    if request.method not in ('PUT', 'PATCH'):
+        raise ApiError(405, 'Method not allowed.')
+
+    data = body(request)
+    if set(data) != {'values'}:
+        raise ApiError(400, 'Request must contain only a values object.')
+    validated = _validate_enterprise_preferences(group_schema, data['values'])
+
+    with transaction.atomic():
+        locked_org = Organization.objects.select_for_update().get(pk=org.pk)
+        general_settings = dict(locked_org.general_settings or {})
+        stored_preferences = general_settings.get('enterprise_preferences') or {}
+        if not isinstance(stored_preferences, dict):
+            raise ApiError(409, 'Stored enterprise preferences are invalid.')
+        preference_store = dict(stored_preferences)
+        stored_values = preference_store.get(group_key) or {}
+        if not isinstance(stored_values, dict):
+            raise ApiError(409, 'Stored enterprise preference values are invalid.')
+        fields = {field['key']: field for field in group_schema.get('fields', [])}
+        previous = {
+            key: value for key, value in stored_values.items()
+            if key in fields and not fields[key].get('readOnly')
+        }
+        next_values = dict(previous) if request.method == 'PATCH' else {}
+        next_values.update(validated)
+        preference_store[group_key] = next_values
+        general_settings['enterprise_preferences'] = preference_store
+        locked_org.general_settings = general_settings
+        locked_org.save(update_fields=['general_settings'])
+        services.log_audit(
+            request.user, 'update', 'OrganizationSettings', locked_org.pk,
+            f'Updated enterprise settings group {group_key}.',
+            org=locked_org, module='settings', submodule=group_key,
+            previous_values=previous, new_values=next_values,
+        )
+
+    return j({
+        'group': group_key,
+        'values': next_values,
+        'integration_status': group_schema.get('integrationStatus', 'requires_workflow_wiring'),
+    })
+
 @api_view
 def settings_roles_view(request, role_id=None):
     """Manage roles: list, create, retrieve, update, delete."""
@@ -10171,6 +10347,10 @@ def settings_organization_view(request):
         ('template_theme', lambda: c.text('template_theme', False, 50)),
         ('template_color', lambda: c.text('template_color', False, 30)),
     ]
+
+    general_settings_update = data.get('general_settings')
+    if isinstance(general_settings_update, dict) and 'enterprise_preferences' in general_settings_update:
+        raise ApiError(400, 'Update enterprise preferences through their organization-scoped settings endpoint.')
 
     for f_name, f_getter in updatable_fields:
         if f_name in data:

@@ -63,6 +63,7 @@ const SETTINGS_MENU_STRUCTURE = [
           { key: 'email-notifications', label: 'Email Notifications', hash: '#/settings/email-notifications' },
           { key: 'sms-notifications', label: 'SMS Notifications', hash: '#/settings/sms-notifications' },
           { key: 'digital-signature', label: 'Digital Signature', hash: '#/settings/digital-signature' },
+          { key: 'enterprise-settings', label: 'Enterprise Settings Registry', hash: '#/settings/enterprise' },
         ]
       }
     ]
@@ -256,6 +257,7 @@ async function renderSettingsDashboard(root) {
                   <li><a href="#/settings/email-notifications" class="settings-link"><span class="link-label">Email Notifications</span></a></li>
                   <li><a href="#/settings/sms-notifications" class="settings-link"><span class="link-label">SMS Notifications</span></a></li>
                   <li><a href="#/settings/digital-signature" class="settings-link"><span class="link-label">Digital Signature</span></a></li>
+                  <li><a href="#/settings/enterprise" class="settings-link"><span class="link-label">Enterprise Settings Registry</span></a></li>
                 </ul>
               </div>
             </div>
@@ -411,6 +413,7 @@ function getSettingsPageRenderer(key) {
     'email-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
     'sms-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
     'digital-signature': typeof renderDigitalSignaturePage === 'function' ? renderDigitalSignaturePage : null,
+    'enterprise-settings': typeof renderEnterpriseSettingsPage === 'function' ? renderEnterpriseSettingsPage : null,
     'mod-prefs': typeof renderGeneralSettingsPage === 'function' ? renderGeneralSettingsPage : null,
     'sales-invoices': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
     'sales-quotes': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
@@ -4360,6 +4363,231 @@ async function renderOpeningBalancesPage(container) {
   });
 }
 
+async function renderEnterpriseSettingsPage(container) {
+  container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading settings registry…</div>`;
+  const registry = await api('/settings/enterprise/registry/');
+  const categories = registry.categories || [];
+  const preferences = registry.preferences || {};
+  const existingRoutes = {
+    profile: '#/settings/profile',
+    branding: '#/settings/branding',
+    branches: '#/settings/business-locations',
+    currencies: '#/settings/currencies',
+    'opening-balances': '#/settings/opening-balances',
+    'manage-subscription': '#/settings/subscription-billing',
+    users: '#/settings/users',
+    roles: '#/settings/roles',
+    'activity-logs': '#/accountant/statutory-audit-logs',
+    'tax-rates': '#/settings/taxes',
+    'tax-groups': '#/settings/taxes',
+    'gst-settings': '#/settings/taxes',
+    'tds-tcs': '#/settings/direct-taxes',
+    'tax-exemptions': '#/settings/taxes',
+    einvoicing: '#/settings/einvoicing',
+    'eway-bills': '#/settings/eway-bills',
+    reminders: '#/settings/reminders',
+    'portal-settings': '#/settings/customer-portal',
+    'transaction-series': '#/settings/number-series',
+    'pdf-templates': '#/settings/pdf-templates',
+    'email-notifications': '#/settings/email-notifications',
+    'sms-notifications': '#/settings/sms-notifications',
+    'digital-signature': '#/settings/digital-signature',
+    'opening-bal-import': '#/accountant/transaction-locking',
+    'payment-gateways': '#/pay/payment-settings',
+  };
+  if (!categories.length) {
+    container.innerHTML = '<div class="error-msg-card">The Settings registry is empty.</div>';
+    return;
+  }
+
+  const firstCategory = categories[0];
+  const firstSubmodule = firstCategory.submodules[0];
+  if (!firstSubmodule) {
+    container.innerHTML = '<div class="error-msg-card">The Settings registry has no entries.</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>Enterprise Settings Registry</h1>
+      </div>
+    </div>
+    <div class="settings-table-card" style="display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:24px;padding:20px;">
+      <nav id="enterpriseSettingsNav" aria-label="Enterprise settings categories">
+        ${categories.map(category => `
+          <div class="settings-nav-group open">
+            <button type="button" class="settings-nav-group-btn" data-enterprise-category-toggle>
+              <span class="settings-nav-group-label">${esc(category.title)}</span>
+            </button>
+            <div class="settings-nav-items">
+              ${category.submodules.map(submodule => `
+                <button type="button"
+                  class="settings-nav-item ${category.id === firstCategory.id && submodule.id === firstSubmodule.id ? 'active' : ''}"
+                  data-enterprise-category="${esc(category.id)}"
+                  data-enterprise-submodule="${esc(submodule.id)}"
+                  style="border:0;background:transparent;width:100%;text-align:left;cursor:pointer;font:inherit;">
+                  ${esc(submodule.title)}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </nav>
+      <section id="enterpriseSettingsDetail" aria-live="polite"></section>
+    </div>
+  `;
+
+  const nav = container.querySelector('#enterpriseSettingsNav');
+  const detail = container.querySelector('#enterpriseSettingsDetail');
+  let activeCategoryId = firstCategory.id;
+  let activeSubmoduleId = firstSubmodule.id;
+  let renderVersion = 0;
+
+  async function renderSubmodule(categoryId, submoduleId) {
+    const category = categories.find(item => item.id === categoryId);
+    const submodule = category && category.submodules.find(item => item.id === submoduleId);
+    if (!submodule) return;
+    activeCategoryId = categoryId;
+    activeSubmoduleId = submoduleId;
+    const version = ++renderVersion;
+    const existingRoute = existingRoutes[submodule.id];
+    const header = `
+      <div class="settings-page-header">
+        <div class="settings-page-header-left">
+          <h2>${esc(submodule.title)}</h2>
+          <p style="color:#6b7280;margin:6px 0 0;">${esc(submodule.description || '')}</p>
+        </div>
+      </div>
+    `;
+
+    if (existingRoute) {
+      detail.innerHTML = `${header}
+        <div class="settings-form-card">
+          <p>A related existing configuration page is available.</p>
+          <a class="btn-primary" href="${existingRoute}">Open related settings</a>
+        </div>`;
+      return;
+    }
+
+    if (submodule.type !== 'prefs' || !preferences[submodule.prefGroup]) {
+      detail.innerHTML = `${header}
+        <div class="info-alert-card" style="margin-top:16px;">
+          This registry entry does not have a verified application workflow yet. No records or integration status are simulated.
+        </div>`;
+      return;
+    }
+
+    const schema = preferences[submodule.prefGroup];
+    detail.innerHTML = `${header}<div class="spin" style="margin:28px auto;">Loading saved preferences…</div>`;
+    let response;
+    try {
+      response = await api(`/settings/enterprise/preferences/${encodeURIComponent(submodule.prefGroup)}/`);
+    } catch (error) {
+      if (version !== renderVersion) return;
+      detail.innerHTML = `${header}<div class="error-msg-card" style="margin-top:16px;">${esc(error.message || 'Could not load preferences.')}</div>`;
+      return;
+    }
+    if (version !== renderVersion) return;
+
+    const values = response.values || {};
+    const fields = schema.fields || [];
+    const editableFields = fields.filter(field => !field.readOnly);
+    const statusMessage = schema.integrationStatus === 'read_only'
+      ? 'This section is read-only until authoritative subscription data is available.'
+      : 'Changes are stored for this organization, but runtime behavior is not wired for this setting yet.';
+    const fieldHtml = fields.map(field => {
+      const currentValue = values[field.key];
+      const disabled = field.readOnly ? 'disabled' : '';
+      let control;
+      if (field.type === 'toggle') {
+        control = `<label style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" data-enterprise-pref-key="${esc(field.key)}" ${currentValue === true ? 'checked' : ''} ${disabled}>
+          <span>${esc(field.label)}</span>
+        </label>`;
+      } else if (field.type === 'select') {
+        const options = (field.options || []).map(option =>
+          `<option value="${esc(option)}" ${String(currentValue) === option ? 'selected' : ''}>${esc(option)}</option>`
+        ).join('');
+        control = `<label>${esc(field.label)}
+          <select class="form-control" data-enterprise-pref-key="${esc(field.key)}" ${disabled}>
+            <option value="">Select an option</option>${options}
+          </select>
+        </label>`;
+      } else {
+        const inputType = field.type === 'number' ? 'number' : 'text';
+        const step = field.type === 'number' ? 'step="any" min="0"' : '';
+        control = `<label>${esc(field.label)}
+          <input class="form-control" type="${inputType}" ${step}
+            data-enterprise-pref-key="${esc(field.key)}"
+            value="${currentValue === undefined || currentValue === null ? '' : esc(String(currentValue))}" ${disabled}>
+        </label>`;
+      }
+      return `<div class="form-group" style="margin-bottom:16px;">
+        ${control}
+        ${field.help ? `<small style="display:block;color:#6b7280;margin-top:5px;">${esc(field.help)}</small>` : ''}
+      </div>`;
+    }).join('');
+
+    detail.innerHTML = `${header}
+      <div class="info-alert-card" style="margin:12px 0;">${esc(statusMessage)}</div>
+      <form id="enterprisePreferenceForm" class="settings-form-card">
+        <div class="form-grid-2">${fieldHtml}</div>
+        ${editableFields.length ? '<div style="display:flex;justify-content:flex-end;margin-top:16px;"><button type="submit" class="btn-primary">Save Preferences</button></div>' : ''}
+      </form>`;
+
+    const form = detail.querySelector('#enterprisePreferenceForm');
+    if (!form || !editableFields.length) return;
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const saveButton = form.querySelector('button[type="submit"]');
+      const nextValues = {};
+      fields.forEach(field => {
+        if (field.readOnly) return;
+        const input = form.querySelector(`[data-enterprise-pref-key="${field.key}"]`);
+        if (!input) return;
+        if (field.type === 'toggle') {
+          nextValues[field.key] = input.checked;
+        } else if (field.type === 'number') {
+          if (input.value !== '') nextValues[field.key] = Number(input.value);
+        } else {
+          nextValues[field.key] = input.value;
+        }
+      });
+      saveButton.disabled = true;
+      try {
+        const saved = await api(`/settings/enterprise/preferences/${encodeURIComponent(submodule.prefGroup)}/`, {
+          method: 'PUT',
+          body: JSON.stringify({ values: nextValues }),
+        });
+        toast(saved.integration_status === 'requires_workflow_wiring'
+          ? 'Preferences saved; runtime behavior is not wired for this setting yet.'
+          : 'Preferences saved.', 'success');
+        await renderSubmodule(activeCategoryId, activeSubmoduleId);
+      } catch (error) {
+        toast(error.message || 'Failed to save preferences.', 'error');
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+  }
+
+  nav.addEventListener('click', event => {
+    const categoryToggle = event.target.closest('[data-enterprise-category-toggle]');
+    if (categoryToggle) {
+      categoryToggle.closest('.settings-nav-group').classList.toggle('open');
+      return;
+    }
+    const item = event.target.closest('[data-enterprise-submodule]');
+    if (!item) return;
+    nav.querySelectorAll('[data-enterprise-submodule]').forEach(button => button.classList.remove('active'));
+    item.classList.add('active');
+    renderSubmodule(item.dataset.enterpriseCategory, item.dataset.enterpriseSubmodule);
+  });
+
+  await renderSubmodule(activeCategoryId, activeSubmoduleId);
+}
+
 // Global window registration
 window.renderEwayBillsPage = renderEwayBillsPage;
 window.renderEinvoicingPage = renderEinvoicingPage;
@@ -4371,3 +4599,4 @@ window.openInviteUserModal = openInviteUserModal;
 window.openAddPaymentTermModal = openAddPaymentTermModal;
 window.openAddCurrencyModal = openAddCurrencyModal;
 window.getSettingsPageRenderer = getSettingsPageRenderer;
+window.renderEnterpriseSettingsPage = renderEnterpriseSettingsPage;

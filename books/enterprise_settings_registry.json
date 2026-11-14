@@ -1,0 +1,3122 @@
+{
+  "version": 1,
+  "metadata": {
+    "categories": 11,
+    "submodules": 72,
+    "preferenceGroups": 45,
+    "collections": 18
+  },
+  "categories": [
+    {
+      "id": "organization",
+      "title": "Organization",
+      "badge": "Core Setup",
+      "description": "Legal identity, branding themes, multi-branch offices, currencies, and opening balances.",
+      "submodules": [
+        {
+          "id": "profile",
+          "title": "Organization Profile",
+          "type": "custom-org-profile",
+          "description": "Legal name, GSTIN, PAN, fiscal year, report basis, and registered address."
+        },
+        {
+          "id": "branding",
+          "title": "Branding & Theme",
+          "type": "custom-branding",
+          "description": "Organization logo, accent color swatches, sidebar theme, and UI density."
+        },
+        {
+          "id": "branches",
+          "title": "Branches",
+          "type": "crud",
+          "description": "Manage multi-location branch offices, GSTINs, and transaction series prefixes.",
+          "collection": "branches"
+        },
+        {
+          "id": "currencies",
+          "title": "Currencies",
+          "type": "crud",
+          "description": "Multi-currency exchange rates, symbols, decimal precision, and base currency lock.",
+          "collection": "currencies"
+        },
+        {
+          "id": "opening-balances",
+          "title": "Opening Balances",
+          "type": "custom-opening-balances",
+          "description": "Migration cut-over date and balanced Debit/Credit ledger opening balances."
+        },
+        {
+          "id": "manage-subscription",
+          "title": "Manage Subscription",
+          "type": "prefs",
+          "description": "Enterprise plan quotas, active user seats, storage utilization, and billing.",
+          "prefGroup": "subscriptionPrefs"
+        }
+      ]
+    },
+    {
+      "id": "users-roles",
+      "title": "Users & Roles",
+      "badge": "RBAC",
+      "description": "User directory, granular role permission matrices, MFA security policies, and audit trails.",
+      "submodules": [
+        {
+          "id": "users",
+          "title": "Users",
+          "type": "crud",
+          "description": "Invite team members, assign roles, scope branch access, and enforce MFA.",
+          "collection": "users"
+        },
+        {
+          "id": "roles",
+          "title": "Roles & Permissions",
+          "type": "custom-roles-matrix",
+          "description": "Granular module-by-module View, Create, Edit, Delete, and Approve permission matrix."
+        },
+        {
+          "id": "user-preferences",
+          "title": "User Preferences & Security",
+          "type": "prefs",
+          "description": "Session idle timeout, mandatory two-factor authentication, and IP allowlisting.",
+          "prefGroup": "securityPrefs"
+        },
+        {
+          "id": "activity-logs",
+          "title": "Activity & Audit Logs",
+          "type": "custom-audit-logs",
+          "description": "Chronological immutable log of all configuration changes and record mutations."
+        }
+      ]
+    },
+    {
+      "id": "taxes",
+      "title": "Taxes & Compliance",
+      "badge": "GST + TDS",
+      "description": "Indian GST slabs, tax groups, TDS/TCS direct taxes, e-Invoicing IRP, and NIC e-Way Bills.",
+      "submodules": [
+        {
+          "id": "tax-rates",
+          "title": "Tax Rates",
+          "type": "crud",
+          "description": "Configure CGST, SGST, IGST, Cess, and zero-rated LUT export tax rates.",
+          "collection": "taxes"
+        },
+        {
+          "id": "tax-groups",
+          "title": "Tax Groups & Calculator",
+          "type": "custom-tax-groups",
+          "description": "Combine component taxes into intra-state GST groups and test live invoice tax splits."
+        },
+        {
+          "id": "gst-settings",
+          "title": "GST Settings",
+          "type": "prefs",
+          "description": "GSTIN registration, GSTR-1/GSTR-3B filing cadence, reverse charge, and HSN/SAC rules.",
+          "prefGroup": "gstSettings"
+        },
+        {
+          "id": "tds-tcs",
+          "title": "TDS / TCS Direct Taxes",
+          "type": "crud",
+          "description": "Income Tax TDS/TCS sections (194C, 194J, 194I, 194Q, 206C) and threshold limits.",
+          "collection": "tdsSections"
+        },
+        {
+          "id": "tax-exemptions",
+          "title": "Tax Exemptions",
+          "type": "crud",
+          "description": "Manage statutory exemption reasons for SEZ units, exports, and exempt items.",
+          "collection": "taxExemptions"
+        },
+        {
+          "id": "einvoicing",
+          "title": "e-Invoicing (IRP)",
+          "type": "prefs",
+          "description": "Invoice Registration Portal (IRP) GSP credentials, auto-IRN generation, and QR code rules.",
+          "prefGroup": "eInvoicing"
+        },
+        {
+          "id": "eway-bills",
+          "title": "e-Way Bills (NIC)",
+          "type": "prefs",
+          "description": "NIC e-Way Bill threshold limits, pin-to-pin distance automation, and Part-B transporter rules.",
+          "prefGroup": "eWayBills"
+        }
+      ]
+    },
+    {
+      "id": "setup",
+      "title": "Setup & Configurations",
+      "badge": "Workspace",
+      "description": "Workspace feature toggles, automated payment reminders, and self-service portal setup.",
+      "submodules": [
+        {
+          "id": "general",
+          "title": "General Module Toggles",
+          "type": "prefs",
+          "description": "Enable or disable optional workspace modules (Quotes, Sales Orders, Projects, Retainers).",
+          "prefGroup": "generalModules"
+        },
+        {
+          "id": "currencies-adj",
+          "title": "Currency & Rounding Rules",
+          "type": "prefs",
+          "description": "Exchange gain/loss ledger mapping, automated RBI/ECB rate feeds, and invoice rounding.",
+          "prefGroup": "currencyAdj"
+        },
+        {
+          "id": "opening-bal-import",
+          "title": "Migration & Lock Dates",
+          "type": "prefs",
+          "description": "Historical ledger import settings and transaction lock dates by module.",
+          "prefGroup": "migrationLocks"
+        },
+        {
+          "id": "reminders",
+          "title": "Payment Reminders",
+          "type": "crud",
+          "description": "Automated pre-due and overdue invoice dunning schedules and escalation emails.",
+          "collection": "reminders"
+        },
+        {
+          "id": "portal-settings",
+          "title": "Customer & Vendor Portals",
+          "type": "prefs",
+          "description": "Self-service portal branding, partial payment permissions, and statement visibility.",
+          "prefGroup": "portalSettings"
+        }
+      ]
+    },
+    {
+      "id": "customization",
+      "title": "Customization",
+      "badge": "Templates & Fields",
+      "description": "Transaction number series, live PDF invoice studio, notifications, DSC, and custom fields.",
+      "submodules": [
+        {
+          "id": "transaction-series",
+          "title": "Transaction Number Series",
+          "type": "crud",
+          "description": "Branch-specific document prefixes and auto-incrementing sequence numbers.",
+          "collection": "transactionSeries"
+        },
+        {
+          "id": "pdf-templates",
+          "title": "PDF Templates Studio",
+          "type": "custom-pdf-studio",
+          "description": "Interactive visual template designer with live GST Tax Invoice preview."
+        },
+        {
+          "id": "email-notifications",
+          "title": "Email Notifications",
+          "type": "prefs",
+          "description": "Sender domain verification, DKIM status, and merge-tag email templates.",
+          "prefGroup": "emailNotifications"
+        },
+        {
+          "id": "sms-notifications",
+          "title": "SMS & WhatsApp Alerts",
+          "type": "prefs",
+          "description": "TRAI DLT template IDs, sender headers, and instant customer alert triggers.",
+          "prefGroup": "smsNotifications"
+        },
+        {
+          "id": "digital-signature",
+          "title": "Digital Signature (DSC)",
+          "type": "prefs",
+          "description": "Class-3 DSC token / PFX certificate integration for legally signed PDF invoices.",
+          "prefGroup": "digitalSignature"
+        },
+        {
+          "id": "custom-fields",
+          "title": "Custom Fields",
+          "type": "crud",
+          "description": "Define custom typed fields across Contacts, Items, Invoices, Sales Orders, and Bills.",
+          "collection": "customFields"
+        },
+        {
+          "id": "reporting-tags",
+          "title": "Reporting Tags",
+          "type": "crud",
+          "description": "Multi-dimensional analytical tags for Business Units, Cost Centers, and Regions.",
+          "collection": "reportingTags"
+        },
+        {
+          "id": "web-tabs",
+          "title": "Web Tabs",
+          "type": "crud",
+          "description": "Embed external internal tools and dashboards as native workspace navigation tabs.",
+          "collection": "webTabs"
+        }
+      ]
+    },
+    {
+      "id": "automation",
+      "title": "Automation",
+      "badge": "Workflows",
+      "description": "Event-driven workflow rules, field updates, webhooks, cron schedules, and custom functions.",
+      "submodules": [
+        {
+          "id": "workflow-rules",
+          "title": "Workflow Rules",
+          "type": "crud",
+          "description": "Trigger automated actions when records are created, edited, approved, or overdue.",
+          "collection": "workflowRules"
+        },
+        {
+          "id": "workflow-actions",
+          "title": "Workflow Actions",
+          "type": "crud",
+          "description": "Reusable email alerts, field updates, webhook dispatches, and in-app tasks.",
+          "collection": "workflowActions"
+        },
+        {
+          "id": "workflow-logs",
+          "title": "Workflow Execution Logs",
+          "type": "prefs",
+          "description": "Execution telemetry, failure retry policies, and alert thresholds.",
+          "prefGroup": "workflowLogPrefs"
+        },
+        {
+          "id": "schedules",
+          "title": "Scheduled Workflows",
+          "type": "crud",
+          "description": "Recurring time-based automation jobs for reports, reconciliations, and backups.",
+          "collection": "schedules"
+        },
+        {
+          "id": "custom-functions",
+          "title": "Custom Functions Sandbox",
+          "type": "custom-functions-ide",
+          "description": "Write and execute serverless JavaScript business logic functions with live test output."
+        }
+      ]
+    },
+    {
+      "id": "modules-general",
+      "title": "Module Settings — General",
+      "badge": "5 Modules",
+      "description": "Accounting rules for Chart of Accounts, Projects, Timesheets, Budgets, and AP/AR Netting.",
+      "submodules": [
+        {
+          "id": "accountant",
+          "title": "Accountant & Journals",
+          "type": "prefs",
+          "description": "Mandatory account codes, manual journal approval, and chart of accounts locking.",
+          "prefGroup": "modAccountant"
+        },
+        {
+          "id": "projects",
+          "title": "Projects",
+          "type": "prefs",
+          "description": "Default billing method, unbilled expense markup, and project profitability tracking.",
+          "prefGroup": "modProjects"
+        },
+        {
+          "id": "timesheets",
+          "title": "Timesheets",
+          "type": "prefs",
+          "description": "Time rounding intervals, daily hour caps, and mandatory manager approval before billing.",
+          "prefGroup": "modTimesheets"
+        },
+        {
+          "id": "budgets",
+          "title": "Budgets",
+          "type": "prefs",
+          "description": "Departmental budget overrun warnings and hard PO blocking thresholds.",
+          "prefGroup": "modBudgets"
+        },
+        {
+          "id": "netting",
+          "title": "AP / AR Party Netting",
+          "type": "prefs",
+          "description": "Bilateral contra settlement rules for entities acting as both Customer and Vendor.",
+          "prefGroup": "modNetting"
+        }
+      ]
+    },
+    {
+      "id": "modules-sales",
+      "title": "Module Settings — Sales",
+      "badge": "10 Modules",
+      "description": "Granular lifecycle rules for Customers, Items, Price Lists, Quotes, Orders, Challans, and Invoices.",
+      "submodules": [
+        {
+          "id": "customers-vendors",
+          "title": "Customers & Vendors",
+          "type": "prefs",
+          "description": "Credit limit enforcement, duplicate name checks, and MSME/Udyam compliance tracking.",
+          "prefGroup": "modContacts"
+        },
+        {
+          "id": "items",
+          "title": "Items & HSN/SAC",
+          "type": "prefs",
+          "description": "Mandatory 6-digit HSN/SAC enforcement, rate/quantity decimal precision, and SKU rules.",
+          "prefGroup": "modItems"
+        },
+        {
+          "id": "price-lists",
+          "title": "Price Lists",
+          "type": "prefs",
+          "description": "Volume tier pricing, percentage markdown/markup schemes, and currency rounding.",
+          "prefGroup": "modPriceLists"
+        },
+        {
+          "id": "quotes",
+          "title": "Quotes / Estimates",
+          "type": "prefs",
+          "description": "Default quote validity period and automatic conversion to Invoice or Sales Order.",
+          "prefGroup": "modQuotes"
+        },
+        {
+          "id": "sales-orders",
+          "title": "Sales Orders",
+          "type": "prefs",
+          "description": "Automatic stock reservation on confirmation and order closure criteria.",
+          "prefGroup": "modSalesOrders"
+        },
+        {
+          "id": "delivery-challans",
+          "title": "Delivery Challans",
+          "type": "prefs",
+          "description": "Job work, supply on approval, inter-branch transfer challans, and invoice conversion.",
+          "prefGroup": "modChallans"
+        },
+        {
+          "id": "invoices",
+          "title": "Invoices",
+          "type": "prefs",
+          "description": "Multi-level approval thresholds, auto-credit application, late fees, and QR display.",
+          "prefGroup": "modInvoices"
+        },
+        {
+          "id": "recurring-invoices",
+          "title": "Recurring Invoices",
+          "type": "prefs",
+          "description": "Auto-dispatch rules, saved mandate auto-charge, and dunning retry intervals.",
+          "prefGroup": "modRecurringInvoices"
+        },
+        {
+          "id": "credit-notes",
+          "title": "Credit Notes",
+          "type": "prefs",
+          "description": "Direct credit adjustment validation and credit refund approval limits.",
+          "prefGroup": "modCreditNotes"
+        },
+        {
+          "id": "payment-retention",
+          "title": "Payment Retention",
+          "type": "prefs",
+          "description": "Contractual holdback percentage on sales invoices and retention release schedules.",
+          "prefGroup": "modRetention"
+        }
+      ]
+    },
+    {
+      "id": "modules-purchases",
+      "title": "Module Settings — Purchases & Inventory",
+      "badge": "8 Modules",
+      "description": "Controls for Expenses, Purchase Orders, 3-Way Bill Matching, Imports, and FIFO/WAC Inventory.",
+      "submodules": [
+        {
+          "id": "expenses",
+          "title": "Expenses & Mileage",
+          "type": "prefs",
+          "description": "Receipt mandatory threshold, two/four-wheeler mileage rates, and billable markup.",
+          "prefGroup": "modExpenses"
+        },
+        {
+          "id": "recurring-expenses",
+          "title": "Recurring Expenses",
+          "type": "prefs",
+          "description": "Automatic vendor bill generation and finance owner alerts.",
+          "prefGroup": "modRecurringExpenses"
+        },
+        {
+          "id": "purchase-orders",
+          "title": "Purchase Orders",
+          "type": "prefs",
+          "description": "PO approval limits, excess quantity receipt tolerance, and auto-closure.",
+          "prefGroup": "modPurchaseOrders"
+        },
+        {
+          "id": "bills",
+          "title": "Vendor Bills (3-Way Match)",
+          "type": "prefs",
+          "description": "Duplicate vendor invoice detection, PO-GRN-Bill 3-way matching, and TDS timing.",
+          "prefGroup": "modBills"
+        },
+        {
+          "id": "bills-of-entry",
+          "title": "Bills of Entry (Imports)",
+          "type": "prefs",
+          "description": "Customs duty tracking, import IGST credit, and landed cost allocation method.",
+          "prefGroup": "modBOE"
+        },
+        {
+          "id": "payments-made",
+          "title": "Payments Made & Cheques",
+          "type": "prefs",
+          "description": "Disbursement voucher approval, cheque printing alignment, and remittance advice.",
+          "prefGroup": "modPaymentsMade"
+        },
+        {
+          "id": "vendor-credits",
+          "title": "Vendor Credits",
+          "type": "prefs",
+          "description": "Automatic debit note adjustment against subsequent vendor bills.",
+          "prefGroup": "modVendorCredits"
+        },
+        {
+          "id": "inventory-adjustments",
+          "title": "Inventory & Batch Tracking",
+          "type": "prefs",
+          "description": "FIFO vs WAC valuation, negative stock prevention, and spice batch/expiry tracking.",
+          "prefGroup": "modInventory"
+        }
+      ]
+    },
+    {
+      "id": "online-payments",
+      "title": "Online Payments",
+      "badge": "Gateways & UPI",
+      "description": "Payment gateways (Razorpay, Stripe, ICICI, PayPal), dynamic BharatQR UPI, and payment links.",
+      "submodules": [
+        {
+          "id": "payment-gateways",
+          "title": "Payment Gateways",
+          "type": "prefs",
+          "description": "Configure Razorpay, Stripe, ICICI Eazypay, and PayPal merchant credentials and settlement accounts.",
+          "prefGroup": "paymentGateways"
+        },
+        {
+          "id": "upi-ach",
+          "title": "UPI & Bharat Connect QR",
+          "type": "prefs",
+          "description": "Corporate UPI VPA, dynamic invoice QR generation, and e-NACH recurring mandates.",
+          "prefGroup": "upiSettings"
+        },
+        {
+          "id": "checkout-links",
+          "title": "Hosted Payment Pages",
+          "type": "prefs",
+          "description": "Hosted checkout expiry, partial payment slider, and custom thank-you redirect URLs.",
+          "prefGroup": "checkoutLinks"
+        }
+      ]
+    },
+    {
+      "id": "custom-integrations-dev",
+      "title": "Custom Modules, Integrations & API",
+      "badge": "Extensibility",
+      "description": "Custom schema builder, CRM/WhatsApp/Tally connectors, Webhooks, OAuth 2.0, and JSON Backups.",
+      "submodules": [
+        {
+          "id": "module-builder",
+          "title": "Custom Modules Builder",
+          "type": "crud",
+          "description": "Create custom business objects (Internship Batches, Cardamom Lot Grading, AMC Contracts).",
+          "collection": "customModules"
+        },
+        {
+          "id": "vendor-portal-modules",
+          "title": "Portal Module Exposure",
+          "type": "prefs",
+          "description": "Control read/write visibility of custom modules inside Customer and Vendor Portals.",
+          "prefGroup": "portalCustomModules"
+        },
+        {
+          "id": "lookup-relations",
+          "title": "Cross-Module Lookups",
+          "type": "crud",
+          "description": "Foreign-key lookup relationships linking Custom Modules to Invoices, Contacts, and Items.",
+          "collection": "lookupRelations"
+        },
+        {
+          "id": "crm-erp-sync",
+          "title": "CRM & ERP Bidirectional Sync",
+          "type": "prefs",
+          "description": "Real-time account, deal, and invoice synchronization with Convosis CRM & ERP.",
+          "prefGroup": "intCrmErp"
+        },
+        {
+          "id": "banking-bharat-connect",
+          "title": "Direct Bank Feeds & Bharat Connect",
+          "type": "prefs",
+          "description": "Connected corporate bank feeds (Bank of Baroda, ICICI Bank) and automated statement fetch.",
+          "prefGroup": "intBanking"
+        },
+        {
+          "id": "whatsapp-business",
+          "title": "WhatsApp Business Cloud API",
+          "type": "prefs",
+          "description": "Automated PDF invoice delivery and interactive payment button messages on WhatsApp.",
+          "prefGroup": "intWhatsApp"
+        },
+        {
+          "id": "tally-migration",
+          "title": "Tally XML & Ledger Migration",
+          "type": "prefs",
+          "description": "Import Masters and Vouchers from Tally Prime XML / Excel exports.",
+          "prefGroup": "intTally"
+        },
+        {
+          "id": "payroll-sync",
+          "title": "Payroll Journal Integration",
+          "type": "prefs",
+          "description": "Automated monthly salary, EPF, ESI, and Professional Tax liability journal mapping.",
+          "prefGroup": "intPayroll"
+        },
+        {
+          "id": "incoming-webhooks",
+          "title": "Webhooks & Event Subscriptions",
+          "type": "crud",
+          "description": "Register HTTPS webhook endpoints with HMAC-SHA256 signing secrets.",
+          "collection": "webhooks"
+        },
+        {
+          "id": "api-usage",
+          "title": "OAuth 2.0 Clients & API Quota",
+          "type": "crud",
+          "description": "Manage OAuth 2.0 Client IDs, scopes, and daily REST API rate limit telemetry.",
+          "collection": "apiClients"
+        },
+        {
+          "id": "data-backup",
+          "title": "Data Backup & Restore",
+          "type": "custom-backup-restore",
+          "description": "Export complete Settings JSON snapshot, import configuration backups, or reset demo state."
+        }
+      ]
+    }
+  ],
+  "preferences": {
+    "subscriptionPrefs": {
+      "title": "Enterprise Subscription & Quota Management",
+      "subtitle": "Monitor active plan capacity, seat allocation, and automated renewal preferences.",
+      "integrationStatus": "read_only",
+      "fields": [
+        {
+          "key": "planTier",
+          "label": "Active Subscription Tier",
+          "type": "select",
+          "options": [
+            "Convosis Books Enterprise Multi-Entity (Unlimited Invoices)",
+            "Convosis Books Professional (Up to 10 Users)",
+            "Convosis Books Standard"
+          ],
+          "readOnly": true
+        },
+        {
+          "key": "billingCycle",
+          "label": "Billing Frequency",
+          "type": "select",
+          "options": [
+            "Annual Commitment (20% Discount)",
+            "Monthly Billing"
+          ],
+          "readOnly": true
+        },
+        {
+          "key": "autoRenew",
+          "label": "Auto-Renew Subscription via Corporate Mandate",
+          "type": "toggle",
+          "help": "Prevent service interruption by automatically charging the primary payment method on renewal date.",
+          "readOnly": true
+        },
+        {
+          "key": "addonBranches",
+          "label": "Active Multi-Branch Add-On Limit",
+          "type": "number",
+          "help": "Maximum concurrent GSTIN branches permitted under current license.",
+          "readOnly": true
+        },
+        {
+          "key": "billingAlertEmail",
+          "label": "Subscription Invoice Recipient Email",
+          "type": "text",
+          "help": "Receives GST tax invoices for subscription renewals.",
+          "readOnly": true
+        }
+      ]
+    },
+    "securityPrefs": {
+      "title": "User Preferences & Organization Security Policy",
+      "subtitle": "Enforce organization-wide authentication controls, session timeouts, and IP restrictions.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enforceMfa",
+          "label": "Enforce Mandatory Two-Factor Authentication (2FA/Passkey) for All Users",
+          "type": "toggle",
+          "help": "Requires TOTP authenticator or WebAuthn passkey before accessing financial settings."
+        },
+        {
+          "key": "sessionTimeoutMins",
+          "label": "Idle Session Auto-Logout Timeout",
+          "type": "select",
+          "options": [
+            "15 Minutes",
+            "30 Minutes",
+            "60 Minutes",
+            "120 Minutes",
+            "480 Minutes (Full Shift)"
+          ]
+        },
+        {
+          "key": "ipRestrictionEnabled",
+          "label": "Restrict Settings Modification to Approved Office IP Ranges",
+          "type": "toggle"
+        },
+        {
+          "key": "allowedCidrList",
+          "label": "Allowed Corporate IPv4 CIDR Blocks",
+          "type": "text",
+          "help": "Comma-separated CIDR ranges."
+        },
+        {
+          "key": "exportWatermarking",
+          "label": "Embed User Email & Timestamp Watermark on Exported Reports",
+          "type": "toggle",
+          "help": "Adds forensic audit trail to downloaded CSV/PDF financial statements."
+        }
+      ]
+    },
+    "gstSettings": {
+      "title": "Goods & Services Tax (GST) Compliance Configuration",
+      "subtitle": "Configure Indian GST registration numbers, GSTR filing periodicity, HSN/SAC validation, and LUT bonds.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "gstEnabled",
+          "label": "Is Your Business Registered for GST in India?",
+          "type": "toggle",
+          "help": "Enables CGST, SGST, IGST, and Cess tax computation across all sales and purchase vouchers."
+        },
+        {
+          "key": "gstin",
+          "label": "Primary Organization GSTIN (15-Character State Code 32 - Kerala)",
+          "type": "text",
+          "help": "Validated against standard 15-character Indian GSTIN format."
+        },
+        {
+          "key": "businessLegalName",
+          "label": "Registered Legal Name (As per GST Portal)",
+          "type": "text",
+          "help": "Printed on GSTR-1, GSTR-3B, and e-Tax Invoices."
+        },
+        {
+          "key": "filingPeriod",
+          "label": "GSTR-1 & GSTR-3B Return Filing Frequency",
+          "type": "select",
+          "options": [
+            "Monthly (Normal Taxpayer)",
+            "Quarterly (QRMP Scheme)"
+          ]
+        },
+        {
+          "key": "hsnDigitsEnforcement",
+          "label": "Mandatory HSN / SAC Code Digit Length for Items",
+          "type": "select",
+          "options": [
+            "6 Digits Mandatory (Turnover > ₹5 Cr)",
+            "4 Digits Mandatory (Turnover up to ₹5 Cr)",
+            "8 Digits Export Commodity Level"
+          ]
+        },
+        {
+          "key": "reverseChargeEnabled",
+          "label": "Enable Reverse Charge Mechanism (RCM) in Purchase Transactions",
+          "type": "toggle",
+          "help": "Allows recording self-invoiced tax liability on unregistered vendor purchases and legal/GTA services."
+        },
+        {
+          "key": "lutBondNumber",
+          "label": "Export Letter of Undertaking (LUT) ARN Number (FY 2026-27)",
+          "type": "text",
+          "help": "Displayed automatically on zero-rated export invoices."
+        }
+      ]
+    },
+    "eInvoicing": {
+      "title": "e-Invoicing (IRP — Invoice Registration Portal) Configuration",
+      "subtitle": "Automate IRN hash generation and signed QR code embedding via NIC / GSP integration.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "eInvoiceEnabled",
+          "label": "Enable Automated e-Invoicing (IRN & QR Generation)",
+          "type": "toggle",
+          "help": "Mandatory for B2B, SEZ, and Export transactions under CBIC e-Invoice mandate."
+        },
+        {
+          "key": "environmentMode",
+          "label": "IRP API Environment Mode",
+          "type": "select",
+          "options": [
+            "Production Live (einvoice1.gst.gov.in)",
+            "Sandbox Testing Environment"
+          ]
+        },
+        {
+          "key": "gspProvider",
+          "label": "Authorized GSP (GST Suvidha Provider)",
+          "type": "select",
+          "options": [
+            "NIC Direct API Integration",
+            "ClearTax GSP Enterprise",
+            "Cygnet GSP",
+            "Vayana GSP"
+          ]
+        },
+        {
+          "key": "irpUsername",
+          "label": "IRP API Username",
+          "type": "text",
+          "help": "Created under API Registration on the NIC e-Invoice Portal."
+        },
+        {
+          "key": "autoGenerateOnApprove",
+          "label": "Auto-Push to IRP & Generate IRN Immediately Upon Invoice Approval",
+          "type": "toggle",
+          "help": "Prevents dispatching B2B tax invoices without a valid 64-character IRN hash."
+        },
+        {
+          "key": "blockCancelAfter24h",
+          "label": "Enforce 24-Hour Statutory IRN Cancellation Window Guard",
+          "type": "toggle",
+          "help": "Blocks IRN cancellation after 24 hours and prompts for a GST Credit Note instead."
+        }
+      ]
+    },
+    "eWayBills": {
+      "title": "e-Way Bill (NIC Portal) Consignment & Transport Settings",
+      "subtitle": "Configure consignment value thresholds, pin-to-pin distance calculation, and vehicle Part-B compliance.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "eWayBillEnabled",
+          "label": "Enable Direct NIC e-Way Bill Generation from Invoices & Challans",
+          "type": "toggle",
+          "help": "Generates 12-digit e-Way Bill number for goods movement."
+        },
+        {
+          "key": "thresholdAmountInr",
+          "label": "Consignment Value Threshold for Mandatory e-Way Bill (₹)",
+          "type": "number",
+          "help": "Default statutory threshold is ₹50,000."
+        },
+        {
+          "key": "applyIntraState",
+          "label": "Apply Threshold to Intra-State Movement Within Kerala",
+          "type": "toggle"
+        },
+        {
+          "key": "defaultTransportMode",
+          "label": "Default Mode of Transport",
+          "type": "select",
+          "options": [
+            "Road (Motor Vehicle)",
+            "Rail",
+            "Air Cargo",
+            "Ship / Coastal Vessel"
+          ]
+        },
+        {
+          "key": "autoPinDistance",
+          "label": "Auto-Calculate Pin-to-Pin Distance via NIC Postal Matrix",
+          "type": "toggle",
+          "help": "Computes approximate road kilometers between supplier and recipient PIN codes."
+        }
+      ]
+    },
+    "generalModules": {
+      "title": "Workspace Module Visibility & General Preferences",
+      "subtitle": "Choose which transactional modules are enabled in the left navigation bar for your organization.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enableQuotes",
+          "label": "Enable Quotes / Estimates Module",
+          "type": "toggle",
+          "help": "Create proposals and convert accepted quotes directly into Sales Orders or Tax Invoices."
+        },
+        {
+          "key": "enableSalesOrders",
+          "label": "Enable Sales Orders Module",
+          "type": "toggle",
+          "help": "Track confirmed customer orders, committed stock, and partial dispatches."
+        },
+        {
+          "key": "enableDeliveryChallans",
+          "label": "Enable Delivery Challans Module",
+          "type": "toggle",
+          "help": "Generate job-work, approval, and branch transfer accompaniment documents."
+        },
+        {
+          "key": "enableRetainerInvoices",
+          "label": "Enable Retainer & Advance Invoices",
+          "type": "toggle",
+          "help": "Collect customer advances and adjust retainers against milestone invoices."
+        },
+        {
+          "key": "enableProjectsTimesheets",
+          "label": "Enable Projects & Billable Timesheets",
+          "type": "toggle",
+          "help": "Track IT consulting hours, sprint milestones, and billable staff rates."
+        },
+        {
+          "key": "enableBillsOfEntry",
+          "label": "Enable Import Bills of Entry (BOE)",
+          "type": "toggle",
+          "help": "Record customs duty and import IGST on international shipments."
+        },
+        {
+          "key": "enablePaymentRetention",
+          "label": "Enable Contractual Payment Retention",
+          "type": "toggle",
+          "help": "Hold back retention percentages on enterprise project invoices."
+        }
+      ]
+    },
+    "currencyAdj": {
+      "title": "Multi-Currency Exchange & Rounding Preferences",
+      "subtitle": "Configure automatic exchange rate feeds, realized/unrealized forex accounts, and invoice total rounding.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "autoFetchRates",
+          "label": "Auto-Fetch Daily Exchange Rates from RBI / ECB Reference Feed",
+          "type": "toggle",
+          "help": "Updates USD, EUR, GBP, and AED conversion rates daily at 09:00 IST."
+        },
+        {
+          "key": "forexGainLossAccount",
+          "label": "Default Ledger for Exchange Gain or Loss",
+          "type": "select",
+          "readOnly": true
+        },
+        {
+          "key": "invoiceRoundingMode",
+          "label": "Sales Invoice Total Rounding Method",
+          "type": "select",
+          "options": [
+            "Round to Nearest ₹1.00 (Standard Indian GST Practice)",
+            "No Rounding (Exact 2 Decimals)",
+            "Round Up to Nearest ₹1.00",
+            "Round Down to Nearest ₹1.00"
+          ]
+        },
+        {
+          "key": "allowRateOverride",
+          "label": "Allow Users to Override Exchange Rate on Individual Invoices",
+          "type": "toggle",
+          "help": "Permits entering custom bank realization certificate (FIRC) exchange rates."
+        }
+      ]
+    },
+    "migrationLocks": {
+      "title": "Transaction Locking & Historical Migration Controls",
+      "subtitle": "Prevent backdated edits to audited accounting periods after GST or statutory tax filing.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "lockAllModules",
+          "label": "Enable Period Lock Date Across Sales, Purchases, Banking & Journals",
+          "type": "toggle",
+          "help": "Blocks creation, modification, or deletion of vouchers dated on or before the lock date."
+        },
+        {
+          "key": "lockDate",
+          "label": "Books Closed & Locked Through Date",
+          "type": "text",
+          "help": "Format: YYYY-MM-DD (e.g. 2026-09-30 for Q2 FY26-27 close)."
+        },
+        {
+          "key": "lockOverrideRole",
+          "label": "Role Permitted to Override Period Lock with Audit Reason",
+          "type": "select",
+          "options": [
+            "Super Admin Only",
+            "Super Admin & Finance Head",
+            "No Override Allowed without Unlocking"
+          ]
+        },
+        {
+          "key": "migrationCutoverDate",
+          "label": "Historical Opening Balance Migration Cut-Over Date",
+          "type": "text",
+          "help": "Date on which legacy Tally/ERP balances were brought into Convosis Books."
+        }
+      ]
+    },
+    "portalSettings": {
+      "title": "Customer & Vendor Self-Service Portal Configuration",
+      "subtitle": "Empower clients and suppliers to view statements, download signed GST invoices, and pay online.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "customerPortalEnabled",
+          "label": "Enable Customer Self-Service Portal",
+          "type": "toggle",
+          "help": "Customers can view open invoices, download PDFs, accept quotes, and pay via UPI/Gateways."
+        },
+        {
+          "key": "vendorPortalEnabled",
+          "label": "Enable Vendor Collaboration Portal",
+          "type": "toggle",
+          "help": "Vendors can view Purchase Orders, upload tax invoices, and reconcile ledger statements."
+        },
+        {
+          "key": "portalSlug",
+          "label": "Custom Portal Subdomain URL",
+          "type": "text",
+          "help": "Hosted portal endpoint for your organization."
+        },
+        {
+          "key": "allowPartialPayments",
+          "label": "Allow Customers to Make Partial Installment Payments in Portal",
+          "type": "toggle",
+          "help": "Lets clients pay a custom amount toward an open invoice."
+        },
+        {
+          "key": "portalBannerMessage",
+          "label": "Portal Welcome Banner Announcement",
+          "type": "text",
+          "help": "Displayed at the top of the client dashboard."
+        }
+      ]
+    },
+    "emailNotifications": {
+      "title": "Email Notification Templates & Sender Authentication",
+      "subtitle": "Configure DKIM/SPF verified sender domains and dynamic merge-tag templates for automated emails.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "fromSenderName",
+          "label": "Default Organization Sender Name",
+          "type": "text",
+          "help": "Appears in the From header of outgoing customer emails."
+        },
+        {
+          "key": "fromSenderEmail",
+          "label": "Verified Primary Sender Email Address",
+          "type": "text",
+          "help": "DKIM & SPF authenticated domain address."
+        },
+        {
+          "key": "attachPdfByDefault",
+          "label": "Attach Signed Tax Invoice PDF to Notification Emails by Default",
+          "type": "toggle",
+          "help": "Includes the rendered PDF attachment alongside the portal payment button."
+        },
+        {
+          "key": "invoiceEmailSubject",
+          "label": "Default Invoice Email Subject Template",
+          "type": "text",
+          "help": "Supports merge tags: %InvoiceNumber%, %CompanyName%, %TotalAmount%, %DueDate%."
+        },
+        {
+          "key": "bccFinanceArchive",
+          "label": "Auto-BCC Compliance Archive Mailbox on All Dispatched Invoices",
+          "type": "toggle"
+        }
+      ]
+    },
+    "smsNotifications": {
+      "title": "SMS & WhatsApp Business DLT Notification Templates",
+      "subtitle": "Configure TRAI DLT entity registration and instant transactional SMS/WhatsApp triggers.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "smsGatewayActive",
+          "label": "Enable Transactional SMS & WhatsApp Alerts",
+          "type": "toggle",
+          "help": "Dispatches instant alerts on Invoice Creation, Payment Receipt, and Overdue Reminder."
+        },
+        {
+          "key": "traiDltEntityId",
+          "label": "TRAI Principal Entity DLT Registration ID",
+          "type": "text",
+          "help": "19-digit DLT Entity ID registered with telecom operators."
+        },
+        {
+          "key": "smsSenderHeader",
+          "label": "Approved 6-Character SMS Header (Sender ID)",
+          "type": "text",
+          "help": "e.g. CONVOS or HANIEL"
+        },
+        {
+          "key": "sendOnPaymentReceived",
+          "label": "Auto-Send Instant Thank-You Receipt SMS Upon Payment Recording",
+          "type": "toggle",
+          "help": "Includes receipt number and updated outstanding balance."
+        }
+      ]
+    },
+    "digitalSignature": {
+      "title": "Digital Signature Certificate (DSC) & Authorized Signatory",
+      "subtitle": "Cryptographically sign PDF Tax Invoices, Credit Notes, and Delivery Challans using Class-3 DSC.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "dscEnabled",
+          "label": "Enable Cryptographic Digital Signature on Exported PDFs",
+          "type": "toggle",
+          "help": "Complies with Rule 46 of CGST Rules 2017 for digitally signed electronic tax invoices."
+        },
+        {
+          "key": "signatoryName",
+          "label": "Authorized Signatory Full Name",
+          "type": "text",
+          "help": "Printed inside the signature block."
+        },
+        {
+          "key": "signatoryDesignation",
+          "label": "Authorized Signatory Designation",
+          "type": "text",
+          "help": "e.g. Chief Executive Officer / Managing Director"
+        },
+        {
+          "key": "certificateProvider",
+          "label": "DSC Certificate Mode",
+          "type": "select",
+          "options": [
+            "Cloud HSM PFX Certificate (Auto-Sign on Approve)",
+            "Local USB ePass Token (WebSocket Signer)",
+            "Visual Facsimile Signature Stamp Only"
+          ]
+        }
+      ]
+    },
+    "workflowLogPrefs": {
+      "title": "Workflow Execution Telemetry & Failure Retry Policy",
+      "subtitle": "Configure retention duration and automatic backoff retries for failed webhook and email actions.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "autoRetryFailedWebhooks",
+          "label": "Automatically Retry Failed Outgoing Webhooks with Exponential Backoff",
+          "type": "toggle",
+          "help": "Retries up to 5 times at 1m, 5m, 15m, 60m, and 6h intervals."
+        },
+        {
+          "key": "maxRetryCount",
+          "label": "Maximum Retry Attempts Before Marking Action Failed",
+          "type": "select",
+          "options": [
+            "3 Attempts",
+            "5 Attempts",
+            "10 Attempts"
+          ]
+        },
+        {
+          "key": "failureAlertEmail",
+          "label": "Notify Engineering / Admin Email on Persistent Workflow Failure",
+          "type": "text",
+          "help": "Receives stack trace and HTTP status code payload."
+        },
+        {
+          "key": "logRetentionDays",
+          "label": "Workflow Execution Log Retention Window",
+          "type": "select",
+          "options": [
+            "90 Days",
+            "180 Days",
+            "365 Days (1 Fiscal Year)"
+          ]
+        }
+      ]
+    },
+    "modAccountant": {
+      "title": "Accountant, Chart of Accounts & Manual Journals",
+      "subtitle": "Enforce general ledger account code numbering, journal approval workflows, and contra rules.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "mandatoryAccountCode",
+          "label": "Make Unique Account Code Mandatory for All Chart of Accounts Ledgers",
+          "type": "toggle",
+          "help": "Requires structured numeric GL codes (e.g. 1000 Assets, 2000 Liabilities, 4000 Revenue)."
+        },
+        {
+          "key": "journalApprovalRequired",
+          "label": "Require Finance Head Approval Before Publishing Manual Journal Entries",
+          "type": "toggle",
+          "help": "New journals remain in Draft/Pending state until approved."
+        },
+        {
+          "key": "allowMultiCurrencyJournals",
+          "label": "Allow Foreign Currency Manual Journal Adjustments",
+          "type": "toggle",
+          "help": "Permits posting journal entries in USD, EUR, GBP, or AED."
+        }
+      ]
+    },
+    "modProjects": {
+      "title": "Projects & Engagement Billing Preferences",
+      "subtitle": "Configure default project billing methods, unbilled expense markups, and milestone invoicing.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "defaultBillingMethod",
+          "label": "Default Project Billing Structure",
+          "type": "select",
+          "options": [
+            "Fixed Cost Milestone Billing",
+            "Based on Project Hours",
+            "Based on Task Hours",
+            "Based on Staff Hourly Rate"
+          ]
+        },
+        {
+          "key": "defaultExpenseMarkupPct",
+          "label": "Default Markup Percentage on Billable Project Expenses (%)",
+          "type": "number",
+          "help": "Applied automatically when recharging travel or cloud expenses to clients."
+        },
+        {
+          "key": "allowClientPortalProjectView",
+          "label": "Allow Customers to View Project Task Progress in Client Portal",
+          "type": "toggle",
+          "help": "Shares sprint task completion percentages and logged hours."
+        }
+      ]
+    },
+    "modTimesheets": {
+      "title": "Timesheets & Billable Hours Configuration",
+      "subtitle": "Set time rounding intervals, maximum daily hour caps, and mandatory timesheet approvals.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "requireTimesheetApproval",
+          "label": "Require Manager Approval Before Invoicing Logged Timesheets",
+          "type": "toggle",
+          "help": "Prevents unverified staff hours from being pulled into customer invoices."
+        },
+        {
+          "key": "timeRoundingInterval",
+          "label": "Round Timer Entries to Nearest Interval",
+          "type": "select",
+          "options": [
+            "Round Up to Nearest 15 Minutes",
+            "Round to Nearest 6 Minutes (0.1 Hr)",
+            "Exact Minutes & Seconds (No Rounding)"
+          ]
+        },
+        {
+          "key": "maxDailyHoursCap",
+          "label": "Maximum Billable Hours Permitted Per Staff Per Day",
+          "type": "number",
+          "help": "Triggers validation warning if daily logged hours exceed cap."
+        }
+      ]
+    },
+    "modBudgets": {
+      "title": "Departmental Budgets & Variance Controls",
+      "subtitle": "Monitor actual vs. budgeted expenditure across branches and enforce purchase order blocks.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "budgetWarningThresholdPct",
+          "label": "Trigger Budget Utilization Warning Alert At (%)",
+          "type": "select",
+          "options": [
+            "80% of Monthly Budget",
+            "90% of Monthly Budget",
+            "100% of Monthly Budget"
+          ]
+        },
+        {
+          "key": "hardBlockPoOnOverrun",
+          "label": "Hard-Block Purchase Order Approval When Department Budget Exceeds 100%",
+          "type": "toggle",
+          "help": "Requires Super Admin override if a PO pushes a cost center over budget."
+        },
+        {
+          "key": "includeCommittedPoInActuals",
+          "label": "Include Open Unbilled Purchase Orders in Budget Utilization Calculation",
+          "type": "toggle",
+          "help": "Calculates committed spend alongside posted vendor bills."
+        }
+      ]
+    },
+    "modNetting": {
+      "title": "Bilateral AP / AR Party Netting Configuration",
+      "subtitle": "Offset Accounts Receivable invoices against Accounts Payable vendor bills for dual-role trading partners.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enableBilateralNetting",
+          "label": "Enable Bilateral Customer-Vendor Contra Netting Settlements",
+          "type": "toggle",
+          "help": "Useful when spice suppliers or IT partners are both buyers and sellers."
+        },
+        {
+          "key": "clearingLedgerAccount",
+          "label": "Default Netting Clearing Suspense Account",
+          "type": "select",
+          "readOnly": true
+        },
+        {
+          "key": "requireNettingApproval",
+          "label": "Require Finance Head Sign-Off on Netting Settlement Vouchers",
+          "type": "toggle",
+          "help": "Generates a printable Netting Settlement Statement for both parties."
+        }
+      ]
+    },
+    "modContacts": {
+      "title": "Customers & Vendors Master Preferences",
+      "subtitle": "Configure credit limit enforcement, duplicate prevention, and MSME/Udyam supplier tracking.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "preventDuplicateDisplayNames",
+          "label": "Disallow Duplicate Customer or Vendor Display Names",
+          "type": "toggle",
+          "help": "Ensures every party has a unique ledger display name."
+        },
+        {
+          "key": "creditLimitAction",
+          "label": "Action When New Sales Invoice Exceeds Customer Credit Limit",
+          "type": "select",
+          "options": [
+            "Warn User & Require Manager Approval",
+            "Strict Block (Prevent Saving Invoice)",
+            "Show Warning Banner Only"
+          ]
+        },
+        {
+          "key": "trackMsmeUdyam",
+          "label": "Track Vendor MSME / Udyam Registration & 45-Day Payment Compliance (Sec 43B(h))",
+          "type": "toggle",
+          "help": "Highlights overdue Micro & Small Enterprise bills approaching the 45-day Income Tax disallowance window."
+        }
+      ]
+    },
+    "modItems": {
+      "title": "Items, SKU & HSN/SAC Catalog Preferences",
+      "subtitle": "Configure decimal precision, mandatory HSN/SAC codes, and duplicate SKU prevention.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "requireUniqueSku",
+          "label": "Enforce Unique SKU Code Across All Goods & Service Items",
+          "type": "toggle",
+          "help": "Prevents duplicate item codes across IT courses, ERP licenses, and cardamom grades."
+        },
+        {
+          "key": "rateDecimalPlaces",
+          "label": "Item Unit Rate Decimal Precision",
+          "type": "select",
+          "options": [
+            "2 Decimal Places (₹0.00)",
+            "3 Decimal Places (₹0.000)",
+            "4 Decimal Places (₹0.0000)"
+          ]
+        },
+        {
+          "key": "qtyDecimalPlaces",
+          "label": "Item Quantity Decimal Precision (For Kgs / Liters / Hours)",
+          "type": "select",
+          "options": [
+            "2 Decimal Places (0.00 Kg)",
+            "3 Decimal Places (0.000 Kg)",
+            "0 Decimal Places (Whole Units Only)"
+          ]
+        },
+        {
+          "key": "enableWholesalePackUnits",
+          "label": "Enable Multi-UOM Packaging Conversion (e.g. 1 Bag = 50 Kg)",
+          "type": "toggle",
+          "help": "Automatically converts purchase bags into retail kilogram inventory."
+        }
+      ]
+    },
+    "modPriceLists": {
+      "title": "Price Lists & Volume Tier Pricing",
+      "subtitle": "Maintain differentiated pricing books for Export Wholesale, Retail, Institutional, and EdTech cohorts.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enablePriceLists",
+          "label": "Enable Multi-Tier Price Lists in Sales & Purchase Transactions",
+          "type": "toggle",
+          "help": "Allows assigning a default Price List to each customer or branch."
+        },
+        {
+          "key": "allowLineItemPriceList",
+          "label": "Allow Selecting Different Price Lists at Individual Line-Item Level",
+          "type": "toggle",
+          "help": "Permits mixing promotional and standard price lists on the same invoice."
+        },
+        {
+          "key": "volumePricingEnabled",
+          "label": "Enable Quantity Slab / Volume Discount Pricing Brackets",
+          "type": "toggle",
+          "help": "Automatically applies lower unit rates when order quantity crosses 50 Kg or 100 seats."
+        }
+      ]
+    },
+    "modQuotes": {
+      "title": "Quotes / Estimates Workflow Preferences",
+      "subtitle": "Automate quote expiry, customer portal acceptance, and instant conversion to Sales Orders or Invoices.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "defaultQuoteExpiryDays",
+          "label": "Default Quote Validity Period (Days)",
+          "type": "number",
+          "help": "Calculates Expiry Date automatically from Quote Date."
+        },
+        {
+          "key": "onQuoteAcceptAction",
+          "label": "Automated Action When Customer Accepts Quote in Portal",
+          "type": "select",
+          "options": [
+            "Convert to Draft Tax Invoice Automatically",
+            "Convert to Confirmed Sales Order Automatically",
+            "Convert to Approved & Sent Invoice",
+            "Notify Sales Owner Only"
+          ]
+        },
+        {
+          "key": "copyQuoteNotesToInvoice",
+          "label": "Carry Forward Customer Notes & Terms Upon Conversion",
+          "type": "toggle",
+          "help": "Preserves custom delivery commitments on the resulting invoice."
+        }
+      ]
+    },
+    "modSalesOrders": {
+      "title": "Sales Orders & Stock Commitment Rules",
+      "subtitle": "Control inventory reservation, partial shipment closure, and backorder handling.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "reserveStockOnConfirm",
+          "label": "Reserve Available Inventory Stock Immediately When Sales Order is Confirmed",
+          "type": "toggle",
+          "help": "Deducts committed quantity from Stock Available for Sale."
+        },
+        {
+          "key": "salesOrderCloseTrigger",
+          "label": "Automatically Mark Sales Order as Closed When",
+          "type": "select",
+          "options": [
+            "Both Fully Shipped AND Fully Invoiced",
+            "Fully Invoiced Only",
+            "Manually Closed by Operations"
+          ]
+        },
+        {
+          "key": "allowOverShipmentPct",
+          "label": "Allowed Over-Shipment Weight Tolerance Percentage (%)",
+          "type": "number",
+          "help": "Useful for bulk agricultural spice shipments where bag weights vary slightly."
+        }
+      ]
+    },
+    "modChallans": {
+      "title": "Delivery Challans & Packing Slips Configuration",
+      "subtitle": "Configure Job Work, Supply on Approval, and Inter-Branch stock transfer challans.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enableReturnableChallans",
+          "label": "Track Returnable Goods & Job-Work Return Deadlines (Sec 143 GST)",
+          "type": "toggle",
+          "help": "Alerts operations if job-work goods are not returned within 1 year."
+        },
+        {
+          "key": "allowPartialChallanInvoicing",
+          "label": "Allow Partial Line-Item Conversion from Delivery Challan to Invoice",
+          "type": "toggle",
+          "help": "Enables billing accepted quantities while logging rejected returns."
+        }
+      ]
+    },
+    "modInvoices": {
+      "title": "Sales Invoices Approval, Late Fees & QR Rules",
+      "subtitle": "Configure multi-tier invoice approvals, automatic credit note application, and UPI QR codes.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "enableInvoiceApproval",
+          "label": "Require Multi-Tier Approval Workflow for Invoices Above Threshold",
+          "type": "toggle",
+          "help": "Invoices above ₹1,00,000 require Finance Head or CEO sign-off before sending."
+        },
+        {
+          "key": "allowEditSentInvoices",
+          "label": "Allow Authorised Admins to Edit Sent Invoices (Before IRN Lock)",
+          "type": "toggle",
+          "help": "Logs a revision entry in the audit trail when a sent invoice is modified."
+        },
+        {
+          "key": "autoApplyCustomerCredits",
+          "label": "Automatically Apply Open Customer Credits / Advances to New Invoices",
+          "type": "toggle",
+          "help": "Reduces balance due by applying unapplied retainer advances."
+        },
+        {
+          "key": "defaultPaymentTerms",
+          "label": "Default Customer Payment Terms",
+          "type": "select",
+          "readOnly": true
+        },
+        {
+          "key": "embedDynamicUpiQr",
+          "label": "Embed Dynamic Amount-Locked UPI QR Code on Every Tax Invoice PDF",
+          "type": "toggle",
+          "help": "Allows customers to scan and pay the exact invoice balance from any UPI app."
+        }
+      ]
+    },
+    "modRecurringInvoices": {
+      "title": "Recurring Invoices & Subscription Billing Rules",
+      "subtitle": "Configure how scheduled recurring invoices are generated, emailed, and charged.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "generationMode",
+          "label": "When a Recurring Invoice Profile Reaches Its Scheduled Date",
+          "type": "select",
+          "options": [
+            "Create & Email Approved Invoice Automatically",
+            "Create as Draft for Finance Review",
+            "Create, Charge Saved Mandate & Email Receipt"
+          ]
+        },
+        {
+          "key": "retryFailedAutoCharge",
+          "label": "Auto-Retry Failed e-NACH / Card Captures After 3 Days",
+          "type": "toggle",
+          "help": "Sends dunning alert if payment capture fails."
+        }
+      ]
+    },
+    "modCreditNotes": {
+      "title": "Credit Notes & Sales Returns Preferences",
+      "subtitle": "Enforce validation against original invoice value and configure GST tax adjustment rules.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "blockCreditExceedingInvoice",
+          "label": "Prevent Credit Note Total from Exceeding Original Linked Invoice Value",
+          "type": "toggle",
+          "help": "Eliminates accidental over-crediting on sales returns."
+        },
+        {
+          "key": "autoRestockReturnedItems",
+          "label": "Automatically Restock Returned Goods into Warehouse Inventory on Credit Note Creation",
+          "type": "toggle",
+          "help": "Increments stock on hand for undamaged returned items."
+        }
+      ]
+    },
+    "modRetention": {
+      "title": "Contractual Payment Retention Settings",
+      "subtitle": "Manage retention money held back by enterprise or government clients on milestone invoices.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "defaultRetentionPct",
+          "label": "Default Retention Holdback Percentage (%)",
+          "type": "number",
+          "help": "Standard contractual retention is 5% or 10%."
+        },
+        {
+          "key": "retentionLedger",
+          "label": "Retention Receivable Asset Account",
+          "type": "select",
+          "readOnly": true
+        }
+      ]
+    },
+    "modExpenses": {
+      "title": "Expenses & Employee Reimbursement Controls",
+      "subtitle": "Enforce receipt attachments, configure vehicle mileage rates, and track GST input tax credit.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "mandatoryReceiptThresholdInr",
+          "label": "Require Scanned Receipt Attachment for Expenses Above (₹)",
+          "type": "number",
+          "help": "Blocks submission of unvouched cash expenses above ₹2,500."
+        },
+        {
+          "key": "twoWheelerRatePerKm",
+          "label": "Two-Wheeler Motorcycle Mileage Reimbursement Rate (₹ / km)",
+          "type": "number",
+          "help": "Default rate for field sales and branch travel."
+        },
+        {
+          "key": "fourWheelerRatePerKm",
+          "label": "Four-Wheeler Car Mileage Reimbursement Rate (₹ / km)",
+          "type": "number",
+          "help": "Standard corporate car allowance rate."
+        }
+      ]
+    },
+    "modRecurringExpenses": {
+      "title": "Recurring Expenses Automation",
+      "subtitle": "Manage scheduled rent, cloud hosting, and internet lease line expense postings.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "postRecurringAsPaid",
+          "label": "Automatically Record Recurring Expense Against Default Bank Account",
+          "type": "toggle",
+          "help": "Posts ledger entry and notifies finance owner."
+        }
+      ]
+    },
+    "modPurchaseOrders": {
+      "title": "Purchase Orders & Procurement Controls",
+      "subtitle": "Configure PO approval thresholds, excess receipt tolerances, and vendor confirmation.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "poApprovalThresholdInr",
+          "label": "Require Manager Approval for Purchase Orders Exceeding (₹)",
+          "type": "number",
+          "help": "Default threshold: ₹50,000."
+        },
+        {
+          "key": "autoClosePoOnFullBill",
+          "label": "Automatically Close Purchase Order When All Line Items Are Billed",
+          "type": "toggle",
+          "help": "Transitions PO status to Closed."
+        }
+      ]
+    },
+    "modBills": {
+      "title": "Vendor Bills & 3-Way Matching Rules",
+      "subtitle": "Prevent duplicate supplier invoices, enforce PO + GRN matching, and automate TDS deduction.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "blockDuplicateVendorBillNo",
+          "label": "Block Duplicate Vendor Invoice Numbers Within Same Fiscal Year",
+          "type": "toggle",
+          "help": "Prevents paying the same supplier bill twice."
+        },
+        {
+          "key": "enforceThreeWayMatch",
+          "label": "Enforce 3-Way Matching (Purchase Order = Goods Receipt Note = Vendor Bill)",
+          "type": "toggle",
+          "help": "Flags quantity or unit price variances before bill approval."
+        },
+        {
+          "key": "requireGstr2bMatchForItc",
+          "label": "Hold Vendor Payment Retention Until Invoice Appears in GSTR-2B Portal",
+          "type": "toggle",
+          "help": "Protects Input Tax Credit (ITC) compliance."
+        }
+      ]
+    },
+    "modBOE": {
+      "title": "Import Bills of Entry (BOE) & Landed Cost",
+      "subtitle": "Allocate Basic Customs Duty, Social Welfare Surcharge, and freight across imported items.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "landedCostAllocationMethod",
+          "label": "Default Landed Cost Allocation Basis Across Line Items",
+          "type": "select",
+          "options": [
+            "Allocate by Line Item Value (CIF)",
+            "Allocate by Gross Weight (Kg)",
+            "Allocate by Quantity"
+          ]
+        },
+        {
+          "key": "validateSevenDigitBoe",
+          "label": "Enforce 7-Digit ICEGATE Bill of Entry Number Format",
+          "type": "toggle",
+          "help": "Required for GSTR-2B import IGST reconciliation."
+        }
+      ]
+    },
+    "modPaymentsMade": {
+      "title": "Vendor Payments Made & Disbursement Controls",
+      "subtitle": "Configure payment voucher approvals, cheque printing, and automated vendor remittance emails.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "requirePaymentApproval",
+          "label": "Require Dual Authorization for Outgoing Vendor Payments Above ₹50,000",
+          "type": "toggle",
+          "help": "Maker-checker control for NEFT/RTGS/IMPS payouts."
+        },
+        {
+          "key": "autoEmailRemittanceAdvice",
+          "label": "Automatically Email Payment Remittance Advice & UTR to Vendor",
+          "type": "toggle",
+          "help": "Lists all settled bill numbers and TDS deducted."
+        }
+      ]
+    },
+    "modVendorCredits": {
+      "title": "Vendor Credits & Purchase Debit Notes",
+      "subtitle": "Configure how supplier credit notes and spice quality weight deductions are adjusted.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "autoApplyVendorCredits",
+          "label": "Prompt to Apply Open Vendor Credits Automatically When Recording New Bill",
+          "type": "toggle",
+          "help": "Ensures pending debit notes are deducted before payout."
+        }
+      ]
+    },
+    "modInventory": {
+      "title": "Inventory Valuation, Batch & Expiry Tracking",
+      "subtitle": "Configure FIFO vs. Weighted Average valuation, negative stock rules, and cardamom lot grading.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "valuationMethod",
+          "label": "Inventory Accounting Valuation Method",
+          "type": "select",
+          "options": [
+            "FIFO (First In, First Out)",
+            "WAC (Weighted Average Cost)"
+          ]
+        },
+        {
+          "key": "preventNegativeStock",
+          "label": "Strictly Block Invoicing or Dispatching Items When Stock Falls Below Zero",
+          "type": "toggle",
+          "help": "Prevents negative inventory ledger distortion."
+        },
+        {
+          "key": "enableBatchAndGradeTracking",
+          "label": "Enable Batch Number, Moisture %, and Expiry Date Tracking on Items",
+          "type": "toggle",
+          "help": "Essential for Aroma Fusion 8mm Bold Green Cardamom lots and perishable inventory."
+        }
+      ]
+    },
+    "paymentGateways": {
+      "title": "Online Payment Gateways (Razorpay, Stripe, ICICI Eazypay, PayPal)",
+      "subtitle": "Connect merchant accounts to collect instant online payments on invoices and portal links.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "razorpayConnected",
+          "label": "Enable Razorpay Enterprise Gateway (UPI, Cards, NetBanking, EMI)",
+          "type": "toggle",
+          "help": "Merchant ID: rzp_live_ConvosisKtm01 • Auto-reconciles settlement UTRs.",
+          "readOnly": true
+        },
+        {
+          "key": "stripeConnected",
+          "label": "Enable Stripe Global Gateway (USD, EUR, GBP, AED International Cards)",
+          "type": "toggle",
+          "help": "Supports 3D Secure 2.0 and automated FIRC export metadata.",
+          "readOnly": true
+        },
+        {
+          "key": "iciciEazypayConnected",
+          "label": "Enable ICICI Bank Corporate Eazypay / CIB Collect",
+          "type": "toggle",
+          "help": "Zero-MDR corporatevirtual account NEFT/RTGS/IMPS reconciliation.",
+          "readOnly": true
+        },
+        {
+          "key": "defaultSettlementAccount",
+          "label": "Default Bank Ledger for Gateway Settlements",
+          "type": "select",
+          "readOnly": true
+        }
+      ]
+    },
+    "upiSettings": {
+      "title": "Corporate UPI & Bharat Connect B2B Collect",
+      "subtitle": "Configure your verified merchant VPA for dynamic invoice QR codes and instant UPI Autopay.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "merchantUpiVpa",
+          "label": "Primary Corporate Merchant UPI ID (VPA)",
+          "type": "text",
+          "help": "Encoded into dynamic BharatQR on every sales invoice."
+        },
+        {
+          "key": "merchantPayeeName",
+          "label": "UPI Payee Display Name",
+          "type": "text",
+          "help": "Shown on customer GPay / PhonePe / Paytm confirmation screen."
+        },
+        {
+          "key": "enableUpiAutopayMandates",
+          "label": "Enable UPI Autopay for Recurring SaaS & EdTech Tuition Installments",
+          "type": "toggle",
+          "help": "Supports recurring mandates up to ₹15,000 without additional AFA."
+        }
+      ]
+    },
+    "checkoutLinks": {
+      "title": "Hosted Payment Links & Checkout Branding",
+      "subtitle": "Customize hosted payment page expiry, partial payment sliders, and redirect URLs.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "defaultLinkExpiryDays",
+          "label": "Default Hosted Payment Link Expiry (Days)",
+          "type": "number",
+          "help": "Links automatically expire after this window."
+        },
+        {
+          "key": "successRedirectUrl",
+          "label": "Post-Payment Thank-You Redirect URL",
+          "type": "text",
+          "help": "Redirects customer browser after verified payment."
+        }
+      ]
+    },
+    "portalCustomModules": {
+      "title": "Customer & Vendor Portal Custom Module Exposure",
+      "subtitle": "Control which custom business objects are visible to external customers and suppliers.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "exposeInternshipBatches",
+          "label": "Allow Students/Clients to View \"Internship Batches\" in Customer Portal",
+          "type": "toggle",
+          "help": "Displays cohort schedule, certificate status, and fee balance."
+        },
+        {
+          "key": "exposeCardamomGrading",
+          "label": "Allow Spice Suppliers/Buyers to View \"Cardamom Lot Grading\" Lab Reports",
+          "type": "toggle",
+          "help": "Shares moisture %, liter weight (g/L), and 8mm bold sieve analysis."
+        }
+      ]
+    },
+    "intCrmErp": {
+      "title": "Convosis CRM & Enterprise ERP Native Sync",
+      "subtitle": "Configure bidirectional master data and transaction synchronization across your software suite.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "crmSyncEnabled",
+          "label": "Enable Real-Time Bidirectional Sync with Convosis CRM & ERP",
+          "type": "toggle",
+          "help": "Syncs Accounts, Contacts, Won Deals, Quotes, and Invoices every 5 minutes.",
+          "readOnly": true
+        },
+        {
+          "key": "conflictResolutionPolicy",
+          "label": "Master Record Conflict Resolution Policy",
+          "type": "select",
+          "options": [
+            "Convosis Books Wins (Accounting Master)",
+            "Most Recently Updated Record Wins",
+            "CRM Wins for Contact Fields Only"
+          ]
+        }
+      ]
+    },
+    "intBanking": {
+      "title": "Connected Corporate Banking Feeds & Bharat Connect",
+      "subtitle": "Automate daily bank statement ingestion and AI-assisted ledger reconciliation.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "bobDirectFeedActive",
+          "label": "Bank of Baroda Corporate Current A/c (•••• 4821) — Auto Statement Feed",
+          "type": "toggle",
+          "help": "Syncs UTR credits and NEFT debits every 60 minutes.",
+          "readOnly": true
+        },
+        {
+          "key": "iciciDirectFeedActive",
+          "label": "ICICI Bank Connected Corporate Banking API (•••• 9014)",
+          "type": "toggle",
+          "help": "Enables direct bill payout initiation from Convosis Books.",
+          "readOnly": true
+        }
+      ]
+    },
+    "intWhatsApp": {
+      "title": "WhatsApp Business Cloud API Integration",
+      "subtitle": "Send approved GST Tax Invoices, payment buttons, and ledger statements directly on WhatsApp.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "whatsappCloudActive",
+          "label": "Enable Official Meta WhatsApp Business Cloud API",
+          "type": "toggle",
+          "help": "Connected Display Number: +91 94470 ••••8 (Verified Green Tick).",
+          "readOnly": true
+        },
+        {
+          "key": "wabaAccountId",
+          "label": "WhatsApp Business Account (WABA) ID",
+          "type": "text",
+          "help": "Meta Business Manager WABA identifier."
+        },
+        {
+          "key": "autoSendPdfOnApprove",
+          "label": "Automatically Dispatch PDF Tax Invoice on WhatsApp Upon Approval",
+          "type": "toggle",
+          "help": "Includes interactive \"Pay Now via UPI\" button."
+        }
+      ]
+    },
+    "intTally": {
+      "title": "Tally Prime XML & Legacy ERP Migration Connector",
+      "subtitle": "Import Chart of Accounts, Party Masters, HSN Items, and Daybook Vouchers from Tally XML.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "autoMapTallyGroups",
+          "label": "Automatically Map Tally Primary Groups (Sundry Debtors/Creditors) to System Ledgers",
+          "type": "toggle",
+          "help": "Preserves parent-child group hierarchy during XML import."
+        },
+        {
+          "key": "preserveVoucherNumbers",
+          "label": "Preserve Original Tally Voucher Numbers During Historical Import",
+          "type": "toggle",
+          "help": "Prevents re-numbering audited historical invoices."
+        }
+      ]
+    },
+    "intPayroll": {
+      "title": "Payroll & Statutory Compliance Journal Integration",
+      "subtitle": "Automatically post monthly salary, EPF, ESI, Professional Tax, and TDS Sec 192 journals.",
+      "integrationStatus": "requires_workflow_wiring",
+      "fields": [
+        {
+          "key": "autoPostMonthlyPayroll",
+          "label": "Auto-Post Consolidated Payroll Journal Entry on Payrun Approval",
+          "type": "toggle",
+          "help": "Splits departmental salary costs across reporting tags."
+        },
+        {
+          "key": "salaryPayableLedger",
+          "label": "Default Net Salary Payable Liability Ledger",
+          "type": "select",
+          "readOnly": true
+        }
+      ]
+    }
+  },
+  "collections": {
+    "branches": {
+      "singular": "Branch",
+      "columns": [
+        {
+          "key": "name",
+          "label": "Branch Name",
+          "badge": false
+        },
+        {
+          "key": "code",
+          "label": "Code",
+          "badge": false
+        },
+        {
+          "key": "gstin",
+          "label": "GSTIN",
+          "badge": false
+        },
+        {
+          "key": "city",
+          "label": "City / State",
+          "badge": false
+        },
+        {
+          "key": "prefix",
+          "label": "Series Prefix",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "name",
+          "label": "Branch Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "code",
+          "label": "Branch Code",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "gstin",
+          "label": "Branch GSTIN (15 chars)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "city",
+          "label": "City & State",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "prefix",
+          "label": "Transaction Series Prefix",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "currencies": {
+      "singular": "Currency",
+      "columns": [
+        {
+          "key": "code",
+          "label": "ISO Code",
+          "badge": false
+        },
+        {
+          "key": "name",
+          "label": "Currency Name",
+          "badge": false
+        },
+        {
+          "key": "symbol",
+          "label": "Symbol",
+          "badge": false
+        },
+        {
+          "key": "rate",
+          "label": "Exchange Rate (to INR)",
+          "badge": false
+        },
+        {
+          "key": "decimals",
+          "label": "Decimals",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "code",
+          "label": "Currency ISO Code (3 letters)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "name",
+          "label": "Currency Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "symbol",
+          "label": "Currency Symbol",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "rate",
+          "label": "Exchange Rate (1 Unit = X INR)",
+          "type": "number",
+          "required": true,
+          "step": "0.01"
+        },
+        {
+          "key": "decimals",
+          "label": "Decimal Places",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "users": {
+      "singular": "User",
+      "columns": [
+        {
+          "key": "name",
+          "label": "Full Name",
+          "badge": false
+        },
+        {
+          "key": "email",
+          "label": "Email Address",
+          "badge": false
+        },
+        {
+          "key": "role",
+          "label": "Assigned Role",
+          "badge": false
+        },
+        {
+          "key": "branch",
+          "label": "Branch Scope",
+          "badge": false
+        },
+        {
+          "key": "mfa",
+          "label": "2FA / MFA",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "name",
+          "label": "Full Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "email",
+          "label": "Work Email Address",
+          "type": "email",
+          "required": true
+        },
+        {
+          "key": "role",
+          "label": "Security Role",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "branch",
+          "label": "Branch Access Scope",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "mfa",
+          "label": "MFA Status",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "taxes": {
+      "singular": "Tax Rate",
+      "columns": [
+        {
+          "key": "name",
+          "label": "Tax Name",
+          "badge": false
+        },
+        {
+          "key": "type",
+          "label": "Tax Component",
+          "badge": false
+        },
+        {
+          "key": "rate",
+          "label": "Rate (%)",
+          "badge": false
+        },
+        {
+          "key": "authority",
+          "label": "Tax Authority",
+          "badge": false
+        },
+        {
+          "key": "records",
+          "label": "Linked Txns",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "name",
+          "label": "Tax Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "type",
+          "label": "Tax Type",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "rate",
+          "label": "Rate (%)",
+          "type": "number",
+          "required": true,
+          "step": "0.01"
+        },
+        {
+          "key": "authority",
+          "label": "Tax Authority",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "records",
+          "label": "Associated Transactions",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "tdsSections": {
+      "singular": "TDS / TCS Section",
+      "columns": [
+        {
+          "key": "section",
+          "label": "Section Code",
+          "badge": false
+        },
+        {
+          "key": "name",
+          "label": "Nature of Payment",
+          "badge": false
+        },
+        {
+          "key": "rateInd",
+          "label": "Individual / HUF (%)",
+          "badge": false
+        },
+        {
+          "key": "rateCorp",
+          "label": "Company / Firm (%)",
+          "badge": false
+        },
+        {
+          "key": "threshold",
+          "label": "Single / Annual Limit (₹)",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "section",
+          "label": "Income Tax Section",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "name",
+          "label": "Nature of Payment / Collection",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "rateInd",
+          "label": "Rate for Individual/HUF (%)",
+          "type": "number",
+          "required": true,
+          "step": "0.01"
+        },
+        {
+          "key": "rateCorp",
+          "label": "Rate for Company/Firm (%)",
+          "type": "number",
+          "required": true,
+          "step": "0.01"
+        },
+        {
+          "key": "threshold",
+          "label": "Annual Exemption Threshold (₹)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "taxExemptions": {
+      "singular": "Tax Exemption",
+      "columns": [
+        {
+          "key": "reason",
+          "label": "Exemption ReasonCode",
+          "badge": false
+        },
+        {
+          "key": "scope",
+          "label": "Applies To",
+          "badge": false
+        },
+        {
+          "key": "clause",
+          "label": "Statutory Clause / Notification",
+          "badge": false
+        },
+        {
+          "key": "authority",
+          "label": "Tax Authority",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "reason",
+          "label": "Exemption Reason",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "scope",
+          "label": "Exemption Scope",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "clause",
+          "label": "Statutory Notification Reference",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "authority",
+          "label": "Tax Authority",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "reminders": {
+      "singular": "Payment Reminder",
+      "columns": [
+        {
+          "key": "title",
+          "label": "Reminder Name",
+          "badge": false
+        },
+        {
+          "key": "trigger",
+          "label": "Schedule Trigger",
+          "badge": false
+        },
+        {
+          "key": "channel",
+          "label": "Delivery Channel",
+          "badge": false
+        },
+        {
+          "key": "ccRole",
+          "label": "CC Internal Role",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "title",
+          "label": "Reminder Title",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger Timing",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "channel",
+          "label": "Notification Channel",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "ccRole",
+          "label": "CC Internal Role",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "transactionSeries": {
+      "singular": "Transaction Number Series",
+      "columns": [
+        {
+          "key": "module",
+          "label": "Document Module",
+          "badge": false
+        },
+        {
+          "key": "seriesName",
+          "label": "Series Group",
+          "badge": false
+        },
+        {
+          "key": "prefix",
+          "label": "Prefix Format",
+          "badge": false
+        },
+        {
+          "key": "nextNum",
+          "label": "Next Number",
+          "badge": false
+        },
+        {
+          "key": "branch",
+          "label": "Assigned Branch",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "module",
+          "label": "Transaction Module",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "seriesName",
+          "label": "Series Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "prefix",
+          "label": "Prefix String",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "nextNum",
+          "label": "Starting / Next Sequence Number",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "branch",
+          "label": "Branch Assignment",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "customFields": {
+      "singular": "Custom Field",
+      "columns": [
+        {
+          "key": "module",
+          "label": "Target Module",
+          "badge": false
+        },
+        {
+          "key": "label",
+          "label": "Field Label",
+          "badge": false
+        },
+        {
+          "key": "apiName",
+          "label": "Field API Key",
+          "badge": false
+        },
+        {
+          "key": "dataType",
+          "label": "Data Type",
+          "badge": false
+        },
+        {
+          "key": "mandatory",
+          "label": "Mandatory",
+          "badge": false
+        },
+        {
+          "key": "showInPdf",
+          "label": "Show on PDF",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "module",
+          "label": "Target Module",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "label",
+          "label": "Field Display Label",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "apiName",
+          "label": "API Field Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "dataType",
+          "label": "Data Type",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "mandatory",
+          "label": "Is Mandatory?",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "showInPdf",
+          "label": "Print on PDF Template?",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "reportingTags": {
+      "singular": "Reporting Tag",
+      "columns": [
+        {
+          "key": "dimension",
+          "label": "Tag Dimension",
+          "badge": false
+        },
+        {
+          "key": "options",
+          "label": "Available Tag Options",
+          "badge": false
+        },
+        {
+          "key": "appliesTo",
+          "label": "Tagged Modules",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "dimension",
+          "label": "Tag Dimension Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "options",
+          "label": "Comma-Separated Tag Values",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "appliesTo",
+          "label": "Applies To Modules",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "webTabs": {
+      "singular": "Web Tab",
+      "columns": [
+        {
+          "key": "tabName",
+          "label": "Tab Label",
+          "badge": false
+        },
+        {
+          "key": "url",
+          "label": "Target HTTPS URL",
+          "badge": false
+        },
+        {
+          "key": "visibility",
+          "label": "Role Visibility",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "tabName",
+          "label": "Web Tab Label",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "url",
+          "label": "Embedded HTTPS URL",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "visibility",
+          "label": "Visible To Roles",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "workflowRules": {
+      "singular": "Workflow Rule",
+      "columns": [
+        {
+          "key": "ruleName",
+          "label": "Workflow Rule Name",
+          "badge": false
+        },
+        {
+          "key": "module",
+          "label": "Module",
+          "badge": false
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger Event",
+          "badge": false
+        },
+        {
+          "key": "condition",
+          "label": "Filter Criteria",
+          "badge": false
+        },
+        {
+          "key": "action",
+          "label": "Automated Action",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "ruleName",
+          "label": "Rule Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "module",
+          "label": "Module",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger Event",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "condition",
+          "label": "Condition Expression",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "action",
+          "label": "Immediate Action",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "workflowActions": {
+      "singular": "Workflow Action",
+      "columns": [
+        {
+          "key": "actionName",
+          "label": "Action Name",
+          "badge": false
+        },
+        {
+          "key": "actionType",
+          "label": "Action Type",
+          "badge": false
+        },
+        {
+          "key": "module",
+          "label": "Module",
+          "badge": false
+        },
+        {
+          "key": "target",
+          "label": "Recipient / Target Field / Endpoint",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "actionName",
+          "label": "Action Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "actionType",
+          "label": "Action Type",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "module",
+          "label": "Module",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "target",
+          "label": "Recipient / Target Field",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "schedules": {
+      "singular": "Scheduled Workflow",
+      "columns": [
+        {
+          "key": "jobName",
+          "label": "Schedule Name",
+          "badge": false
+        },
+        {
+          "key": "cadence",
+          "label": "Execution Cadence",
+          "badge": false
+        },
+        {
+          "key": "nextRun",
+          "label": "Next Scheduled Run",
+          "badge": false
+        },
+        {
+          "key": "handler",
+          "label": "Target Function / Report",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "jobName",
+          "label": "Scheduled Task Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "cadence",
+          "label": "Frequency / Cron",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "nextRun",
+          "label": "Next Scheduled Run",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "handler",
+          "label": "Action Handler",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "customModules": {
+      "singular": "Custom Module",
+      "columns": [
+        {
+          "key": "pluralName",
+          "label": "Module Name (Plural)",
+          "badge": false
+        },
+        {
+          "key": "apiName",
+          "label": "API Identifier",
+          "badge": false
+        },
+        {
+          "key": "primaryField",
+          "label": "Primary Record Field",
+          "badge": false
+        },
+        {
+          "key": "recordsCount",
+          "label": "Records",
+          "badge": false
+        },
+        {
+          "key": "portalAccess",
+          "label": "Portal Visibility",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "pluralName",
+          "label": "Module Plural Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "apiName",
+          "label": "Module API Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "primaryField",
+          "label": "Primary Auto-Number / Label Field",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "recordsCount",
+          "label": "Initial Records Count",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "portalAccess",
+          "label": "Portal Exposure",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "lookupRelations": {
+      "singular": "Lookup Relationship",
+      "columns": [
+        {
+          "key": "sourceModule",
+          "label": "Source Module",
+          "badge": false
+        },
+        {
+          "key": "lookupLabel",
+          "label": "Lookup Field Label",
+          "badge": false
+        },
+        {
+          "key": "targetModule",
+          "label": "Referenced Target Module",
+          "badge": false
+        },
+        {
+          "key": "onDelete",
+          "label": "Cascade Behavior",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "sourceModule",
+          "label": "Source Module",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "lookupLabel",
+          "label": "Lookup Field Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "targetModule",
+          "label": "Target Module",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "onDelete",
+          "label": "On Target Deletion",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "webhooks": {
+      "singular": "Webhook Endpoint",
+      "columns": [
+        {
+          "key": "name",
+          "label": "Webhook Name",
+          "badge": false
+        },
+        {
+          "key": "event",
+          "label": "Subscribed Event",
+          "badge": false
+        },
+        {
+          "key": "url",
+          "label": "Target HTTPS Endpoint",
+          "badge": false
+        },
+        {
+          "key": "secret",
+          "label": "HMAC Signing Key",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "name",
+          "label": "Webhook Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "event",
+          "label": "Event Topic",
+          "type": "select",
+          "required": false
+        },
+        {
+          "key": "url",
+          "label": "Endpoint URL",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "secret",
+          "label": "HMAC Secret Token",
+          "type": "text",
+          "required": true,
+          "requiresSecureStorage": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    },
+    "apiClients": {
+      "singular": "OAuth 2.0 API Client",
+      "columns": [
+        {
+          "key": "clientName",
+          "label": "Application Name",
+          "badge": false
+        },
+        {
+          "key": "clientId",
+          "label": "Client ID",
+          "badge": false
+        },
+        {
+          "key": "scopes",
+          "label": "Authorized Scopes",
+          "badge": false
+        },
+        {
+          "key": "rateLimit",
+          "label": "Daily Quota Usage",
+          "badge": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "badge": true
+        }
+      ],
+      "fields": [
+        {
+          "key": "clientName",
+          "label": "Client Application Name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "clientId",
+          "label": "OAuth Client ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "scopes",
+          "label": "OAuth Scopes",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "rateLimit",
+          "label": "Daily Quota Used",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "select",
+          "required": false
+        }
+      ]
+    }
+  }
+}

@@ -135,6 +135,8 @@ urlpatterns = [
 
     # ConvosisBooks Settings Module Endpoints
     path('settings/all/', api.settings_all_view),
+    path('settings/enterprise/registry/', api.settings_enterprise_registry_view),
+    path('settings/enterprise/preferences/<slug:group_key>/', api.settings_enterprise_preferences_view),
     path('settings/roles/', api.settings_roles_view),
     path('settings/roles/<int:role_id>/', api.settings_roles_view),
     path('settings/roles/<int:role_id>/duplicate/', api.settings_role_duplicate_view),

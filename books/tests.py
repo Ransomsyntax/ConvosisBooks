@@ -1197,6 +1197,16 @@ class TestQABugReportFixes(BaseAccountingTestCase):
 
 
 class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
+    def login_as_tenant_admin(self, username='settings_tenant_admin'):
+        tenant_admin = User.objects.create_user(username=username, password='TestPassword123!')
+        UserProfile.objects.create(
+            user=tenant_admin,
+            organization=self.org,
+            role=UserProfile.ADMIN,
+        )
+        self.client.force_login(tenant_admin)
+        return tenant_admin
+
     def setUp(self):
         super().setUp()
         self.admin_user.is_superuser = False
@@ -1273,6 +1283,116 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(tenant_user)
         response = self.client.get('/api/settings/all/')
         self.assertEqual(response.status_code, 403)
+
+    def test_enterprise_settings_registry_and_preference_persistence(self):
+        self.login_as_tenant_admin()
+        registry_response = self.client.get('/api/settings/enterprise/registry/')
+        self.assertEqual(registry_response.status_code, 200, registry_response.content)
+        registry = registry_response.json()
+        self.assertEqual(registry['metadata']['categories'], 11)
+        self.assertEqual(registry['metadata']['submodules'], 72)
+        self.assertEqual(registry['metadata']['preferenceGroups'], 45)
+        self.assertEqual(registry['metadata']['collections'], 18)
+
+        endpoint = '/api/settings/enterprise/preferences/modProjects/'
+        payload = {'values': {'defaultBillingMethod': 'Based on Project Hours', 'defaultExpenseMarkupPct': 12.5}}
+        save_response = self.client.put(
+            endpoint,
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(save_response.status_code, 200, save_response.content)
+        self.assertEqual(save_response.json()['integration_status'], 'requires_workflow_wiring')
+
+        read_response = self.client.get(endpoint)
+        self.assertEqual(read_response.status_code, 200)
+        self.assertEqual(read_response.json()['values'], payload['values'])
+        self.org.refresh_from_db()
+        self.assertEqual(
+            self.org.general_settings['enterprise_preferences']['modProjects'],
+            payload['values'],
+        )
+        organization_response = self.client.get('/api/settings/organization/')
+        self.assertNotIn('enterprise_preferences', organization_response.json()['general_settings'])
+        bypass_response = self.client.post(
+            '/api/settings/organization/',
+            data=json.dumps({'general_settings': {'enterprise_preferences': {'modProjects': {'defaultExpenseMarkupPct': 99}}}}),
+            content_type='application/json',
+        )
+        self.assertEqual(bypass_response.status_code, 400)
+        self.client.force_login(self.auditor_user)
+        auditor_org_response = self.client.get('/api/settings/organization/')
+        self.assertNotIn('enterprise_preferences', auditor_org_response.json()['general_settings'])
+        self.assertEqual(self.client.get(endpoint).status_code, 403)
+        self.assertTrue(AuditLog.objects.filter(
+            organization=self.org,
+            entity_type='OrganizationSettings',
+            submodule='modProjects',
+            action='update',
+        ).exists())
+
+    def test_enterprise_settings_reject_invalid_and_unverified_values(self):
+        self.login_as_tenant_admin()
+        endpoint = '/api/settings/enterprise/preferences/paymentGateways/'
+        response = self.client.put(
+            endpoint,
+            data=json.dumps({'values': {'razorpayConnected': True}}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('razorpayConnected', response.json()['errors'])
+
+        response = self.client.put(
+            '/api/settings/enterprise/preferences/modProjects/',
+            data=json.dumps({'values': {'defaultExpenseMarkupPct': 101}}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('defaultExpenseMarkupPct', response.json()['errors'])
+
+        response = self.client.put(
+            '/api/settings/enterprise/preferences/modProjects/',
+            data=json.dumps({'values': {'unknownPreference': True}}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('unknownPreference', response.json()['errors'])
+
+    def test_enterprise_settings_are_organization_scoped(self):
+        self.login_as_tenant_admin()
+        endpoint = '/api/settings/enterprise/preferences/modProjects/'
+        save_response = self.client.put(
+            endpoint,
+            data=json.dumps({'values': {'defaultExpenseMarkupPct': 8}}),
+            content_type='application/json',
+        )
+        self.assertEqual(save_response.status_code, 200, save_response.content)
+
+        other_org = Organization.objects.create(name='Other Tenant')
+        other_admin = User.objects.create_user(username='other_tenant_admin', password='TestPassword123!')
+        UserProfile.objects.create(user=other_admin, organization=other_org, role=UserProfile.ADMIN)
+        self.client.force_login(other_admin)
+
+        response = self.client.get(endpoint)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['values'], {})
+
+        response = self.client.put(
+            endpoint,
+            data=json.dumps({'values': {'defaultExpenseMarkupPct': 3}}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.org.refresh_from_db()
+        other_org.refresh_from_db()
+        self.assertEqual(
+            self.org.general_settings['enterprise_preferences']['modProjects']['defaultExpenseMarkupPct'],
+            8.0,
+        )
+        self.assertEqual(
+            other_org.general_settings['enterprise_preferences']['modProjects']['defaultExpenseMarkupPct'],
+            3.0,
+        )
 
     def test_users_list_and_invite(self):
         self.client.force_login(self.admin_user)

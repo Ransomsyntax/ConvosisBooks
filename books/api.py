@@ -2538,7 +2538,7 @@ class RetainerInvoiceResource(DocResource):
             'available_balance': max(Z, paid - applied)
         }
 
-    def parse(self, data, user=None):
+    def parse(self, data, user=None, user_org=None):
         if isinstance(data, dict) and isinstance(data.get('lines'), list):
             normalized = dict(data)
             normalized_lines = []
@@ -2578,7 +2578,7 @@ class RetainerInvoiceResource(DocResource):
                 )
             normalized['lines'] = normalized_lines
             data = normalized
-        return super().parse(data, user=user)
+        return super().parse(data, user=user, user_org=user_org)
 
     def _validate_business_location(self, data, user, current=None):
         location_id = data.get('business_location_id') or data.get('business_location')

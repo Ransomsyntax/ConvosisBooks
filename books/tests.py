@@ -1417,8 +1417,14 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         retainer_id = response.json()['id']
+        retainer = RetainerInvoice.objects.get(pk=retainer_id)
+        self.assertEqual(retainer.status, 'draft')
+        self.assertEqual(retainer.payments.count(), 0)
+        listed = self.client.get('/api/retainer-invoices/').json()['results']
+        self.assertTrue(any(row['id'] == retainer_id for row in listed))
         detail = self.client.get(f'/api/retainer-invoices/{retainer_id}/').json()
         self.assertTrue(detail['number'])
+        self.assertEqual(detail['raw_status'], 'draft')
         self.assertEqual(detail['reference'], 'PO-RET-42')
         self.assertEqual(detail['project_name'], project.name)
         self.assertEqual(detail['project_id'], project.pk)

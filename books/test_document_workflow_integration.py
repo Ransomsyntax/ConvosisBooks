@@ -166,6 +166,13 @@ class DocumentWorkflowIntegrationTests(TestCase):
         inv_resp = self.client.get(f'/api/invoices/{inv.id}/')
         inv_data = inv_resp.json()
         self.assertTrue(any(doc['id'] == so.id and doc['kind'] == 'sales-orders' for doc in inv_data.get('related_documents', [])))
+        duplicate = self.client.post(
+            f'/api/sales-orders/{so.id}/convert-to-invoice/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 400, duplicate.content)
+        self.assertEqual(Invoice.objects.filter(source_sales_order=so).count(), 1)
 
     def test_purchase_order_to_bill_conversion(self):
         # 1. Create a Purchase Order
@@ -178,7 +185,8 @@ class DocumentWorkflowIntegrationTests(TestCase):
             place_of_supply='Kerala',
             status='confirmed',
             subtotal=Decimal('5000.00'),
-            total=Decimal('5900.00')
+            total=Decimal('5900.00'),
+            terms='Net 30 payment'
         )
         po.lines.create(
             item=self.item,
@@ -207,6 +215,7 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(bill.source_purchase_order, po)
         self.assertEqual(bill.vendor, self.vendor)
         self.assertEqual(bill.total, Decimal('5900.00'))
+        self.assertEqual(bill.terms, 'Net 30 payment')
 
         # PO updated
         po.refresh_from_db()
@@ -221,6 +230,13 @@ class DocumentWorkflowIntegrationTests(TestCase):
         bill_resp = self.client.get(f'/api/bills/{bill.id}/')
         bill_data = bill_resp.json()
         self.assertTrue(any(doc['id'] == po.id and doc['kind'] == 'purchase-orders' for doc in bill_data.get('related_documents', [])))
+        duplicate = self.client.post(
+            f'/api/purchase-orders/{po.id}/convert-to-bill/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 400, duplicate.content)
+        self.assertEqual(Bill.objects.filter(source_purchase_order=po).count(), 1)
 
     def test_recurring_invoice_generation(self):
         # 1. Create a Recurring Invoice Profile

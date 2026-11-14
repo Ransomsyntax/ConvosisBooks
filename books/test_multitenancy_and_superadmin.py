@@ -234,55 +234,66 @@ class MultiTenancyAndSuperAdminTests(TestCase):
         resp = self.client.get('/api/super-admin/overview/')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn('kpis', data)
-        self.assertEqual(data['kpis']['total_companies'], Organization.objects.count())
-        self.assertEqual(data['kpis']['total_users'], User.objects.count())
-        self.assertIn('companies', data)
-        self.assertIn('recent_activity', data)
+        self.assertEqual(set(data), {'organizations', 'users'})
+        self.assertEqual(
+            set(data['organizations'][0]),
+            {'organization_id', 'email', 'phone', 'subscription_id', 'subscription_status'}
+        )
+        self.assertEqual(
+            set(data['users'][0]),
+            {'user_id', 'email', 'phone', 'subscription_status'}
+        )
+        serialized = resp.content.decode('utf-8')
+        self.assertNotIn("Company Alpha", serialized)
+        self.assertNotIn("Alpha Customer 1", serialized)
+        self.assertNotIn("gstin", serialized.lower())
 
         resp_users = self.client.get('/api/super-admin/users/')
         self.assertEqual(resp_users.status_code, 200)
         users = resp_users.json().get('users', [])
-        usernames = [u['username'] for u in users]
-        self.assertIn('alice', usernames)
-        self.assertIn('bob', usernames)
-        self.assertIn('superadmin', usernames)
+        self.assertTrue(users)
+        self.assertTrue(all(set(user) == {'user_id', 'email', 'phone', 'subscription_status'} for user in users))
 
-    def test_super_admin_can_toggle_user_status(self):
+    def test_super_admin_cannot_mutate_user_status_through_api(self):
         self.client.force_login(self.superuser)
         self.assertTrue(self.user_b.is_active)
 
-        # Deactivate bob
         resp = self.client.post(f'/api/super-admin/users/{self.user_b.pk}/toggle-active/')
-        self.assertEqual(resp.status_code, 200)
-        self.user_b.refresh_from_db()
-        self.assertFalse(self.user_b.is_active)
-
-        # Re-activate bob
-        resp = self.client.post(f'/api/super-admin/users/{self.user_b.pk}/toggle-active/')
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 403)
         self.user_b.refresh_from_db()
         self.assertTrue(self.user_b.is_active)
 
     def test_super_admin_cannot_deactivate_self(self):
         self.client.force_login(self.superuser)
         resp = self.client.post(f'/api/super-admin/users/{self.superuser.pk}/toggle-active/')
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 403)
         self.superuser.refresh_from_db()
         self.assertTrue(self.superuser.is_active)
 
-    def test_super_admin_can_view_company_detail_and_toggle(self):
+    def test_super_admin_company_detail_is_limited_to_allowed_metadata(self):
         self.client.force_login(self.superuser)
         resp = self.client.get(f'/api/super-admin/companies/{self.org_a.pk}/')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(data['company']['name'], "Company Alpha")
-        self.assertEqual(data['record_counts']['customers'], 1)
-        self.assertEqual(data['record_counts']['items'], 1)
-        self.assertEqual(data['record_counts']['invoices'], 1)
+        self.assertEqual(
+            set(data),
+            {'organization', 'users'}
+        )
+        self.assertEqual(
+            set(data['organization']),
+            {'organization_id', 'email', 'phone', 'subscription_id', 'subscription_status'}
+        )
+        self.assertNotIn("Company Alpha", resp.content.decode('utf-8'))
+        self.assertNotIn("Alpha Customer 1", resp.content.decode('utf-8'))
 
-        # Toggle company status
         resp_toggle = self.client.post(f'/api/super-admin/companies/{self.org_a.pk}/toggle-active/')
-        self.assertEqual(resp_toggle.status_code, 200)
+        self.assertEqual(resp_toggle.status_code, 403)
         self.org_a.refresh_from_db()
-        self.assertFalse(self.org_a.is_active)
+        self.assertTrue(self.org_a.is_active)
+
+    def test_superuser_cannot_access_business_api_data(self):
+        self.client.force_login(self.superuser)
+        for path in ('/api/customers/', '/api/invoices/', '/api/settings/'):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 403, path)
+            self.assertNotIn("Alpha Customer 1", response.content.decode('utf-8'))

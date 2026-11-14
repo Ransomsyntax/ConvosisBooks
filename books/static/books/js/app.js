@@ -7,7 +7,7 @@ const NAV = [
   ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Transfers', 'Warehouses']],
   ['Sales', 'sales', ['Customers', 'Quotes', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
-  ['Time Tracking', 'time', ['Projects', 'Timesheets']],
+  ['Time Tracking', 'time', ['Projects', 'Tasks', 'Milestones', 'Timesheets']],
   ['Banking', 'banking', []],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
   ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
@@ -136,7 +136,6 @@ const ROUTES = {
   'settings/roles': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'roles', 'Roles', renderSettingsRolesPage) : null,
   'settings/roles/new': r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, 'new') : null,
   'settings/profile': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
-  'settings/business-locations': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'business-locations', 'Business Locations', renderBusinessLocationsPage) : null,
   'settings/branding': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'branding', 'Company Branding', renderBrandingPage) : null,
   'settings/ai': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'ai', 'AI Control Center', renderAiControlCenterPage) : null,
   'settings/taxes': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'taxes', 'Taxes', renderTaxesPage) : null,
@@ -150,8 +149,7 @@ const ROUTES = {
   'settings/opening-balances': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'opening-balances', 'Opening Balances', renderOpeningBalancesPage) : null,
   'settings/reminders': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'reminders', 'Reminders', renderRemindersPage) : null,
   'settings/customer-portal': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'customer-portal', 'Customer Portal', renderCustomerPortalPage) : null,
-  'settings/number-series': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'number-series', 'Transaction Serial Numbers', renderNumberSeriesPage) : null,
-  'settings/retainer-number-series': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'retainer-number-series', 'Retainer Invoice Serial Numbers', renderRetainerNumberSeriesPage) : null,
+  'settings/number-series': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'number-series', 'Transaction Number Series', renderNumberSeriesPage) : null,
   'settings/pdf-templates': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'pdf-templates', 'PDF Templates', renderPdfTemplatesPage) : null,
   'settings/email-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'email-notifications', 'Email Notifications', renderNotificationsPage) : null,
   'settings/sms-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'sms-notifications', 'SMS Notifications', renderNotificationsPage) : null,
@@ -377,8 +375,8 @@ const closePops = () => {
   let timer = null;
 
   wrap.addEventListener('mouseenter', () => {
+    if (wrap.classList.contains('menu-dismissed')) return;
     clearTimeout(timer);
-    wrap.classList.remove('menu-dismissed');
     menu.classList.add('on');
     wrap.classList.add('open');
   });
@@ -399,6 +397,21 @@ document.addEventListener('touchstart', e => {
     closePops();
   }
 }, { passive: true });
+
+document.addEventListener('click', e => {
+  if (e.target.classList && (e.target.classList.contains('modal-backdrop') || e.target.classList.contains('custom-modal-overlay'))) {
+    e.target.remove();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const bds = document.querySelectorAll('.modal-backdrop, .custom-modal-overlay');
+    if (bds.length) {
+      bds[bds.length - 1].remove();
+    }
+  }
+});
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
@@ -514,7 +527,20 @@ document.addEventListener('click', async e => {
     }
     return true;
   };
-  if (t.closest('#btnCloseUserCard')) { closePops(); return; }
+  const closeUserCardBtn = t.closest('#btnCloseUserCard');
+  if (closeUserCardBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const wrap = $('#userMenuWrapper') || $('#um')?.closest('.user-menu-wrap');
+    if (wrap) {
+      wrap.classList.add('menu-dismissed');
+      wrap.classList.remove('open');
+    }
+    const menu = $('#umm');
+    if (menu) menu.classList.remove('on');
+    closePops();
+    return;
+  }
   if (tog('#notifBtn', '#notifPop')) { NotificationCenter.fetch(); return; }
   if (tog('#qc', '#qcm') || tog('#um', '#umm')) return;
 

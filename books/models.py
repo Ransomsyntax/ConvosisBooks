@@ -305,6 +305,7 @@ class Invoice(Document):
     source_sales_order = models.ForeignKey('SalesOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_invoices')
     source_delivery_challan = models.ForeignKey('DeliveryChallan', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices')
     recurring_invoice = models.ForeignKey('RecurringInvoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_invoices')
+    project = models.ForeignKey('Project', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices')
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
@@ -391,7 +392,35 @@ class Payment(models.Model):
         abstract = True
 
 class PaymentReceived(Payment):
+    INVOICE_PAYMENT, CUSTOMER_ADVANCE = 'invoice_payment', 'customer_advance'
+    PAYMENT_TYPES = [
+        (INVOICE_PAYMENT, 'Invoice Payment'),
+        (CUSTOMER_ADVANCE, 'Customer Advance'),
+    ]
+    DRAFT, PAID = 'draft', 'paid'
+    PAYMENT_STATUSES = [(DRAFT, 'Draft'), (PAID, 'Paid')]
+
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='payments')
+    payment_type = models.CharField(max_length=24, choices=PAYMENT_TYPES, default=INVOICE_PAYMENT)
+    status = models.CharField(max_length=10, choices=PAYMENT_STATUSES, default=PAID)
+    bank_charges = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    income_tds = models.BooleanField(default=False)
+    tds_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    tax_name = models.CharField(max_length=100, blank=True, default='')
+    tax_type = models.CharField(max_length=30, blank=True, default='')
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    place_of_supply = models.CharField(max_length=80, blank=True, default='')
+    branch = models.CharField(max_length=120, blank=True, default='')
+    business_location = models.ForeignKey(
+        'BusinessLocation', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='payment_received',
+    )
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    draft_allocations = models.JSONField(default=list, blank=True)
+    thank_you_enabled = models.BooleanField(default=False)
+    thank_you_note = models.TextField(blank=True, default='')
+    thank_you_recipients = models.JSONField(default=list, blank=True)
 
 class PaymentMade(Payment):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='payments')
@@ -920,6 +949,9 @@ class Expense(models.Model):
     notes = models.TextField(blank=True)
     is_tax_deductible = models.BooleanField(default=True)
     receipt = models.ForeignKey(ManagedDocument, null=True, blank=True, on_delete=models.SET_NULL, related_name='expenses')
+    project = models.ForeignKey('Project', null=True, blank=True, on_delete=models.PROTECT, related_name='expenses')
+    billable_to_customer = models.BooleanField(default=False)
+    invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.PROTECT, related_name='project_expenses')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 
@@ -979,11 +1011,21 @@ class Project(models.Model):
     name = models.CharField(max_length=150)
     code = models.CharField(max_length=40, blank=True)
     customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name='projects')
-    billing_method = models.CharField(max_length=40, default='hourly_rate')
+    billing_method = models.CharField(max_length=40, default='project_hourly_rate')
     rate_per_hour = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    fixed_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    invoice_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     budget_hours = models.DecimalField(default=Decimal('0.00'), **QTY)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, default='active')
     description = models.TextField(blank=True)
+    staff = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through='ProjectStaff',
+        related_name='assigned_projects',
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -992,19 +1034,124 @@ class Project(models.Model):
     def __str__(self):
         return self.name
 
+class ProjectStaff(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='project_staff')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='staff_assignments')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='project_assignments')
+    hourly_rate = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'user'], name='unique_project_staff_user'),
+        ]
+
+class ProjectTask(models.Model):
+    STATUSES = [
+        ('open', 'Open'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('archived', 'Archived'),
+    ]
+
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='project_tasks')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='tasks')
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    hourly_rate = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    estimated_hours = models.DecimalField(default=Decimal('0.00'), **QTY)
+    progress_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    status = models.CharField(max_length=20, choices=STATUSES, default='open')
+    assigned_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through='ProjectTaskAssignment',
+        related_name='assigned_project_tasks',
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['project_id', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'name'], name='unique_project_task_name'),
+        ]
+
+    def __str__(self):
+        return f'{self.project.name}: {self.name}'
+
+class ProjectTaskAssignment(models.Model):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='project_task_assignments')
+    task = models.ForeignKey(ProjectTask, on_delete=models.CASCADE, related_name='staff_assignments')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='project_task_assignments')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['task', 'user'], name='unique_project_task_staff_user'),
+        ]
+
+class ProjectMilestone(models.Model):
+    STATUSES = [
+        ('planned', 'Planned'),
+        ('invoiced', 'Invoiced'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='project_milestones')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='milestones')
+    name = models.CharField(max_length=150)
+    description = models.CharField(max_length=500, blank=True)
+    amount = models.DecimalField(**MONEY)
+    invoice_tax_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUSES, default='planned')
+    invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.PROTECT, related_name='project_milestones')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['due_date', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'name'], name='unique_project_milestone_name'),
+        ]
+
 class TimeLog(models.Model):
+    STATUSES = [
+        ('draft', 'Draft'),
+        ('running', 'Running'),
+        ('submitted', 'Submitted'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('invoiced', 'Invoiced'),
+    ]
+
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='time_logs')
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='timelogs')
+    task_record = models.ForeignKey(ProjectTask, null=True, blank=True, on_delete=models.PROTECT, related_name='time_entries')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     date = models.DateField()
     hours = models.DecimalField(max_digits=6, decimal_places=2)
     task = models.CharField(max_length=255)
     billable = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, choices=STATUSES, default='draft')
+    timer_started_at = models.DateTimeField(null=True, blank=True)
+    timer_stopped_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='approved_time_entries')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=500, blank=True)
+    invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.PROTECT, related_name='project_time_entries')
+    invoiced_rate = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    invoiced_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-date', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'user'],
+                condition=models.Q(status='running'),
+                name='unique_running_time_entry_per_user_org',
+            ),
+        ]
 
 class ItemCategory(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='item_categories')

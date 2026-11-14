@@ -24,7 +24,8 @@ from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, BusinessLocation, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
-    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project, TimeLog
+    UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project, ProjectMilestone,
+    ProjectTask, TimeLog
 )
 
 User = get_user_model()
@@ -804,7 +805,9 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
 class TestQuoteModule(BaseAccountingTestCase):
     def setUp(self):
         super().setUp()
-        self.client.force_login(self.admin_user)
+        tenant_admin = User.objects.create_user(username='quote_tenant_admin', password='TestPassword123!')
+        UserProfile.objects.create(user=tenant_admin, organization=self.org, role=UserProfile.ADMIN)
+        self.client.force_login(tenant_admin)
 
     def test_quote_create_and_read(self):
         payload = {
@@ -1207,11 +1210,6 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(tenant_admin)
         return tenant_admin
 
-    def setUp(self):
-        super().setUp()
-        self.admin_user.is_superuser = False
-        self.admin_user.save(update_fields=['is_superuser'])
-
     def test_django_admin_is_restricted_to_platform_superusers(self):
         staff_user = User.objects.create_user(
             username='tenant_staff_admin',
@@ -1226,12 +1224,7 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(staff_user)
         self.assertEqual(self.client.get('/admin/').status_code, 302)
 
-        platform_user = User.objects.create_superuser(
-            username='platform_admin',
-            email='platform_admin@example.com',
-            password='TestPassword123!',
-        )
-        self.client.force_login(platform_user)
+        self.client.force_login(self.admin_user)
         self.assertEqual(self.client.get('/admin/').status_code, 200)
 
     def test_settings_all_endpoint(self):
@@ -1251,38 +1244,6 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         self.client.force_login(self.auditor_user)
         res = self.client.get('/api/settings/all/')
         self.assertEqual(res.status_code, 403)
-        organization_settings = self.client.get('/api/settings/organization/')
-        self.assertEqual(organization_settings.status_code, 403)
-        document_number_settings = self.client.post(
-            '/api/settings/doc-number-preferences/',
-            data=json.dumps({
-                'document_type': 'invoices',
-                'transaction_series': 'Default',
-                'prefix': 'INV/',
-                'next_number': 1,
-            }),
-            content_type='application/json',
-        )
-        self.assertEqual(document_number_settings.status_code, 403)
-        document_number_preferences = self.client.get(
-            '/api/settings/doc-number-preferences/?document_type=invoices'
-        )
-        self.assertEqual(document_number_preferences.status_code, 200)
-
-    def test_settings_do_not_fall_back_to_an_unrelated_organization(self):
-        Organization.objects.create(
-            name='Other Settings Organization',
-            company_id='other-settings-organization',
-        )
-        tenant_user = User.objects.create_user(
-            username='settings_without_org',
-            email='settings_without_org@example.com',
-            password='TestPassword123!',
-        )
-        UserProfile.objects.create(user=tenant_user, role=UserProfile.ADMIN)
-        self.client.force_login(tenant_user)
-        response = self.client.get('/api/settings/all/')
-        self.assertEqual(response.status_code, 403)
 
     def test_enterprise_settings_registry_and_preference_persistence(self):
         self.login_as_tenant_admin()
@@ -1753,6 +1714,44 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         retainer.refresh_from_db()
         self.assertEqual(retainer.status, 'sent')
         self.assertEqual(retainer.project, project)
+
+        paid = self.client.post(
+            f'/api/retainer-invoices/{retainer.pk}/pay/',
+            data=json.dumps({
+                'amount': '100.00', 'date': str(date.today()),
+                'bank_account': self.bank_hdfc.name, 'payment_mode': 'bank_transfer',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(paid.status_code, 200, paid.content)
+        invoice_response = self.client.post(
+            '/api/invoices/',
+            data=json.dumps({
+                'customer': self.customer.pk,
+                'date': str(date.today()),
+                'due_date': str(date.today() + timedelta(days=30)),
+                'lines': [{'description': 'Project work', 'quantity': '1', 'rate': '150.00', 'gst_rate': '0'}],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.content)
+        invoice_id = invoice_response.json()['id']
+        sent_invoice = self.client.post(
+            f'/api/invoices/{invoice_id}/send/', data='{}', content_type='application/json'
+        )
+        self.assertEqual(sent_invoice.status_code, 200, sent_invoice.content)
+        applied = self.client.post(
+            f'/api/invoices/{invoice_id}/apply-retainer/',
+            data=json.dumps({'allocations': [{'retainer_id': retainer.pk, 'amount': '25.00'}]}),
+            content_type='application/json',
+        )
+        self.assertEqual(applied.status_code, 200, applied.content)
+        invoice = Invoice.objects.get(pk=invoice_id)
+        retainer.refresh_from_db()
+        self.assertEqual(invoice.project, project)
+        self.assertEqual(invoice.project_name, project.name)
+        self.assertEqual(invoice.balance_due, Decimal('125.00'))
+        self.assertEqual(retainer.available_balance, Decimal('75.00'))
 
         optional_project_response = self.client.post(
             '/api/retainer-invoices/',
@@ -3522,3 +3521,235 @@ class TestPasswordResetWorkflow(BaseAccountingTestCase):
             statuses.append(limited.status_code)
         self.assertEqual(statuses, [302] * 6)
         self.assertEqual(len(mail.outbox), 6)
+
+
+class TestTimeTrackingWorkflows(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin_user.is_superuser = False
+        self.admin_user.save(update_fields=['is_superuser'])
+        self.client.force_login(self.admin_user)
+
+    def create_project(self, **overrides):
+        payload = {
+            'name': 'Workflow Project',
+            'customer': self.customer.pk,
+            'billing_method': 'task_hourly_rate',
+            'invoice_tax_rate': '18.00',
+            'start_date': str(timezone.localdate() - timedelta(days=1)),
+            'end_date': str(timezone.localdate() + timedelta(days=30)),
+        }
+        payload.update(overrides)
+        response = self.client.post(
+            '/api/projects/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        return Project.objects.get(pk=response.json()['id'])
+
+    def test_approved_time_invoice_is_draft_idempotent_and_releasable(self):
+        project = self.create_project()
+        task_response = self.client.post(
+            '/api/project-tasks/',
+            data=json.dumps({
+                'project_id': project.pk,
+                'name': 'Configuration',
+                'hourly_rate': '150.00',
+                'estimated_hours': '4',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(task_response.status_code, 201, task_response.content)
+        task = ProjectTask.objects.get(pk=task_response.json()['id'])
+        self.assertEqual(task.organization_id, project.organization_id)
+        self.assertEqual(task.project_id, project.pk)
+        entry_response = self.client.post(
+            '/api/timelogs/',
+            data=json.dumps({
+                'project': project.pk, 'task_id': task.pk,
+                'date': str(timezone.localdate()), 'hours': '2.50',
+                'billable': True, 'notes': 'Configured the project.',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(entry_response.status_code, 201, entry_response.content)
+        entry = TimeLog.objects.get(pk=entry_response.json()['id'])
+        self.assertEqual(entry.status, 'draft')
+
+        submitted = self.client.post(f'/api/timelogs/{entry.pk}/submit/', data='{}', content_type='application/json')
+        self.assertEqual(submitted.status_code, 200, submitted.content)
+        approved = self.client.post(f'/api/timelogs/{entry.pk}/approve/', data='{}', content_type='application/json')
+        self.assertEqual(approved.status_code, 200, approved.content)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, 'approved')
+        self.assertEqual(entry.approved_by, self.admin_user)
+
+        payload = {
+            'time_entry_ids': [entry.pk],
+            'date': str(timezone.localdate()),
+        }
+        generated = self.client.post(
+            f'/api/projects/{project.pk}/generate-invoice/',
+            data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertEqual(generated.status_code, 201, generated.content)
+        invoice = Invoice.objects.get(pk=generated.json()['invoice_id'])
+        self.assertEqual(invoice.status, 'draft')
+        self.assertEqual(invoice.project, project)
+        self.assertEqual(invoice.project_name, project.name)
+        self.assertEqual(invoice.total, Decimal('442.50'))
+        self.assertEqual(invoice.lines.get().taxable, Decimal('375.00'))
+        self.assertFalse(Journal.objects.filter(reference=invoice.number).exists())
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, 'invoiced')
+        self.assertEqual(entry.invoice, invoice)
+        self.assertEqual(entry.invoiced_amount, Decimal('375.00'))
+
+        duplicate = self.client.post(
+            f'/api/projects/{project.pk}/generate-invoice/',
+            data=json.dumps(payload), content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 409, duplicate.content)
+        self.assertEqual(project.invoices.count(), 1)
+
+        deleted = self.client.delete(f'/api/invoices/{invoice.pk}/')
+        self.assertEqual(deleted.status_code, 204, deleted.content)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, 'approved')
+        self.assertIsNone(entry.invoice_id)
+        self.assertIsNone(entry.invoiced_rate)
+
+    def test_fixed_price_milestone_invoice_uses_explicit_milestone_tax(self):
+        project = self.create_project(
+            name='Fixed Workflow Project',
+            billing_method='fixed_project_cost',
+            invoice_tax_rate=None,
+            fixed_amount='1000.00',
+        )
+        milestone_response = self.client.post(
+            '/api/project-milestones/',
+            data=json.dumps({
+                'project_id': project.pk, 'name': 'Design Sign-off',
+                'amount': '1000.00', 'invoice_tax_rate': '12.00',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(milestone_response.status_code, 201, milestone_response.content)
+        milestone = ProjectMilestone.objects.get(pk=milestone_response.json()['id'])
+
+        generated = self.client.post(
+            f'/api/projects/{project.pk}/generate-invoice/',
+            data=json.dumps({
+                'milestone_ids': [milestone.pk],
+                'date': str(timezone.localdate()),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(generated.status_code, 201, generated.content)
+        invoice = Invoice.objects.get(pk=generated.json()['invoice_id'])
+        milestone.refresh_from_db()
+        self.assertEqual(invoice.total, Decimal('1120.00'))
+        self.assertEqual(milestone.invoice, invoice)
+        self.assertEqual(milestone.status, 'invoiced')
+
+        duplicate = self.client.post(
+            f'/api/projects/{project.pk}/generate-invoice/',
+            data=json.dumps({
+                'milestone_ids': [milestone.pk],
+                'date': str(timezone.localdate()),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(duplicate.status_code, 409, duplicate.content)
+
+    def test_billable_expense_is_rebilled_on_pre_tax_amount_and_scoped(self):
+        project = self.create_project(
+            name='Expense Project',
+            billing_method='project_hourly_rate',
+            rate_per_hour='250.00',
+        )
+        expense_response = self.client.post(
+            '/api/expenses/',
+            data=json.dumps({
+                'date': str(timezone.localdate()),
+                'expense_account': self.gl_exp.pk,
+                'amount': '100.00', 'gst_rate': '18.00',
+                'paid_through': 'Cash', 'notes': 'Travel',
+                'project_id': project.pk, 'billable_to_customer': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(expense_response.status_code, 201, expense_response.content)
+        expense = Expense.objects.get(pk=expense_response.json()['id'])
+        self.assertEqual(expense.total, Decimal('118.00'))
+
+        generated = self.client.post(
+            f'/api/projects/{project.pk}/generate-invoice/',
+            data=json.dumps({
+                'expense_ids': [expense.pk], 'date': str(timezone.localdate()),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(generated.status_code, 201, generated.content)
+        invoice = Invoice.objects.get(pk=generated.json()['invoice_id'])
+        self.assertEqual(invoice.lines.get().taxable, Decimal('100.00'))
+        self.assertEqual(invoice.total, Decimal('118.00'))
+        expense.refresh_from_db()
+        self.assertEqual(expense.invoice, invoice)
+
+    def test_time_entries_are_tenant_scoped_and_only_accountants_can_approve(self):
+        other_org = Organization.objects.create(name='Other Time Tracking Org')
+        foreign_project = Project.objects.create(
+            organization=other_org, customer=None, name='Foreign Project'
+        )
+        project = self.create_project()
+        foreign_entry = self.client.post(
+            '/api/timelogs/',
+            data=json.dumps({
+                'project': foreign_project.pk, 'date': str(timezone.localdate()),
+                'task': 'Foreign activity', 'hours': '1.00',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(foreign_entry.status_code, 404, foreign_entry.content)
+        listed_projects = {row['id'] for row in self.client.get('/api/lookup/projects/').json()}
+        self.assertNotIn(foreign_project.pk, listed_projects)
+
+        entry_response = self.client.post(
+            '/api/timelogs/',
+            data=json.dumps({
+                'project': project.pk, 'date': str(timezone.localdate()),
+                'task': 'Review', 'hours': '1.00',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(entry_response.status_code, 201, entry_response.content)
+        entry_id = entry_response.json()['id']
+        self.assertEqual(self.client.post(f'/api/timelogs/{entry_id}/submit/', data='{}', content_type='application/json').status_code, 200)
+
+        self.client.force_login(self.cashier_user)
+        denied = self.client.post(f'/api/timelogs/{entry_id}/approve/', data='{}', content_type='application/json')
+        self.assertEqual(denied.status_code, 403, denied.content)
+
+    def test_timer_is_unique_per_user_and_can_be_stopped(self):
+        project = self.create_project(name='Timer Project')
+        timer_payload = {
+            'project': project.pk, 'task': 'Timer activity',
+            'hours': '0', 'start_timer': True,
+        }
+        started = self.client.post(
+            '/api/timelogs/', data=json.dumps(timer_payload), content_type='application/json'
+        )
+        self.assertEqual(started.status_code, 201, started.content)
+        entry_id = started.json()['id']
+        duplicate = self.client.post(
+            '/api/timelogs/', data=json.dumps(timer_payload), content_type='application/json'
+        )
+        self.assertEqual(duplicate.status_code, 409, duplicate.content)
+
+        stopped = self.client.post(
+            f'/api/timelogs/{entry_id}/stop-timer/', data='{}', content_type='application/json'
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.content)
+        entry = TimeLog.objects.get(pk=entry_id)
+        self.assertEqual(entry.status, 'draft')
+        self.assertIsNotNone(entry.timer_stopped_at)

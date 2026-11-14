@@ -18,14 +18,6 @@ function bindDocumentNumberPreview(form, options) {
       const value = selector ? form.querySelector(selector)?.value : '';
       if (value) params.set(name, value);
     });
-    if (options.locationId) {
-      const locationId = form.querySelector(options.locationId)?.value;
-      if (locationId) params.set('business_location_id', locationId);
-    }
-    if (options.customerId) {
-      const customerId = form.querySelector(options.customerId)?.value;
-      if (customerId) params.set('customer_id', customerId);
-    }
     const gstin = options.getGstin ? options.getGstin() : '';
     if (gstin) params.set('gstin', gstin);
 
@@ -43,7 +35,7 @@ function bindDocumentNumberPreview(form, options) {
     }
   };
 
-  [options.date, options.customerType, options.location, options.locationId, options.party, options.customerId]
+  [options.date, options.customerType, options.location, options.party]
     .filter(Boolean)
     .forEach(selector => {
       form.querySelector(selector)?.addEventListener('change', refresh);
@@ -238,7 +230,7 @@ function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
 }
 
 let uid = 0;
-var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
+var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; const selected = Array.isArray(sel) ? sel.map(String).includes(String(v)) : String(v) === String(sel == null ? '' : sel); return `<option value="${esc(v)}"${selected ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
 function fld(o) {
   const id = 'i' + (++uid), v = o.value == null ? '' : o.value, req = o.req ? ' required aria-required="true"' : '', at = o.attrs || '';
   let ctl;
@@ -751,6 +743,10 @@ function readForm(form) {
     if (!el.name || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
     if (el.type === 'radio') {
       if (el.checked) d[el.name] = el.value;
+      continue;
+    }
+    if (el.tagName === 'SELECT' && el.multiple) {
+      d[el.name] = Array.from(el.selectedOptions, option => option.value);
       continue;
     }
     d[el.name] = el.type === 'checkbox' ? el.checked : el.value;
@@ -1441,15 +1437,14 @@ document.addEventListener('click', e => {
 
 function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
   const currentSig = doc.signature_data || '';
-  const orgTitle = window.APP && window.APP.org && window.APP.org.signature_title;
-  const currentTitle = doc.signature_title || (orgTitle === 'Authorized Signatory' ? '' : orgTitle) || '';
+  const currentTitle = doc.signature_title || (window.APP && window.APP.org && window.APP.org.signature_title) || 'Authorized Signatory';
   const currentName = doc.signed_by || (window.APP && window.APP.user && (window.APP.user.name || window.APP.user.username)) || '';
   const isOrgSetting = kind === 'organization';
   const docTitle = isOrgSetting ? 'Company Default Signature' : `${doc.number ? doc.number : (kind || 'Document').replace('-', ' ').toUpperCase()} Signature`;
 
   const m = Modal.open({
     title: `✍️ Digital Signature · ${docTitle}`,
-    wide: false,
+    wide: true,
     body: `
       <div class="sig-modal-container" style="display:flex;flex-direction:column;gap:16px;">
         <div class="sig-mode-tabs" style="display:flex;gap:8px;border-bottom:1px solid var(--bd);padding-bottom:10px;">
@@ -1476,7 +1471,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
             </div>
           </div>
           <div style="background:#fff;border:1px dashed #cbd5e1;border-radius:8px;position:relative;overflow:hidden;touch-action:none;">
-            <canvas id="sig-draw-canvas" width="460" height="150" style="width:100%;height:150px;display:block;cursor:crosshair;"></canvas>
+            <canvas id="sig-draw-canvas" width="600" height="160" style="width:100%;height:160px;display:block;cursor:crosshair;"></canvas>
             <div id="sig-draw-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#94a3b8;font-size:14px;font-style:italic;">
               Draw signature here
             </div>
@@ -1518,16 +1513,16 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
           </div>
         </div>
 
-        <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:12px 14px;border:1px solid var(--bd);">
-          <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
+        <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:14px 16px;border:1px solid var(--bd);">
+          <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
           <div class="sig-meta-grid">
             <div class="fg sig-meta-field">
-              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Signer Name</label>
-              <input type="text" class="in sig-meta-input" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name">
+              <label style="font-size:12px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:6px;">Signer Name</label>
+              <input type="text" class="in sig-meta-input" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name" style="width:100%;height:40px;box-sizing:border-box;">
             </div>
             <div class="fg sig-meta-field">
-              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Designation / Title</label>
-              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="Authorized Signatory">
+              <label style="font-size:12px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:6px;">Designation / Title</label>
+              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory" style="width:100%;height:40px;box-sizing:border-box;">
             </div>
           </div>
         </div>
@@ -1713,19 +1708,14 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
     return null;
   }
 
-  const saveButton = $('#btn-sig-save', m.el);
-  let savingSignature = false;
-  saveButton?.addEventListener('click', async () => {
-    if (savingSignature) return;
+  $('#btn-sig-save', m.el)?.addEventListener('click', async () => {
     const sigData = getSignatureDataUrl() || currentSig;
     if (!sigData) {
       return toast('Please draw, type, or upload a signature first.', 'err');
     }
     const signerName = $('#sig-meta-name', m.el)?.value.trim() || '';
-    const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || '';
+    const sigTitle = $('#sig-meta-title', m.el)?.value.trim() || 'Authorized Signatory';
 
-    savingSignature = true;
-    saveButton.disabled = true;
     try {
       if (isOrgSetting) {
         await api('organization/', {
@@ -1760,9 +1750,6 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
       }
     } catch (err) {
       toast(err.message, 'err');
-    } finally {
-      savingSignature = false;
-      if (!m.closed) saveButton.disabled = false;
     }
   });
 
@@ -4442,8 +4429,8 @@ async function setupProjectSelectorForCustomer(selectEl, customerId, selectedPro
       selectEl.disabled = false;
       selectEl.innerHTML = `
         <option value="">Select Project</option>
-      ${projects.map(p => `<option value="${useProjectId ? p.id : esc(p.name)}" ${useProjectId ? `data-project-name="${esc(p.name)}"` : ''} ${String(p.id) === String(selectedProject) || p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      ${useProjectId ? '<option value="__new_project__">+ Add New Project…</option>' : ''}
+        ${projects.map(p => `<option value="${useProjectId ? p.id : esc(p.name)}" ${useProjectId ? `data-project-name="${esc(p.name)}"` : ''} ${String(p.id) === String(selectedProject) || p.name === selectedProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        ${useProjectId ? '<option value="__new_project__">+ Add New Project…</option>' : ''}
       `;
       return projects;
     } else {
@@ -5404,7 +5391,511 @@ async function recordDocumentPaymentModal(doc, kind = 'invoices', onDone) {
 window.recordDocumentPaymentModal = recordDocumentPaymentModal;
 window.recordInvoicePaymentModal = (inv, onDone) => recordDocumentPaymentModal(inv, 'invoices', onDone);
 
+async function paymentReceivedForm(pre = {}) {
+  const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
+  let customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview;
+  try {
+    [customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview] = await Promise.all([
+      api('lookup/customers/'),
+      api('lookup/bank-accounts/'),
+      api('lookup/business-locations/'),
+      api('/settings/taxes/'),
+      api('custom-fields/?module=payments_received&page_size=100'),
+      payId ? api(`payments-received/${payId}/`) : Promise.resolve(null),
+      payId ? Promise.resolve(null) : api('lookup/next-payment-received-number/'),
+    ]);
+  } catch (error) {
+    toast(`Could not load payment form data: ${error.message}`, 'err');
+    return;
+  }
+  let customers = Array.isArray(customersResponse) ? customersResponse : (customersResponse.results || []);
+  const customFields = Array.isArray(customResponse) ? customResponse : (customResponse.results || []);
+  const data = existing || (typeof pre === 'object' ? pre : {});
+  const customerId = data.customer_id || data.customer || data.party_id || data.party || '';
+  const customer = customers.find(item => String(item.id) === String(customerId));
+  const bankOpts = [
+    ['', 'Select Bank or Cash Account…'],
+    ...bankAccounts.map(item => [
+      item.id,
+      `${item.display_name || item.name}${item.account_type === 'cash' ? ' (Cash)' : ''}`,
+    ]),
+    ['__add_new__', '+ Add New Bank Account…'],
+  ];
+  const stateOptions = GST_STATE_OPTIONS.map(([value, label]) => {
+    const clean = String(value).replace(/^\[\d+\]\s*/, '');
+    return [clean, clean || label.replace(/^\[\d+\]\s*/, '')];
+  });
+  const toState = value => {
+    const clean = String(value || '').replace(/^\[\d+\]\s*/, '').trim().toLowerCase();
+    const match = stateOptions.find(([state]) => state.toLowerCase() === clean);
+    return match ? match[0] : '';
+  };
+  const taxes = (taxResponse.taxes || []).filter(tax =>
+    tax && tax.active !== false && ['Tax Group', 'IGST'].includes(tax.type)
+  );
+  const taxOpts = [
+    ['', 'No Tax'],
+    ...taxes.map(tax => [tax.name, `${tax.name} (${tax.rate}%)`]),
+  ];
+  const paymentTypes = [
+    ['invoice_payment', 'Invoice Payment'],
+    ['customer_advance', 'Customer Advance'],
+  ];
+  const currency = customer && customer.currency ? customer.currency : (APP.org.base_currency || 'INR');
+  const number = data.number || (numberPreview && (numberPreview.next_number || numberPreview.number)) || '';
+  let invoiceList = [];
+  let customerDetail = null;
+  const initialCustomerId = String(customerId || '');
+  let pendingFiles = [];
+  let existingFiles = Array.isArray(data.attachments) ? [...data.attachments] : [];
+  let recipients = [];
+
+  const customFieldHtml = customFields.filter(field => field.active !== false).map(field => {
+    const value = (data.custom_fields_data || {})[field.name] || '';
+    const inputName = `cf__${field.name}`;
+    if (field.field_type === 'select') {
+      const options = String(field.options || '').split(',').map(item => item.trim()).filter(Boolean);
+      return fld({
+        name: inputName, label: field.label, req: field.required,
+        type: 'select', opts: [['', 'Select…'], ...options.map(item => [item, item])], value,
+      });
+    }
+    if (field.field_type === 'checkbox') {
+      return fld({ name: inputName, label: field.label, req: field.required, type: 'checkbox', value: value === true || value === 'true' });
+    }
+    return fld({
+      name: inputName, label: field.label, req: field.required,
+      type: field.field_type === 'date' || field.field_type === 'number' ? field.field_type : 'text',
+      value,
+    });
+  }).join('');
+
+  formModal({
+    title: payId ? `Edit draft receipt ${data.number || ''}` : 'New Payment Received',
+    wide: true,
+    actions: [
+      { label: 'Save as Draft', value: 'draft' },
+      { label: 'Save as Paid', value: 'paid', primary: true },
+    ],
+    body: `
+      <div class="zb-form-wrap">
+        <div class="zb-form-row fg c2">
+          <label class="zb-form-label">Payment Type</label>
+          <div class="zb-form-ctrl">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${paymentTypes.map(([value, label]) => `<label class="btn" style="display:flex;align-items:center;gap:7px;cursor:pointer;"><input type="radio" name="payment_type" value="${value}" ${String(data.payment_type || 'invoice_payment') === value ? 'checked' : ''}> ${label}</label>`).join('')}
+            </div>
+          </div>
+        </div>
+        ${fld({ name: 'customer', label: 'Customer Name', type: 'select', req: true, opts: [['', 'Select Customer…'], ...customers.map(item => [item.id, item.name])], value: customerId })}
+        ${fld({ name: 'number', label: 'Payment Number', value: number, attrs: 'readonly aria-readonly="true"' })}
+        ${fld({ name: 'date', label: 'Payment Date', type: 'date', req: true, value: data.date || APP.today })}
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">Currency</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-currency" readonly value="${esc(currency)}"></div>
+        </div>
+        ${fld({ name: 'reference', label: 'Reference Number', value: data.reference || '' })}
+        ${fld({ name: 'mode', label: 'Payment Mode', type: 'select', req: true, opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: data.mode || 'bank_transfer' })}
+        ${fld({ name: 'bank_account_id', label: 'Deposit To', type: 'select', req: true, opts: bankOpts, value: data.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : '') })}
+        ${fld({ name: 'amount', label: 'Amount Received', type: 'number', req: true, value: data.amount || '', attrs: 'min="0.01" step="0.01"' })}
+        ${fld({ name: 'bank_charges', label: 'Bank Charges', type: 'number', value: data.bank_charges || '0.00', attrs: 'min="0" step="0.01"' })}
+        ${fld({ name: 'branch', label: 'Branch', value: data.branch || '' })}
+        ${fld({ name: 'business_location_id', label: 'Business Location', type: 'select', opts: [['', 'Select Business Location…'], ...locations.map(item => [item.id, item.name])], value: data.business_location_id || '' })}
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">Customer Type</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-customer-type" readonly value="${customer && customer.customer_type === 'individual' ? 'B2C' : customer ? 'B2B' : ''}"></div>
+        </div>
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">GSTIN</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-customer-gstin" readonly value="${esc(customer && customer.gstin || '')}"></div>
+        </div>
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">PAN</label>
+          <div class="zb-form-ctrl" style="display:flex;gap:8px;">
+            <input class="in" id="payment-customer-pan" readonly value="${esc(customer && customer.pan || '')}">
+            <button type="button" class="btn" id="payment-edit-pan" ${customerId ? '' : 'disabled'}>Add / Update PAN</button>
+          </div>
+        </div>
+        ${fld({ name: 'place_of_supply', label: 'Place of Supply', type: 'select', req: true, opts: [['', 'Select State…'], ...stateOptions], value: toState(data.place_of_supply || (customer && (customer.place_of_supply || customer.state))) })}
+        <div id="payment-advance-fields" style="display:none;">
+          ${fld({ name: 'tax_name', label: 'Tax', type: 'select', opts: taxOpts, value: data.tax_name || '' })}
+        </div>
+        <div class="zb-form-row fg c2" id="payment-tds-row">
+          <label class="zb-form-label">Income TDS</label>
+          <div class="zb-form-ctrl"><label class="ck"><input type="checkbox" name="income_tds" ${data.income_tds ? 'checked' : ''}> Yes, deduct TDS at the invoice’s originating quote rate</label><div class="er" data-err="income_tds" role="alert"></div></div>
+        </div>
+        <div class="zb-form-row fg c2">
+          <label class="zb-form-label">Thank You Email</label>
+          <div class="zb-form-ctrl">
+            <label class="ck"><input type="checkbox" name="thank_you_enabled" ${data.thank_you_enabled ? 'checked' : ''}> Send a thank-you email after saving as paid</label>
+            <div id="payment-email-fields" style="display:none;margin-top:8px;">
+              <div id="payment-email-recipients" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
+              <div class="er" data-err="thank_you_recipients" role="alert"></div>
+              <textarea class="in" name="thank_you_note" rows="2" maxlength="2000" placeholder="Optional thank-you note">${esc(data.thank_you_note || '')}</textarea>
+            </div>
+          </div>
+        </div>
+        ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: data.notes || '', col: 'c2' })}
+      </div>
+      <section id="payment-invoice-section" style="margin-top:16px;">
+        <h3 style="margin:0 0 8px;font-size:14px;">Apply to Invoices</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+          <label class="sub">Invoice date from <input class="in" type="date" id="payment-date-from" style="width:auto;"></label>
+          <label class="sub">to <input class="in" type="date" id="payment-date-to" style="width:auto;"></label>
+        </div>
+        <div id="payment-invoices"><div class="sub">Select a customer to load outstanding invoices.</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button type="button" class="btn" data-payment-auto>Auto-apply (oldest first)</button>
+          <button type="button" class="btn" data-payment-clear>Clear applied amounts</button>
+        </div>
+        <div class="er" data-err="allocations" role="alert"></div>
+      </section>
+      ${customFieldHtml ? `<section style="margin-top:16px;"><h3 style="font-size:14px;">Additional Fields</h3><div class="zb-form-wrap">${customFieldHtml}</div></section>` : ''}
+      <section style="margin-top:16px;">
+        <h3 style="font-size:14px;">Attachments</h3>
+        <input type="file" id="payment-files" multiple>
+        <div class="er" data-err="attachments" role="alert"></div>
+        <div id="payment-file-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"></div>
+      </section>
+      <div class="cs" style="margin-top:14px;">
+        <div><span>Applied</span><b id="payment-applied">₹0.00</b></div>
+        <div><span>Income TDS</span><b id="payment-tds-amount">₹0.00</b></div>
+        <div><span>Tax</span><b id="payment-tax-amount">₹0.00</b></div>
+        <div><span>Unapplied / Advance Balance</span><b id="payment-unapplied">₹0.00</b></div>
+        <div><span>Net Deposit</span><b id="payment-net-deposit">₹0.00</b></div>
+      </div>
+    `,
+    onReady: (form, modal) => {
+      const customerSelect = form.elements.customer;
+      const bankSelect = form.elements.bank_account_id;
+      const typeInputs = $$('input[name="payment_type"]', form);
+      const tdsInput = form.elements.income_tds;
+      const emailInput = form.elements.thank_you_enabled;
+      const taxSelect = form.elements.tax_name;
+      const fileList = $('#payment-file-list', form);
+      const invoiceBox = $('#payment-invoices', form);
+      const formData = existing || {};
+
+      setupSearchableSelect(customerSelect, {
+        placeholder: 'Search customers…',
+        onNew: () => partyForm('customers', null, async added => {
+          const fresh = await api('lookup/customers/');
+          const freshCustomers = Array.isArray(fresh) ? fresh : (fresh.results || []);
+          customers.splice(0, customers.length, ...freshCustomers);
+          customerSelect.innerHTML = '<option value="">Select Customer…</option>' +
+            freshCustomers.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('') +
+            '<option value="__new_customer__">+ Add New Customer…</option>';
+          const newCustomer = freshCustomers.find(item => String(item.id) === String(added.id));
+          if (newCustomer) {
+            customerSelect.value = newCustomer.id;
+            customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }),
+      });
+      if (bankSelect) setupSearchableSelect(bankSelect, {
+        placeholder: 'Search bank or cash accounts…',
+        onNew: () => bankAccountForm(null, async created => {
+          const fresh = await api('lookup/bank-accounts/');
+          bankSelect.innerHTML = '<option value="">Select Bank or Cash Account…</option>' +
+            fresh.map(item => `<option value="${item.id}">${esc(item.display_name || item.name)}</option>`).join('') +
+            '<option value="__add_new__">+ Add New Bank Account…</option>';
+          if (created && created.id) bankSelect.value = created.id;
+          if (bankSelect._searchableSync) bankSelect._searchableSync();
+        }),
+      });
+
+      const selectedType = () => (form.querySelector('input[name="payment_type"]:checked') || {}).value || 'invoice_payment';
+      let customerLoadId = 0;
+      let invoiceLoadId = 0;
+      const tdsFor = allocations => {
+        if (!tdsInput.checked) return 0;
+        let total = 0;
+        for (const input of allocations) {
+          const invoice = invoiceList.find(item => String(item.id) === input.dataset.id);
+          if (!invoice || num(invoice.income_tds_rate) <= 0 || num(invoice.total) <= 0) return null;
+          total += num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100;
+        }
+        return r2(total);
+      };
+      const allAllocationInputs = () => $$('.payment-allocation', form);
+      const updateSummary = () => {
+        const type = selectedType();
+        const allocations = type === 'invoice_payment' ? allAllocationInputs().filter(input => num(input.value) > 0) : [];
+        const applied = allocations.reduce((sum, input) => sum + num(input.value), 0);
+        const tds = type === 'invoice_payment' ? tdsFor(allocations) : 0;
+        const taxRow = taxes.find(item => item.name === (taxSelect && taxSelect.value));
+        const tax = type === 'customer_advance' && taxRow ? r2(num(form.elements.amount.value) * num(taxRow.rate) / 100) : 0;
+        const amount = num(form.elements.amount.value);
+        const settlement = amount + (type === 'customer_advance' ? tax : (tds || 0));
+        const cashReceived = amount + (type === 'customer_advance' ? tax : 0);
+        $('#payment-applied', form).textContent = inr(applied);
+        $('#payment-tds-amount', form).textContent = tds == null ? 'Rate unavailable' : inr(tds || 0);
+        $('#payment-tax-amount', form).textContent = inr(tax);
+        $('#payment-unapplied', form).textContent = inr(Math.max(0, settlement - applied));
+        $('#payment-net-deposit', form).textContent = inr(Math.max(0, cashReceived - num(form.elements.bank_charges.value)));
+        const err = form.querySelector('[data-err="allocations"]');
+        if (err && tds == null) err.textContent = 'Income TDS requires an allocated invoice with an originating quote TDS rate.';
+        else if (err && err.textContent.includes('Income TDS requires')) err.textContent = '';
+      };
+      const setCustomerInfo = async (id, preservePlace = false) => {
+        const requestId = ++customerLoadId;
+        const picked = customers.find(item => String(item.id) === String(id));
+        recipients = [];
+        customerDetail = null;
+        $('#payment-email-recipients', form).innerHTML = picked
+          ? '<span class="sub">Loading customer contacts…</span>'
+          : '';
+        if (!picked) {
+          $('#payment-customer-type', form).value = '';
+          $('#payment-customer-gstin', form).value = '';
+          $('#payment-customer-pan', form).value = '';
+          $('#payment-currency', form).value = APP.org.base_currency || 'INR';
+          $('#payment-edit-pan', form).disabled = true;
+          recipients = [];
+          $('#payment-email-recipients', form).innerHTML = '';
+          return;
+        }
+        $('#payment-customer-type', form).value = picked.customer_type === 'individual' ? 'B2C' : 'B2B';
+        $('#payment-customer-gstin', form).value = picked.gstin || '';
+        $('#payment-customer-pan', form).value = picked.pan || '';
+        $('#payment-currency', form).value = picked.currency || APP.org.base_currency || 'INR';
+        $('#payment-edit-pan', form).disabled = false;
+        if (!preservePlace) form.elements.place_of_supply.value = toState(picked.place_of_supply || picked.state);
+        try {
+          customerDetail = await api(`customers/${picked.id}/`);
+        } catch (error) {
+          toast(`Could not load customer details: ${error.message}`, 'err');
+          customerDetail = picked;
+        }
+        if (requestId !== customerLoadId || String(customerSelect.value) !== String(id)) return;
+        $('#payment-customer-type', form).value = customerDetail.customer_type === 'individual' ? 'B2C' : 'B2B';
+        $('#payment-customer-gstin', form).value = customerDetail.gstin || '';
+        $('#payment-customer-pan', form).value = customerDetail.pan || '';
+        $('#payment-currency', form).value = customerDetail.currency || APP.org.base_currency || 'INR';
+        const emails = [];
+        if (customerDetail.email) emails.push(customerDetail.email);
+        for (const contact of customerDetail.contact_persons_data || []) {
+          if (contact && contact.email) emails.push(contact.email);
+        }
+        recipients = [...new Set(emails.map(email => String(email).trim()).filter(Boolean))];
+        const selectedRecipients = String(id) === initialCustomerId
+          ? (formData.thank_you_recipients || data.thank_you_recipients || [])
+          : [];
+        const selected = new Set(selectedRecipients.map(email => String(email).toLowerCase()));
+        $('#payment-email-recipients', form).innerHTML = recipients.length
+          ? recipients.map(email => `<label class="ck"><input type="checkbox" class="payment-email-recipient" value="${esc(email)}" ${selected.has(email.toLowerCase()) ? 'checked' : ''}> ${esc(email)}</label>`).join('')
+          : '<span class="sub">No customer email addresses are available.</span>';
+      };
+      const renderFiles = () => {
+        fileList.innerHTML = [
+          ...existingFiles.map(file => `<div class="btn" style="display:flex;gap:8px;align-items:center;"><a href="${esc(file.url || '#')}" target="_blank" rel="noopener">${esc(file.filename)}</a><button type="button" class="lk" data-remove-existing="${file.id}" aria-label="Remove ${esc(file.filename)}">×</button></div>`),
+          ...pendingFiles.map((file, index) => `<div class="btn" style="display:flex;gap:8px;align-items:center;">${esc(file.filename)}<button type="button" class="lk" data-remove-pending="${index}" aria-label="Remove ${esc(file.filename)}">×</button></div>`),
+        ].join('');
+      };
+      const loadInvoices = async () => {
+        const requestId = ++invoiceLoadId;
+        const id = customerSelect.value;
+        if (!id || id.startsWith('__')) {
+          invoiceBox.innerHTML = '<div class="sub">Select a customer to load outstanding invoices.</div>';
+          invoiceList = [];
+          updateSummary();
+          return;
+        }
+        invoiceBox.innerHTML = spinner;
+        try {
+          const result = await api('invoices/?' + qs({
+            open: 1, customer: id, page_size: 100, ordering: 'due_date',
+            date_from: $('#payment-date-from', form).value || undefined,
+            date_to: $('#payment-date-to', form).value || undefined,
+          }));
+          if (requestId !== invoiceLoadId || customerSelect.value !== id) return;
+          invoiceList = result.results || [];
+          invoiceBox.innerHTML = invoiceList.length ? `
+            <div class="tw"><table><thead><tr><th>Invoice</th><th>Date</th><th class="r">Balance Due</th><th class="r">Apply (${esc($('#payment-currency', form).value || currency)})</th><th></th></tr></thead>
+            <tbody>${invoiceList.map(invoice => `<tr>
+              <td>${esc(invoice.number)}${tdsInput.checked ? `<div class="sub">TDS rate ${num(invoice.income_tds_rate)}%</div>` : ''}</td>
+              <td>${fd(invoice.date)}</td><td class="r">${inr(invoice.balance)}</td>
+              <td><input class="in payment-allocation r" type="number" min="0" max="${esc(invoice.balance)}" step="0.01" data-id="${invoice.id}" aria-label="Apply to ${esc(invoice.number)}"></td>
+              <td><button type="button" class="btn" data-pay-full="${invoice.id}">Pay in Full</button></td>
+            </tr>`).join('')}</tbody></table></div>` : '<div class="sub">No outstanding invoices for this customer.</div>';
+          const startingAllocations = existing && existing.allocations ? existing.allocations : (pre.doc ? [{ doc_id: pre.doc, amount: pre.amount || '' }] : []);
+          for (const allocation of startingAllocations) {
+            const input = $(`.payment-allocation[data-id="${allocation.doc_id}"]`, invoiceBox);
+            if (input) input.value = allocation.amount;
+          }
+        } catch (error) {
+          if (requestId !== invoiceLoadId || customerSelect.value !== id) return;
+          invoiceBox.innerHTML = errBox(error.message);
+          invoiceList = [];
+        }
+        updateSummary();
+      };
+      const toggleType = () => {
+        const advance = selectedType() === 'customer_advance';
+        if (advance) tdsInput.checked = false;
+        else if (taxSelect) taxSelect.value = '';
+        const amountLabel = form.elements.amount.closest('.zb-form-row').querySelector('.zb-form-label');
+        if (amountLabel && amountLabel.firstChild) {
+          amountLabel.firstChild.textContent = advance ? 'Customer Advance (before tax)' : 'Amount Received';
+        }
+        $('#payment-advance-fields', form).style.display = advance ? '' : 'none';
+        $('#payment-invoice-section', form).style.display = advance ? 'none' : '';
+        $('#payment-tds-row', form).style.display = advance ? 'none' : '';
+        updateSummary();
+      };
+      const toggleEmail = () => {
+        $('#payment-email-fields', form).style.display = emailInput.checked ? '' : 'none';
+      };
+      customerSelect.addEventListener('change', async () => {
+        await setCustomerInfo(customerSelect.value);
+        await loadInvoices();
+      });
+      typeInputs.forEach(input => input.addEventListener('change', toggleType));
+      form.addEventListener('input', updateSummary);
+      form.addEventListener('change', updateSummary);
+      emailInput.addEventListener('change', toggleEmail);
+      $('#payment-date-from', form).addEventListener('change', loadInvoices);
+      $('#payment-date-to', form).addEventListener('change', loadInvoices);
+      $('#payment-edit-pan', form).addEventListener('click', () => {
+        const id = customerSelect.value;
+        if (id && !id.startsWith('__')) partyForm('customers', id, async updated => {
+          if (String(customerSelect.value) === String(updated.id)) {
+            await setCustomerInfo(updated.id);
+          }
+        });
+      });
+      form.addEventListener('click', async event => {
+        const full = event.target.closest('[data-pay-full]');
+        if (full) {
+          const input = $(`.payment-allocation[data-id="${full.dataset.payFull}"]`, form);
+          const invoice = invoiceList.find(item => String(item.id) === String(full.dataset.payFull));
+          if (input && invoice) {
+            input.value = invoice.balance;
+            if (tdsInput.checked && num(invoice.income_tds_rate) > 0 && num(invoice.total) > 0) {
+              const tds = r2(num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100);
+              form.elements.amount.value = r2(num(input.value) - tds);
+            } else {
+              form.elements.amount.value = invoice.balance;
+            }
+            updateSummary();
+          }
+        }
+        if (event.target.closest('[data-payment-auto]')) {
+          let cashLeft = num(form.elements.amount.value);
+          for (const input of allAllocationInputs()) {
+            const invoice = invoiceList.find(item => String(item.id) === input.dataset.id);
+            let factor = 1;
+            if (tdsInput.checked) {
+              if (!invoice || num(invoice.income_tds_rate) <= 0 || num(invoice.total) <= 0) continue;
+              factor = 1 - num(invoice.subtotal) / num(invoice.total) * num(invoice.income_tds_rate) / 100;
+            }
+            const amount = Math.min(num(invoice.balance), factor > 0 ? cashLeft / factor : 0);
+            input.value = amount > 0 ? r2(amount) : '';
+            const tds = tdsInput.checked ? r2(num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100) : 0;
+            cashLeft = Math.max(0, r2(cashLeft - num(input.value) + tds));
+          }
+          updateSummary();
+        }
+        if (event.target.closest('[data-payment-clear]')) {
+          allAllocationInputs().forEach(input => { input.value = ''; });
+          updateSummary();
+        }
+        const removePending = event.target.closest('[data-remove-pending]');
+        if (removePending) {
+          pendingFiles.splice(Number(removePending.dataset.removePending), 1);
+          renderFiles();
+        }
+        const removeExisting = event.target.closest('[data-remove-existing]');
+        if (removeExisting) {
+          const id = removeExisting.dataset.removeExisting;
+          try {
+            await api(`attachments/${id}/`, { method: 'DELETE' });
+            existingFiles = existingFiles.filter(file => String(file.id) !== String(id));
+            renderFiles();
+          } catch (error) {
+            toast(error.message, 'err');
+          }
+        }
+      });
+      $('#payment-files', form).addEventListener('change', async event => {
+        const files = Array.from(event.target.files || []);
+        if (existingFiles.length + pendingFiles.length + files.length > 10) {
+          form.querySelector('[data-err="attachments"]').textContent = 'A payment can have no more than 10 files.';
+          event.target.value = '';
+          return;
+        }
+        for (const file of files) {
+          if (file.size > 10 * 1024 * 1024) {
+            form.querySelector('[data-err="attachments"]').textContent = `${file.name} exceeds the 10 MB limit.`;
+            continue;
+          }
+          try {
+            const fileData = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+              reader.readAsDataURL(file);
+            });
+            pendingFiles.push({ filename: file.name, mime_type: file.type || 'application/octet-stream', file_data: fileData });
+          } catch (error) {
+            form.querySelector('[data-err="attachments"]').textContent = error.message;
+          }
+        }
+        event.target.value = '';
+        renderFiles();
+      });
+      renderFiles();
+      toggleEmail();
+      toggleType();
+      if (customerId) {
+        setCustomerInfo(customerId, true).then(loadInvoices);
+      } else {
+        updateSummary();
+      }
+    },
+    onSubmit: async (d, action, form) => {
+      const paymentType = form.querySelector('input[name="payment_type"]:checked').value;
+      d.payment_type = paymentType;
+      d.status = action;
+      d.bank_account_id = d.bank_account_id && d.bank_account_id !== '__add_new__' ? Number(d.bank_account_id) : '';
+      d.business_location_id = d.business_location_id ? Number(d.business_location_id) : '';
+      d.place_of_supply = d.place_of_supply || '';
+      d.allocations = paymentType === 'invoice_payment'
+        ? $$('.payment-allocation', form).filter(input => num(input.value) > 0).map(input => ({ invoice: Number(input.dataset.id), amount: input.value }))
+        : [];
+      d.custom_fields_data = {};
+      customFields.forEach(field => {
+        const input = form.elements[`cf__${field.name}`];
+        if (input) d.custom_fields_data[field.name] = input.type === 'checkbox' ? input.checked : input.value;
+      });
+      d.thank_you_recipients = $$('.payment-email-recipient:checked', form).map(input => input.value);
+      d.attachments = pendingFiles;
+      if (!d.customer) throw new ApiErr(400, { customer: 'Customer is required.' }, 'Select a customer.');
+      if (!d.date) throw new ApiErr(400, { date: 'Payment date is required.' }, 'Select a payment date.');
+      if (num(d.amount) <= 0) throw new ApiErr(400, { amount: 'Amount received must be greater than zero.' }, 'Enter an amount greater than zero.');
+      if (!d.bank_account_id) throw new ApiErr(400, { bank_account_id: 'Deposit To is required.' }, 'Select a bank or cash account.');
+      if (d.income_tds && !d.allocations.length) throw new ApiErr(400, { allocations: 'Income TDS requires an allocated invoice.' }, 'Select an invoice to calculate TDS.');
+      const payment = await api(payId ? `payments-received/${payId}/` : 'payments-received/', {
+        method: payId ? 'PUT' : 'POST',
+        body: d,
+      });
+      if (action === 'paid' && d.thank_you_enabled) {
+        try {
+          await api(`payments-received/${payment.id}/send-thank-you/`, {
+            method: 'POST', body: { recipients: d.thank_you_recipients },
+          });
+        } catch (error) {
+          toast(`Receipt ${payment.number} was saved, but the thank-you email failed: ${error.message}`, 'err');
+        }
+      }
+      toast(`Payment ${payment.number} ${action === 'draft' ? 'saved as draft' : 'recorded as paid'}.`);
+      refresh();
+    },
+  });
+}
+
 async function paymentForm(kind, pre = {}) {
+  if (kind === 'payments-received') return paymentReceivedForm(pre);
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
   const [parties, bankAccounts, existing] = await Promise.all([
@@ -7242,8 +7733,12 @@ window.convobotAiAssistantModal = convobotAiAssistantModal;
 window.ziaAiAssistantModal = convobotAiAssistantModal;
 
 async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
-  const custs = await api('lookup/customers/');
-  const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: defaultCustomerId, billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
+  const [custs, staff] = await Promise.all([api('lookup/customers/'), api('lookup/employees/')]);
+  const o = id ? await api(`projects/${id}/`) : {
+    name: '', code: '', customer: defaultCustomerId, billing_method: 'project_hourly_rate',
+    rate_per_hour: '0.00', fixed_amount: '0.00', invoice_tax_rate: '',
+    budget_hours: '0.00', start_date: '', end_date: '', staff: [], status: 'active', description: ''
+  };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
     dialog: Boolean(onDone || Modal.count() > 0),
@@ -7252,15 +7747,24 @@ async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
       ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Internal / No Customer'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', col: 's6' })}
-      ${fld({ name: 'billing_method', label: 'Billing Method', type: 'select', opts: [['hourly_rate', 'Hourly Rate'], ['fixed_cost', 'Fixed Cost'], ['task_hours', 'Task Hours']], value: o.billing_method, col: 's6' })}
-      ${fld({ name: 'rate_per_hour', label: 'Rate Per Hour (₹)', type: 'number', value: o.rate_per_hour, col: 's6' })}
+      ${fld({ name: 'billing_method', label: 'Billing Method', type: 'select', opts: [['project_hourly_rate', 'Project Hourly Rate'], ['task_hourly_rate', 'Task Hourly Rate'], ['staff_hourly_rate', 'Staff Hourly Rate'], ['fixed_project_cost', 'Fixed Project Cost / Milestones']], value: o.billing_method, col: 's6' })}
+      ${fld({ name: 'rate_per_hour', label: 'Project / Staff Rate Per Hour (₹)', type: 'number', value: o.rate_per_hour, col: 's6', attrs: 'min="0" step="0.01"' })}
+      ${fld({ name: 'fixed_amount', label: 'Fixed Project Amount (₹)', type: 'number', value: o.fixed_amount, col: 's6', attrs: 'min="0" step="0.01"' })}
+      ${fld({ name: 'invoice_tax_rate', label: 'Invoice Tax Rate (%)', type: 'number', value: o.invoice_tax_rate, col: 's6', attrs: 'min="0" max="100" step="0.01"' })}
       ${fld({ name: 'budget_hours', label: 'Budget Hours', type: 'number', value: o.budget_hours, col: 's6' })}
+      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', value: o.start_date, col: 's6' })}
+      ${fld({ name: 'end_date', label: 'End Date', type: 'date', value: o.end_date, col: 's6' })}
+      ${fld({ name: 'staff_ids', label: 'Assigned Staff', type: 'select', opts: staff.map(s => [s.id, s.name]), value: (o.staff || []).map(s => s.user_id), attrs: 'multiple size="5"', help: 'Select one or more active users in this organization.', col: 's12' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, col: 's12' })}
+      ${id ? `<div class="s12 sub">Tasks: ${o.task_count || 0} · Milestones: ${(o.milestones || []).length} · Invoices: ${(o.invoices || []).length}</div>` : ''}
     </div>`,
     onSubmit: async d => {
       d.customer = d.customer ? Number(d.customer) : null;
       d.rate_per_hour = num(d.rate_per_hour);
+      d.fixed_amount = num(d.fixed_amount);
+      d.invoice_tax_rate = d.invoice_tax_rate === '' ? null : num(d.invoice_tax_rate);
       d.budget_hours = num(d.budget_hours);
+      d.staff_ids = (d.staff_ids || []).map(Number);
       let res;
       if (id) res = await api(`projects/${id}/`, { method: 'PUT', body: d });
       else res = await api('projects/', { method: 'POST', body: d });
@@ -7281,22 +7785,150 @@ async function timelogModal(id) {
     return projectModal();
   }
   const o = rec || { project_id: prjs[0]?.id, date: APP.today, task: '', hours: '2.5', billable: true, notes: '' };
+  let taskSelect = null;
+  const loadTasks = async (projectId, selectedId) => {
+    const result = await api(`project-tasks/?project=${projectId}&page_size=100`);
+    const rows = result.results || [];
+    if (taskSelect) {
+      taskSelect.innerHTML = `<option value="">Select a task (or enter an activity below)</option>${rows.map(task => `<option value="${task.id}" ${String(task.id) === String(selectedId || '') ? 'selected' : ''}>${esc(task.name)}</option>`).join('')}`;
+    }
+  };
+  const initialTasks = await api(`project-tasks/?project=${o.project_id}&page_size=100`);
+  const taskRows = initialTasks.results || [];
   formModal({
     title: id ? 'Edit Timesheet Entry' : 'Log Project Timesheet',
+    actions: [{ label: id ? 'Save Changes' : 'Log Time', value: 'save', primary: true }, ...(!id ? [{ label: 'Start Timer', value: 'timer' }] : [])],
     body: `<div class="g">
       ${fld({ name: 'project', label: 'Project', type: 'select', opts: prjs.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
       ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
-      ${fld({ name: 'task', label: 'Task / Activity', req: true, value: o.task, col: 's8', ph: 'e.g. Deluge Scripting & Workflow Integration' })}
-      ${fld({ name: 'hours', label: 'Hours', type: 'number', req: true, value: o.hours, col: 's4' })}
+      ${fld({ name: 'task_id', label: 'Project Task', type: 'select', opts: [['', 'Select a task (or enter an activity below)'], ...taskRows.map(t => [t.id, t.name])], value: o.task_record_id || '', col: 's8' })}
+      ${fld({ name: 'task', label: 'Task / Activity', value: o.task_record_id ? '' : o.task, col: 's8', ph: 'e.g. Workflow integration' })}
+      ${fld({ name: 'hours', label: 'Hours', type: 'number', value: o.hours, col: 's4', attrs: 'min="0.01" max="24" step="0.01"' })}
       ${fld({ name: 'billable', label: 'Billable to customer', type: 'checkbox', value: o.billable, col: 's12' })}
       ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: o.notes || '', col: 's12', ph: 'Work accomplished...' })}
     </div>`,
-    onSubmit: async d => {
+    onReady: form => {
+      taskSelect = form.elements.task_id;
+      form.elements.project.addEventListener('change', async event => {
+        try {
+          await loadTasks(event.target.value, '');
+        } catch (error) {
+          toast(error.message || 'Tasks could not be loaded.', 'err');
+        }
+      });
+    },
+    onSubmit: async (d, action) => {
       d.project = Number(d.project);
-      d.hours = num(d.hours);
+      d.task_id = d.task_id ? Number(d.task_id) : null;
+      if (action === 'timer') {
+        d.start_timer = true;
+        d.hours = 0;
+      } else {
+        d.hours = num(d.hours);
+      }
       if (id) await api(`timelogs/${id}/`, { method: 'PUT', body: d });
       else await api('timelogs/', { method: 'POST', body: d });
-      toast(id ? 'Timesheet entry updated' : 'Timesheet entry logged');
+      toast(action === 'timer' ? 'Timer started' : id ? 'Timesheet entry updated' : 'Timesheet entry logged');
+      refresh();
+    }
+  });
+}
+
+async function projectTaskModal(id, projectId = '') {
+  const [projects, staff, rec] = await Promise.all([
+    api('lookup/projects/'), api('lookup/employees/'),
+    id ? api(`project-tasks/${id}/`) : Promise.resolve(null)
+  ]);
+  const o = rec || { project_id: projectId || projects[0]?.id, name: '', description: '', hourly_rate: '', estimated_hours: '0', progress_percent: '0', status: 'open', assigned_user_ids: [] };
+  formModal({
+    title: id ? 'Edit Project Task' : 'New Project Task',
+    body: `<div class="g">
+      ${fld({ name: 'project_id', label: 'Project', type: 'select', opts: projects.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
+      ${fld({ name: 'name', label: 'Task Name', value: o.name, req: true, col: 's6' })}
+      ${fld({ name: 'hourly_rate', label: 'Hourly Rate (₹)', type: 'number', value: o.hourly_rate, attrs: 'min="0.01" step="0.01"', col: 's6' })}
+      ${fld({ name: 'estimated_hours', label: 'Estimated Hours', type: 'number', value: o.estimated_hours, attrs: 'min="0" step="0.01"', col: 's6' })}
+      ${fld({ name: 'progress_percent', label: 'Progress (%)', type: 'number', value: o.progress_percent, attrs: 'min="0" max="100" step="0.01"', col: 's6' })}
+      ${fld({ name: 'status', label: 'Status', type: 'select', opts: [['open', 'Open'], ['in_progress', 'In Progress'], ['completed', 'Completed'], ...(id ? [['archived', 'Archived']] : [])], value: o.status, col: 's6' })}
+      ${fld({ name: 'assigned_user_ids', label: 'Assigned Staff', type: 'select', opts: staff.map(s => [s.id, s.name]), value: o.assigned_user_ids || [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, col: 's12' })}
+    </div>`,
+    onSubmit: async d => {
+      d.project_id = Number(d.project_id);
+      d.hourly_rate = d.hourly_rate === '' ? null : num(d.hourly_rate);
+      d.estimated_hours = num(d.estimated_hours);
+      d.progress_percent = num(d.progress_percent);
+      d.assigned_user_ids = (d.assigned_user_ids || []).map(Number);
+      if (id) await api(`project-tasks/${id}/`, { method: 'PUT', body: d });
+      else await api('project-tasks/', { method: 'POST', body: d });
+      toast('Project task saved');
+      refresh();
+    }
+  });
+}
+
+async function projectMilestoneModal(id, projectId = '') {
+  const [projects, rec] = await Promise.all([
+    api('projects/?page_size=100'), id ? api(`project-milestones/${id}/`) : Promise.resolve(null)
+  ]);
+  const projectRows = (projects.results || []).filter(project => project.billing_method === 'fixed_project_cost');
+  const o = rec || { project_id: projectId || projectRows[0]?.id, name: '', description: '', amount: '', invoice_tax_rate: '', due_date: '', status: 'planned' };
+  formModal({
+    title: id ? 'Edit Project Milestone' : 'New Project Milestone',
+    body: `<div class="g">
+      ${fld({ name: 'project_id', label: 'Project', type: 'select', opts: projectRows.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
+      ${fld({ name: 'name', label: 'Milestone Name', value: o.name, req: true, col: 's6' })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', value: o.amount, req: true, attrs: 'min="0.01" step="0.01"', col: 's6' })}
+      ${fld({ name: 'invoice_tax_rate', label: 'Invoice Tax Rate (%)', type: 'number', value: o.invoice_tax_rate, attrs: 'min="0" max="100" step="0.01"', col: 's6' })}
+      ${fld({ name: 'due_date', label: 'Due Date', type: 'date', value: o.due_date, col: 's6' })}
+      ${fld({ name: 'description', label: 'Description', value: o.description, col: 's12' })}
+    </div>`,
+    onSubmit: async d => {
+      d.project_id = Number(d.project_id);
+      d.amount = num(d.amount);
+      d.invoice_tax_rate = d.invoice_tax_rate === '' ? null : num(d.invoice_tax_rate);
+      if (id) await api(`project-milestones/${id}/`, { method: 'PUT', body: d });
+      else await api('project-milestones/', { method: 'POST', body: d });
+      toast('Project milestone saved');
+      refresh();
+    }
+  });
+}
+
+async function generateProjectInvoiceModal(projectId) {
+  const [project, entries, expenses] = await Promise.all([
+    api(`projects/${projectId}/`),
+    api(`timesheets/?project=${projectId}&status=approved&page_size=100`),
+    api(`expenses/?project=${projectId}&billable=true&page_size=100`)
+  ]);
+  const billableEntries = (entries.results || []).filter(entry => entry.status === 'approved' && entry.billable && !entry.invoice_id);
+  const billableExpenses = (expenses.results || []).filter(expense => expense.billable_to_customer && !expense.invoice_id);
+  const fixed = project.billing_method === 'fixed_project_cost';
+  const milestones = fixed ? (project.milestones || []).filter(item => item.status === 'planned' && !item.invoice_id) : [];
+  formModal({
+    title: `Generate Project Invoice — ${project.name}`,
+    body: `<div class="g">
+      <div class="s12 sub">An invoice is created as a draft. No payment or accounting entry is generated until it is sent.</div>
+      ${fixed ? fld({ name: 'milestone_ids', label: 'Planned Milestones', type: 'select', opts: milestones.map(item => [item.id, `${item.name} — ${inr(item.amount)}`]), value: [], attrs: 'multiple size="5"', col: 's12' }) : fld({ name: 'time_entry_ids', label: 'Approved Billable Time Entries', type: 'select', opts: billableEntries.map(entry => [entry.id, `${fd(entry.date)} · ${entry.task} · ${qty(entry.hours)} hrs`]), value: [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'expense_ids', label: 'Billable Expenses', type: 'select', opts: billableExpenses.map(expense => [expense.id, `${expense.number} · ${expense.notes || 'Expense'} · ${inr(expense.amount)}`]), value: [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'date', label: 'Invoice Date', type: 'date', value: APP.today, req: true, col: 's6' })}
+      ${fld({ name: 'due_date', label: 'Due Date', type: 'date', value: '', col: 's6' })}
+    </div>`,
+    onSubmit: async d => {
+      for (const key of ['milestone_ids', 'time_entry_ids', 'expense_ids']) d[key] = (d[key] || []).map(Number);
+      const result = await api(`projects/${projectId}/generate-invoice/`, { method: 'POST', body: d });
+      toast(result.message || `Draft invoice ${result.invoice_number} created.`);
+      refresh();
+    }
+  });
+}
+
+function rejectTimesheetModal(row) {
+  formModal({
+    title: 'Reject Timesheet Entry',
+    body: `<div class="g">${fld({ name: 'reason', label: 'Reason', req: true, col: 's12', ph: 'Explain what needs correction' })}</div>`,
+    onSubmit: async data => {
+      await api(`timelogs/${row.id}/reject/`, { method: 'POST', body: data });
+      toast('Time entry rejected');
       refresh();
     }
   });
@@ -8185,7 +8817,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   const rStartDate = rec ? (rec.start_date || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10))) : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const rNextDate = rec ? (rec.next_date || rStartDate) : rStartDate;
   const rEndDate = rec ? (rec.end_date || '') : '';
-  const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : false;
+  const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : true;
   const rTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const rCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const rPaymentTerms = rec ? (rec.payment_terms != null ? Number(rec.payment_terms) : 30) : 30;
@@ -8322,7 +8954,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:150px;">
 
             <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Ends On</label>
-            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" min="${rStartDate}" style="width:150px;${rNeverEnds ? 'opacity:0.5;' : ''}" ${rNeverEnds ? 'disabled' : ''}>
+            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:150px;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
 
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;cursor:pointer;margin-left:10px;">
               <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''}> Never Expires
@@ -8498,13 +9130,6 @@ ${renderStockQuantityCell(l, items, whList)}
       $('#rec-start-date', form).focus();
       return;
     }
-    const neverEnds = $('#rec-never-ends', form).checked;
-    const endDate = neverEnds ? null : ($('#rec-end-date', form).value || null);
-    if (endDate && endDate < sd) {
-      toast('End Date cannot be earlier than Start Date.', 'err');
-      $('#rec-end-date', form).focus();
-      return;
-    }
 
     const lines = [];
     $$('.ln-rec', tbody).forEach((tr, idx) => {
@@ -8556,8 +9181,8 @@ ${renderStockQuantityCell(l, items, whList)}
       frequency: $('#rec-frequency', form)?.value || 'monthly',
       repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
       start_date: sd,
-      end_date: endDate,
-      never_ends: neverEnds,
+      end_date: $('#rec-never-ends', form).checked ? null : ($('#rec-end-date', form).value || null),
+      never_ends: $('#rec-never-ends', form).checked,
       payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
       tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
       customer_type: $('#rec-customer-type', form)?.value || 'b2b',
@@ -8599,14 +9224,6 @@ ${renderStockQuantityCell(l, items, whList)}
 
   const neverEndsCb = $('#rec-never-ends', form);
   const endDateIn = $('#rec-end-date', form);
-  const startDateIn = $('#rec-start-date', form);
-  if (endDateIn && startDateIn) {
-    const updateEndDateMinimum = () => {
-      endDateIn.min = startDateIn.value || '';
-    };
-    startDateIn.addEventListener('change', updateEndDateMinimum);
-    updateEndDateMinimum();
-  }
   if (neverEndsCb && endDateIn) {
     neverEndsCb.addEventListener('change', () => {
       if (neverEndsCb.checked) {
@@ -8793,6 +9410,139 @@ ${renderStockQuantityCell(l, items, whList)}
 
   $('#btn-rec-close-x', target)?.addEventListener('click', handleClose);
   $('#btn-rec-cancel', target)?.addEventListener('click', handleClose);
+
+  async function saveRecurring(isDraft = false) {
+    const pName = ($('#rec-profile-name', form).value || '').trim();
+    if (!pName) {
+      toast('Profile Name is required.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+    if (/[#@!$%^*+=~`<>?[\]\{}]/.test(pName)) {
+      toast('Profile Name contains invalid special characters.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+
+    const custId = $('#rec-customer', form).value;
+    if (!custId || custId === '__new_customer__') {
+      toast('Please select a customer.', 'err');
+      $('#rec-customer', form).focus();
+      return;
+    }
+
+    const sDateVal = $('#rec-start-date', form).value;
+    if (!sDateVal) {
+      toast('Please enter a start date.', 'err');
+      $('#rec-start-date', form).focus();
+      return;
+    }
+
+    const nextDateVal = $('#rec-next-date', form).value || sDateVal;
+    if (sDateVal && nextDateVal && new Date(nextDateVal) < new Date(sDateVal)) {
+      toast('Next Invoice Date cannot be earlier than Start Date.', 'err');
+      $('#rec-next-date', form).focus();
+      return;
+    }
+
+    const neverEnds = !!(neverEndsCb && neverEndsCb.checked);
+    const edVal = neverEnds ? null : ($('#rec-end-date', form).value || null);
+    if (!neverEnds && edVal && sDateVal && new Date(edVal) < new Date(sDateVal)) {
+      toast('End Date cannot be earlier than Start Date.', 'err');
+      $('#rec-end-date', form).focus();
+      return;
+    }
+
+    const lines = [];
+    $$('.ln-rec', tbody).forEach((tr, idx) => {
+      const itVal = $('.l-item', tr).value;
+      const descVal = $('.l-desc', tr).value.trim();
+      const qVal = num($('.l-qty', tr).value) || 1;
+      const rVal = num($('.l-rate', tr).value) || 0;
+      const dVal = num($('.l-disc', tr).value) || 0;
+      const gVal = num($('.l-gst', tr).value) || 0;
+      const discType = $('.l-disc-type', tr).value || 'percent';
+
+      let taxable = qVal * rVal;
+      if (discType === 'percent') {
+        taxable = taxable * (100 - dVal) / 100;
+      } else {
+        taxable = Math.max(0, taxable - dVal);
+      }
+      taxable = r2(taxable);
+      const lTot = r2(taxable * (1 + gVal / 100));
+
+      lines.push({
+        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
+        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qVal,
+        rate: rVal,
+        discount_percent: dVal,
+        gst_rate: gVal,
+        line_total: lTot,
+        position: idx
+      });
+    });
+
+    if (!lines.length) {
+      toast('At least one line item is required.', 'err');
+      return;
+    }
+
+    const totals = calcRecTotals();
+
+    const payload = {
+      profile_name: pName,
+      customer: Number(custId),
+      frequency: $('#rec-frequency', form).value,
+      branch: ($('#rec-branch', form)?.value || '').trim(),
+      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
+      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
+      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
+      start_date: sDateVal,
+      next_date: nextDateVal,
+      end_date: edVal,
+      never_ends: neverEnds,
+      payment_terms: Number($('#rec-payment-terms', form).value) || 0,
+      status: isDraft ? 'paused' : ($('#rec-status', form).value || 'active'),
+      auto_send: !!($('#rec-auto-send', form) && $('#rec-auto-send', form).checked),
+      notes: $('#rec-notes', form).value.trim(),
+      terms: $('#rec-terms', form).value.trim(),
+      lines: lines,
+      total: totals.totalGrand.toFixed(2)
+    };
+
+    const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
+    actionBtns.forEach(b => { if (b) b.disabled = true; });
+
+    try {
+      let saved;
+      if (id) {
+        saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
+        toast('Recurring profile updated successfully!', 'ok');
+      } else {
+        saved = await api('recurring-invoices/', { method: 'POST', body: payload });
+        toast('Recurring profile created successfully!', 'ok');
+      }
+
+      if (onDone) onDone(saved);
+      else {
+        location.hash = '#/sales/recurring-invoices';
+        if (typeof route === 'function') route();
+      }
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      actionBtns.forEach(b => { if (b) b.disabled = false; });
+    }
+  }
+
+  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurring(false));
+  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurring(true));
 
   calcRecTotals();
 }
@@ -13199,27 +13949,15 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  let formData;
-  try {
-    formData = await Promise.all([
-      api('lookup/customers/'),
-      api('lookup/retainer-locations/'),
-      id ? Promise.resolve(null) : api('lookup/next-retainer-number/'),
-      id ? api(`retainer-invoices/${id}/`) : Promise.resolve(null)
-    ]);
-  } catch (error) {
-    toast(`Unable to load Retainer Invoice form: ${error.message}`, 'err');
-    return;
-  }
-  const [parties, retLocations, nextNum, rec] = formData;
+  const [parties, whList, nextNum, rec] = await Promise.all([
+    api('lookup/customers/').catch(() => []),
+    api('lookup/warehouses/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
+    id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
 
   const retOrg = APP && APP.org ? APP.org : {};
-  const retNum = rec ? rec.number : (nextNum.next_number || nextNum.formatted || '');
-  const retNumberReadOnly = Boolean(rec || nextNum.auto_generate !== false);
-  if (!rec && retNumberReadOnly && !retNum) {
-    toast('Unable to generate the Retainer Invoice Number. Check the document numbering configuration.', 'err');
-    return;
-  }
+  const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
   const retPdfTheme = retOrg.template_theme || 'convosis';
   const retPdfTemplateName = {
     convosis: 'Standard Template',
@@ -13228,15 +13966,13 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     minimal: 'Minimal Template'
   }[retPdfTheme] || retPdfTheme;
   const retCustomer = rec ? (rec.customer_id || rec.party_id) : '';
-  const defaultLocation = retLocations.find(location => location.is_default) || retLocations[0];
-  const retLocationId = rec
-    ? (rec.business_location_id || (retLocations.find(location => location.name === rec.location)?.id || ''))
-    : (defaultLocation?.id || '');
-  const retParty = parties.find(party => String(party.id) === String(retCustomer));
+  const retLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const retBranch = rec ? (rec.branch || '') : '';
+  const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const retProject = rec ? (rec.project_id || rec.project_name || '') : '';
   const retDate = rec ? rec.date : (APP.today || new Date().toISOString().slice(0, 10));
   const retDueDate = rec ? (rec.due_date || '') : retDate;
+  const retTerms = rec && ['Due on Receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due end of the month'].includes(rec.terms) ? rec.terms : 'Due on Receipt';
   const retOrderNum = rec ? (rec.order_number || '') : '';
   const retSalesperson = rec ? (rec.salesperson || '') : '';
   const retSubject = rec ? (rec.subject || rec.purpose || '') : '';
@@ -13244,30 +13980,33 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const retNotes = rec ? (rec.notes != null ? rec.notes : '') : (retOrg.notes_default || 'Thanks for your business.');
   const retTermsText = rec ? (rec.terms != null ? rec.terms : '') : (retOrg.terms_default || '');
   const retTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
-  const retCustType = retParty?.customer_type === 'individual' ? 'b2c' : 'b2b';
-  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ amount: 0 }];
+  const retCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
+  const retLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
   const retAdditionalFields = rec && rec.custom_fields_data && typeof rec.custom_fields_data === 'object' && !Array.isArray(rec.custom_fields_data)
     ? Object.entries(rec.custom_fields_data).map(([label, value]) => ({ label, value }))
     : [];
   const pendingFiles = [];
 
   const rowHtml = (l = {}) => {
-    const amount = l.amount == null
-      ? (l.line_total == null
-        ? num(l.quantity || 1) * num(l.rate || 0) * (1 - num(l.discount_percent || 0) / 100) * (1 + num(l.gst_rate || 0) / 100)
-        : num(l.line_total))
-      : num(l.amount);
+    const quantity = l.quantity == null ? 1 : num(l.quantity);
+    const rate = l.rate == null ? 0 : num(l.rate);
+    const discount = num(l.discount_percent || 0);
+    const gst = num(l.gst_rate || 0);
+    const amount = l.line_total == null
+      ? quantity * rate * (1 - discount / 100) * (1 + gst / 100)
+      : num(l.line_total);
     return `
       <tr class="ln-retainer-invoice" style="border-bottom:1px solid var(--bd);">
         <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
           <input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:6px 8px;width:100%;">
         </td>
         <td style="width:180px;padding:10px 8px;vertical-align:top;">
-          <input class="in l-amount" aria-label="Amount" type="number" step="0.01" min="0" max="999999999" value="${amount.toFixed(2)}" style="text-align:right;width:100%;">
+          <input class="in l-amount" aria-label="Amount" type="number" step="0.01" min="0" value="${amount.toFixed(2)}" style="text-align:right;width:100%;">
         </td>
         <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
           <button type="button" class="btn ic" data-rm-line style="color:var(--tx-muted);font-size:16px;border:none;background:none;cursor:pointer;" title="Remove row">×</button>
         </td>
+        <td hidden><input class="l-item" value="${esc(l.item || '')}"><input class="l-qty" value="${quantity}"><input class="l-rate" value="${rate}"><input class="l-disc" value="${discount}"><input class="l-gst" value="${gst}"><input class="l-hsn" value="${esc(l.hsn_sac || '')}"><input class="l-wh-select" value="${esc(l.warehouse_id || '')}"><input class="l-wh-code" value="${esc(l.warehouse_code || '')}"></td>
       </tr>
     `;
   };
@@ -13287,7 +14026,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Retainer Invoice' : 'New Retainer Invoice'}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" id="btn-ret-settings" title="Settings" aria-label="Retainer Invoice settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
           <button type="button" class="btn ic" id="btn-ret-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
@@ -13298,47 +14037,98 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="flex:1;max-width:480px;">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="ret-customer" name="customer" required aria-describedby="ret-customer-error" aria-invalid="false" style="flex:1;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-              </div>
-              <div id="ret-customer-error" role="alert" hidden></div>
+            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
+              <select class="in" id="ret-customer" name="customer" required style="flex:1;">
+                <option value="">Select or add a customer</option>
+                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
             </div>
           </div>
 
-          <div style="display:none;">
-              <input type="hidden" id="ret-location" name="business_location_id" value="${esc(retLocationId)}">
-              <input type="hidden" id="ret-branch" name="branch" value="${esc(retBranch)}">
-              <input type="hidden" id="ret-customer-type" name="customer_type" value="${retCustType}">
-              <input type="hidden" id="ret-accounts-receivable" name="accounts_receivable" value="${esc(rec?.accounts_receivable || 'Accounts Receivable')}">
-              <input type="hidden" id="ret-salesperson" name="salesperson" value="${esc(retSalesperson)}">
-              <input type="hidden" id="ret-purpose" name="purpose" value="${esc(retSubject)}">
-              <input type="hidden" id="ret-due-date" name="due_date" value="${esc(retDueDate)}">
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+            <div>
+              <select class="in" id="ret-location" name="location" style="width:260px;">
+                ${whList.map(w => `<option value="${esc(w.name)}" ${(retLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+              </select>
+              <div id="ret-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
+                Source of Supply: ${esc(retPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
+              <input class="in" id="ret-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(retBranch)}" style="width:260px;margin-top:6px;">
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <select class="in" id="ret-customer-type" name="customer_type" style="width:260px;">
+                <option value="b2b" ${retCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                <option value="b2c" ${retCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+              </select>
+              <div id="ret-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                <span id="ret-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(retCustomer))?.gstin) || 'Not provided'}</span>
+              </div>
+            </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Number*</label>
             <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="ret-number" name="number" value="${retNum}" required ${retNumberReadOnly ? 'readonly' : ''} style="width:180px;">
+              <select class="in" id="ret-series" name="transaction_series" style="width:180px;">
+                <option value="Default Transaction Series" ${(retSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
+                <option value="Online Store Series" ${retSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
+                <option value="Export Series" ${retSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
+                <option value="Retail Series" ${retSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+              </select>
+              <input class="in" id="ret-number" name="number" value="${retNum}" required style="width:180px;">
+              <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                <i class="fa-solid fa-gear"></i>
+              </button>
             </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
             <label for="ret-reference" style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Reference #</label>
-            <input class="in" id="ret-reference" name="reference" value="${esc(retOrderNum)}" maxlength="60" style="width:260px;">
+            <input class="in" id="ret-reference" name="reference" value="${esc(retOrderNum)}" style="width:260px;">
           </div>
 
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
             <label for="ret-date" style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Retainer Invoice Date*</label>
             <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:260px;">
+            
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Payment Terms</label>
+            <select class="in" id="ret-terms" name="terms" style="width:180px;">
+              <option value="Due on Receipt" ${retTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
+              <option value="Net 15" ${retTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
+              <option value="Net 30" ${retTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
+              <option value="Net 45" ${retTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
+              <option value="Net 60" ${retTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
+              <option value="Due end of the month" ${retTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
+            </select>
+
+            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
+            <input class="in" type="date" id="ret-due-date" name="due_date" value="${retDueDate}" style="width:160px;">
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
+              Accounts Receivable
+              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
+            </label>
+            <select class="in" id="ret-accounts-receivable" name="accounts_receivable" style="width:260px;">
+              <option value="Accounts Receivable" selected>Accounts Receivable</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
+            <div id="ret-salesperson-container"></div>
           </div>
 
           <div style="display:flex;align-items:center;gap:16px;">
@@ -13346,6 +14136,13 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             <select class="in" id="ret-project" name="project_id" style="width:260px;" disabled>
               <option value="">There are no active projects for this customer.</option>
             </select>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
+              Purpose <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
+            </label>
+            <textarea class="in" id="ret-purpose" name="purpose" rows="2" placeholder="Enter purpose of this retainer invoice (e.g. Project advance or service retainer)" style="width:260px;font-size:12px;">${esc(retSubject)}</textarea>
           </div>
 
           <input type="hidden" id="ret-place-of-supply" name="place_of_supply" value="${esc(retPlaceOfSupply)}">
@@ -13478,19 +14275,6 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   const form = $('#retainer-form-element', target);
   const tbody = $('#retainer-line-tbody', form);
   const projectSaveButtons = [$('#btn-ret-save-draft', form), $('#btn-ret-save-send', form)].filter(Boolean);
-  const customerSelect = $('#ret-customer', form);
-  const customerError = $('#ret-customer-error', form);
-  const isValidRetainerCustomer = customerId => parties.some(party => String(party.id) === String(customerId));
-  const clearRetainerCustomerError = () => {
-    if (!customerSelect || !customerError) return;
-    customerSelect.classList.remove('in-error');
-    customerSelect.setAttribute('aria-invalid', 'false');
-    customerError.hidden = true;
-    customerError.textContent = '';
-  };
-  customerSelect?.addEventListener('change', () => {
-    if (isValidRetainerCustomer(customerSelect.value)) clearRetainerCustomerError();
-  });
 
   async function refreshRetainerProjects(customerId, selectedProject = '') {
     const projectCustomerId = /^\d+$/.test(String(customerId || '')) ? customerId : '';
@@ -13510,60 +14294,107 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           toast('Project was created but is not available for this customer. Check its customer and status.', 'err');
         }
       };
-      if (projectSelect && rec?.project_name && String(selectedProject) === String(rec.project_id || rec.project_name)) {
-        const savedProjectIsAvailable = Array.from(projectSelect.options).some(option =>
-          option.value === String(rec.project_id || '') || option.dataset.projectName === rec.project_name
-        );
-        if (!savedProjectIsAvailable) {
-          projectSelect.insertAdjacentHTML(
-            'beforeend',
-            `<option value="__legacy_project__" data-project-name="${esc(rec.project_name)}" selected>${esc(rec.project_name)} (inactive or unavailable)</option>`
-          );
-          projectSelect.value = '__legacy_project__';
-          projectSelect.disabled = false;
-        }
-      }
       return projects;
     } finally {
       projectSaveButtons.forEach(button => { button.disabled = false; });
     }
   }
 
-  function applyRetainerCustomerContext(customer) {
-    const custTypeEl = $('#ret-customer-type', form);
-    if (customer) {
-      $('#ret-place-of-supply', form).value = customer.state || (APP.org ? APP.org.state : 'Kerala');
-    }
-    if (custTypeEl) custTypeEl.value = customer?.customer_type === 'individual' ? 'b2c' : 'b2b';
-  }
-
+  createSalespersonCustomDropdown($('#ret-salesperson-container', form), retSalesperson, () => {});
   await refreshRetainerProjects(retCustomer, retProject);
   $('#ret-customer', form)?.addEventListener('change', e => {
     void refreshRetainerProjects(e.target.value);
-    const customer = parties.find(party => String(party.id) === String(e.target.value));
-    applyRetainerCustomerContext(customer);
-    updateDueDate(customer);
   });
-  function updateDueDate(customer = parties.find(party => String(party.id) === String($('#ret-customer', form).value))) {
+
+  $('#btn-ret-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'retainer-invoices',
+      series: $('#ret-series', form)?.value || 'Default Transaction Series',
+      location: $('#ret-location', form)?.value || 'HO Kottayam',
+      branch: $('#ret-branch', form)?.value || '',
+      onSave: (res) => {
+        if (res && res.preview_formatted) {
+          $('#ret-number', form).value = res.preview_formatted;
+        }
+      }
+    });
+  });
+
+  function updateDueDate() {
     const dVal = $('#ret-date', form).value;
     if (!dVal) return;
+    const termsVal = $('#ret-terms', form).value;
     const d = new Date(dVal + 'T00:00:00');
-    const paymentDays = Number(customer?.payment_terms) || 30;
-    d.setDate(d.getDate() + paymentDays);
-    $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    if (termsVal === 'Due on Receipt') {
+      $('#ret-due-date', form).value = dVal;
+    } else if (termsVal === 'Net 15') {
+      d.setDate(d.getDate() + 15);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 30') {
+      d.setDate(d.getDate() + 30);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 45') {
+      d.setDate(d.getDate() + 45);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Net 60') {
+      d.setDate(d.getDate() + 60);
+      $('#ret-due-date', form).value = d.toISOString().slice(0, 10);
+    } else if (termsVal === 'Due end of the month') {
+      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      $('#ret-due-date', form).value = endOfMonth.toISOString().slice(0, 10);
+    }
   }
 
   function calcRetainer() {
-    let totalCents = 0;
+    const isTaxInclusive = ($('#ret-tax-pricing', form)?.value === 'tax_inclusive');
+    let subtotal = 0;
+    let totalTax = 0;
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
-      const amount = Math.max(0, num($('.l-amount', tr).value) || 0);
-      totalCents += Math.round(amount * 100);
-    });
-    const total = totalCents / 100;
+      const qty = num($('.l-qty', tr).value) || 0;
+      const rate = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const gross = qty * rate;
+      const disc = gross * discVal / 100;
+      const net = Math.max(0, gross - disc);
+      const gstRate = num($('.l-gst', tr).value) || 0;
 
-    $('#ret-subtotal-val', form).textContent = total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#ret-grandtotal-val', form).textContent = total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#ret-bar-total-amount', form).textContent = inr(total);
+      let taxable = net;
+      let tax = 0;
+      let lineTot = net;
+
+      if (isTaxInclusive && gstRate > 0) {
+        taxable = Math.round((net / (1 + gstRate / 100)) * 100) / 100;
+        tax = Math.round((net - taxable) * 100) / 100;
+        lineTot = net;
+      } else {
+        taxable = Math.round(net * 100) / 100;
+        tax = Math.round((taxable * (gstRate / 100)) * 100) / 100;
+        lineTot = taxable + tax;
+      }
+
+      if (document.activeElement !== $('.l-amount', tr)) {
+        $('.l-amount', tr).value = lineTot.toFixed(2);
+      }
+      subtotal += taxable;
+      totalTax += tax;
+    });
+
+    const grand = subtotal + totalTax;
+
+    $('#ret-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-grandtotal-val', form).textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#ret-bar-total-amount', form).textContent = inr(grand);
+  }
+
+  function updateRateFromAmount(tr) {
+    const amountInput = $('.l-amount', tr);
+    const quantity = num($('.l-qty', tr).value) || 1;
+    const discount = Math.min(100, Math.max(0, num($('.l-disc', tr).value))) / 100;
+    const gstRate = Math.max(0, num($('.l-gst', tr).value));
+    const inclusive = $('#ret-tax-pricing', form).value === 'tax_inclusive';
+    const taxFactor = inclusive ? 1 : 1 + gstRate / 100;
+    const divisor = quantity * (1 - discount) * taxFactor;
+    $('.l-rate', tr).value = divisor > 0 ? (num(amountInput.value) / divisor).toFixed(6) : '0';
   }
 
   function renderAttach() {
@@ -13607,10 +14438,8 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         const sel = $('#ret-customer', form);
         sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
         sel.value = newCust.id;
-        applyRetainerCustomerContext(newCust);
-        updateDueDate(newCust);
+        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
         void refreshRetainerProjects(newCust.id);
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
       }
     });
   });
@@ -13619,21 +14448,44 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     if (e.target.value === '__new_customer__') {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        applyRetainerCustomerContext(newCust);
-        updateDueDate(newCust);
+        if (newCust.state) $('#ret-place-of-supply', form).value = newCust.state;
         void refreshRetainerProjects(newCust.id);
-        e.target.dispatchEvent(new Event('change', { bubbles: true }));
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) {
+            $('#ret-terms', form).value = termsMap[newCust.payment_terms];
+            updateDueDate();
+          }
+        }
       });
       return;
     }
     const custId = $('#ret-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
-    applyRetainerCustomerContext(cust);
-    updateDueDate(cust);
+    if (cust) {
+      if (cust.state) $('#ret-place-of-supply', form).value = cust.state;
+      const gstinEl = $('#ret-customer-gstin', form);
+      const custTypeEl = $('#ret-customer-type', form);
+      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
+      if (custTypeEl) {
+        if (cust.gstin && cust.gstin.trim()) {
+          custTypeEl.value = 'b2b';
+        } else if (cust.customer_type === 'individual') {
+          custTypeEl.value = 'b2c';
+        }
+      }
+      if (cust.payment_terms) {
+        const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+        if (termsMap[cust.payment_terms]) {
+          $('#ret-terms', form).value = termsMap[cust.payment_terms];
+          updateDueDate();
+        }
+      }
+    }
   });
 
   $('#ret-date', form).addEventListener('change', updateDueDate);
-  if (!rec) updateDueDate();
+  $('#ret-terms', form).addEventListener('change', updateDueDate);
 
   $('#btn-ret-sign', form)?.addEventListener('click', () => {
     const curSigObj = {
@@ -13665,12 +14517,14 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   });
 
   form.addEventListener('input', e => {
+    const tr = e.target.closest('.ln-retainer-invoice');
+    if (tr && e.target.classList.contains('l-amount')) updateRateFromAmount(tr);
     calcRetainer();
   });
   form.addEventListener('change', () => calcRetainer());
 
   $('#btn-ret-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ amount: 0 }));
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }));
     calcRetainer();
   });
 
@@ -13735,17 +14589,12 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   });
 
   const saveRetainerInvoice = async (isDraft) => {
-    const custId = customerSelect.value;
-    if (!isValidRetainerCustomer(custId)) {
-      customerSelect.classList.add('in-error');
-      customerSelect.setAttribute('aria-invalid', 'true');
-      customerError.textContent = 'Please select a customer.';
-      customerError.hidden = false;
-      customerSelect.focus();
-      customerSelect.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const custId = $('#ret-customer', form).value;
+    if (!custId) {
+      toast('Please select a customer.', 'err');
+      $('#ret-customer', form).focus();
       return;
     }
-    clearRetainerCustomerError();
     const numVal = $('#ret-number', form).value.trim();
     if (!numVal) {
       toast('Please enter a retainer invoice number.', 'err');
@@ -13757,30 +14606,36 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       toast('Please enter a retainer date.', 'err');
       return;
     }
-    const businessLocationId = $('#ret-location', form)?.value || '';
-    if (retLocations.length && !businessLocationId) {
-      toast('Please select a business location.', 'err');
-      $('#ret-location', form)?.focus();
-      return;
-    }
 
     const lines = [];
     let lineErr = false;
     $$('.ln-retainer-invoice', tbody).forEach(tr => {
+      const itVal = $('.l-item', tr).value;
       const descVal = $('.l-desc', tr).value.trim();
       const amountRaw = $('.l-amount', tr).value.trim();
-      if (!descVal && !amountRaw) return;
-      if (amountRaw && (!Number.isFinite(Number(amountRaw)) || Number(amountRaw) < 0)) {
+      const amountVal = amountRaw ? num(amountRaw) : 0;
+      const qtyVal = num($('.l-qty', tr).value) || 0;
+      const rateVal = num($('.l-rate', tr).value) || 0;
+      if (!descVal && !itVal && !amountRaw) return;
+      if (amountVal < 0) {
         lineErr = true;
         return;
       }
-      if (!descVal) {
+      if (!descVal && !itVal) {
         lineErr = true;
         return;
       }
       lines.push({
-        description: descVal,
-        amount: amountRaw || '0'
+        item: itVal || null,
+        warehouse: $('.l-wh-select', tr)?.value || null,
+        warehouse_id: $('.l-wh-select', tr)?.value || null,
+        warehouse_code: $('.l-wh-code', tr)?.value || '',
+        description: descVal || 'Item line',
+        hsn_sac: $('.l-hsn', tr).value.trim(),
+        quantity: qtyVal || 1,
+        rate: rateVal,
+        discount_percent: num($('.l-disc', tr).value) || 0,
+        gst_rate: num($('.l-gst', tr).value) || 0
       });
     });
 
@@ -13810,9 +14665,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       customer_id: custId,
       number: numVal,
       reference: ($('#ret-reference', form)?.value || '').trim(),
-      business_location_id: businessLocationId || null,
-      location: retLocations.find(location => String(location.id) === String(businessLocationId))?.name || rec?.location || 'HO Kottayam',
+      location: $('#ret-location', form)?.value || 'HO Kottayam',
       branch: $('#ret-branch', form)?.value || '',
+      transaction_series: $('#ret-series', form)?.value || 'Default Transaction Series',
       accounts_receivable: $('#ret-accounts-receivable', form)?.value || 'Accounts Receivable',
       date: dt,
       due_date: $('#ret-due-date', form).value || dt,
@@ -13886,12 +14741,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
 
   $('#btn-ret-save-draft', target).addEventListener('click', () => saveRetainerInvoice(true));
   $('#btn-ret-save-send', target).addEventListener('click', () => saveRetainerInvoice(false));
-  const openRetainerSettings = () => {
-    if (Modal.count()) return;
+  $('#btn-ret-template-change', form).addEventListener('click', () => {
     openTemplateCustomizer({ number: retNum }, 'retainer-invoices', () => {});
-  };
-  $('#btn-ret-settings', target)?.addEventListener('click', openRetainerSettings);
-  $('#btn-ret-template-change', form).addEventListener('click', openRetainerSettings);
+  });
 
   const handleRetClose = () => {
     if (onDone) onDone();
@@ -13910,10 +14762,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       date: '#ret-date',
       customerType: '#ret-customer-type',
       branch: '#ret-branch',
-      locationId: '#ret-location',
-      customerId: '#ret-customer',
+      location: '#ret-location',
       party: '#ret-customer',
-      getGstin: () => retLocations.find(location => String(location.id) === String($('#ret-location', form)?.value))?.gstin || ''
+      getGstin: () => parties.find(p => String(p.id) === String($('#ret-customer', form)?.value))?.gstin || ''
     });
   }
   renderAttach();

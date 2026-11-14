@@ -4,7 +4,6 @@ import uuid
 from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 from django.test import TestCase, Client, override_settings
 from django.utils import timezone
 from books import models, services
@@ -39,113 +38,166 @@ class TestAdminAndUserManagement(TestCase):
         res = self.client.get('/admin/')
         self.assertEqual(res.status_code, 200)
         content = res.content.decode('utf-8')
-        self.assertIn('Django administration', content)
+        self.assertIn('CONVOSIS Books', content)
+        self.assertNotIn('Recent actions', content)
 
     def test_admin_auth_user_list(self):
+        private_user = User.objects.create_user(
+            username="private-user-handle",
+            email="account@example.test",
+            first_name="Private",
+            last_name="Name",
+            password="UserPassword123!"
+        )
+        models.UserProfile.objects.create(
+            user=private_user,
+            organization=self.org,
+            role=models.UserProfile.ACCOUNTANT,
+            phone="+919876543210"
+        )
+        models.TenantSubscription.objects.create(
+            organization=self.org,
+            status="active",
+            tier=models.TenantSubscription.PREMIUM
+        )
         res = self.client.get('/admin/auth/user/')
         self.assertEqual(res.status_code, 200)
         content = res.content.decode('utf-8')
         self.assertIn('Select user to change', content)
-        self.assertIn('superadmin', content)
+        self.assertIn('account@example.test', content)
+        self.assertIn('+919876543210', content)
+        self.assertIn('active', content)
+        self.assertNotIn('private-user-handle', content)
+        self.assertNotIn('Private Name', content)
 
-    def test_admin_add_user_page_loads(self):
+    def test_admin_cannot_add_users_or_change_authentication_fields(self):
         res = self.client.get('/admin/auth/user/add/')
-        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.status_code, 403)
 
-    def test_admin_create_and_edit_user(self):
-        # Create user via admin
-        res = self.client.post('/admin/auth/user/add/', {
-            'username': 'staffuser1',
-            'password1': 'StrongStaffPass123!',
-            'password2': 'StrongStaffPass123!',
-        }, follow=True)
-        self.assertEqual(res.status_code, 200)
-
-        created_user = User.objects.filter(username='staffuser1').first()
-        self.assertIsNotNone(created_user)
-        self.assertTrue(hasattr(created_user, 'profile'))
-        self.assertEqual(created_user.profile.organization, self.org)
-
-        # Edit user change page
-        res_change = self.client.get(f'/admin/auth/user/{created_user.pk}/change/')
-        self.assertEqual(res_change.status_code, 200)
-
-    def test_admin_deactivate_and_activate_users_action(self):
-        user_to_toggle = User.objects.create_user(
-            username="toggleuser",
-            email="toggle@alphacorp.com",
-            password="Password123!"
+        managed_user = User.objects.create_user(
+            username="private-user-handle",
+            email="managed@example.test",
+            first_name="Private",
+            last_name="Name",
+            password="UserPassword123!"
         )
         models.UserProfile.objects.create(
-            user=user_to_toggle,
+            user=managed_user,
             organization=self.org,
-            role=models.UserProfile.ACCOUNTANT
+            phone="+919876543210"
         )
-        self.assertTrue(user_to_toggle.is_active)
+        res_change = self.client.get(f'/admin/auth/user/{managed_user.pk}/change/')
+        self.assertEqual(res_change.status_code, 200)
+        content = res_change.content.decode('utf-8')
+        self.assertIn('managed@example.test', content)
+        self.assertIn('+919876543210', content)
+        self.assertNotIn('private-user-handle', content)
+        self.assertNotIn('Private Name', content)
+        self.assertNotIn('name="password"', content)
+        self.assertNotIn('name="is_staff"', content)
 
-        # Deactivate action
-        res_deact = self.client.post('/admin/auth/user/', {
-            'action': 'deactivate_users',
-            '_selected_action': [user_to_toggle.pk],
-        }, follow=True)
-        self.assertEqual(res_deact.status_code, 200)
-        user_to_toggle.refresh_from_db()
-        self.assertFalse(user_to_toggle.is_active)
+    def test_organization_admin_hides_business_details(self):
+        self.org.email = "safe-contact@example.test"
+        self.org.phone = "+919812345678"
+        self.org.company_id = "PRIVATE-COMPANY-ID"
+        self.org.gstin = "PRIVATE-GSTIN"
+        self.org.save()
+        res = self.client.get('/admin/books/organization/')
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode('utf-8')
+        self.assertIn(self.org.organization_id, content)
+        self.assertIn("safe-contact@example.test", content)
+        self.assertIn("+919812345678", content)
+        self.assertNotIn("Alpha Corp Main", content)
+        self.assertNotIn("PRIVATE-COMPANY-ID", content)
+        self.assertNotIn("PRIVATE-GSTIN", content)
 
-        # Activate action
-        res_act = self.client.post('/admin/auth/user/', {
-            'action': 'activate_users',
-            '_selected_action': [user_to_toggle.pk],
-        }, follow=True)
-        self.assertEqual(res_act.status_code, 200)
-        user_to_toggle.refresh_from_db()
-        self.assertTrue(user_to_toggle.is_active)
+    def test_organization_change_view_hides_unapproved_fields(self):
+        self.org.email = "safe-contact@example.test"
+        self.org.phone = "+919812345678"
+        self.org.company_id = "PRIVATE-COMPANY-ID"
+        self.org.gstin = "PRIVATE-GSTIN"
+        self.org.save()
+        res = self.client.get(f'/admin/books/organization/{self.org.pk}/change/')
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode('utf-8')
+        self.assertIn(self.org.organization_id, content)
+        self.assertIn("safe-contact@example.test", content)
+        self.assertIn("+919812345678", content)
+        self.assertNotIn("Alpha Corp Main", content)
+        self.assertNotIn("PRIVATE-COMPANY-ID", content)
+        self.assertNotIn("PRIVATE-GSTIN", content)
+
+    def test_subscription_change_view_only_shows_allowlisted_metadata(self):
+        subscription = models.TenantSubscription.objects.create(
+            organization=self.org,
+            status="active",
+            tier=models.TenantSubscription.PREMIUM,
+            payment_method="PRIVATE-PAYMENT-METHOD"
+        )
+        res = self.client.get(f'/admin/books/tenantsubscription/{subscription.pk}/change/')
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode('utf-8')
+        self.assertIn(str(subscription.pk), content)
+        self.assertIn(self.org.organization_id, content)
+        self.assertIn("active", content)
+        self.assertNotIn("premium", content)
+        self.assertNotIn("PRIVATE-PAYMENT-METHOD", content)
 
     def test_admin_groups_and_permissions(self):
-        grp = Group.objects.create(name="Finance Managers")
         res = self.client.get('/admin/auth/group/')
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("Finance Managers", res.content.decode('utf-8'))
+        self.assertEqual(res.status_code, 404)
 
-    def test_all_custom_admin_pages_load_successfully(self):
-        admin_urls = [
+    def test_admin_exposes_only_account_and_subscription_records(self):
+        permitted_admin_urls = [
+            '/admin/auth/user/',
             '/admin/books/organization/',
-            '/admin/books/userprofile/',
-            '/admin/books/role/',
-            '/admin/books/customer/',
-            '/admin/books/vendor/',
-            '/admin/books/item/',
-            '/admin/books/warehouse/',
-            '/admin/books/stockmovement/',
-            '/admin/books/stocktransfer/',
-            '/admin/books/invoice/',
-            '/admin/books/bill/',
-            '/admin/books/quote/',
-            '/admin/books/salesorder/',
-            '/admin/books/purchaseorder/',
-            '/admin/books/creditnote/',
-            '/admin/books/vendorcredit/',
-            '/admin/books/retainerinvoice/',
-            '/admin/books/recurringinvoice/',
-            '/admin/books/deliverychallan/',
-            '/admin/books/paymentreceived/',
-            '/admin/books/paymentmade/',
-            '/admin/books/expense/',
-            '/admin/books/bankaccount/',
-            '/admin/books/banktransaction/',
-            '/admin/books/einvoicerecord/',
-            '/admin/books/ewaybill/',
-            '/admin/books/dpdpconsentrecord/',
-            '/admin/books/dpdpdatasubjectrequest/',
-            '/admin/books/dpdpbreachincident/',
-            '/admin/books/dpdpdataprocessor/',
             '/admin/books/tenantsubscription/',
-            '/admin/books/subscriptioninvoice/',
-            '/admin/books/auditlog/',
         ]
-        for url in admin_urls:
+        for url in permitted_admin_urls:
             res = self.client.get(url)
             self.assertEqual(res.status_code, 200, f"Admin URL failed: {url}")
+
+        restricted_admin_urls = [
+            '/admin/auth/group/',
+            '/admin/books/userprofile/',
+            '/admin/books/customer/',
+            '/admin/books/vendor/',
+            '/admin/books/invoice/',
+            '/admin/books/bill/',
+            '/admin/books/bankaccount/',
+            '/admin/books/auditlog/',
+            '/admin/books/subscriptioninvoice/',
+        ]
+        for url in restricted_admin_urls:
+            res = self.client.get(url)
+            self.assertEqual(res.status_code, 404, f"Sensitive admin URL remained available: {url}")
+
+    def test_user_history_and_restricted_admin_access_are_blocked_and_audited(self):
+        restricted_user = User.objects.create_user(username="history-private", password="StrongPassword123!")
+        history_res = self.client.get(f'/admin/auth/user/{restricted_user.pk}/history/')
+        self.assertEqual(history_res.status_code, 404)
+
+        forbidden_res = self.client.get('/admin/books/customer/')
+        self.assertEqual(forbidden_res.status_code, 404)
+        audit_event = models.AuditLog.objects.filter(
+            user=self.superuser,
+            action='admin_access',
+            entity_type='DjangoAdmin',
+            summary='GET /admin/books/customer/'
+        ).latest('pk')
+        self.assertEqual(audit_event.status, 'failure')
+
+    def test_admin_access_is_audited(self):
+        res = self.client.get('/admin/')
+        self.assertEqual(res.status_code, 200)
+        audit_event = models.AuditLog.objects.filter(
+            user=self.superuser,
+            action='admin_access',
+            entity_type='DjangoAdmin',
+            summary='GET /admin/'
+        ).latest('pk')
+        self.assertEqual(audit_event.status, 'success')
 
 
 class TestTenantIsolationAndSubOrganizations(TestCase):
@@ -383,10 +435,11 @@ class TestDPDPActCompliance(TestCase):
 class TestProductionSecurityConfiguration(TestCase):
     def test_allowed_hosts_includes_production_domain(self):
         self.assertIn('convosisbooks.onrender.com', settings.ALLOWED_HOSTS)
-        self.assertIn('.onrender.com', settings.ALLOWED_HOSTS)
+        self.assertNotIn('.onrender.com', settings.ALLOWED_HOSTS)
 
     def test_csrf_trusted_origins_includes_production_domain(self):
         self.assertTrue(any('convosisbooks.onrender.com' in o for o in settings.CSRF_TRUSTED_ORIGINS))
+        self.assertNotIn('https://*.onrender.com', settings.CSRF_TRUSTED_ORIGINS)
 
     def test_custom_404_and_500_suppress_stack_traces(self):
         client = Client()

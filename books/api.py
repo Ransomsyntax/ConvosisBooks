@@ -1,12 +1,13 @@
 """JSON API (session-authenticated, CSRF-protected). One Resource class per entity."""
 import csv
+import base64
 import datetime
 from datetime import timedelta
 import io
 import json
 import re
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache, wraps
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -35,7 +36,8 @@ from .models import (
     DeliveryChallanLine, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
-    PriceList, Project, PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
+    PriceList, Project, ProjectMilestone, ProjectStaff, ProjectTask, ProjectTaskAssignment,
+    PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
     SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
@@ -188,6 +190,15 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
 
         method = request.method
         action = action_name or ('delete' if method == 'DELETE' else ('edit' if method in ('PUT', 'PATCH') else ('create' if method == 'POST' else 'view')))
+        if resource_name in ('projects', 'project-tasks', 'project-milestones', 'timesheets'):
+            if action == 'generate-invoice':
+                action = 'create'
+            elif action == 'archive':
+                action = 'delete'
+            elif action in ('approve', 'reject'):
+                action = 'approve'
+            elif action in ('submit', 'start-timer', 'stop-timer'):
+                action = 'edit'
 
         RES_MAP = {
             'customers': ('contacts', 'customers'),
@@ -214,6 +225,8 @@ def check_permission(request, allowed_roles=None, resource_name=None, action_nam
             'journals': ('accountant', 'journals'),
             'budgets': ('accountant', 'budgets'),
             'projects': ('timesheets', 'projects'),
+            'project-tasks': ('timesheets', 'projects'),
+            'project-milestones': ('timesheets', 'projects'),
             'timesheets': ('timesheets', 'timesheets'),
             'time-entries': ('timesheets', 'time_entries'),
             'settings': ('settings', 'update_profile'),
@@ -680,7 +693,7 @@ class Resource:
                 if dup_mode not in ('skip', 'update', 'auto_sku', 'error', 'create'):
                     dup_mode = 'skip'
 
-                user_org = get_user_org(request.user)
+                user_org = get_user_org(request.user, request)
                 self.current_user_org = user_org
                 records = self.preprocess_import_records(records)
 
@@ -1913,6 +1926,16 @@ class DocResource(Resource):
                 'numbering_series': allocation.series.name,
                 'numbering_financial_year': allocation.financial_year,
             })
+        if isinstance(o, Invoice):
+            source_quote = o.source_quote
+            if not source_quote and o.source_sales_order_id:
+                source_quote = o.source_sales_order.source_quote
+            if source_quote and source_quote.organization_id == o.organization_id and source_quote.tax_type == 'tds':
+                r['income_tds_rate'] = source_quote.tds_tcs_tax
+                r['income_tds_quote'] = source_quote.number
+            else:
+                r['income_tds_rate'] = Decimal('0.00')
+                r['income_tds_quote'] = ''
         if isinstance(o, RetainerInvoice):
             applied = q2(getattr(o, 'applied_sum', getattr(o, 'applied_amount', 0)))
             r['applied_amount'] = applied
@@ -2372,14 +2395,36 @@ class InvoiceResource(DocResource):
         return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
 
     def extra_detail(self, o):
-        return {'terms': o.terms, 'order_number': o.order_number}
+        return {
+            'terms': o.terms, 'order_number': o.order_number,
+            'project_id': o.project_id, 'project_name': o.project_name,
+        }
 
+    def destroy(self, obj):
+        if obj.project_id:
+            if obj.status != 'draft':
+                raise ApiError(409, 'Issued project invoices cannot be deleted. Void the invoice to release its project sources.')
+            with transaction.atomic():
+                TimeLog.objects.filter(invoice=obj).update(
+                    invoice=None, status='approved', invoiced_rate=None, invoiced_amount=None
+                )
+                Expense.objects.filter(invoice=obj).update(invoice=None)
+                ProjectMilestone.objects.filter(invoice=obj).update(invoice=None, status='planned')
+        return super().destroy(obj)
+
+    @transaction.atomic
     def action(self, request, obj, name):
         if name == 'send':
             services.send_invoice(obj, request.user)
             return j({'status': 'ok', 'message': f'Invoice {obj.number} sent.'})
         elif name == 'void':
             services.void_invoice(obj, request.user)
+            if obj.project_id:
+                TimeLog.objects.filter(invoice=obj).update(
+                    invoice=None, status='approved', invoiced_rate=None, invoiced_amount=None
+                )
+                Expense.objects.filter(invoice=obj).update(invoice=None)
+                ProjectMilestone.objects.filter(invoice=obj).update(invoice=None, status='planned')
             return j({'status': 'ok', 'message': f'Invoice {obj.number} voided.'})
         elif name == 'write-off':
             b = body(request)
@@ -2416,14 +2461,27 @@ class InvoiceResource(DocResource):
             b = body(request)
             raw_allocs = b.get('allocations', [])
             dt = Cleaner(b).date('date') or timezone.localdate()
+            user_org = get_user_org(request.user, request)
             if not raw_allocs or not isinstance(raw_allocs, list):
                 raise ApiError(400, 'Expected non-empty allocations list.')
             for it in raw_allocs:
                 ret_id = it.get('retainer') or it.get('retainer_id')
                 amt = q2(it.get('amount') or 0)
-                ret = RetainerInvoice.objects.filter(pk=ret_id).first()
+                ret = RetainerInvoice.objects.filter(
+                    pk=ret_id, organization=user_org, customer_id=obj.customer_id
+                ).first()
                 if not ret:
                     raise ApiError(404, 'Retainer invoice not found.')
+                if ret.project_id:
+                    if obj.project_id and obj.project_id != ret.project_id:
+                        raise ApiError(400, 'The retainer project does not match the invoice project.')
+                    if not obj.project_id:
+                        obj.project = ret.project
+                        obj.project_name = ret.project_name or ret.project.name
+                        obj.save(update_fields=['project', 'project_name'])
+                elif ret.project_name and not obj.project_name:
+                    obj.project_name = ret.project_name
+                    obj.save(update_fields=['project_name'])
                 services.apply_retainer_to_invoices(ret, [{'invoice': obj, 'amount': amt, 'notes': it.get('notes', '')}], request.user, dt)
             return j({'status': 'ok', 'message': 'Retainer applied successfully.'})
         else:
@@ -2749,6 +2807,11 @@ class QuoteResource(DocResource):
             services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} declined')
             return j({'status': 'declined', 'number': obj.number})
         elif name == 'convert-to-invoice':
+            obj = Quote.objects.select_for_update().filter(
+                pk=obj.pk, organization=obj.organization
+            ).first()
+            if not obj:
+                raise ApiError(404, 'Quote not found in your organization.')
             if obj.status == 'invoiced' or obj.converted_to_invoice_id:
                 target = obj.converted_to_invoice.number if obj.converted_to_invoice else ''
                 raise ApiError(400, f'Quote {obj.number} has already been converted to Invoice {target}. A quote cannot be converted multiple times.')
@@ -2806,6 +2869,11 @@ class QuoteResource(DocResource):
             services.log_audit(request.user, 'create', 'invoice', inv.pk, f'Converted Quote {obj.number} to Invoice {inv.number}')
             return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
         elif name == 'convert-to-sales-order':
+            obj = Quote.objects.select_for_update().filter(
+                pk=obj.pk, organization=obj.organization
+            ).first()
+            if not obj:
+                raise ApiError(404, 'Quote not found in your organization.')
             if obj.status == 'ordered' or obj.converted_to_sales_order_id:
                 target = obj.converted_to_sales_order.number if obj.converted_to_sales_order else ''
                 raise ApiError(400, f'Quote {obj.number} has already been converted to Sales Order {target}. A quote cannot be converted multiple times.')
@@ -3157,6 +3225,660 @@ class PaymentReceivedResource(PaymentResource):
     search_fields = ('number', 'customer__name', 'reference')
     csv_cols = [('Receipt#', 'number'), ('Customer', 'party'), ('Date', 'date'), ('Mode', 'mode_label'),
                 ('Reference', 'reference'), ('Amount', 'amount'), ('Applied', 'applied'), ('Unapplied', 'unapplied')]
+
+    def _tax_options(self, org):
+        options = []
+        for rate in GST_SLABS:
+            rate_label = format_qty(rate)
+            options.append({'name': f'GST{rate_label}', 'type': 'Tax Group', 'rate': rate, 'active': True})
+            options.append({'name': f'IGST{rate_label}', 'type': 'IGST', 'rate': rate, 'active': True})
+        settings_taxes = (org.tax_settings or {}).get('custom_taxes', [])
+        if isinstance(settings_taxes, list):
+            options.extend(
+                row for row in settings_taxes
+                if isinstance(row, dict) and row.get('active', True)
+                and row.get('type') in ('Tax Group', 'IGST')
+            )
+        return options
+
+    def _custom_fields(self, org):
+        return list(CustomField.objects.filter(
+            organization=org, module='payments_received', active=True
+        ).order_by('label', 'id'))
+
+    def _clean_custom_fields(self, org, values, previous=None):
+        if values is None:
+            values = previous or {}
+        if not isinstance(values, dict):
+            raise ApiError(400, 'Custom field values must be an object.', {
+                'custom_fields_data': 'Invalid custom field values.'
+            })
+        fields = {}
+        errors = {}
+        for field in self._custom_fields(org):
+            value = values.get(field.name, values.get(field.label, ''))
+            if field.field_type == 'checkbox':
+                if isinstance(value, bool):
+                    checked = value
+                elif value in (None, '', 'false', 'False', '0', 0):
+                    checked = False
+                elif value in ('true', 'True', '1', 1):
+                    checked = True
+                else:
+                    errors[f'cf__{field.name}'] = f'Enter a valid value for {field.label}.'
+                    continue
+                if field.required and not checked:
+                    errors[f'cf__{field.name}'] = f'{field.label} is required.'
+                fields[field.name] = checked
+                continue
+            value = '' if value is None else str(value).strip()
+            if field.required and not value:
+                errors[f'cf__{field.name}'] = f'{field.label} is required.'
+                continue
+            if value and field.field_type == 'select':
+                choices = [choice.strip() for choice in field.options.split(',') if choice.strip()]
+                if value not in choices:
+                    errors[f'cf__{field.name}'] = f'Select a valid value for {field.label}.'
+                    continue
+            fields[field.name] = value[:1000]
+        if errors:
+            raise ApiError(400, 'Please correct the custom fields.', errors)
+        return fields
+
+    def _parse_payment(self, data, user, existing=None):
+        org = existing.organization if existing else get_user_org(user)
+        if not org:
+            raise ApiError(403, 'Organization required.')
+
+        payload = dict(data)
+        if existing:
+            payload.setdefault('customer', existing.customer_id)
+            payload.setdefault('date', existing.date)
+            payload.setdefault('amount', existing.amount)
+            payload.setdefault('mode', existing.mode)
+            payload.setdefault('bank_account_id', existing.bank_account_id)
+            payload.setdefault('payment_type', existing.payment_type)
+            payload.setdefault('status', existing.status)
+            payload.setdefault('bank_charges', existing.bank_charges)
+            payload.setdefault('income_tds', existing.income_tds)
+            payload.setdefault('tax_name', existing.tax_name)
+            payload.setdefault('place_of_supply', existing.place_of_supply)
+            payload.setdefault('branch', existing.branch)
+            payload.setdefault('business_location_id', existing.business_location_id)
+            payload.setdefault('reference', existing.reference)
+            payload.setdefault('notes', existing.notes)
+            payload.setdefault('custom_fields_data', existing.custom_fields_data)
+            payload.setdefault('thank_you_enabled', existing.thank_you_enabled)
+            payload.setdefault('thank_you_note', existing.thank_you_note)
+            payload.setdefault('thank_you_recipients', existing.thank_you_recipients)
+
+        c = Cleaner(payload)
+        customer_id = c.integer('customer', lo=1, required=True)
+        customer = Customer.objects.filter(
+            pk=customer_id, organization=org, active=True
+        ).first() if customer_id else None
+        if customer_id and not customer:
+            c.err('customer', 'Customer not found in your organization.')
+
+        payment_type = c.choice(
+            'payment_type', ('invoice_payment', 'customer_advance'), 'invoice_payment'
+        )
+        status = c.choice('status', ('draft', 'paid'), 'paid')
+        date = c.date('date', required=True)
+        amount = c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999'))
+        bank_charges = c.number(
+            'bank_charges', lo=Decimal('0.00'), hi=Decimal('999999999'),
+            default=Decimal('0.00'),
+        )
+        mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
+        bank_account_id = c.integer('bank_account_id', lo=1) or c.integer('bank_account', lo=1)
+        bank_account = BankAccount.objects.filter(
+            pk=bank_account_id, organization=org, active=True
+        ).first() if bank_account_id else None
+        if not bank_account:
+            bank_account = BankAccount.objects.filter(organization=org, active=True).first()
+        if not bank_account and org:
+            bank_account = BankAccount.objects.create(
+                organization=org,
+                name='Bank Account',
+                account_type='bank',
+                bank_name='Default Bank',
+                account_number='0000000000',
+                active=True
+            )
+
+        place_of_supply = re.sub(
+            r'^\[\d+\]\s*', '',
+            c.text('place_of_supply', max_len=80, default='') or
+            (customer.place_of_supply or customer.state if customer else ''),
+        ).strip()
+        branch = c.text('branch', max_len=120)
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=org, active=True
+        ).first() if business_location_id else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+
+        reference = c.text('reference', max_len=80)
+        notes = c.text('notes', max_len=2000)
+        income_tds = c.boolean('income_tds', default=False)
+        tax_name = c.text('tax_name', max_len=100)
+        tax = None
+        if tax_name:
+            tax = next((row for row in self._tax_options(org) if row.get('name') == tax_name), None)
+            if not tax:
+                c.err('tax_name', 'Select a tax configured for your organization.')
+            elif tax.get('type') not in ('Tax Group', 'IGST'):
+                c.err('tax_name', 'Select a GST tax for the customer advance.')
+
+        custom_fields = self._clean_custom_fields(
+            org, payload.get('custom_fields_data'), existing.custom_fields_data if existing else None
+        )
+        thank_you_enabled = c.boolean('thank_you_enabled', default=False)
+        thank_you_note = c.text('thank_you_note', max_len=2000)
+        recipients = payload.get('thank_you_recipients', [])
+        if not isinstance(recipients, list) or any(not isinstance(item, str) for item in recipients):
+            c.err('thank_you_recipients', 'Recipients must be a list of email addresses.')
+            recipients = []
+        recipients = list(dict.fromkeys(item.strip() for item in recipients if item.strip()))
+        if len(recipients) > 20:
+            c.err('thank_you_recipients', 'Choose no more than 20 recipients.')
+        if customer:
+            valid_emails = {customer.email.strip().lower()} if customer.email else set()
+            for contact in customer.contact_persons_data or []:
+                if isinstance(contact, dict) and contact.get('email'):
+                    valid_emails.add(str(contact['email']).strip().lower())
+            if any(item.lower() not in valid_emails for item in recipients):
+                c.err('thank_you_recipients', 'Recipients must be customer email addresses.')
+        c.done()
+
+        services.check_transaction_lock(date, org=org)
+        if payment_type == 'customer_advance' and income_tds:
+            raise ApiError(400, 'Income TDS applies to invoice payments, not customer advances.', {
+                'income_tds': 'Turn off Income TDS for a customer advance.'
+            })
+        if payment_type == 'invoice_payment' and tax_name:
+            raise ApiError(400, 'GST tax can only be recorded on a customer advance.', {
+                'tax_name': 'Remove tax from an invoice payment.'
+            })
+        allocations = payload.get(
+            'allocations',
+            existing.draft_allocations if existing and existing.status == 'draft' else [],
+        )
+        if payment_type == 'customer_advance' and allocations:
+            raise ApiError(400, 'A customer advance is applied to invoices after it is paid.', {
+                'allocations': 'Remove invoice allocations from the advance.'
+            })
+        return {
+            'organization': org, 'customer': customer, 'payment_type': payment_type,
+            'status': status, 'date': date, 'amount': q2(amount),
+            'bank_charges': q2(bank_charges), 'mode': mode,
+            'bank_account': bank_account, 'reference': reference, 'notes': notes,
+            'place_of_supply': place_of_supply, 'branch': branch,
+            'business_location': business_location, 'income_tds': income_tds,
+            'tax_name': tax_name, 'tax_type': (tax or {}).get('type', ''),
+            'tax_rate': q2((tax or {}).get('rate', 0)),
+            'custom_fields_data': custom_fields,
+            'thank_you_enabled': thank_you_enabled,
+            'thank_you_note': thank_you_note,
+            'thank_you_recipients': recipients,
+            'allocations': allocations,
+        }
+
+    def _normalize_allocations(self, customer, org, raw, allow_empty=True):
+        if raw in (None, []):
+            if allow_empty:
+                return []
+            raise ApiError(400, 'At least one invoice allocation is required.', {
+                'allocations': 'Select an invoice and enter an amount.'
+            })
+        if not isinstance(raw, list):
+            raise ApiError(400, 'Invalid allocations.', {'allocations': 'Invalid allocations.'})
+
+        rows, seen = [], set()
+        for raw_row in raw:
+            if not isinstance(raw_row, dict):
+                raise ApiError(400, 'Each allocation must identify an invoice and amount.', {
+                    'allocations': 'Invalid allocation row.'
+                })
+            c = Cleaner(raw_row)
+            invoice_id = c.integer('invoice', lo=1) or c.integer('invoice_id', lo=1)
+            amount = c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999'))
+            if c.errors or not invoice_id:
+                raise ApiError(400, 'Each allocation needs a valid invoice and positive amount.', {
+                    'allocations': 'Each allocation needs a valid invoice and positive amount.'
+                })
+            if invoice_id in seen:
+                raise ApiError(400, 'An invoice can only be listed once per payment.', {
+                    'allocations': 'Remove duplicate invoice rows.'
+                })
+            seen.add(invoice_id)
+            invoice = Invoice.objects.select_for_update().filter(
+                pk=invoice_id, organization=org, customer=customer
+            ).first()
+            if not invoice:
+                raise ApiError(404, 'Invoice not found for this customer in your organization.', {
+                    'allocations': 'Select an invoice belonging to this customer.'
+                })
+            if invoice.status not in ('sent', 'partial', 'paid'):
+                raise ApiError(400, f'Invoice {invoice.number} is not available for payment.', {
+                    'allocations': f'Invoice {invoice.number} is not available for payment.'
+                })
+            paid = sum((item.amount for item in invoice.allocations.all()), Z)
+            paid += sum((item.amount for item in invoice.retainer_allocations.all()), Z)
+            balance = max(Z, invoice.total - paid)
+            amount = q2(amount)
+            if amount > balance:
+                raise ApiError(400, f'Amount exceeds the balance due on {invoice.number}.', {
+                    'allocations': f'Amount exceeds the balance due on {invoice.number} ({balance}).'
+                })
+            rows.append((invoice, amount))
+        return rows
+
+    def _calculate_tds(self, rows, org):
+        if not rows:
+            raise ApiError(400, 'Select an invoice with a configured TDS rate.', {
+                'allocations': 'Income TDS requires an allocated invoice with an originating quote TDS rate.'
+            })
+        total = Z
+        for invoice, amount in rows:
+            quote = invoice.source_quote
+            if not quote and invoice.source_sales_order_id:
+                quote = invoice.source_sales_order.source_quote
+            if (
+                not quote or quote.organization_id != org.pk
+                or quote.tax_type != 'tds' or quote.tds_tcs_tax <= 0
+            ):
+                raise ApiError(400, f'Invoice {invoice.number} has no configured income-TDS rate.', {
+                    'allocations': f'Invoice {invoice.number} has no configured income-TDS rate on its originating quote.'
+                })
+            if invoice.total <= 0:
+                raise ApiError(400, f'Invoice {invoice.number} has no taxable balance for TDS.', {
+                    'allocations': f'Invoice {invoice.number} has no taxable balance for TDS.'
+                })
+            taxable_share = invoice.subtotal * amount / invoice.total
+            total += q2(taxable_share * quote.tds_tcs_tax / Decimal('100'))
+        return q2(total)
+
+    def _save_attachments(self, pay, raw_files):
+        if raw_files in (None, []):
+            return
+        if not isinstance(raw_files, list):
+            raise ApiError(400, 'Attachments must be a list of files.', {
+                'attachments': 'Invalid attachment list.'
+            })
+        existing_count = Attachment.objects.filter(
+            organization=pay.organization, entity_type='payment_received', entity_id=pay.pk
+        ).count()
+        if existing_count + len(raw_files) > 10:
+            raise ApiError(400, 'A payment can have no more than 10 attachments.', {
+                'attachments': 'Remove files so the payment has no more than 10 attachments.'
+            })
+        for item in raw_files:
+            if not isinstance(item, dict):
+                raise ApiError(400, 'Invalid attachment.', {'attachments': 'Invalid attachment.'})
+            filename = str(item.get('filename') or '').strip()[:255]
+            mime_type = str(item.get('mime_type') or '')[:100]
+            file_data = item.get('file_data')
+            if not filename or not isinstance(file_data, str):
+                raise ApiError(400, 'Each attachment needs a filename and file content.', {
+                    'attachments': 'Choose a valid file.'
+                })
+            encoded = file_data.split(',', 1)[1] if file_data.startswith('data:') and ',' in file_data else file_data
+            try:
+                decoded = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError):
+                raise ApiError(400, f'Attachment {filename} is not valid base64 data.', {
+                    'attachments': f'File {filename} could not be read.'
+                })
+            if len(decoded) > 10 * 1024 * 1024:
+                raise ApiError(400, f'Attachment {filename} exceeds the 10 MB limit.', {
+                    'attachments': f'File {filename} exceeds the 10 MB limit.'
+                })
+            Attachment.objects.create(
+                organization=pay.organization, entity_type='payment_received',
+                entity_id=pay.pk, filename=filename, file_size=len(decoded),
+                mime_type=mime_type, file_data=file_data, created_by=pay.created_by,
+            )
+
+    def _record_paid(self, pay, rows, user):
+        if pay.payment_type == 'invoice_payment':
+            for invoice, amount in rows:
+                self.Alloc.objects.create(payment=pay, invoice=invoice, amount=amount)
+        else:
+            rows = []
+        cash_received = self._cash_received(pay.amount, pay.payment_type, pay.tax_amount)
+        if pay.bank_charges > cash_received:
+            raise ApiError(400, 'Bank charges cannot exceed the amount received.', {
+                'bank_charges': 'Bank charges cannot exceed the cash received.'
+            })
+        bank_account = pay.bank_account
+        if bank_account:
+            net = cash_received - pay.bank_charges
+            bank_account.current_balance += net
+            bank_account.bank_balance += net
+            bank_account.save(update_fields=['current_balance', 'bank_balance'])
+            BankTransaction.objects.create(
+                organization=pay.organization,
+                bank_account=bank_account,
+                date=pay.date,
+                description=f'Payment Received {pay.number} - {pay.customer.name}',
+                reference=pay.reference or pay.number,
+                transaction_type='Payment Received',
+                payee=pay.customer.name,
+                withdrawal=pay.bank_charges,
+                deposit=cash_received,
+                balance=bank_account.current_balance,
+                status='categorized',
+                matched_entity_type='payment_received',
+                matched_entity_id=pay.pk,
+            )
+        services.post_payment_received_journal(pay, user)
+        for invoice, _ in rows:
+            self._sync_invoice_status(invoice)
+
+    def _sync_invoice_status(self, invoice):
+        if invoice.status in ('draft', 'void'):
+            return
+        paid = sum((item.amount for item in invoice.allocations.all()), Z)
+        paid += sum((item.amount for item in invoice.retainer_allocations.all()), Z)
+        invoice.status = 'paid' if paid >= invoice.total else ('partial' if paid > 0 else 'sent')
+        invoice.save(update_fields=['status'])
+
+    def _cash_received(self, amount, payment_type, tax_amount):
+        return q2(amount + (tax_amount if payment_type == 'customer_advance' else Z))
+
+    @transaction.atomic
+    def create(self, data, user):
+        parsed = self._parse_payment(data, user)
+        rows = self._normalize_allocations(
+            parsed['customer'], parsed['organization'], parsed['allocations']
+        ) if parsed['payment_type'] == 'invoice_payment' else []
+        tds_amount = self._calculate_tds(rows, parsed['organization']) if parsed['income_tds'] else Z
+        tax_amount = q2(parsed['amount'] * parsed['tax_rate'] / Decimal('100')) if parsed['payment_type'] == 'customer_advance' else Z
+        gross = q2(parsed['amount'] + (tax_amount if parsed['payment_type'] == 'customer_advance' else tds_amount))
+        cash_received = self._cash_received(
+            parsed['amount'], parsed['payment_type'], tax_amount
+        )
+        if parsed['bank_charges'] > cash_received:
+            raise ApiError(400, 'Bank charges cannot exceed the amount received.', {
+                'bank_charges': 'Bank charges cannot exceed the cash received.'
+            })
+        applied = sum((amount for _, amount in rows), Z)
+        if applied > q2(parsed['amount'] + tds_amount):
+            raise ApiError(400, 'Applied amount exceeds the receipt including TDS.', {
+                'allocations': 'Applied amount exceeds the receipt including TDS.'
+            })
+        if parsed['thank_you_enabled'] and not parsed['thank_you_recipients']:
+            raise ApiError(400, 'Select at least one recipient for the thank-you email.', {
+                'thank_you_recipients': 'Choose at least one customer email address.'
+            })
+
+        with transaction.atomic():
+            number = services.next_document_number('PR', org=parsed['organization'], date=parsed['date'])
+            pay = PaymentReceived.objects.create(
+                number=number, created_by=user,
+                customer=parsed['customer'], organization=parsed['organization'],
+                payment_type=parsed['payment_type'], status=parsed['status'],
+                date=parsed['date'], amount=parsed['amount'], mode=parsed['mode'],
+                account=parsed['bank_account'].name, bank_account=parsed['bank_account'],
+                reference=parsed['reference'], notes=parsed['notes'],
+                bank_charges=parsed['bank_charges'], income_tds=parsed['income_tds'],
+                tds_amount=tds_amount, tax_name=parsed['tax_name'],
+                tax_type=parsed['tax_type'], tax_rate=parsed['tax_rate'],
+                tax_amount=tax_amount, place_of_supply=parsed['place_of_supply'],
+                branch=parsed['branch'], business_location=parsed['business_location'],
+                custom_fields_data=parsed['custom_fields_data'],
+                draft_allocations=[
+                    {'invoice': invoice.pk, 'amount': str(amount)} for invoice, amount in rows
+                ] if parsed['status'] == 'draft' else [],
+                thank_you_enabled=parsed['thank_you_enabled'],
+                thank_you_note=parsed['thank_you_note'],
+                thank_you_recipients=parsed['thank_you_recipients'],
+            )
+            self._save_attachments(pay, data.get('attachments'))
+            if pay.status == 'paid':
+                self._record_paid(pay, rows, user)
+            services.log_audit(
+                user, 'create', 'PaymentReceived', pay.number,
+                f'Recorded {pay.get_payment_type_display()} {pay.number} for ₹{cash_received}',
+                org=pay.organization, module='sales', submodule='payments_received',
+            )
+        return pay
+
+    @transaction.atomic
+    def update(self, obj, data, user):
+        if obj.status != 'draft':
+            raise ApiError(409, 'Paid receipts cannot be edited. Delete and recreate the receipt if permitted.')
+        parsed = self._parse_payment(data, user, existing=obj)
+        rows = self._normalize_allocations(
+            parsed['customer'], obj.organization, parsed['allocations']
+        ) if parsed['payment_type'] == 'invoice_payment' else []
+        tds_amount = self._calculate_tds(rows, obj.organization) if parsed['income_tds'] else Z
+        tax_amount = q2(parsed['amount'] * parsed['tax_rate'] / Decimal('100')) if parsed['payment_type'] == 'customer_advance' else Z
+        cash_received = self._cash_received(
+            parsed['amount'], parsed['payment_type'], tax_amount
+        )
+        if parsed['bank_charges'] > cash_received:
+            raise ApiError(400, 'Bank charges cannot exceed the amount received.', {
+                'bank_charges': 'Bank charges cannot exceed the cash received.'
+            })
+        if sum((amount for _, amount in rows), Z) > q2(parsed['amount'] + tds_amount):
+            raise ApiError(400, 'Applied amount exceeds the receipt including TDS.', {
+                'allocations': 'Applied amount exceeds the receipt including TDS.'
+            })
+        if parsed['thank_you_enabled'] and not parsed['thank_you_recipients']:
+            raise ApiError(400, 'Select at least one recipient for the thank-you email.', {
+                'thank_you_recipients': 'Choose at least one customer email address.'
+            })
+
+        with transaction.atomic():
+            pay = PaymentReceived.objects.select_for_update().get(
+                pk=obj.pk, organization=obj.organization
+            )
+            pay.customer = parsed['customer']
+            pay.payment_type = parsed['payment_type']
+            pay.status = parsed['status']
+            pay.date = parsed['date']
+            pay.amount = parsed['amount']
+            pay.mode = parsed['mode']
+            pay.account = parsed['bank_account'].name
+            pay.bank_account = parsed['bank_account']
+            pay.bank_charges = parsed['bank_charges']
+            pay.income_tds = parsed['income_tds']
+            pay.tds_amount = tds_amount
+            pay.tax_name = parsed['tax_name']
+            pay.tax_type = parsed['tax_type']
+            pay.tax_rate = parsed['tax_rate']
+            pay.tax_amount = tax_amount
+            pay.place_of_supply = parsed['place_of_supply']
+            pay.branch = parsed['branch']
+            pay.business_location = parsed['business_location']
+            pay.reference = parsed['reference']
+            pay.notes = parsed['notes']
+            pay.custom_fields_data = parsed['custom_fields_data']
+            pay.draft_allocations = [
+                {'invoice': invoice.pk, 'amount': str(amount)} for invoice, amount in rows
+            ] if pay.status == 'draft' else []
+            pay.thank_you_enabled = parsed['thank_you_enabled']
+            pay.thank_you_note = parsed['thank_you_note']
+            pay.thank_you_recipients = parsed['thank_you_recipients']
+            pay.save()
+            self._save_attachments(pay, data.get('attachments'))
+            if pay.status == 'paid':
+                self._record_paid(pay, rows, user)
+            services.log_audit(
+                user, 'update', 'PaymentReceived', pay.number,
+                f'Updated payment received {pay.number} ({pay.status})',
+                org=pay.organization, module='sales', submodule='payments_received',
+            )
+        return pay
+
+    def row(self, o):
+        applied = sum((allocation.amount for allocation in o.allocations.all()), Z)
+        tds_amount = q2(o.tds_amount)
+        tax_amount = q2(o.tax_amount)
+        gross = q2(o.amount + (tax_amount if o.payment_type == 'customer_advance' else tds_amount))
+        cash_received = self._cash_received(o.amount, o.payment_type, tax_amount)
+        party = o.customer
+        return {
+            'id': o.pk, 'number': o.number, 'party_id': party.pk, 'party': party.name,
+            'customer_id': party.pk, 'customer_name': party.name,
+            'date': o.date, 'mode': o.mode, 'mode_label': MODE_LABEL.get(o.mode, o.mode),
+            'account': o.account, 'bank_account_id': o.bank_account_id,
+            'bank_account_name': o.bank_account.name if o.bank_account else '',
+            'bank_name': o.bank_account.bank_name if o.bank_account else '',
+            'amount': o.amount, 'total_received': cash_received,
+            'applied': applied, 'unapplied': max(Z, gross - applied),
+            'reference': o.reference, 'notes': o.notes,
+            'payment_type': o.payment_type, 'payment_type_label': o.get_payment_type_display(),
+            'status': o.status, 'status_label': o.get_status_display(),
+            'bank_charges': o.bank_charges, 'income_tds': o.income_tds,
+            'tds_amount': tds_amount, 'tax_name': o.tax_name,
+            'tax_type': o.tax_type, 'tax_rate': o.tax_rate, 'tax_amount': tax_amount,
+            'place_of_supply': o.place_of_supply, 'branch': o.branch,
+            'business_location_id': o.business_location_id,
+            'business_location_name': o.business_location.name if o.business_location else '',
+            'customer_gstin': party.gstin, 'customer_pan': party.pan,
+            'customer_type': 'B2C' if party.customer_type == 'individual' else 'B2B',
+            'currency': party.currency or (o.organization.base_currency if o.organization else 'INR'),
+            'custom_fields_data': o.custom_fields_data or {},
+            'thank_you_enabled': o.thank_you_enabled,
+            'thank_you_note': o.thank_you_note,
+            'thank_you_recipients': o.thank_you_recipients or [],
+            'attachment_count': Attachment.objects.filter(
+                organization=o.organization, entity_type='payment_received', entity_id=o.pk
+            ).count(),
+        }
+
+    def detail(self, o):
+        result = self.row(o)
+        if o.status == 'draft':
+            allocations = []
+            for item in o.draft_allocations or []:
+                invoice = Invoice.objects.filter(
+                    pk=item.get('invoice'), organization=o.organization, customer=o.customer
+                ).first()
+                if invoice:
+                    allocations.append({
+                        'doc_id': invoice.pk, 'number': invoice.number, 'amount': item.get('amount'),
+                    })
+        else:
+            allocations = [{
+                'doc_id': allocation.invoice_id, 'number': allocation.invoice.number,
+                'amount': allocation.amount,
+            } for allocation in o.allocations.select_related('invoice')]
+        result['allocations'] = allocations
+        result['attachments'] = [{
+            'id': item.pk, 'filename': item.filename, 'file_size': item.file_size,
+            'mime_type': item.mime_type, 'url': item.file.url if item.file else item.file_data,
+        } for item in Attachment.objects.filter(
+            organization=o.organization, entity_type='payment_received', entity_id=o.pk
+        )]
+        return result
+
+    def destroy(self, obj):
+        services.check_transaction_lock(obj.date, org=obj.organization)
+        invoice_ids = list(obj.allocations.values_list('invoice_id', flat=True))
+        with transaction.atomic():
+            if obj.status == 'paid' and obj.bank_account:
+                cash_received = self._cash_received(
+                    obj.amount, obj.payment_type, obj.tax_amount
+                )
+                net = cash_received - obj.bank_charges
+                obj.bank_account.current_balance -= net
+                obj.bank_account.bank_balance -= net
+                obj.bank_account.save(update_fields=['current_balance', 'bank_balance'])
+            BankTransaction.objects.filter(
+                organization=obj.organization, matched_entity_type='payment_received',
+                matched_entity_id=obj.pk,
+            ).delete()
+            Journal.objects.filter(organization=obj.organization, reference=obj.number).delete()
+            Journal.objects.filter(
+                organization=obj.organization, entry_type='payment_advance_apply',
+                reference__startswith=f'{obj.number}:',
+            ).delete()
+            Attachment.objects.filter(
+                organization=obj.organization, entity_type='payment_received', entity_id=obj.pk
+            ).delete()
+            services.log_audit(
+                obj.created_by, 'delete', 'PaymentReceived', obj.number,
+                f'Reversed/deleted payment {obj.number}', org=obj.organization,
+                module='sales', submodule='payments_received',
+            )
+            obj.delete()
+            for invoice in Invoice.objects.filter(
+                pk__in=invoice_ids, organization=obj.organization
+            ):
+                self._sync_invoice_status(invoice)
+
+    def action(self, request, obj, name):
+        if name == 'apply':
+            if obj.status != 'paid':
+                raise ApiError(409, 'Only paid receipts can be applied to invoices.')
+            raw = body(request).get('allocations')
+            with transaction.atomic():
+                pay = PaymentReceived.objects.select_for_update().get(
+                    pk=obj.pk, organization=obj.organization
+                )
+                rows = self._normalize_allocations(
+                    pay.customer, pay.organization, raw, allow_empty=False
+                )
+                existing = sum((allocation.amount for allocation in pay.allocations.all()), Z)
+                requested = sum((amount for _, amount in rows), Z)
+                gross = pay.amount + (
+                    pay.tax_amount if pay.payment_type == 'customer_advance' else pay.tds_amount
+                )
+                available = q2(gross - existing)
+                if requested > available:
+                    raise ApiError(400, 'Applied amount exceeds the remaining receipt balance.', {
+                        'allocations': f'Only {available} remains available to apply.'
+                    })
+                created = []
+                for invoice, amount in rows:
+                    allocation, was_created = self.Alloc.objects.get_or_create(
+                        payment=pay, invoice=invoice, defaults={'amount': amount}
+                    )
+                    if not was_created:
+                        allocation.amount += amount
+                        allocation.save(update_fields=['amount'])
+                    if pay.payment_type == 'customer_advance':
+                        services.post_customer_advance_application_journal(
+                            pay, allocation, request.user, amount=amount
+                        )
+                    self._sync_invoice_status(invoice)
+                    created.append(allocation)
+                services.log_audit(
+                    request.user, 'apply', 'PaymentReceived', pay.number,
+                    f'Applied ₹{requested} from payment received {pay.number}',
+                    org=pay.organization, module='sales', submodule='payments_received',
+                )
+            return j({
+                'status': 'ok', 'applied': requested,
+                'available': max(Z, available - requested),
+            })
+        if name == 'send-thank-you':
+            if obj.status != 'paid' or not obj.thank_you_enabled:
+                raise ApiError(409, 'Enable the thank-you email on a paid receipt before sending.')
+            requested = body(request).get('recipients') or obj.thank_you_recipients or []
+            if not isinstance(requested, list) or not requested:
+                raise ApiError(400, 'Select at least one email recipient.')
+            valid_emails = {obj.customer.email.strip().lower()} if obj.customer.email else set()
+            for contact in obj.customer.contact_persons_data or []:
+                if isinstance(contact, dict) and contact.get('email'):
+                    valid_emails.add(str(contact['email']).strip().lower())
+            recipients = list(dict.fromkeys(str(item).strip() for item in requested))
+            if any(item.lower() not in valid_emails for item in recipients):
+                raise ApiError(400, 'Recipients must be customer email addresses.')
+            sent = []
+            for recipient in recipients:
+                services.send_payment_received_email(
+                    obj, recipient, obj.thank_you_note, request.user
+                )
+                sent.append(recipient)
+            return j({'status': 'ok', 'sent_to': sent, 'message': 'Thank-you email sent.'})
+        raise ApiError(404, 'Unknown action.')
 
 class PaymentMadeResource(PaymentResource):
     name = 'payments-made'
@@ -4611,6 +5333,7 @@ class SalesOrderResource(Resource):
         services.log_audit(user, 'update', 'SalesOrder', obj.number, f"Updated sales order {obj.number} (₹{obj.total})")
         return obj
 
+    @transaction.atomic
     def action(self, request, obj, name):
         if name == 'sign':
             return sign_document_action(obj, request)
@@ -4628,6 +5351,11 @@ class SalesOrderResource(Resource):
             services.log_audit(request.user, 'void', 'SalesOrder', obj.number, f"Voided sales order {obj.number}")
             return j({'status': obj.status})
         elif name == 'convert-to-invoice':
+            obj = SalesOrder.objects.select_for_update().filter(
+                pk=obj.pk, organization=obj.organization
+            ).first()
+            if not obj:
+                raise ApiError(404, 'Sales order not found in your organization.')
             if obj.status == 'void':
                 raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
             if obj.status == 'closed' or obj.converted_to_invoice_id:
@@ -4916,12 +5644,18 @@ class PurchaseOrderResource(Resource):
         services.log_audit(user, 'update', 'PurchaseOrder', obj.number, f"Updated purchase order {obj.number}")
         return obj
 
+    @transaction.atomic
     def action(self, request, obj, name):
         if name == 'sign':
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
         elif name == 'convert-to-bill':
+            obj = PurchaseOrder.objects.select_for_update().filter(
+                pk=obj.pk, organization=obj.organization
+            ).first()
+            if not obj:
+                raise ApiError(404, 'Purchase order not found in your organization.')
             if obj.status == 'void':
                 raise ApiError(400, f'Cannot convert void purchase order {obj.number}.')
             if obj.status == 'closed' or obj.converted_to_bill_id:
@@ -4952,7 +5686,8 @@ class PurchaseOrderResource(Resource):
                 vendor_ref=obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
-                notes=obj.notes
+                notes=obj.notes,
+                terms=obj.terms
             )
             for l in obj.lines.all():
                 BillLine.objects.create(
@@ -4992,29 +5727,42 @@ class ExpenseResource(Resource):
                 ('Amount', 'amount'), ('GST Rate (%)', 'gst_rate'), ('Paid Through', 'paid_through'),
                 ('Reference', 'reference'), ('Notes', 'notes')]
 
+    def filter_qs(self, qs, request):
+        project_id = request.GET.get('project')
+        if project_id and project_id.isdigit():
+            qs = qs.filter(project_id=int(project_id))
+        if request.GET.get('billable') == 'true':
+            qs = qs.filter(billable_to_customer=True)
+        return qs
+
     def get_template_sample(self):
         return ['2026-10-20', 'Office Supplies', 'Reliable Hardware Supplies', '2450.00', '18.00', 'Bank Account', 'REF-98120', 'Office stationery']
 
     def prepare_import_record(self, rec):
+        user_org = getattr(self, 'current_user_org', None)
         acc_val = rec.get('expense_account') or rec.get('account')
         if acc_val and not str(acc_val).isdigit():
-            acc = Account.objects.filter(Q(name__iexact=str(acc_val).strip()) | Q(code__iexact=str(acc_val).strip())).first()
+            acc = Account.objects.filter(organization=user_org).filter(
+                Q(name__iexact=str(acc_val).strip()) | Q(code__iexact=str(acc_val).strip())
+            ).first() if user_org else None
             if not acc:
-                acc = Account.objects.filter(account_type='expense').first()
+                acc = Account.objects.filter(organization=user_org, account_type='expense').first() if user_org else None
             if acc:
                 rec['expense_account'] = acc.pk
         elif not acc_val:
-            first_exp = Account.objects.filter(account_type='expense').first()
+            first_exp = Account.objects.filter(organization=user_org, account_type='expense').first() if user_org else None
             if first_exp:
                 rec['expense_account'] = first_exp.pk
 
         ven_val = rec.get('vendor') or rec.get('vendor_name') or rec.get('payee')
         if ven_val and not str(ven_val).isdigit():
-            ven = Vendor.objects.filter(Q(name__iexact=str(ven_val).strip()) | Q(company__iexact=str(ven_val).strip())).first()
-            if not ven:
-                org = Organization.get()
-                ven = Vendor.objects.create(name=str(ven_val).strip(), active=True, state=org.state if org else '', organization=org)
-            rec['vendor'] = ven.pk
+            ven = Vendor.objects.filter(organization=user_org).filter(
+                Q(name__iexact=str(ven_val).strip()) | Q(company__iexact=str(ven_val).strip())
+            ).first() if user_org else None
+            if not ven and user_org:
+                ven = Vendor.objects.create(organization=user_org, name=str(ven_val).strip(), active=True)
+            if ven:
+                rec['vendor'] = ven.pk
 
         if not rec.get('date'):
             rec['date'] = timezone.localdate().isoformat()
@@ -5029,22 +5777,46 @@ class ExpenseResource(Resource):
             'vendor_id': o.vendor_id, 'vendor_name': o.vendor.name if o.vendor else 'Direct Expense',
             'amount': o.amount, 'gst_rate': o.gst_rate, 'tax_amount': o.tax_amount,
             'total': o.total, 'paid_through': o.paid_through, 'reference': o.reference,
-            'notes': o.notes, 'has_receipt': bool(o.receipt_id)
+            'notes': o.notes, 'has_receipt': bool(o.receipt_id),
+            'project_id': o.project_id, 'project_name': o.project.name if o.project_id else '',
+            'billable_to_customer': o.billable_to_customer, 'invoice_id': o.invoice_id,
         }
 
     def create(self, data, user):
+        user_org = getattr(self, 'current_user_org', None) or get_user_org(user)
+        return self._create(data, user, user_org)
+
+    def create_for_request(self, data, user, request):
+        return self._create(data, user, get_user_org(user, request))
+
+    def _create(self, data, user, user_org):
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to create an expense.')
         c = Cleaner(data)
         dt = c.date('date', required=True)
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
         acc_id = c.integer('expense_account', required=True, lo=1)
-        acc = Account.objects.filter(pk=acc_id).first()
+        acc = Account.objects.filter(pk=acc_id, organization=user_org).first()
         if not acc:
-            raise ApiError(404, 'Expense account not found.')
+            c.err('expense_account', 'Select an expense account from your organization.')
         ven_id = c.integer('vendor', lo=1)
-        ven = Vendor.objects.filter(pk=ven_id).first() if ven_id else None
+        ven = Vendor.objects.filter(pk=ven_id, organization=user_org).first() if ven_id else None
+        if ven_id and not ven:
+            c.err('vendor', 'Select a vendor from your organization.')
+        project_id = c.integer('project_id', lo=1, default=None)
+        if not project_id:
+            project_id = c.integer('project', lo=1, default=None)
+        project = Project.objects.filter(pk=project_id, organization=user_org, status='active').first() if project_id else None
+        if project_id and not project:
+            c.err('project_id', 'Select an active project from your organization.')
+        billable = c.boolean('billable_to_customer', default=False)
+        if billable and not project:
+            c.err('project_id', 'Select a project before marking this expense billable.')
+        if billable and project and not project.customer_id:
+            c.err('project_id', 'Add a customer to this project before marking expenses billable.')
         amt = c.number('amount', required=True, lo=Decimal('0.01'))
-        gst_r = c.number('gst_rate', default=Decimal('0.00'))
+        gst_r = c.number('gst_rate', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('100'))
         tax_amt = q2(amt * gst_r / Decimal(100))
         tot = amt + tax_amt
         paid_via = c.text('paid_through', default='Bank Account', max_len=80)
@@ -5057,9 +5829,8 @@ class ExpenseResource(Resource):
         notes = c.text('notes', max_len=1000)
         c.done()
 
-        user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
-        num_exists = Expense.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else False
+        num_exists = Expense.objects.filter(number=num, organization=user_org).exists() if num else False
         if not num or num_exists or services.has_document_number_series('EXP', org=user_org):
             num = services.next_document_number(
                 'EXP', org=user_org, date=dt, branch=branch, location=location,
@@ -5068,7 +5839,8 @@ class ExpenseResource(Resource):
         exp = Expense.objects.create(
             organization=user_org,
             number=num, date=dt, branch=branch, location=location,
-            expense_account=acc, vendor=ven,
+            expense_account=acc, vendor=ven, project=project,
+            billable_to_customer=billable,
             amount=amt, gst_rate=gst_r, tax_amount=tax_amt, total=tot,
             paid_through=paid_via, reference=ref, notes=notes,
             created_by=user if getattr(user, 'pk', None) else None
@@ -5078,6 +5850,9 @@ class ExpenseResource(Resource):
         return exp
 
     def update(self, obj, data, user):
+        if obj.invoice_id:
+            raise ApiError(409, 'An expense already included on an invoice cannot be edited.')
+        user_org = obj.organization or get_user_org(user)
         c = Cleaner(data)
         if 'branch' in data:
             obj.branch = c.text('branch', max_len=120)
@@ -5087,16 +5862,36 @@ class ExpenseResource(Resource):
             obj.date = c.date('date', required=True)
         if 'expense_account' in data:
             acc_id = c.integer('expense_account', required=True, lo=1)
-            acc = Account.objects.filter(pk=acc_id).first()
+            acc = Account.objects.filter(pk=acc_id, organization=user_org).first()
             if not acc:
-                raise ApiError(404, 'Expense account not found.')
+                c.err('expense_account', 'Select an expense account from your organization.')
             obj.expense_account = acc
         if 'vendor' in data:
             ven_id = c.integer('vendor', lo=1)
-            obj.vendor = Vendor.objects.filter(pk=ven_id).first() if ven_id else None
+            vendor = Vendor.objects.filter(pk=ven_id, organization=user_org).first() if ven_id else None
+            if ven_id and not vendor:
+                c.err('vendor', 'Select a vendor from your organization.')
+            obj.vendor = vendor
+        if 'project' in data or 'project_id' in data:
+            project_id = c.integer('project_id', lo=1, default=None)
+            if not project_id:
+                project_id = c.integer('project', lo=1, default=None)
+            project = Project.objects.filter(
+                pk=project_id, organization=user_org, status='active'
+            ).first() if project_id and user_org else None
+            if project_id and not project:
+                c.err('project_id', 'Select an active project from your organization.')
+            obj.project = project
+        if 'billable_to_customer' in data:
+            obj.billable_to_customer = c.boolean('billable_to_customer', default=obj.billable_to_customer)
+        project = obj.project
+        if obj.billable_to_customer and not project:
+            c.err('project_id', 'Select a project before marking this expense billable.')
+        if obj.billable_to_customer and project and not project.customer_id:
+            c.err('project_id', 'Add a customer to this project before marking expenses billable.')
         if 'amount' in data or 'gst_rate' in data:
             amt = c.number('amount', default=obj.amount, lo=Decimal('0.01'))
-            gst_r = c.number('gst_rate', default=obj.gst_rate)
+            gst_r = c.number('gst_rate', default=obj.gst_rate, lo=Decimal('0'), hi=Decimal('100'))
             tax_amt = q2(amt * gst_r / Decimal(100))
             obj.amount = amt
             obj.gst_rate = gst_r
@@ -5122,6 +5917,8 @@ class ExpenseResource(Resource):
         return obj
 
     def destroy(self, obj):
+        if obj.invoice_id:
+            raise ApiError(409, 'An expense included on a project invoice cannot be deleted.')
         Journal.objects.filter(reference=obj.number, entry_type='expense').delete()
         obj.delete()
 
@@ -6588,15 +7385,30 @@ class EWayBillResource(Resource):
         doc_id = inv.pk if inv else 1
         return services.generate_eway_bill(dtype, doc_id, '', trans_name, veh, dist, user)
 
+def normalize_project_billing_method(value):
+    aliases = {
+        'hourly_rate': 'project_hourly_rate',
+        'fixed_cost': 'fixed_project_cost',
+        'task_hours': 'task_hourly_rate',
+    }
+    value = aliases.get(str(value or '').strip().lower(), str(value or '').strip().lower())
+    allowed = ('project_hourly_rate', 'task_hourly_rate', 'staff_hourly_rate', 'fixed_project_cost')
+    if value not in allowed:
+        raise ApiError(400, 'Choose a supported project billing method.')
+    return value
+
+
 class ProjectResource(Resource):
     name = 'projects'
     model = Project
     search_fields = ('name', 'code', 'customer__name')
     default_ordering = ('name',)
     csv_cols = [
-        ('Project Name', 'name'), ('Project Code', 'code'), ('Customer Name', 'customer'),
+        ('Project Name', 'name'), ('Project Code', 'code'), ('Customer Name', 'customer_name'),
         ('Billing Method', 'billing_method'), ('Rate Per Hour', 'rate_per_hour'),
-        ('Budget Hours', 'budget_hours'), ('Description', 'description')
+        ('Fixed Amount', 'fixed_amount'), ('Budget Hours', 'budget_hours'),
+        ('Start Date', 'start_date'), ('End Date', 'end_date'),
+        ('Description', 'description')
     ]
 
     def queryset(self, request):
@@ -6604,20 +7416,64 @@ class ProjectResource(Resource):
         cid = request.GET.get('customer') or request.GET.get('customer_id')
         if cid and str(cid).isdigit():
             qs = qs.filter(customer_id=int(cid))
+        if request.GET.get('status') != 'all':
+            qs = qs.exclude(status='archived')
         return qs
 
     def get_template_sample(self):
-        return ['Cloud ERP Implementation', 'PRJ-001', 'Acme Infotech Ltd', 'hourly_rate', '2500.00', '120.00', 'Cloud ERP deployment and training']
+        return ['Cloud ERP Implementation', 'PRJ-001', 'Acme Infotech Ltd', 'project_hourly_rate', '2500.00', '0.00', '120.00', '', '', 'Cloud ERP deployment and training']
 
     def prepare_import_record(self, rec):
+        user_org = getattr(self, 'current_user_org', None)
         cust_val = rec.get('customer') or rec.get('customer_name') or rec.get('client')
-        if cust_val and not str(cust_val).isdigit():
+        if user_org and cust_val and not str(cust_val).isdigit():
             c_str = str(cust_val).strip()
-            c = Customer.objects.filter(Q(name__iexact=c_str) | Q(company__iexact=c_str)).first()
-            if not c:
-                org = Organization.get()
-                c = Customer.objects.create(name=c_str, active=True, state=org.state if org else '', organization=org)
-            rec['customer'] = c.pk
+            customer = Customer.objects.filter(organization=user_org).filter(
+                Q(name__iexact=c_str) | Q(company__iexact=c_str)
+            ).first()
+            if customer:
+                rec['customer'] = customer.pk
+
+    @staticmethod
+    def _sync_staff(project, raw_staff, user_org):
+        if not isinstance(raw_staff, list):
+            raise ApiError(400, 'Project staff must be a list of organization user IDs.')
+        parsed = {}
+        for item in raw_staff:
+            if isinstance(item, dict):
+                user_id = item.get('user_id') or item.get('id')
+                rate_value = item.get('hourly_rate')
+            else:
+                user_id, rate_value = item, None
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                raise ApiError(400, 'Each project staff member must have a valid user ID.')
+            if user_id in parsed:
+                raise ApiError(400, 'A project staff member may only be assigned once.')
+            rate = None
+            if rate_value not in (None, ''):
+                rate_cleaner = Cleaner({'hourly_rate': rate_value})
+                rate = rate_cleaner.number('hourly_rate', lo=Decimal('0.01'), hi=Decimal('999999999'))
+                rate_cleaner.done()
+            parsed[user_id] = rate
+        profiles = UserProfile.objects.filter(
+            organization=user_org, status=UserProfile.STATUS_ACTIVE, user_id__in=parsed
+        )
+        valid_ids = set(profiles.values_list('user_id', flat=True))
+        if valid_ids != set(parsed):
+            raise ApiError(400, 'Select active staff members from your organization.')
+        for user_id, rate in parsed.items():
+            if rate is None and project.billing_method == 'staff_hourly_rate' and project.rate_per_hour > 0:
+                rate = project.rate_per_hour
+            assignment, _ = ProjectStaff.objects.get_or_create(
+                project=project, user_id=user_id,
+                defaults={'organization': user_org, 'hourly_rate': rate},
+            )
+            if rate is not None and assignment.hourly_rate != rate:
+                assignment.hourly_rate = rate
+                assignment.save(update_fields=['hourly_rate'])
+        project.staff_assignments.exclude(user_id__in=parsed).delete()
 
     def _create_project(self, data, user_org):
         if not user_org:
@@ -6626,37 +7482,67 @@ class ProjectResource(Resource):
         name = c.text('name', required=True, max_len=150)
         code = c.text('code', max_len=40)
         cid = c.integer('customer', lo=1)
-        customer = Customer.objects.filter(pk=cid, organization=user_org).first() if cid else None
+        customer = Customer.objects.filter(pk=cid, organization=user_org, active=True).first() if cid else None
         if cid and not customer:
-            c.err('customer', 'Select a customer from your organization.')
-        bmethod = c.text('billing_method', default='hourly_rate', max_len=40)
-        rate = c.number('rate_per_hour', default=Decimal('0.00'))
-        budget = c.number('budget_hours', default=Decimal('0.00'))
+            c.err('customer', 'Select an active customer from your organization.')
+        try:
+            billing_method = normalize_project_billing_method(c.text(
+                'billing_method', default='project_hourly_rate', max_len=40
+            ))
+        except ApiError as exc:
+            c.err('billing_method', exc.message)
+            billing_method = 'project_hourly_rate'
+        rate = c.number('rate_per_hour', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        fixed_amount = c.number('fixed_amount', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        budget = c.number('budget_hours', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        tax_rate = c.number('invoice_tax_rate', default=None, lo=Decimal('0'), hi=Decimal('100')) if 'invoice_tax_rate' in data else None
+        start = c.date('start_date')
+        end = c.date('end_date')
+        if start and end and end < start:
+            c.err('end_date', 'End date cannot be before start date.')
         desc = c.text('description', max_len=1000)
         c.done()
-        return Project.objects.create(
-            organization=user_org,
-            name=name,
-            code=code,
-            customer=customer,
-            billing_method=bmethod,
-            rate_per_hour=rate,
-            budget_hours=budget,
-            description=desc,
+        project = Project.objects.create(
+            organization=user_org, name=name, code=code, customer=customer,
+            billing_method=billing_method, rate_per_hour=rate, fixed_amount=fixed_amount,
+            invoice_tax_rate=tax_rate, budget_hours=budget, start_date=start,
+            end_date=end, description=desc,
         )
+        if 'staff' in data or 'staff_ids' in data:
+            self._sync_staff(project, data.get('staff', data.get('staff_ids')), user_org)
+        return project
 
     def row(self, o):
         hours = o.timelogs.aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
         return {
             'id': o.pk, 'name': o.name, 'code': o.code, 'customer_id': o.customer_id,
             'customer_name': o.customer.name if o.customer else 'Internal Project',
-            'billing_method': o.billing_method, 'rate_per_hour': o.rate_per_hour,
-            'budget_hours': o.budget_hours, 'logged_hours': hours,
-            'status': o.status, 'description': o.description
+            'billing_method': normalize_project_billing_method(o.billing_method),
+            'rate_per_hour': o.rate_per_hour, 'fixed_amount': o.fixed_amount,
+            'invoice_tax_rate': o.invoice_tax_rate, 'budget_hours': o.budget_hours,
+            'logged_hours': hours, 'start_date': o.start_date, 'end_date': o.end_date,
+            'staff_count': o.staff_assignments.count(), 'task_count': o.tasks.count(),
+            'status': o.status, 'description': o.description,
         }
 
+    def detail(self, o):
+        result = self.row(o)
+        result['staff'] = [
+            {'user_id': assignment.user_id, 'name': assignment.user.get_full_name() or assignment.user.get_username(),
+             'hourly_rate': assignment.hourly_rate}
+            for assignment in o.staff_assignments.select_related('user').order_by('user__username')
+        ]
+        result['tasks'] = [ProjectTaskResource().row(task) for task in o.tasks.all()]
+        result['milestones'] = [ProjectMilestoneResource().row(milestone) for milestone in o.milestones.select_related('invoice')]
+        result['invoices'] = [
+            {'id': invoice.pk, 'number': invoice.number, 'date': invoice.date,
+             'status': invoice.status, 'total': invoice.total}
+            for invoice in o.invoices.order_by('-date', '-id')
+        ]
+        return result
+
     def create(self, data, user):
-        return self._create_project(data, get_user_org(user))
+        return self._create_project(data, getattr(self, 'current_user_org', None) or get_user_org(user))
 
     def create_for_request(self, data, user, request):
         return self._create_project(data, get_user_org(user, request))
@@ -6670,24 +7556,414 @@ class ProjectResource(Resource):
             obj.code = c.text('code', max_len=40)
         if 'customer' in data:
             cid = c.integer('customer', lo=1)
-            customer = Customer.objects.filter(pk=cid, organization=user_org).first() if cid and user_org else None
+            customer = Customer.objects.filter(pk=cid, organization=user_org, active=True).first() if cid and user_org else None
             if cid and not customer:
-                c.err('customer', 'Select a customer from your organization.')
+                c.err('customer', 'Select an active customer from your organization.')
             obj.customer = customer
         if 'billing_method' in data:
-            obj.billing_method = c.text('billing_method', max_len=40)
+            try:
+                obj.billing_method = normalize_project_billing_method(c.text('billing_method', max_len=40))
+            except ApiError as exc:
+                c.err('billing_method', exc.message)
         if 'rate_per_hour' in data:
-            obj.rate_per_hour = c.number('rate_per_hour', default=Decimal('0.00'))
+            obj.rate_per_hour = c.number('rate_per_hour', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        if 'fixed_amount' in data:
+            obj.fixed_amount = c.number('fixed_amount', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
         if 'budget_hours' in data:
-            obj.budget_hours = c.number('budget_hours', default=Decimal('0.00'))
+            obj.budget_hours = c.number('budget_hours', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        if 'invoice_tax_rate' in data:
+            obj.invoice_tax_rate = c.number('invoice_tax_rate', default=None, lo=Decimal('0'), hi=Decimal('100'))
+        if 'start_date' in data:
+            obj.start_date = c.date('start_date')
+        if 'end_date' in data:
+            obj.end_date = c.date('end_date')
+        if obj.start_date and obj.end_date and obj.end_date < obj.start_date:
+            c.err('end_date', 'End date cannot be before start date.')
         if 'status' in data:
             obj.status = c.choice('status', ['active', 'completed', 'on_hold', 'cancelled'], default=obj.status)
         if 'description' in data:
             obj.description = c.text('description', max_len=1000)
         c.done()
+        if any(key in data for key in ('staff', 'staff_ids')):
+            self._sync_staff(obj, data.get('staff', data.get('staff_ids')), user_org)
         obj.save()
         services.log_audit(user, 'update', 'Project', obj.name, f"Updated project {obj.name}")
         return obj
+
+    def destroy(self, obj):
+        if obj.timelogs.exists() or obj.invoices.exists() or obj.expenses.exists() or obj.milestones.exists():
+            raise ApiError(409, 'This project has transaction history and cannot be deleted. Archive it instead.')
+        obj.delete()
+
+    def action(self, request, obj, name):
+        if name == 'archive':
+            if obj.status == 'archived':
+                raise ApiError(409, 'This project is already archived.')
+            if obj.timelogs.filter(status='running').exists():
+                raise ApiError(409, 'Stop active timers before archiving this project.')
+            obj.status = 'archived'
+            obj.save(update_fields=['status'])
+            return j({'status': 'ok', 'message': f'Project {obj.name} archived.'})
+        if name != 'generate-invoice':
+            raise ApiError(404, 'Unknown project action.')
+        if obj.status not in ('active', 'completed'):
+            raise ApiError(409, 'Only active or completed projects can be invoiced.')
+        org = get_user_org(request.user, request)
+        project = Project.objects.select_for_update().filter(pk=obj.pk, organization=org).first()
+        if not project:
+            raise ApiError(404, 'Project not found.')
+        if not project.customer_id:
+            raise ApiError(400, 'Add a customer to this project before generating an invoice.')
+        data = body(request)
+        method = normalize_project_billing_method(project.billing_method)
+        milestone_ids = data.get('milestone_ids', [])
+        time_entry_ids = data.get('time_entry_ids', [])
+        expense_ids = data.get('expense_ids', [])
+
+        def ids(raw, field, required=False):
+            if raw in (None, '') and not required:
+                return []
+            if not isinstance(raw, list) or (required and not raw):
+                raise ApiError(400, f'{field} must be a non-empty list of IDs.')
+            try:
+                parsed = [int(value) for value in raw]
+            except (TypeError, ValueError):
+                raise ApiError(400, f'{field} must contain valid IDs.')
+            if any(value < 1 for value in parsed) or len(set(parsed)) != len(parsed):
+                raise ApiError(400, f'{field} contains an invalid or duplicate ID.')
+            return parsed
+
+        selected_milestones = []
+        selected_entries = []
+        selected_expenses = []
+        milestones = []
+        entries = []
+        expenses = []
+        if method == 'fixed_project_cost':
+            selected_milestones = ids(milestone_ids, 'milestone_ids', required=True)
+            milestones = list(ProjectMilestone.objects.select_for_update().filter(
+                organization=org, project=project, pk__in=selected_milestones,
+                status='planned', invoice__isnull=True,
+            ))
+            if len(milestones) != len(selected_milestones):
+                raise ApiError(409, 'One or more milestones are unavailable or have already been invoiced.')
+        elif milestone_ids:
+            raise ApiError(400, 'Milestones can only be invoiced for fixed-price projects.')
+
+        selected_entries = ids(time_entry_ids, 'time_entry_ids')
+        if selected_entries:
+            if method == 'fixed_project_cost':
+                raise ApiError(400, 'Time entries cannot be billed as hourly work on a fixed-price project.')
+            entries = list(TimeLog.objects.select_for_update().filter(
+                organization=org, project=project, pk__in=selected_entries,
+                status='approved', billable=True, invoice__isnull=True,
+            ).select_related('task_record', 'user'))
+            if len(entries) != len(selected_entries):
+                raise ApiError(409, 'One or more time entries are not approved, billable, or already invoiced.')
+        else:
+            entries = []
+
+        selected_expenses = ids(expense_ids, 'expense_ids')
+        if selected_expenses:
+            expenses = list(Expense.objects.select_for_update().filter(
+                organization=org, project=project, pk__in=selected_expenses,
+                billable_to_customer=True, invoice__isnull=True,
+            ))
+            if len(expenses) != len(selected_expenses):
+                raise ApiError(409, 'One or more expenses are not billable to this customer or already invoiced.')
+        else:
+            expenses = []
+        if not milestones and not entries and not expenses:
+            raise ApiError(400, 'Select at least one approved time entry, planned milestone, or billable expense.')
+
+        lines, entry_values = [], {}
+        for milestone in milestones:
+            tax_rate = milestone.invoice_tax_rate
+            if tax_rate is None:
+                tax_rate = project.invoice_tax_rate
+            if tax_rate is None:
+                raise ApiError(400, f'Set an invoice tax rate on project or milestone "{milestone.name}".')
+            lines.append({
+                'description': milestone.name, 'quantity': '1', 'rate': str(milestone.amount),
+                'discount_percent': '0', 'gst_rate': str(tax_rate),
+            })
+
+        for entry in entries:
+            if method == 'project_hourly_rate':
+                rate = project.rate_per_hour
+            elif method == 'task_hourly_rate':
+                rate = entry.task_record.hourly_rate if entry.task_record_id else None
+            else:
+                assignment = ProjectStaff.objects.filter(
+                    organization=org, project=project, user_id=entry.user_id
+                ).first()
+                rate = assignment.hourly_rate if assignment else None
+            if rate is None or rate <= 0:
+                raise ApiError(400, f'Set an explicit hourly rate before invoicing time entry #{entry.pk}.')
+            if project.invoice_tax_rate is None:
+                raise ApiError(400, 'Set an explicit project invoice tax rate before invoicing time entries.')
+            lines.append({
+                'description': f'{entry.task} ({entry.date.isoformat()})',
+                'quantity': str(entry.hours), 'rate': str(rate),
+                'discount_percent': '0', 'gst_rate': str(project.invoice_tax_rate),
+            })
+            entry_values[entry.pk] = (rate, q2(entry.hours * rate))
+
+        for expense in expenses:
+            if project.invoice_tax_rate is None:
+                raise ApiError(400, 'Set an explicit project invoice tax rate before rebilling expenses.')
+            lines.append({
+                'description': expense.notes or f'Reimbursable expense {expense.number}',
+                'quantity': '1', 'rate': str(expense.amount),
+                'discount_percent': '0', 'gst_rate': str(project.invoice_tax_rate),
+            })
+
+        c = Cleaner(data)
+        invoice_date = c.date('date') or timezone.localdate()
+        due_date = c.date('due_date')
+        c.done()
+        invoice_data = {
+            'customer': project.customer_id,
+            'date': invoice_date.isoformat(),
+            'due_date': due_date.isoformat() if due_date else '',
+            'project_name': project.name,
+            'order_number': f'Project {project.code or project.name}',
+            'notes': f'Invoice for project {project.name}',
+            'lines': lines,
+        }
+        invoice = InvoiceResource().create_for_request(invoice_data, request.user, request)
+        invoice.project = project
+        invoice.save(update_fields=['project'])
+        for entry in entries:
+            rate, amount = entry_values[entry.pk]
+            entry.invoice = invoice
+            entry.status = 'invoiced'
+            entry.invoiced_rate = rate
+            entry.invoiced_amount = amount
+            entry.save(update_fields=['invoice', 'status', 'invoiced_rate', 'invoiced_amount'])
+        if expenses:
+            Expense.objects.filter(pk__in=[expense.pk for expense in expenses], organization=org).update(invoice=invoice)
+        if milestones:
+            ProjectMilestone.objects.filter(pk__in=[milestone.pk for milestone in milestones], organization=org).update(
+                invoice=invoice, status='invoiced'
+            )
+        return j({
+            'status': 'ok', 'invoice_id': invoice.pk, 'invoice_number': invoice.number,
+            'total': invoice.total, 'message': f'Draft invoice {invoice.number} created for project {project.name}.',
+        }, 201)
+
+
+class ProjectTaskResource(Resource):
+    name = 'project-tasks'
+    model = ProjectTask
+    search_fields = ('name', 'description', 'project__name')
+    default_ordering = ('project__name', 'name')
+
+    def filter_qs(self, qs, request):
+        project_id = request.GET.get('project')
+        if project_id and project_id.isdigit():
+            qs = qs.filter(project_id=int(project_id))
+        if request.GET.get('status') != 'all':
+            qs = qs.exclude(status='archived')
+        return qs
+
+    @staticmethod
+    def _sync_assignees(task, raw_ids, user_org):
+        if not isinstance(raw_ids, list):
+            raise ApiError(400, 'Assigned staff must be a list of organization user IDs.')
+        try:
+            user_ids = [int(value) for value in raw_ids]
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Each task assignee must have a valid user ID.')
+        if any(value < 1 for value in user_ids) or len(set(user_ids)) != len(user_ids):
+            raise ApiError(400, 'Task assignees contain an invalid or duplicate ID.')
+        valid_ids = set(UserProfile.objects.filter(
+            organization=user_org, status=UserProfile.STATUS_ACTIVE, user_id__in=user_ids
+        ).values_list('user_id', flat=True))
+        if valid_ids != set(user_ids):
+            raise ApiError(400, 'Select active staff members from your organization.')
+        project_staff = set(task.project.staff_assignments.values_list('user_id', flat=True))
+        if project_staff and not set(user_ids).issubset(project_staff):
+            raise ApiError(400, 'Task assignees must first be assigned to the project.')
+        for user_id in user_ids:
+            ProjectTaskAssignment.objects.get_or_create(
+                organization=user_org, task=task, user_id=user_id
+            )
+        task.staff_assignments.exclude(user_id__in=user_ids).delete()
+
+    def row(self, o):
+        hours = o.time_entries.aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
+        return {
+            'id': o.pk, 'project_id': o.project_id, 'project_name': o.project.name,
+            'name': o.name, 'description': o.description, 'hourly_rate': o.hourly_rate,
+            'estimated_hours': o.estimated_hours, 'logged_hours': hours,
+            'progress_percent': o.progress_percent, 'status': o.status,
+            'assigned_user_ids': list(o.assigned_users.values_list('id', flat=True)),
+            'assignees': [
+                {'id': staff_member.pk, 'name': staff_member.get_full_name() or staff_member.get_username()}
+                for staff_member in o.assigned_users.all()
+            ],
+        }
+
+    def detail(self, o):
+        result = self.row(o)
+        result['assignees'] = [
+            {'id': profile.user_id, 'name': profile.user.get_full_name() or profile.user.get_username()}
+            for profile in UserProfile.objects.filter(
+                user_id__in=result['assigned_user_ids'], organization=o.organization
+            ).select_related('user')
+        ]
+        return result
+
+    def _project(self, project_id, user_org):
+        project = Project.objects.filter(pk=project_id, organization=user_org).first()
+        if not project or project.status != 'active':
+            raise ApiError(404, 'Active project not found in your organization.')
+        return project
+
+    def create_for_request(self, data, user, request):
+        return self._create_task(data, get_user_org(user, request))
+
+    def create(self, data, user):
+        user_org = getattr(self, 'current_user_org', None) or get_user_org(user)
+        return self._create_task(data, user_org)
+
+    def _create_task(self, data, user_org):
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to create a project task.')
+        c = Cleaner(data)
+        project_id = c.integer('project_id', lo=1, default=None)
+        if not project_id:
+            project_id = c.integer('project', required=True, lo=1)
+        name = c.text('name', required=True, max_len=150)
+        description = c.text('description', max_len=2000)
+        rate = c.number('hourly_rate', default=None, lo=Decimal('0.01'), hi=Decimal('999999999'))
+        estimate = c.number('estimated_hours', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        progress = c.number('progress_percent', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('100'))
+        status = c.choice('status', ['open', 'in_progress', 'completed'], default='open')
+        c.done()
+        project = self._project(project_id, user_org)
+        if ProjectTask.objects.filter(project=project, name__iexact=name).exists():
+            raise ApiError(409, 'A task with this name already exists in the project.')
+        task = ProjectTask.objects.create(
+            organization=user_org, project=project, name=name, description=description,
+            hourly_rate=rate, estimated_hours=estimate,
+            progress_percent=Decimal('100.00') if status == 'completed' else progress,
+            status=status,
+        )
+        if 'assigned_user_ids' in data:
+            self._sync_assignees(task, data['assigned_user_ids'], user_org)
+        return task
+
+    def update(self, obj, data, user):
+        if obj.time_entries.filter(invoice__isnull=False).exists():
+            raise ApiError(409, 'Tasks linked to invoiced time entries cannot be edited.')
+        user_org = obj.organization or get_user_org(user)
+        c = Cleaner(data)
+        if 'name' in data:
+            obj.name = c.text('name', required=True, max_len=150)
+        if 'description' in data:
+            obj.description = c.text('description', max_len=2000)
+        if 'hourly_rate' in data:
+            obj.hourly_rate = c.number('hourly_rate', default=None, lo=Decimal('0.01'), hi=Decimal('999999999'))
+        if 'estimated_hours' in data:
+            obj.estimated_hours = c.number('estimated_hours', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('999999999'))
+        if 'progress_percent' in data:
+            obj.progress_percent = c.number('progress_percent', default=obj.progress_percent, lo=Decimal('0'), hi=Decimal('100'))
+        if 'status' in data:
+            obj.status = c.choice('status', ['open', 'in_progress', 'completed', 'archived'], default=obj.status)
+        c.done()
+        if obj.status == 'completed':
+            obj.progress_percent = Decimal('100.00')
+        if 'assigned_user_ids' in data:
+            self._sync_assignees(obj, data['assigned_user_ids'], user_org)
+        obj.save()
+        return obj
+
+    def destroy(self, obj):
+        if obj.time_entries.exists():
+            raise ApiError(409, 'Tasks with time entries cannot be deleted. Archive the task instead.')
+        obj.delete()
+
+
+class ProjectMilestoneResource(Resource):
+    name = 'project-milestones'
+    model = ProjectMilestone
+    search_fields = ('name', 'project__name', 'description')
+    default_ordering = ('project__name', 'due_date', 'id')
+
+    def filter_qs(self, qs, request):
+        project_id = request.GET.get('project')
+        if project_id and project_id.isdigit():
+            qs = qs.filter(project_id=int(project_id))
+        return qs
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'project_id': o.project_id, 'project_name': o.project.name,
+            'name': o.name, 'description': o.description, 'amount': o.amount,
+            'invoice_tax_rate': o.invoice_tax_rate, 'due_date': o.due_date,
+            'status': o.status, 'invoice_id': o.invoice_id,
+            'invoice_number': o.invoice.number if o.invoice_id else '',
+        }
+
+    def detail(self, o):
+        return self.row(o)
+
+    def create_for_request(self, data, user, request):
+        user_org = get_user_org(user, request)
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to create a milestone.')
+        c = Cleaner(data)
+        project_id = c.integer('project_id', lo=1, default=None)
+        if not project_id:
+            project_id = c.integer('project', required=True, lo=1)
+        name = c.text('name', required=True, max_len=150)
+        description = c.text('description', max_len=500)
+        amount = c.number('amount', required=True, lo=Decimal('0.01'), hi=Decimal('999999999'))
+        tax_rate = c.number('invoice_tax_rate', default=None, lo=Decimal('0'), hi=Decimal('100')) if 'invoice_tax_rate' in data else None
+        due_date = c.date('due_date')
+        c.done()
+        project = Project.objects.filter(pk=project_id, organization=user_org, status='active').first()
+        if not project:
+            raise ApiError(404, 'Active project not found in your organization.')
+        if normalize_project_billing_method(project.billing_method) != 'fixed_project_cost':
+            raise ApiError(400, 'Milestones are only available for fixed-price projects.')
+        if ProjectMilestone.objects.filter(project=project, name__iexact=name).exists():
+            raise ApiError(409, 'A milestone with this name already exists in the project.')
+        return ProjectMilestone.objects.create(
+            organization=user_org, project=project, name=name, description=description,
+            amount=amount, invoice_tax_rate=tax_rate, due_date=due_date,
+        )
+
+    def create(self, data, user):
+        raise ApiError(405, 'Create milestones through an organization-scoped request.')
+
+    def update(self, obj, data, user):
+        if obj.invoice_id:
+            raise ApiError(409, 'An invoiced milestone cannot be edited.')
+        c = Cleaner(data)
+        if 'name' in data:
+            obj.name = c.text('name', required=True, max_len=150)
+        if 'description' in data:
+            obj.description = c.text('description', max_len=500)
+        if 'amount' in data:
+            obj.amount = c.number('amount', required=True, lo=Decimal('0.01'), hi=Decimal('999999999'))
+        if 'invoice_tax_rate' in data:
+            obj.invoice_tax_rate = c.number('invoice_tax_rate', default=None, lo=Decimal('0'), hi=Decimal('100'))
+        if 'due_date' in data:
+            obj.due_date = c.date('due_date')
+        if 'status' in data:
+            obj.status = c.choice('status', ['planned', 'cancelled'], default=obj.status)
+        c.done()
+        obj.save()
+        return obj
+
+    def destroy(self, obj):
+        if obj.invoice_id:
+            raise ApiError(409, 'An invoiced milestone cannot be deleted.')
+        obj.delete()
+
 
 class TimeLogResource(Resource):
     name = 'timesheets'
@@ -6695,23 +7971,30 @@ class TimeLogResource(Resource):
     search_fields = ('project__name', 'task', 'notes')
     default_ordering = ('-date', '-id')
 
+    def filter_qs(self, qs, request):
+        project_id = request.GET.get('project')
+        if project_id and project_id.isdigit():
+            qs = qs.filter(project_id=int(project_id))
+        status = request.GET.get('status')
+        if status in {value for value, _ in TimeLog.STATUSES}:
+            qs = qs.filter(status=status)
+        return qs
+
     def prepare_import_record(self, rec):
-        user_org = getattr(self, 'current_user_org', None) or Organization.get()
+        user_org = getattr(self, 'current_user_org', None)
+        if not user_org:
+            raise ApiError(403, 'An active organization is required to import time entries.')
         proj_val = rec.get('project') or rec.get('project_name') or rec.get('project_code')
         if proj_val and not str(proj_val).isdigit():
             p_str = str(proj_val).strip()
-            p = Project.objects.filter(organization=user_org).filter(
+            project = Project.objects.filter(organization=user_org).filter(
                 Q(name__iexact=p_str) | Q(code__iexact=p_str)
             ).first()
-            if not p:
-                p = Project.objects.create(organization=user_org, name=p_str)
-            rec['project'] = p.pk
+            if not project:
+                raise ApiError(400, f'Project "{p_str}" was not found in your organization.')
+            rec['project'] = project.pk
         elif not proj_val:
-            first_p = Project.objects.filter(organization=user_org).first()
-            if not first_p:
-                first_p = Project.objects.create(organization=user_org, name='General Project')
-            rec['project'] = first_p.pk
-
+            raise ApiError(400, 'A project is required for every imported time entry.')
         if not rec.get('date'):
             rec['date'] = timezone.localdate().isoformat()
         if not rec.get('task'):
@@ -6722,9 +8005,15 @@ class TimeLogResource(Resource):
     def row(self, o):
         return {
             'id': o.pk, 'project_id': o.project_id, 'project_name': o.project.name,
-            'date': o.date, 'hours': o.hours, 'task': o.task,
-            'billable': o.billable, 'notes': o.notes,
-            'user_name': o.user.get_username() if o.user else 'Staff'
+            'task_record_id': o.task_record_id, 'date': o.date, 'hours': o.hours,
+            'task': o.task, 'billable': o.billable, 'status': o.status,
+            'notes': o.notes, 'user_id': o.user_id,
+            'user_name': o.user.get_full_name() or o.user.get_username() if o.user else 'Staff',
+            'timer_started_at': o.timer_started_at, 'timer_stopped_at': o.timer_stopped_at,
+            'submitted_at': o.submitted_at, 'approved_at': o.approved_at,
+            'rejection_reason': o.rejection_reason, 'invoice_id': o.invoice_id,
+            'invoice_number': o.invoice.number if o.invoice_id else '',
+            'invoiced_rate': o.invoiced_rate, 'invoiced_amount': o.invoiced_amount,
         }
 
     def create(self, data, user):
@@ -6734,54 +8023,169 @@ class TimeLogResource(Resource):
     def create_for_request(self, data, user, request):
         return self._create(data, user, get_user_org(user, request))
 
+    @staticmethod
+    def _manager(user, org):
+        if user.is_superuser:
+            return True
+        profile = getattr(user, 'profile', None)
+        if not profile or profile.organization_id != getattr(org, 'pk', None):
+            return False
+        role = getattr(profile, 'custom_role', None)
+        return profile.role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT) or bool(role and role.is_accountant)
+
+    def _validate_assignment(self, project, task_record, user, user_org, entry_date):
+        if project.status != 'active':
+            raise ApiError(400, 'Time can only be recorded against an active project.')
+        if project.start_date and entry_date < project.start_date:
+            raise ApiError(400, 'Time entry date cannot be before the project start date.')
+        if project.end_date and entry_date > project.end_date:
+            raise ApiError(400, 'Time entry date cannot be after the project end date.')
+        assigned_project_staff = set(project.staff_assignments.values_list('user_id', flat=True))
+        user_id = user.pk if user else None
+        if assigned_project_staff and user_id not in assigned_project_staff:
+            raise ApiError(403, 'You are not assigned to this project.')
+        if task_record:
+            if task_record.project_id != project.pk or task_record.organization_id != user_org.pk:
+                raise ApiError(400, 'Select a task belonging to this project and organization.')
+            if task_record.status in ('completed', 'archived'):
+                raise ApiError(400, 'Time cannot be recorded against a completed or archived task.')
+            assigned_task_staff = set(task_record.assigned_users.values_list('id', flat=True))
+            if assigned_task_staff and user_id not in assigned_task_staff:
+                raise ApiError(403, 'You are not assigned to this task.')
+
     def _create(self, data, user, user_org):
         if not user_org:
             raise ApiError(403, 'An active organization is required to log time.')
         c = Cleaner(data)
-        pid = c.integer('project', required=True, lo=1)
-        proj = Project.objects.filter(pk=pid, organization=user_org).first()
-        if not proj:
+        project_id = c.integer('project', required=True, lo=1)
+        project = Project.objects.filter(pk=project_id, organization=user_org).first()
+        if not project:
             raise ApiError(404, 'Project not found.')
-        dt = c.date('date', required=True)
-        hrs = c.number('hours', required=True, lo=Decimal('0.1'), hi=Decimal('24.0'))
-        task = c.text('task', required=True, max_len=255)
+        task_id = c.integer('task_id', lo=1, default=None)
+        task_record = ProjectTask.objects.filter(
+            pk=task_id, project=project, organization=user_org
+        ).first() if task_id else None
+        if task_id and not task_record:
+            c.err('task_id', 'Select an active task from this project.')
+        task_text = c.text('task', max_len=255)
+        if task_record:
+            task_text = task_record.name
+        elif not task_text:
+            c.err('task', 'Select a task or enter a task description.')
+        started = c.boolean('start_timer', default=False)
+        dt = c.date('date', default=timezone.localdate())
+        hrs = c.number('hours', default=Decimal('0.00'), lo=Decimal('0'), hi=Decimal('24.0'))
         bill = c.boolean('billable', default=True)
         notes = c.text('notes', max_len=1000)
         c.done()
-        return TimeLog.objects.create(
-            organization=user_org,
-            project=proj,
-            user=user,
-            date=dt,
-            hours=hrs,
-            task=task,
-            billable=bill,
-            notes=notes,
-        )
+        self._validate_assignment(project, task_record, user, user_org, dt)
+        if started and hrs != 0:
+            raise ApiError(400, 'A new timer cannot include manually entered hours.')
+        if not started and hrs <= 0:
+            raise ApiError(400, 'Hours must be greater than zero.')
+        try:
+            with transaction.atomic():
+                return TimeLog.objects.create(
+                    organization=user_org, project=project, task_record=task_record,
+                    user=user, date=dt, hours=hrs, task=task_text, billable=bill,
+                    notes=notes, status='running' if started else 'draft',
+                    timer_started_at=timezone.now() if started else None,
+                )
+        except IntegrityError as exc:
+            if started:
+                raise ApiError(409, 'You already have a running timer in this organization.') from exc
+            raise
 
     def update(self, obj, data, user):
         user_org = obj.organization or get_user_org(user)
+        if obj.status not in ('draft', 'rejected') or obj.invoice_id:
+            raise ApiError(409, 'Only unsubmitted time entries can be edited.')
+        if obj.user_id != user.pk and not self._manager(user, user_org):
+            raise ApiError(403, 'You may only edit your own time entries.')
         c = Cleaner(data)
         if 'project' in data:
-            pid = c.integer('project', required=True, lo=1)
-            proj = Project.objects.filter(pk=pid, organization=user_org).first() if user_org else None
-            if not proj:
+            project_id = c.integer('project', required=True, lo=1)
+            project = Project.objects.filter(pk=project_id, organization=user_org).first() if user_org else None
+            if not project:
                 raise ApiError(404, 'Project not found.')
-            obj.project = proj
+            obj.project = project
+        if 'task_id' in data:
+            task_id = c.integer('task_id', lo=1, default=None)
+            task_record = ProjectTask.objects.filter(
+                pk=task_id, project=obj.project, organization=user_org
+            ).first() if task_id and user_org else None
+            if task_id and not task_record:
+                c.err('task_id', 'Select an active task from this project.')
+            obj.task_record = task_record
+            if task_record:
+                obj.task = task_record.name
         if 'date' in data:
             obj.date = c.date('date', required=True)
         if 'hours' in data:
-            obj.hours = c.number('hours', required=True, lo=Decimal('0.1'), hi=Decimal('24.0'))
-        if 'task' in data:
+            obj.hours = c.number('hours', required=True, lo=Decimal('0.01'), hi=Decimal('24.0'))
+        if 'task' in data and not obj.task_record_id:
             obj.task = c.text('task', required=True, max_len=255)
         if 'billable' in data:
             obj.billable = c.boolean('billable', default=obj.billable)
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=1000)
         c.done()
+        self._validate_assignment(obj.project, obj.task_record, obj.user, user_org, obj.date)
         obj.save()
         services.log_audit(user, 'update', 'TimeLog', str(obj.pk), f"Updated time log for {obj.project.name}: {obj.hours} hrs")
         return obj
+
+    def action(self, request, obj, name):
+        org = get_user_org(request.user, request)
+        manager = self._manager(request.user, org)
+        if name == 'submit':
+            if obj.user_id != request.user.pk and not manager:
+                raise ApiError(403, 'You may only submit your own time entries.')
+            if obj.status not in ('draft', 'rejected') or obj.invoice_id:
+                raise ApiError(409, 'Only draft or rejected time entries can be submitted.')
+            if obj.hours <= 0 or obj.timer_started_at and not obj.timer_stopped_at:
+                raise ApiError(400, 'Stop the timer and enter a positive number of hours before submitting.')
+            obj.status = 'submitted'
+            obj.submitted_at = timezone.now()
+            obj.rejection_reason = ''
+            obj.save(update_fields=['status', 'submitted_at', 'rejection_reason'])
+            return j({'status': 'ok', 'message': 'Time entry submitted for approval.'})
+        if name in ('approve', 'reject'):
+            if not manager:
+                raise ApiError(403, 'Only organization admins or accountants may approve or reject time entries.')
+            if obj.status != 'submitted':
+                raise ApiError(409, 'Only submitted time entries can be approved or rejected.')
+            if name == 'approve':
+                obj.status = 'approved'
+                obj.approved_by = request.user
+                obj.approved_at = timezone.now()
+                obj.rejection_reason = ''
+                obj.save(update_fields=['status', 'approved_by', 'approved_at', 'rejection_reason'])
+                return j({'status': 'ok', 'message': 'Time entry approved.'})
+            reason = Cleaner(body(request)).text('reason', required=True, max_len=500)
+            obj.status = 'rejected'
+            obj.rejection_reason = reason
+            obj.save(update_fields=['status', 'rejection_reason'])
+            return j({'status': 'ok', 'message': 'Time entry rejected.'})
+        if name == 'stop-timer':
+            if obj.user_id != request.user.pk and not manager:
+                raise ApiError(403, 'You may only stop your own timer.')
+            if obj.status != 'running' or not obj.timer_started_at:
+                raise ApiError(409, 'This time entry does not have a running timer.')
+            stopped = timezone.now()
+            seconds = Decimal(str((stopped - obj.timer_started_at).total_seconds()))
+            hours = (seconds / Decimal('3600')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            obj.hours = min(hours, Decimal('24.00'))
+            obj.timer_stopped_at = stopped
+            obj.status = 'draft'
+            obj.save(update_fields=['hours', 'timer_stopped_at', 'status'])
+            return j({'status': 'ok', 'time_entry': self.row(obj), 'message': 'Timer stopped.'})
+        raise ApiError(404, 'Unknown time entry action.')
+
+    def destroy(self, obj):
+        if obj.status in ('approved', 'invoiced') or obj.invoice_id:
+            raise ApiError(409, 'Approved or invoiced time entries cannot be deleted.')
+        obj.delete()
 
 class ItemCategoryResource(Resource):
     name = 'item-categories'
@@ -7297,11 +8701,14 @@ RESOURCES = {r.name: r for r in (
     BankTransferResource(), BankReconciliationResource(), BankStatementBatchResource(), DocumentFolderResource(),
     ManagedDocumentResource(), SalesOrderResource(), PurchaseOrderResource(), ExpenseResource(),
     CreditNoteResource(), VendorCreditResource(), RecurringInvoiceResource(), DeliveryChallanResource(),
-    EWayBillResource(), ProjectResource(), TimeLogResource(), ItemCategoryResource(), PriceListResource(),
+    EWayBillResource(), ProjectResource(), ProjectTaskResource(), ProjectMilestoneResource(),
+    TimeLogResource(), ItemCategoryResource(), PriceListResource(),
     WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource(),
     StockTransferResource(), SalespersonResource(), EmployeeResource()
 )}
 RESOURCES['timelogs'] = RESOURCES.get('timesheets')
+RESOURCES['time-entries'] = RESOURCES.get('timesheets')
+RESOURCES['tasks'] = RESOURCES.get('project-tasks')
 RESOURCES['inventory-summary'] = RESOURCES.get('items')
 
 @api_view
@@ -7504,6 +8911,10 @@ def attachments_view(request, pk=None):
             eid = int(request.POST.get('entity_id') or 0)
             if not f:
                 raise ApiError(400, 'File is required.')
+            if etype == 'payment_received' and not PaymentReceived.objects.filter(
+                pk=eid, organization=user_org
+            ).exists():
+                raise ApiError(404, 'Payment received record not found.')
             att = Attachment.objects.create(
                 organization=user_org,
                 entity_type=etype, entity_id=eid, file=f,
@@ -7522,6 +8933,10 @@ def attachments_view(request, pk=None):
             fdata = d.get('file_data', '')
             mtype = c.text('mime_type', max_len=100)
             c.done()
+            if etype == 'payment_received' and not PaymentReceived.objects.filter(
+                pk=eid, organization=user_org
+            ).exists():
+                raise ApiError(404, 'Payment received record not found.')
             att = Attachment.objects.create(
                 organization=user_org,
                 entity_type=etype, entity_id=eid, filename=fname, file_size=fsize,
@@ -7704,7 +9119,9 @@ def lookup(request, name):
     elif name == 'employees':
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        eq_qs = User.objects.filter(is_active=True, profile__organization=user_org) if user_org else User.objects.filter(is_active=True)
+        eq_qs = User.objects.filter(
+            is_active=True, profile__organization=user_org, profile__status=UserProfile.STATUS_ACTIVE
+        ) if user_org else User.objects.none()
         data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in eq_qs.order_by('username')]
     elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
@@ -9395,111 +10812,48 @@ def superuser_required(fn):
         return fn(request, *args, **kwargs)
     return wrapper
 
+
+def _platform_subscription_for(organization):
+    if not organization:
+        return None
+    return TenantSubscription.objects.filter(
+        organization=organization
+    ).order_by('-created_at', '-pk').first()
+
+
+def _platform_user_metadata(user):
+    profile = getattr(user, 'profile', None)
+    organization = profile.organization if profile else None
+    subscription = _platform_subscription_for(organization)
+    return {
+        'user_id': profile.user_id_code if profile and profile.user_id_code else f'USR-{user.pk:08d}',
+        'email': user.email or '',
+        'phone': profile.phone if profile else '',
+        'subscription_status': subscription.status if subscription else '',
+    }
+
+
+def _platform_organization_metadata(organization):
+    subscription = _platform_subscription_for(organization)
+    return {
+        'organization_id': organization.organization_id or '',
+        'email': organization.email or '',
+        'phone': organization.phone or '',
+        'subscription_id': subscription.pk if subscription else None,
+        'subscription_status': subscription.status if subscription else '',
+    }
+
+
 @api_view
 @superuser_required
 def super_admin_overview_view(request):
     from django.contrib.auth import get_user_model
     User = get_user_model()
-    now = timezone.now()
-    today = timezone.localdate()
-
-    total_users = User.objects.count()
-    active_users = User.objects.filter(is_active=True).count()
-    inactive_users = total_users - active_users
-
-    total_companies = Organization.objects.count()
-    active_companies = Organization.objects.filter(is_active=True).count()
-    inactive_companies = total_companies - active_companies
-
-    # New registrations over time (last 30 days)
-    start_30 = now - timedelta(days=30)
-    users_30 = User.objects.filter(date_joined__gte=start_30).order_by('date_joined')
-    trend_map = {}
-    for i in range(30):
-        d = (today - timedelta(days=29 - i)).strftime('%Y-%m-%d')
-        trend_map[d] = 0
-    for u in users_30:
-        d_str = u.date_joined.strftime('%Y-%m-%d')
-        if d_str in trend_map:
-            trend_map[d_str] += 1
-    registration_trend = [{'date': d, 'count': cnt} for d, cnt in trend_map.items()]
-
-    # Total business records breakdown by company
-    companies_summary = []
-    for org in Organization.objects.all().order_by('-id')[:50]:
-        users_count = UserProfile.objects.filter(organization=org).count()
-        cust_cnt = Customer.objects.filter(organization=org).count()
-        vend_cnt = Vendor.objects.filter(organization=org).count()
-        item_cnt = Item.objects.filter(organization=org).count()
-        inv_cnt = Invoice.objects.filter(organization=org).count()
-        bill_cnt = Bill.objects.filter(organization=org).count()
-        pay_cnt = PaymentReceived.objects.filter(organization=org).count() + PaymentMade.objects.filter(organization=org).count()
-        adj_cnt = StockMovement.objects.filter(organization=org, kind='adjustment').count()
-        total_records = cust_cnt + vend_cnt + item_cnt + inv_cnt + bill_cnt + pay_cnt + adj_cnt
-
-        companies_summary.append({
-            'id': org.pk,
-            'name': org.name,
-            'legal_name': org.company_id or org.name,
-            'state': org.state,
-            'gstin': org.gstin or 'Unregistered',
-            'created_at': org.created_at.strftime('%Y-%m-%d %H:%M') if org.created_at else '',
-            'is_active': org.is_active,
-            'users_count': users_count,
-            'total_records': total_records,
-            'record_counts': {
-                'customers': cust_cnt,
-                'vendors': vend_cnt,
-                'items': item_cnt,
-                'invoices': inv_cnt,
-                'bills': bill_cnt,
-                'payments': pay_cnt,
-                'stock_adjustments': adj_cnt
-            }
-        })
-
-    # Recent platform audit activity
-    recent_activity = []
-    for log in AuditLog.objects.select_related('user').order_by('-timestamp')[:20]:
-        recent_activity.append({
-            'id': log.pk,
-            'timestamp': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-            'user': log.user.username if log.user else 'System',
-            'action': log.action,
-            'model_name': log.entity_type,
-            'object_id': log.entity_id,
-            'summary': log.summary,
-            'ip_address': log.ip_address or ''
-        })
-
-    # Recent user registrations
-    recent_users = []
-    for u in User.objects.select_related('profile__organization').order_by('-date_joined')[:10]:
-        org = getattr(getattr(u, 'profile', None), 'organization', None)
-        recent_users.append({
-            'id': u.pk,
-            'username': u.username,
-            'email': u.email,
-            'full_name': u.get_full_name() or u.username,
-            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M'),
-            'is_active': u.is_active,
-            'company': org.name if org else 'None',
-            'role': getattr(getattr(u, 'profile', None), 'role', 'admin')
-        })
-
+    organizations = Organization.objects.order_by('id')
+    users = User.objects.select_related('profile__organization').order_by('id')
     return j({
-        'kpis': {
-            'total_users': total_users,
-            'active_users': active_users,
-            'inactive_users': inactive_users,
-            'total_companies': total_companies,
-            'active_companies': active_companies,
-            'inactive_companies': inactive_companies
-        },
-        'registration_trend': registration_trend,
-        'companies': companies_summary,
-        'recent_activity': recent_activity,
-        'recent_users': recent_users
+        'organizations': [_platform_organization_metadata(org) for org in organizations],
+        'users': [_platform_user_metadata(user) for user in users],
     })
 
 @api_view
@@ -9510,45 +10864,19 @@ def super_admin_users_view(request):
     q = request.GET.get('q', '').strip()
     company_id = request.GET.get('company_id', '').strip()
     status = request.GET.get('status', '').strip()
-    role = request.GET.get('role', '').strip()
 
-    qs = User.objects.select_related('profile__organization').order_by('-date_joined')
+    qs = User.objects.select_related('profile__organization').order_by('id')
     if q:
         qs = qs.filter(
-            Q(username__icontains=q) |
             Q(email__icontains=q) |
-            Q(first_name__icontains=q) |
-            Q(last_name__icontains=q) |
-            Q(profile__organization__name__icontains=q)
+            Q(profile__user_id_code__icontains=q) |
+            Q(profile__phone__icontains=q)
         )
-    if company_id and company_id.isdigit():
-        qs = qs.filter(profile__organization_id=int(company_id))
-    if status == 'active':
-        qs = qs.filter(is_active=True)
-    elif status == 'inactive':
-        qs = qs.filter(is_active=False)
-    if role:
-        qs = qs.filter(profile__role=role)
-
-    users_list = []
-    for u in qs[:100]:
-        profile = getattr(u, 'profile', None)
-        org = getattr(profile, 'organization', None)
-        users_list.append({
-            'id': u.pk,
-            'username': u.username,
-            'email': u.email,
-            'full_name': u.get_full_name() or u.username,
-            'is_active': u.is_active,
-            'is_staff': u.is_staff,
-            'is_superuser': u.is_superuser,
-            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M') if u.date_joined else '',
-            'last_login': u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else 'Never',
-            'company_id': org.pk if org else None,
-            'company_name': org.name if org else 'No Company',
-            'role': profile.role if profile else 'admin'
-        })
-    return j({'users': users_list, 'total_count': qs.count()})
+    if company_id:
+        qs = qs.filter(profile__organization__organization_id=company_id)
+    if status:
+        qs = qs.filter(profile__organization__subscriptions__status=status)
+    return j({'users': [_platform_user_metadata(user) for user in qs.distinct()[:100]]})
 
 @api_view
 @superuser_required
@@ -9564,19 +10892,19 @@ def super_admin_toggle_user_view(request, pk):
     target_user.is_active = not target_user.is_active
     target_user.save(update_fields=['is_active'])
 
-    action_label = 'Activated' if target_user.is_active else 'Deactivated'
+    user_metadata = _platform_user_metadata(target_user)
     services.log_audit(
         request.user,
         'update',
         'User',
         target_user.pk,
-        f"Super Admin {action_label} user {target_user.username} ({target_user.email})"
+        f"Platform account access updated for {user_metadata['user_id']}.",
+        org=getattr(getattr(target_user, 'profile', None), 'organization', None),
     )
     return j({
         'status': 'ok',
-        'user_id': target_user.pk,
-        'is_active': target_user.is_active,
-        'message': f"User {target_user.username} successfully {action_label.lower()}."
+        'user_id': user_metadata['user_id'],
+        'message': f"Account access updated for {user_metadata['user_id']}.",
     })
 
 @api_view
@@ -9588,57 +10916,12 @@ def super_admin_company_detail_view(request, pk):
 
     from django.contrib.auth import get_user_model
     User = get_user_model()
-    company_users = []
-    for u in User.objects.filter(profile__organization=org).order_by('username'):
-        profile = getattr(u, 'profile', None)
-        company_users.append({
-            'id': u.pk,
-            'username': u.username,
-            'email': u.email,
-            'full_name': u.get_full_name() or u.username,
-            'role': profile.role if profile else 'admin',
-            'is_active': u.is_active,
-            'date_joined': u.date_joined.strftime('%Y-%m-%d %H:%M') if u.date_joined else ''
-        })
-
-    sub = TenantSubscription.objects.filter(organization=org).first()
-    sub_data = {
-        'plan_tier': sub.plan_tier if sub else 'standard',
-        'status': sub.status if sub else 'active',
-        'current_period_end': sub.current_period_end.strftime('%Y-%m-%d') if sub and sub.current_period_end else '',
-        'max_users': sub.max_users if sub else 10
-    }
-
-    record_counts = {
-        'customers': Customer.objects.filter(organization=org).count(),
-        'vendors': Vendor.objects.filter(organization=org).count(),
-        'items': Item.objects.filter(organization=org).count(),
-        'invoices': Invoice.objects.filter(organization=org).count(),
-        'bills': Bill.objects.filter(organization=org).count(),
-        'payments': PaymentReceived.objects.filter(organization=org).count() + PaymentMade.objects.filter(organization=org).count(),
-        'stock_adjustments': StockMovement.objects.filter(organization=org, kind='adjustment').count()
-    }
-
     return j({
-        'company': {
-            'id': org.pk,
-            'name': org.name,
-            'legal_name': org.company_id or org.name,
-            'company_id': org.company_id,
-            'state': org.state,
-            'gstin': org.gstin or '',
-            'email': org.email or '',
-            'phone': org.phone or '',
-            'address': org.address or '',
-            'city': org.city or '',
-            'pincode': org.pincode or '',
-            'country': org.country or 'India',
-            'created_at': org.created_at.strftime('%Y-%m-%d %H:%M') if org.created_at else '',
-            'is_active': org.is_active
-        },
-        'record_counts': record_counts,
-        'users': company_users,
-        'subscription': sub_data
+        'organization': _platform_organization_metadata(org),
+        'users': [
+            _platform_user_metadata(user)
+            for user in User.objects.filter(profile__organization=org).select_related('profile__organization').order_by('id')
+        ],
     })
 
 @api_view
@@ -9651,19 +10934,18 @@ def super_admin_toggle_company_view(request, pk):
     org.is_active = not org.is_active
     org.save(update_fields=['is_active'])
 
-    action_label = 'Activated' if org.is_active else 'Deactivated'
     services.log_audit(
         request.user,
         'update',
         'Organization',
         org.pk,
-        f"Super Admin {action_label} company {org.name} (ID: {org.pk})"
+        f"Organization access updated for {org.organization_id}.",
+        org=org,
     )
     return j({
         'status': 'ok',
-        'company_id': org.pk,
-        'is_active': org.is_active,
-        'message': f"Company {org.name} successfully {action_label.lower()}."
+        'organization_id': org.organization_id,
+        'message': f"Organization access updated for {org.organization_id}.",
     })
 
 
@@ -9708,18 +10990,11 @@ def serialize_user_entry(u, org):
         'date_joined': u.date_joined.strftime('%Y-%m-%d') if u.date_joined else ''
     }
 
-def _settings_organization(request):
-    org = get_user_org(request.user, request)
-    if not org:
-        raise ApiError(403, 'An active organization is required to access settings.')
-    return org
-
-
 @api_view
 def settings_all_view(request):
     """Return aggregated settings dashboard data for the user's organization."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
     services.ensure_default_settings(org)
 
     from django.contrib.auth import get_user_model
@@ -9938,11 +11213,12 @@ def settings_enterprise_preferences_view(request, group_key):
         'integration_status': group_schema.get('integrationStatus', 'requires_workflow_wiring'),
     })
 
+
 @api_view
 def settings_roles_view(request, role_id=None):
     """Manage roles: list, create, retrieve, update, delete."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
     services.ensure_default_settings(org)
 
     if request.method == 'GET':
@@ -10037,7 +11313,7 @@ def settings_roles_view(request, role_id=None):
 def settings_role_duplicate_view(request, role_id):
     """Duplicate an existing role into a new customizable role."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     src = Role.objects.filter(organization=org, pk=role_id).first()
     if not src:
@@ -10067,7 +11343,9 @@ def settings_role_duplicate_view(request, role_id):
 def settings_users_view(request, user_id=None):
     """User management: list, add, edit, deactivate, delete."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user, request)
+    if not org:
+        raise ApiError(403, 'Organization required.')
 
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -10212,7 +11490,7 @@ def settings_users_view(request, user_id=None):
 def settings_invite_user_view(request):
     """Invite a new user or accountant with role assignment."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
     services.check_subscription_limits(org, 'user')
 
     data = body(request)
@@ -10282,7 +11560,7 @@ def settings_invite_user_view(request):
 def settings_resend_invite_view(request, invite_id):
     """Resend a user invitation."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     inv = UserInvitation.objects.filter(organization=org, pk=invite_id).first()
     if not inv:
@@ -10304,11 +11582,11 @@ def settings_resend_invite_view(request, invite_id):
 @api_view
 def settings_organization_view(request):
     """Get and update complete organization profile and settings."""
-    check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
     if request.method == 'GET':
         return j(org_json(org))
 
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
     data = body(request)
     c = Cleaner(data)
 
@@ -10389,7 +11667,9 @@ def _business_location_payload(location):
 @api_view
 def settings_locations_view(request, location_id=None):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user)
+    if not org:
+        raise ApiError(403, 'An organization is required to manage business locations.')
 
     queryset = BusinessLocation.objects.filter(organization=org)
     if request.method == 'GET':
@@ -10497,7 +11777,7 @@ def settings_locations_view(request, location_id=None):
 def settings_currencies_view(request, currency_id=None):
     """Manage currencies."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     if request.method == 'GET':
         qs = CurrencySetting.objects.filter(organization=org).order_by('id')
@@ -10559,7 +11839,7 @@ def settings_currencies_view(request, currency_id=None):
 def settings_payment_terms_view(request, term_id=None):
     """Manage payment terms."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     if request.method == 'GET':
         qs = PaymentTermSetting.objects.filter(organization=org).order_by('days')
@@ -10611,7 +11891,7 @@ def settings_payment_terms_view(request, term_id=None):
 def settings_number_series_view(request):
     """View and configure document numbering series for all modules."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     modules = [
         ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
@@ -10705,7 +11985,7 @@ def _number_series_payload(series):
 @api_view
 def settings_document_number_series_view(request, series_id=None, retainer_only=False):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
     document_types = {
         'invoices', 'retainer_invoices', 'recurring_invoices', 'quotes',
         'sales_orders', 'credit_notes', 'delivery_challans', 'bills',
@@ -10906,9 +12186,7 @@ def doc_number_preferences_view(request):
     Supports auto-generate vs manual mode, custom prefixes with placeholders (${YEAR}, ${FYS_YY}, etc.),
     next sequence number, and fiscal year restarting.
     """
-    org = _settings_organization(request)
-    if request.method != 'GET':
-        check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
     from .models import DocumentNumberPreference, Sequence
 
     canon_map = {
@@ -11011,7 +12289,7 @@ def doc_number_preferences_view(request):
 def settings_templates_view(request):
     """View and update PDF and invoice templates."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     if request.method == 'GET':
         return j({
@@ -11039,7 +12317,7 @@ def settings_templates_view(request):
 def settings_digital_signature_view(request):
     """View and upload digital signature."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     if request.method == 'GET':
         return j({
@@ -11071,7 +12349,7 @@ def settings_digital_signature_view(request):
 def settings_taxes_view(request):
     """View and update tax settings, tax groups, and direct tax (TDS/TCS) configurations."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN, UserProfile.ACCOUNTANT])
-    org = _settings_organization(request)
+    org = get_user_org(request.user) or Organization.get()
 
     standard_taxes = [
         {'name': 'GST0', 'type': 'Tax Group', 'rate': 0, 'active': True},

@@ -2066,20 +2066,11 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const partyState = party.state ? `<div>State: ${esc(party.state)}</div>` : '';
 
   const companyIdLine = org.company_id ? `<div>Company ID : <b>${esc(org.company_id)}</b></div>` : '';
-  const businessLocation = isRetainer ? (d.business_location_details || {}) : {};
-  const orgAddress = businessLocation.address || org.address || '';
-  const orgAddrHtml = orgAddress ? orgAddress.split('\n').map(l => `<div>${esc(l)}</div>`).join('') : '';
-  const cityStateParts = [
-    businessLocation.city || org.city,
-    businessLocation.state || org.state,
-    businessLocation.pincode || org.pincode
-  ].filter(Boolean).map(esc).join(' ');
+  const orgAddrHtml = org.address ? org.address.split('\n').map(l => `<div>${esc(l)}</div>`).join('') : '';
+  const cityStateParts = [org.city, org.state, org.pincode].filter(Boolean).map(esc).join(' ');
   const orgCityState = cityStateParts ? `<div>${cityStateParts}</div>` : '';
   const orgCountry = org.country ? `<div>${esc(org.country)}</div>` : '';
-  const documentGstin = isRetainer && d.business_location_id
-    ? (d.business_location_gstin || '')
-    : org.gstin;
-  const orgGstin = documentGstin ? `<div>GSTIN <b>${esc(documentGstin)}</b></div>` : '';
+  const orgGstin = org.gstin ? `<div>GSTIN <b>${esc(org.gstin)}</b></div>` : '';
   const orgPhone = org.phone ? `<div>${esc(org.phone)}</div>` : '';
   const orgEmail = org.email ? `<div>${esc(org.email)}</div>` : '';
   const orgWeb = org.website ? `<div>${esc(org.website)}</div>` : '';
@@ -2123,18 +2114,18 @@ function renderDocSheet(d, kind, customOpts = {}) {
           ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer Invoice# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
             ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
-            ${isRetainer ? `<tr><td>Retainer Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
+            ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
             ${!isRetainer ? `<tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>` : ''}
 
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
-            ${isRetainer && d.location ? `<tr><td>Business Location</td><td>: ${esc(d.location)}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
-            ${!isRetainer && d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
-            ${!isRetainer ? `<tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
-            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>` : ''}
+            ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
+            ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
+            <tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
+            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
           </table>
 
         </div>
@@ -2215,20 +2206,20 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
         <div class="doc-bottom-right">
           <div class="doc-totals-box">
-            ${!isRetainer ? `<div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
+            <div style="font-size:11px;color:#64748b;text-align:right;margin-bottom:8px;padding-bottom:6px;border-bottom:1px dashed #e2e8f0;">
               <a href="javascript:void(0)" class="btn-tax-pricing-info" data-doc-kind="${kind}" style="color:#2563eb;text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-weight:600;" title="View GST Pricing & B2B/B2C Rules Guide">
                 <i class="fa-solid fa-circle-info"></i> Tax &amp; Billing (${partyTypeLabel} · ${taxPricingLabel})
               </a>
-            </div>` : ''}
+            </div>
             ${!hideAmounts ? `
-              ${!isRetainer ? `<div class="doc-totals-row">
+              <div class="doc-totals-row">
                 <span>Taxable Amount (${taxPricingLabel})</span>
                 <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
-              </div>` : ''}
-              ${!isRetainer && d.intra_state ? `
+              </div>
+              ${d.intra_state ? `
                 <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
                 <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
-              ` : (!isRetainer && num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
+              ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
               <div class="doc-totals-row main-total">
                 <span>Total</span>
                 <span>${inr(d.total)}</span>
@@ -2644,25 +2635,21 @@ function printDocument(doc, kind, mode = 'standard', isPdf = false) {
 }
 
 function openSendEmailModal(doc, kind, onDone) {
-  const isRetainer = kind === 'retainer-invoices';
   const party = doc.party_details || {};
   const recipient = party.email || doc.customer_email || doc.email || '';
   const partyName = doc.party || party.name || 'Valued Customer';
   const orgName = (APP.org && APP.org.name) || 'Convosis';
-  const documentLabel = isRetainer ? 'Retainer Invoice' : 'Invoice';
-  const defaultSubj = `${documentLabel} ${doc.number} from ${orgName}`;
-  const defaultBody = isRetainer
-    ? `Dear ${partyName},\n\nThanks for your business.\n\nThe retainer invoice ${doc.number} is attached with this email. Here is an overview of the invoice for your reference.\n\nRetainer Invoice Overview:\nInvoice #: ${doc.number}\nDate: ${fd(doc.date)}\nAmount: ${inr(doc.total)}\n\nRegards,\n${orgName}`
-    : `Dear ${partyName},\n\nInvoice ${doc.number} for the amount of ${inr(doc.total)} has been issued.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
+  const defaultSubj = `Invoice ${doc.number} from ${orgName}`;
+  const defaultBody = `Dear ${partyName},\n\nInvoice ${doc.number} for the amount of ${inr(doc.total)} has been issued.\n\nDue Date: ${fd(doc.due_date)}\n\nThank you for your business.\n\nWarm regards,\n${orgName}`;
 
   formModal({
-    title: `Send ${documentLabel} · ${esc(doc.number)}`,
+    title: `Send Invoice · ${esc(doc.number)}`,
     submit: 'Send Email',
     wide: false,
     body: `
       <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
         <div><b>To:</b> ${esc(partyName)}</div>
-        <div style="margin-top:2px;"><b>${documentLabel}:</b> ${esc(doc.number)} &nbsp;|&nbsp; <b>Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>${isRetainer ? 'Date' : 'Due'}:</b> ${fd(isRetainer ? doc.date : doc.due_date)}</div>
+        <div style="margin-top:2px;"><b>Invoice:</b> ${esc(doc.number)} &nbsp;|&nbsp; <b>Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Due:</b> ${fd(doc.due_date)}</div>
       </div>
       <div class="fgrid">
         ${fld({ name: 'to_email', label: 'To Email Address', type: 'email', req: 1, value: recipient, placeholder: 'customer@example.com', col: 'c2' })}
@@ -2671,7 +2658,7 @@ function openSendEmailModal(doc, kind, onDone) {
         ${fld({ name: 'message', label: 'Message', type: 'textarea', req: 1, value: defaultBody, col: 'c2' })}
         <div style="grid-column:span 2;font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:4px;">
           <i class="fa-solid fa-paperclip"></i>
-          <span>${isRetainer ? 'The Retainer Invoice PDF will be attached to this email.' : 'This email includes document details. PDF attachments are not available yet.'}</span>
+          <span>This email includes document details. PDF attachments are not available yet.</span>
         </div>
       </div>
     `,
@@ -2686,7 +2673,7 @@ function openSendEmailModal(doc, kind, onDone) {
           message: data.message
         }
       });
-      toast(`${documentLabel} ${doc.number} sent to ${data.to_email}`, 'ok');
+      toast(`Invoice ${doc.number} sent to ${data.to_email}`, 'ok');
       if (onDone) onDone();
     }
   });
@@ -2959,15 +2946,6 @@ function openInvoicePreferencesModal(onDone) {
 }
 
 async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {}) {
-  const previousListeners = root._docMasterDetailListeners || [];
-  previousListeners.forEach(({ type, handler }) => root.removeEventListener(type, handler));
-  const rootListeners = [];
-  root._docMasterDetailListeners = rootListeners;
-  const addRootListener = (type, handler) => {
-    root.addEventListener(type, handler);
-    rootListeners.push({ type, handler });
-  };
-
   const KIND_CONFIG = {
     'invoices': {
       title: 'Invoices',
@@ -3194,7 +3172,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     </div>
   `;
 
-  async function loadList(refreshDetail = true) {
+  async function loadList() {
     try {
       const qParams = { page_size: 100, ordering: (isRec ? '-created_at' : '-date') };
       if (curFilter) qParams.status = curFilter;
@@ -3202,7 +3180,6 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       const res = await api(`${kind}/?` + qs(qParams));
       docs = res.results || [];
       renderMasterList();
-      if (!refreshDetail) return;
       if (selectedId === 'new') {
         openForm(null);
         return;
@@ -3476,7 +3453,6 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
               </div>
             ` : isRetainer ? `
               <button class="btn" type="button" data-act="edit"><i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i> Edit</button>
-              ${d.raw_status === 'draft' ? `<button class="btn p" type="button" data-act="send-retainer"><i class="fa-regular fa-paper-plane" style="font-size:11px;margin-right:4px;"></i> Mark as Sent</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.balance) > 0 ? `<button class="btn p" type="button" data-act="pay-retainer"><i class="fa-solid fa-money-bill-wave" style="font-size:11px;margin-right:4px;"></i> Record Payment</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" style="background:#6366f1;color:#fff;border-color:#6366f1;" type="button" data-act="apply-invoices"><i class="fa-solid fa-hand-holding-dollar" style="font-size:11px;margin-right:4px;"></i> Apply to Invoices</button>` : ''}
               ${d.raw_status !== 'draft' && d.raw_status !== 'void' && d.raw_status !== 'cancelled' && num(d.available_balance) > 0 ? `<button class="btn" type="button" data-act="refund-retainer" title="Refund available retainer balance">Refund</button>` : ''}
@@ -3578,7 +3554,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     `;
   }
 
-  addRootListener('change', e => {
+  root.addEventListener('change', e => {
     if (e.target.id === 'master-cb-all') {
       const checked = e.target.checked;
       root.querySelectorAll('.master-doc-cb').forEach(cb => {
@@ -3599,7 +3575,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     }
   });
 
-  addRootListener('click', async e => {
+  root.addEventListener('click', async e => {
     const bulkDel = e.target.closest('#master-bulk-del-btn');
     if (bulkDel) {
       const count = masterSelectedIds.size;
@@ -3678,30 +3654,6 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       root.querySelectorAll('.tb-pop-menu').forEach(p => { p.style.display = 'none'; });
       const act = actBtn.dataset.act;
       const d = curDoc;
-
-      if (act === 'send-retainer') {
-        if (d.raw_status !== 'draft') return;
-        if (!(await confirmBox({
-          title: 'Mark Retainer Invoice as Sent?',
-          message: 'Are you sure you want to mark this Retainer Invoice as Sent?',
-          okText: 'Mark as Sent'
-        }))) return;
-        actBtn.disabled = true;
-        try {
-          await api(`${kind}/${d.id}/send/`, { method: 'POST', body: {} });
-          toast(`Retainer Invoice ${d.number} marked as sent.`, 'ok');
-          await loadList(false);
-          await loadDetail(d.id);
-        } catch (err) {
-          toast(err.message || 'Could not mark the Retainer Invoice as sent.', 'err');
-          actBtn.disabled = false;
-          if (err.status === 409) {
-            await loadList(false);
-            await loadDetail(d.id);
-          }
-        }
-        return;
-      }
 
       // Conversions
       if (act === 'convert-so') {
@@ -3783,51 +3735,33 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
 
       // Recurring Profile actions
       if (act === 'gen-rec-inv') {
-        actBtn.disabled = true;
         try {
-          const res = await api(`recurring-invoices/${d.id}/generate-invoice/`, {
-            method: 'POST',
-            body: { scheduled_date: d.next_date }
-          });
+          const res = await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'generate-invoice' } });
           toast(res.message || 'Invoice generated successfully!', 'ok');
-          await loadList(false);
           if (res.invoice_id) {
             docMasterDetail($('#pg'), 'invoices', res.invoice_id);
           } else {
             loadDetail(d.id);
           }
-        } catch (e) {
-          toast(e.message, 'err');
-          actBtn.disabled = false;
-        }
+        } catch (e) { toast(e.message, 'err'); }
         return;
       }
       if (act === 'pause-rec' || act === 'resume-rec') {
         const nextAct = act === 'pause-rec' ? 'pause' : 'resume';
-        actBtn.disabled = true;
         try {
-          await api(`recurring-invoices/${d.id}/${nextAct}/`, { method: 'POST', body: {} });
+          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: nextAct } });
           toast(`Recurring profile ${nextAct === 'pause' ? 'paused' : 'resumed'}.`, 'ok');
-          await loadList(false);
           loadDetail(d.id);
-        } catch (e) {
-          toast(e.message, 'err');
-          actBtn.disabled = false;
-        }
+        } catch (e) { toast(e.message, 'err'); }
         return;
       }
       if (act === 'cancel-rec') {
         if (!(await confirmBox({ title: `Cancel Profile ${d.profile_name}?`, message: 'No more invoices will be generated automatically.', okText: 'Cancel Profile', danger: true }))) return;
-        actBtn.disabled = true;
         try {
-          await api(`recurring-invoices/${d.id}/cancel/`, { method: 'POST', body: {} });
+          await api(`recurring-invoices/${d.id}/action/`, { method: 'POST', body: { action: 'cancel' } });
           toast('Recurring profile cancelled.', 'ok');
-          await loadList(false);
           loadDetail(d.id);
-        } catch (e) {
-          toast(e.message, 'err');
-          actBtn.disabled = false;
-        }
+        } catch (e) { toast(e.message, 'err'); }
         return;
       }
       if (act === 'clone-rec') {
@@ -4036,6 +3970,10 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }
       if (act === 'close') {
         curDoc = null;
+        if (typeof LISTS !== 'undefined' && LISTS[kind]) {
+          listPage(root, LISTS[kind]);
+          return;
+        }
         renderMasterList();
         renderDetailPane();
         const filter = $('#master-filter-sel', root);
@@ -4066,7 +4004,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       e.stopPropagation();
       expPop.style.display = expPop.style.display === 'none' ? 'block' : 'none';
     });
-    addRootListener('click', e => {
+    root.addEventListener('click', e => {
       if (!e.target.closest('.export-dropdown-wrap')) expPop.style.display = 'none';
     });
   }
@@ -4123,6 +4061,28 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }, 250);
     });
   }
+
+  const onDocMasterKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (!root.isConnected) {
+        document.removeEventListener('keydown', onDocMasterKeyDown);
+        return;
+      }
+      if (document.querySelector('.modal-overlay, .custom-modal-overlay, .modal-backdrop, .mo, .pop.on')) return;
+      if (curDoc) {
+        e.preventDefault();
+        curDoc = null;
+        if (typeof LISTS !== 'undefined' && LISTS[kind]) {
+          document.removeEventListener('keydown', onDocMasterKeyDown);
+          listPage(root, LISTS[kind]);
+        } else {
+          renderMasterList();
+          renderDetailPane();
+        }
+      }
+    }
+  };
+  document.addEventListener('keydown', onDocMasterKeyDown);
 
   loadList();
 }
@@ -8934,7 +8894,7 @@ async function subscriptionBillingPage(root) {
       <!-- Billing Invoices & Payment Statements -->
       <div style="margin-top:54px;margin-bottom:20px;">
         <h2 style="font-size:20px;font-weight:800;color:var(--tx-main);margin:0 0 6px;">Billing Invoices & Payment Statements</h2>
-        <p style="font-size:13px;color:var(--tx-muted);margin:0 0 16px;">Download subscription receipts and track recorded payment transactions.</p>
+        <p style="font-size:13px;color:var(--tx-muted);margin:0 0 16px;">Download GST compliant subscription receipts and track past payment transactions.</p>
 
         <div class="card" style="padding:0;overflow:hidden;border-radius:16px;border:1px solid var(--bd);">
           <table style="width:100%;border-collapse:collapse;">

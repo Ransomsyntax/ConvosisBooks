@@ -3970,6 +3970,10 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }
       if (act === 'close') {
         curDoc = null;
+        if (typeof LISTS !== 'undefined' && LISTS[kind]) {
+          listPage(root, LISTS[kind]);
+          return;
+        }
         renderMasterList();
         renderDetailPane();
         const filter = $('#master-filter-sel', root);
@@ -4057,6 +4061,28 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }, 250);
     });
   }
+
+  const onDocMasterKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (!root.isConnected) {
+        document.removeEventListener('keydown', onDocMasterKeyDown);
+        return;
+      }
+      if (document.querySelector('.modal-overlay, .custom-modal-overlay, .modal-backdrop, .mo, .pop.on')) return;
+      if (curDoc) {
+        e.preventDefault();
+        curDoc = null;
+        if (typeof LISTS !== 'undefined' && LISTS[kind]) {
+          document.removeEventListener('keydown', onDocMasterKeyDown);
+          listPage(root, LISTS[kind]);
+        } else {
+          renderMasterList();
+          renderDetailPane();
+        }
+      }
+    }
+  };
+  document.addEventListener('keydown', onDocMasterKeyDown);
 
   loadList();
 }

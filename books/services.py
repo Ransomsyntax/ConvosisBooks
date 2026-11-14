@@ -2189,6 +2189,7 @@ def ensure_default_accounts(org=None):
         ('1000', 'Petty Cash', 'asset', 'cash', 'Liquid physical currency on hand'),
         ('1010', 'Bank Account', 'asset', 'bank', 'Primary operating bank account'),
         ('1200', 'Accounts Receivable', 'asset', 'accounts_receivable', 'Monies owed by customers for credit sales'),
+        ('1210', 'Income TDS Receivable', 'asset', 'current_asset', 'Tax deducted at source by customers'),
         ('1300', 'Inventory Asset', 'asset', 'inventory', 'Valuation of goods in stock held for resale'),
         ('1400', 'Undeposited Funds', 'asset', 'current_asset', 'Payments received awaiting bank clearance'),
         ('1500', 'Office & Computer Equipment', 'asset', 'fixed_asset', 'Tangible capital assets'),
@@ -2358,16 +2359,89 @@ def post_bill_void_journal(bill, user):
     return post_journal_entry(bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}', items, user, org=org)
 
 def post_payment_received_journal(pay, user):
-    """Debit Bank/Cash, Credit Accounts Receivable."""
+    """Post the accounting entry for a paid receipt."""
     org = getattr(pay, 'organization', None)
     acc_code = '1000' if pay.mode == 'cash' else '1010'
     if getattr(pay, 'bank_account', None) and getattr(pay.bank_account, 'gl_account', None):
         acc_code = pay.bank_account.gl_account.code
+    is_advance = getattr(pay, 'payment_type', 'invoice_payment') == 'customer_advance'
+    tax = q2(getattr(pay, 'tax_amount', 0)) if is_advance else Decimal('0.00')
+    tds = q2(getattr(pay, 'tds_amount', 0)) if not is_advance else Decimal('0.00')
+    gross = q2(pay.amount + tax)
     items = [
-        (acc_code, pay.amount, Decimal('0.00'), f'Payment {pay.number} from {pay.customer.name}'),
-        ('1200', Decimal('0.00'), pay.amount, f'Payment {pay.number} applied to AR')
+        (acc_code, q2(gross - pay.bank_charges), Decimal('0.00'), f'Payment {pay.number} from {pay.customer.name}'),
     ]
+    if pay.bank_charges > 0:
+        items.append(('6070', pay.bank_charges, Decimal('0.00'), f'Bank charges on {pay.number}'))
+    if is_advance:
+        items.append(('2100', Decimal('0.00'), pay.amount, f'Customer advance liability on {pay.number}'))
+        _append_payment_tax_items(
+            items, tax, pay, debit=False,
+            description=f'Output tax on customer advance {pay.number}',
+        )
+    else:
+        if tds > 0:
+            items.append(('1210', tds, Decimal('0.00'), f'Income TDS receivable on {pay.number}'))
+        items.append(
+            ('1200', Decimal('0.00'), q2(pay.amount + tds), f'Payment {pay.number} applied to AR')
+        )
     return post_journal_entry(pay.date, 'payment_in', pay.number, f'Payment received {pay.number}', items, user, org=org)
+
+def _append_payment_tax_items(items, tax, pay, debit, description):
+    tax = q2(tax or 0)
+    if tax <= 0:
+        return
+    side = (tax, Decimal('0.00')) if debit else (Decimal('0.00'), tax)
+    org = getattr(pay, 'organization', None)
+    if getattr(pay, 'tax_type', '') == 'IGST' or not is_intra_state(
+        getattr(pay, 'place_of_supply', ''), getattr(org, 'state', '')
+    ):
+        items.append(('2230', side[0], side[1], description))
+        return
+    central = q2(tax / 2)
+    state = tax - central
+    items.append(('2210', central if debit else Decimal('0.00'), Decimal('0.00') if debit else central, description))
+    items.append(('2220', state if debit else Decimal('0.00'), Decimal('0.00') if debit else state, description))
+
+def post_customer_advance_application_journal(payment, allocation, user, amount=None):
+    """Move an advance and its related GST from liabilities to invoice receivables."""
+    amount = q2(allocation.amount if amount is None else amount)
+    tax_total = q2(getattr(payment, 'tax_amount', 0))
+    gross_total = q2(payment.amount + tax_total)
+    tax_part = q2(amount * tax_total / gross_total) if gross_total else Decimal('0.00')
+    advance_part = amount - tax_part
+    items = [
+        ('2100', advance_part, Decimal('0.00'), f'Customer advance applied from {payment.number}'),
+    ]
+    _append_payment_tax_items(
+        items, tax_part, payment, debit=True,
+        description=f'Advance tax released to invoice {allocation.invoice.number}',
+    )
+    items.append(
+        ('1200', Decimal('0.00'), amount, f'Advance {payment.number} applied to {allocation.invoice.number}')
+    )
+    reference = f'{payment.number}:{allocation.invoice.number}:{allocation.amount}'
+    return post_journal_entry(
+        allocation.payment.date, 'payment_advance_apply', reference,
+        f'Customer advance {payment.number} applied to invoice {allocation.invoice.number}',
+        items, user, org=payment.organization,
+    )
+
+def send_payment_received_email(payment, to_email, message, user=None):
+    gross = payment.amount
+    if getattr(payment, 'payment_type', 'invoice_payment') == 'customer_advance':
+        gross += getattr(payment, 'tax_amount', Decimal('0.00'))
+    details = (
+        f'Thank you for your payment.\n'
+        f'Receipt: {payment.number}\n'
+        f'Date: {payment.date}\n'
+        f'Amount received: ₹{q2(gross)}'
+    )
+    body = '\n\n'.join(part for part in (message, details) if part)
+    return send_document_email(
+        payment, to_email, subject=f'Payment received {payment.number}',
+        message=body, user=user,
+    )
 
 def post_payment_made_journal(pay, user):
     """Debit Accounts Payable, Credit Bank/Cash."""
@@ -7709,7 +7783,12 @@ def get_default_permissions_for_role(role_name):
             'purchases': {k: {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False, 'approve': False} for k in ['bills', 'payments_made', 'expenses', 'purchase_orders', 'vendor_credits']},
             'accountant': {k: {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False} for k in ['chart_of_accounts', 'journals', 'budgets']},
             'income_tds': {'tds_payments': {'full': False, 'view': False, 'create': False, 'edit': False, 'delete': False}},
-            'timesheets': {'projects': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'timesheets': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'time_entries': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False}, 'others': {'assigned_projects_only': True, 'restrict_expense_recording': True}},
+            'timesheets': {
+                'projects': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False},
+                'timesheets': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False, 'approve': False},
+                'time_entries': {'full': True, 'view': True, 'create': True, 'edit': True, 'delete': False, 'approve': False},
+                'others': {'assigned_projects_only': True, 'restrict_expense_recording': True}
+            },
             'gst_filing': {'view_generate': False, 'push_transactions': False, 'reconcile': False, 'file_returns': False},
             'settings': {k: False for k in ['update_profile', 'users', 'export_data', 'general_preferences', 'accountant_preferences', 'gst_filing', 'taxes', 'currencies', 'protected_data', 'payment_terms', 'templates', 'email_templates', 'manage_integrations', 'automation', 'incoming_webhooks', 'notifications']},
             'dashboard': {'total_payables': False, 'total_receivables': False, 'cash_flow': False, 'income_expenses': False, 'top_expenses': False, 'projects': True, 'bank_credit_cards': False, 'account_watchlist': False},
@@ -7789,8 +7868,8 @@ def get_default_permissions_for_role(role_name):
         },
         'timesheets': {
             'projects': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
-            'timesheets': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
-            'time_entries': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del},
+            'timesheets': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
+            'time_entries': {'full': is_admin, 'view': True, 'create': True, 'edit': True, 'delete': can_del, 'approve': can_acc},
             'others': {'restrict_expense_recording': False, 'assigned_projects_only': False}
         },
         'gst_filing': {

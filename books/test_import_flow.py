@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.utils import timezone
 from books import services
-from books.models import Account, BankAccount, BankTransaction, Customer, Expense, Invoice, Item, Organization, UserProfile, Vendor
+from books.models import Account, BankAccount, BankTransaction, Customer, Expense, Invoice, Item, Organization, Project, UserProfile, Vendor
 
 class TestUniversalImport(TestCase):
     def setUp(self):
@@ -362,6 +362,10 @@ class TestUniversalImport(TestCase):
         self.assertEqual(po.vendor.name, 'Alpha Steel Supplies')
 
     def test_projects_import(self):
+        Customer.objects.create(
+            organization=Organization.get(),
+            name='Fintech Alliance',
+        )
         records = [
             {
                 'name': 'API Gateway Modernization',
@@ -575,6 +579,10 @@ class TestUniversalImport(TestCase):
         self.assertEqual(bt.deposit, Decimal('45000.00'))
 
     def test_timelogs_alias_import(self):
+        Project.objects.create(
+            organization=Organization.get(),
+            name='Project Phoenix',
+        )
         records = [{
             'project': 'Project Phoenix',
             'date': '2026-11-02',

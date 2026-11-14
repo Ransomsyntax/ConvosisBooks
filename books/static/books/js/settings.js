@@ -13,7 +13,6 @@ const SETTINGS_MENU_STRUCTURE = [
         icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 21v-4h6v4M7 3h10l2 4H5l2-4z"/></svg>',
         items: [
           { key: 'profile', label: 'Profile', hash: '#/settings/profile' },
-          { key: 'business-locations', label: 'Business Locations', hash: '#/settings/business-locations' },
           { key: 'branding', label: 'Branding', hash: '#/settings/branding' },
           { key: 'ai', label: 'AI Control Center', hash: '#/settings/ai' },
           { key: 'subscription-billing', label: 'Manage Subscription', hash: '#/settings/subscription-billing' },
@@ -58,7 +57,7 @@ const SETTINGS_MENU_STRUCTURE = [
         label: 'Customization',
         icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
         items: [
-          { key: 'number-series', label: 'Transaction Serial Numbers', hash: '#/settings/number-series' },
+          { key: 'number-series', label: 'Transaction Number Series', hash: '#/settings/number-series' },
           { key: 'pdf-templates', label: 'PDF Templates', hash: '#/settings/pdf-templates' },
           { key: 'email-notifications', label: 'Email Notifications', hash: '#/settings/email-notifications' },
           { key: 'sms-notifications', label: 'SMS Notifications', hash: '#/settings/sms-notifications' },
@@ -93,7 +92,6 @@ const SETTINGS_MENU_STRUCTURE = [
         icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h3l2 11h10l2-8H7"/></svg>',
         items: [
           { key: 'sales-invoices', label: 'Invoices', hash: '#/settings/number-series' },
-          { key: 'sales-retainer-series', label: 'Retainer Invoices - Serial Numbers', hash: '#/settings/retainer-number-series' },
           { key: 'sales-quotes', label: 'Quotes', hash: '#/settings/number-series' },
         ]
       },
@@ -183,7 +181,6 @@ async function renderSettingsDashboard(root) {
                 </div>
                 <ul class="settings-cat-list">
                   <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Profile</span></a></li>
-                  <li><a href="#/settings/business-locations" class="settings-link"><span class="link-label">Business Locations</span></a></li>
                   <li><a href="#/settings/branding" class="settings-link"><span class="link-label">Branding</span></a></li>
                   <li><a href="#/settings/ai" class="settings-link"><span class="link-label">AI Control Center</span><span class="pastel-chip chip-sky" style="font-size:10px;margin-left:8px;">Smart</span></a></li>
                   <li><a href="#/settings/subscription-billing" class="settings-link"><span class="link-label">Manage Subscription</span></a></li>
@@ -252,7 +249,7 @@ async function renderSettingsDashboard(root) {
                   <span class="cat-title">Customization</span>
                 </div>
                 <ul class="settings-cat-list">
-                  <li><a href="#/settings/number-series" class="settings-link"><span class="link-label">Transaction Serial Numbers</span></a></li>
+                  <li><a href="#/settings/number-series" class="settings-link"><span class="link-label">Transaction Number Series</span></a></li>
                   <li><a href="#/settings/pdf-templates" class="settings-link"><span class="link-label">PDF Templates</span></a></li>
                   <li><a href="#/settings/email-notifications" class="settings-link"><span class="link-label">Email Notifications</span></a></li>
                   <li><a href="#/settings/sms-notifications" class="settings-link"><span class="link-label">SMS Notifications</span></a></li>
@@ -393,7 +390,6 @@ function getSettingsPageRenderer(key) {
     'users': typeof renderSettingsUsersPage === 'function' ? renderSettingsUsersPage : null,
     'roles': typeof renderSettingsRolesPage === 'function' ? renderSettingsRolesPage : null,
     'profile': typeof renderOrgProfilePage === 'function' ? renderOrgProfilePage : null,
-    'business-locations': typeof renderBusinessLocationsPage === 'function' ? renderBusinessLocationsPage : null,
     'branding': typeof renderBrandingPage === 'function' ? renderBrandingPage : null,
     'ai': typeof renderAiControlCenterPage === 'function' ? renderAiControlCenterPage : null,
     'taxes': typeof renderTaxesPage === 'function' ? renderTaxesPage : null,
@@ -408,7 +404,6 @@ function getSettingsPageRenderer(key) {
     'reminders': typeof renderRemindersPage === 'function' ? renderRemindersPage : null,
     'customer-portal': typeof renderCustomerPortalPage === 'function' ? renderCustomerPortalPage : null,
     'number-series': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
-    'retainer-number-series': typeof renderRetainerNumberSeriesPage === 'function' ? renderRetainerNumberSeriesPage : null,
     'pdf-templates': typeof renderPdfTemplatesPage === 'function' ? renderPdfTemplatesPage : null,
     'email-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
     'sms-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
@@ -2572,148 +2567,10 @@ async function renderDirectTaxesPage(container) {
 // 9. TRANSACTION NUMBER SERIES (Section 9)
 // =========================================================================
 
-async function renderBusinessLocationsPage(container) {
-  const [data, warehouseData] = await Promise.all([
-    api('/settings/locations/'),
-    api('/lookup/warehouses/')
-  ]);
-  const locations = data.locations || [];
-  const warehouses = warehouseData || [];
-
-  container.innerHTML = `
-    <div class="settings-page-header">
-      <div class="settings-page-header-left">
-        <h1>Business Locations</h1>
-        <p class="sub">Manage organization locations and their GSTIN details for Retainer Invoices.</p>
-      </div>
-      <div class="settings-page-header-right">
-        <button type="button" class="btn-primary" id="btnAddBusinessLocation">+ Add Location</button>
-      </div>
-    </div>
-    <div class="settings-table-card">
-      <table class="settings-data-table">
-        <thead><tr><th>LOCATION</th><th>GSTIN</th><th>STATE / CITY</th><th>WAREHOUSES</th><th>STATUS</th><th style="text-align:right;">ACTION</th></tr></thead>
-        <tbody>
-          ${locations.map(location => `
-            <tr>
-              <td><b>${esc(location.name)}</b>${location.is_default ? '<div class="sub">Default</div>' : ''}</td>
-              <td>${esc(location.gstin || '—')}</td>
-              <td>${esc([location.state, location.city].filter(Boolean).join(', ') || '—')}</td>
-              <td>${esc((location.warehouses || []).map(warehouse => warehouse.name).join(', ') || '—')}</td>
-              <td>${location.active ? 'Active' : 'Inactive'}</td>
-              <td style="text-align:right;white-space:nowrap;">
-                <button type="button" class="btn-table-action" data-edit-business-location="${location.id}">Configure</button>
-                <button type="button" class="btn-table-action" data-toggle-business-location="${location.id}">${location.active ? 'Deactivate' : 'Activate'}</button>
-              </td>
-            </tr>
-          `).join('') || '<tr><td colspan="6" class="sub" style="text-align:center;padding:18px;">No business locations configured.</td></tr>'}
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  container.querySelector('#btnAddBusinessLocation')?.addEventListener('click', () => {
-    openBusinessLocationModal(null, warehouses, () => renderBusinessLocationsPage(container));
-  });
-  container.querySelectorAll('[data-edit-business-location]').forEach(button => {
-    button.addEventListener('click', () => {
-      const location = locations.find(item => String(item.id) === button.dataset.editBusinessLocation);
-      if (location) openBusinessLocationModal(location, warehouses, () => renderBusinessLocationsPage(container));
-    });
-  });
-  container.querySelectorAll('[data-toggle-business-location]').forEach(button => {
-    button.addEventListener('click', async () => {
-      const location = locations.find(item => String(item.id) === button.dataset.toggleBusinessLocation);
-      if (!location) return;
-      const active = !location.active;
-      if (!confirm(`${active ? 'Activate' : 'Deactivate'} ${location.name}?`)) return;
-      try {
-        await api(`/settings/locations/${location.id}/`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            name: location.name, gstin: location.gstin, address: location.address,
-            city: location.city, state: location.state, pincode: location.pincode,
-            active, is_default: active && location.is_default,
-            warehouse_ids: (location.warehouses || []).map(warehouse => warehouse.id)
-          })
-        });
-        toast(`Business location ${active ? 'activated' : 'deactivated'}.`, 'success');
-        await renderBusinessLocationsPage(container);
-      } catch (error) {
-        toast(error.message || 'Could not update the business location.', 'error');
-      }
-    });
-  });
-}
-
-function openBusinessLocationModal(location, warehouses, onSaved) {
-  const item = location || {};
-  const selectedWarehouseIds = new Set((item.warehouses || []).map(warehouse => String(warehouse.id)));
-  const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
-  modal.innerHTML = `
-    <div class="modal-box" style="max-width:680px;">
-      <div class="modal-header">
-        <h3>${location ? 'Configure' : 'Add'} Business Location</h3>
-        <button type="button" class="modal-close-btn" data-close-location>✕</button>
-      </div>
-      <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <label class="form-group">Location Name*<input class="form-control" id="blName" maxlength="120" value="${esc(item.name || '')}" required></label>
-        <label class="form-group">GSTIN<input class="form-control" id="blGstin" maxlength="15" value="${esc(item.gstin || '')}"></label>
-        <label class="form-group">City<input class="form-control" id="blCity" maxlength="100" value="${esc(item.city || '')}"></label>
-        <label class="form-group">State<input class="form-control" id="blState" maxlength="60" value="${esc(item.state || '')}"></label>
-        <label class="form-group">PIN Code<input class="form-control" id="blPincode" maxlength="20" value="${esc(item.pincode || '')}"></label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="blDefault" type="checkbox" ${item.is_default ? 'checked' : ''}>Default business location</label>
-        <label class="form-group" style="grid-column:1/-1;">Address<textarea class="form-control" id="blAddress" rows="3" maxlength="4000">${esc(item.address || '')}</textarea></label>
-        <label class="form-group" style="grid-column:1/-1;">Associated Warehouses
-          <select class="form-control" id="blWarehouses" multiple size="5">
-            ${warehouses.map(warehouse => `<option value="${warehouse.id}" ${selectedWarehouseIds.has(String(warehouse.id)) ? 'selected' : ''}>${esc(warehouse.code)} - ${esc(warehouse.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="blActive" type="checkbox" ${item.active !== false ? 'checked' : ''}>Active</label>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn-secondary" data-close-location>Cancel</button>
-        <button type="button" class="btn-primary" id="btnSaveBusinessLocation">Save Location</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-  modal.querySelectorAll('[data-close-location]').forEach(button => button.addEventListener('click', () => modal.remove()));
-  modal.querySelector('#btnSaveBusinessLocation').addEventListener('click', async event => {
-    const saveButton = event.currentTarget;
-    const active = modal.querySelector('#blActive').checked;
-    const payload = {
-      name: modal.querySelector('#blName').value.trim(),
-      gstin: modal.querySelector('#blGstin').value.trim().toUpperCase(),
-      address: modal.querySelector('#blAddress').value.trim(),
-      city: modal.querySelector('#blCity').value.trim(),
-      state: modal.querySelector('#blState').value.trim(),
-      pincode: modal.querySelector('#blPincode').value.trim(),
-      active,
-      is_default: active && modal.querySelector('#blDefault').checked,
-      warehouse_ids: Array.from(modal.querySelector('#blWarehouses').selectedOptions).map(option => Number(option.value))
-    };
-    try {
-      saveButton.disabled = true;
-      await api(location ? `/settings/locations/${location.id}/` : '/settings/locations/', {
-        method: location ? 'PUT' : 'POST',
-        body: JSON.stringify(payload)
-      });
-      modal.remove();
-      toast('Business location saved.', 'success');
-      await onSaved();
-    } catch (error) {
-      toast(error.message || 'Could not save the business location.', 'error');
-      saveButton.disabled = false;
-    }
-  });
-}
-
-async function renderNumberSeriesPage(container, retainerOnly = false) {
+async function renderNumberSeriesPage(container) {
   const [data, configuredData] = await Promise.all([
-    retainerOnly ? Promise.resolve({ series: [] }) : api('/settings/number-series/'),
-    api(retainerOnly ? '/settings/retainer-number-series/' : '/settings/number-series/configured/')
+    api('/settings/number-series/'),
+    api('/settings/number-series/configured/')
   ]);
   const series = data.series || [];
   const configuredSeries = configuredData.series || [];
@@ -2721,11 +2578,11 @@ async function renderNumberSeriesPage(container, retainerOnly = false) {
   container.innerHTML = `
     <div class="settings-page-header">
       <div class="settings-page-header-left">
-        <h1>${retainerOnly ? 'Retainer Invoice Serial Numbers' : 'Transaction Serial Numbers'}</h1>
+        <h1>Transaction Number Series</h1>
       </div>
     </div>
 
-    ${retainerOnly ? '' : `<div class="settings-table-card">
+    <div class="settings-table-card">
       <table class="settings-data-table">
         <thead>
           <tr>
@@ -2754,14 +2611,14 @@ async function renderNumberSeriesPage(container, retainerOnly = false) {
           `).join('')}
         </tbody>
       </table>
-    </div>`}
+    </div>
     <div class="settings-page-header" style="margin-top:24px;">
       <div class="settings-page-header-left">
-        <h2>${retainerOnly ? 'Retainer Invoice Serial Number Series' : 'Independent Serial Number Series'}</h2>
-        <p class="sub">${retainerOnly ? 'Configure a serial number sequence for each customer type and business location.' : 'Add customer-, branch-, location-, GSTIN-, or financial-year-specific serial number sequences. Existing numbering preferences remain available above.'}</p>
+        <h2>Independent Numbering Series</h2>
+        <p class="sub">Add customer-, branch-, location-, GSTIN-, or financial-year-specific sequences. Existing numbering preferences remain available above.</p>
       </div>
       <div class="settings-page-header-right">
-        <button type="button" class="btn-primary" id="btnAddDocumentNumberSeries">+ Add Serial Number Series</button>
+        <button type="button" class="btn-primary" id="btnAddDocumentNumberSeries">+ Add Series</button>
       </div>
     </div>
     <div class="settings-table-card">
@@ -2781,7 +2638,7 @@ async function renderNumberSeriesPage(container, retainerOnly = false) {
         <tbody>
           ${configuredSeries.map(s => `
             <tr>
-              <td><b>${esc(s.name)}</b>${s.is_default ? '<div class="sub">Default</div>' : ''}<div class="sub">${esc(s.document_type.replace(/_/g, ' '))}</div></td>
+              <td><b>${esc(s.name)}</b><div class="sub">${esc(s.document_type.replace(/_/g, ' '))}</div></td>
               <td>${esc(s.customer_type || 'Any')}${s.branch ? `<div class="sub">${esc(s.branch)}</div>` : ''}</td>
               <td>${esc(s.location || 'Any')}${s.gstin ? `<div class="sub">${esc(s.gstin)}</div>` : ''}</td>
               <td><code>${esc(s.prefix + (s.separator || '') + '…')}</code></td>
@@ -2793,77 +2650,46 @@ async function renderNumberSeriesPage(container, retainerOnly = false) {
                 ${s.active ? `<button type="button" class="btn-table-action" data-deactivate-document-number-series="${s.id}">Deactivate</button>` : ''}
               </td>
             </tr>
-          `).join('') || '<tr><td colspan="8" class="sub" style="text-align:center;padding:18px;">No independent serial number series configured. Existing numbering settings remain active.</td></tr>'}
+          `).join('') || '<tr><td colspan="8" class="sub" style="text-align:center;padding:18px;">No independent numbering series configured. Existing numbering settings remain active.</td></tr>'}
         </tbody>
       </table>
     </div>
   `;
 
-  container.querySelector('#btnAddDocumentNumberSeries')?.addEventListener('click', () => openDocumentNumberSeriesModal(null, retainerOnly));
+  container.querySelector('#btnAddDocumentNumberSeries')?.addEventListener('click', () => openDocumentNumberSeriesModal());
   container.querySelectorAll('[data-edit-document-number-series]').forEach(button => {
     button.addEventListener('click', () => {
       const selected = configuredSeries.find(item => String(item.id) === button.dataset.editDocumentNumberSeries);
-      if (selected) openDocumentNumberSeriesModal(selected, retainerOnly);
+      if (selected) openDocumentNumberSeriesModal(selected);
     });
   });
   container.querySelectorAll('[data-deactivate-document-number-series]').forEach(button => {
     button.addEventListener('click', async () => {
-      if (!(await confirmBox({
-        title: 'Deactivate serial number series?',
-        message: 'Existing document numbers and sequence history will remain unchanged.',
-        okText: 'Deactivate',
-        danger: true
-      }))) return;
+      if (!confirm('Deactivate this numbering series? Existing document numbers will remain unchanged.')) return;
       try {
-        const endpoint = retainerOnly ? '/settings/retainer-number-series/' : '/settings/number-series/configured/';
-        await api(`${endpoint}${button.dataset.deactivateDocumentNumberSeries}/`, { method: 'DELETE' });
-        toast('Serial number series deactivated.', 'ok');
-        await renderNumberSeriesPage(container, retainerOnly);
+        await api(`/settings/number-series/configured/${button.dataset.deactivateDocumentNumberSeries}/`, { method: 'DELETE' });
+        toast('Numbering series deactivated.', 'success');
+        await renderNumberSeriesPage(container);
       } catch (err) {
-        toast(err.message || 'Failed to deactivate serial number series.', 'err');
+        toast(err.message || 'Failed to deactivate numbering series.', 'error');
       }
     });
   });
 }
 
-function renderRetainerNumberSeriesPage(container) {
-  return renderNumberSeriesPage(container, true);
-}
-
-async function openDocumentNumberSeriesModal(series = null, retainerOnly = false) {
-  if (document.querySelector('.modal-backdrop, .mo')) return;
+function openDocumentNumberSeriesModal(series = null) {
   const item = series || {};
-  let locations = [];
-  if (retainerOnly) {
-    try {
-      locations = (await api('/settings/locations/')).locations || [];
-    } catch (error) {
-      toast(error.message || 'Could not load business locations.', 'err');
-      return;
-    }
-  }
-  const availableLocations = locations.filter(location =>
-    location.active || String(item.business_location_id || '') === String(location.id)
-  );
-  const locationOptions = availableLocations.map(location => `
-    <option value="${location.id}" data-name="${esc(location.name)}" data-gstin="${esc(location.gstin || '')}"
-      ${String(item.business_location_id || '') === String(location.id) ? 'selected' : ''}>
-      ${esc(location.name)}${location.gstin ? ` - ${esc(location.gstin)}` : ''}
-    </option>
-  `).join('');
-  const selectedLocation = locations.find(location => String(location.id) === String(item.business_location_id));
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;" role="dialog" aria-modal="true" aria-labelledby="documentNumberSeriesTitle" tabindex="-1">
+    <div class="modal-box" style="max-width:720px;">
       <div class="modal-header">
-        <h3 id="documentNumberSeriesTitle">${series ? 'Configure' : 'Add'} Serial Number Series</h3>
+        <h3>${series ? 'Configure' : 'Add'} Numbering Series</h3>
         <button type="button" class="modal-close-btn" data-close-series>✕</button>
       </div>
-      <div class="modal-body number-series-modal-body">
-        <div class="series-form-error" data-series-form-error role="alert" hidden></div>
-        <label class="form-group">Series Name*<input class="form-control" id="nsName" maxlength="120" value="${esc(item.name || '')}" required><span class="series-field-error" data-field-error="name" role="alert" hidden></span></label>
-        ${retainerOnly ? '<input type="hidden" id="nsDocumentType" value="retainer_invoices">' : `<label class="form-group">Document Type*
+      <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <label class="form-group">Series Name*<input class="form-control" id="nsName" maxlength="120" value="${esc(item.name || '')}" required></label>
+        <label class="form-group">Document Type*
           <select class="form-control" id="nsDocumentType" ${series ? 'disabled' : ''}>
             ${[
               ['invoices','Invoice'],['retainer_invoices','Retainer Invoice'],['recurring_invoices','Recurring Invoice'],
@@ -2872,229 +2698,49 @@ async function openDocumentNumberSeriesModal(series = null, retainerOnly = false
               ['expenses','Expense'],['debit_notes','Debit Note']
             ].map(([value,label]) => `<option value="${value}" ${item.document_type === value ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
-        </label>`}
+        </label>
         <label class="form-group">Customer Type
-          <select class="form-control" id="nsCustomerType" ${retainerOnly ? 'required' : ''}>
-            ${retainerOnly ? '' : `<option value="" ${!item.customer_type ? 'selected' : ''}>Any</option>`}
+          <select class="form-control" id="nsCustomerType">
+            <option value="" ${!item.customer_type ? 'selected' : ''}>Any</option>
             <option value="b2b" ${item.customer_type === 'b2b' ? 'selected' : ''}>B2B</option>
             <option value="b2c" ${item.customer_type === 'b2c' ? 'selected' : ''}>B2C</option>
           </select>
-          <span class="series-field-error" data-field-error="customer_type" role="alert" hidden></span>
         </label>
-        ${retainerOnly ? '' : `<label class="form-group">Branch<input class="form-control" id="nsBranch" maxlength="120" value="${esc(item.branch || '')}"></label>`}
-        ${retainerOnly ? `<label class="form-group">Business Location*
-          <select class="form-control" id="nsBusinessLocation" required>
-            <option value="">Select a business location</option>${locationOptions}
-            ${item.business_location_id && !selectedLocation ? `<option value="${item.business_location_id}" selected>${esc(item.location || 'Inactive location')}</option>` : ''}
-          </select>
-          <span class="series-field-error" data-field-error="business_location" role="alert" hidden></span>
-        </label>` : `<label class="form-group">Business Location<input class="form-control" id="nsLocation" maxlength="120" value="${esc(item.location || '')}"></label>`}
-        <label class="form-group">GSTIN<input class="form-control" id="nsGstin" maxlength="15" value="${esc(retainerOnly ? (selectedLocation?.gstin || item.gstin || '') : (item.gstin || ''))}" ${retainerOnly ? 'readonly' : ''}></label>
+        <label class="form-group">Branch<input class="form-control" id="nsBranch" maxlength="120" value="${esc(item.branch || '')}"></label>
+        <label class="form-group">Business Location<input class="form-control" id="nsLocation" maxlength="120" value="${esc(item.location || '')}"></label>
+        <label class="form-group">GSTIN<input class="form-control" id="nsGstin" maxlength="15" value="${esc(item.gstin || '')}"></label>
         <label class="form-group">Prefix / Template*
-          <input class="form-control" id="nsPrefix" maxlength="100" value="${esc(item.prefix || '')}" placeholder="${retainerOnly ? '${ORG}/RET/${FY}' : '${ORG}/INV/${FY}'}" required>
-          <span class="series-field-error" data-field-error="prefix" role="alert" hidden></span>
+          <input class="form-control" id="nsPrefix" maxlength="100" value="${esc(item.prefix || '')}" placeholder="\${ORG}/INV/\${FY}">
         </label>
         <label class="form-group">Separator
           <select class="form-control" id="nsSeparator">${['/','-','.','_'].map(value => `<option value="${value}" ${(item.separator || '/') === value ? 'selected' : ''}>${value === '/' ? 'Slash /' : value}</option>`).join('')}</select>
         </label>
-        <label class="form-group">Starting Number<input class="form-control" id="nsStartingNumber" type="number" min="1" value="${item.starting_number || 1}" required><span class="series-field-error" data-field-error="starting_number" role="alert" hidden></span></label>
-        <label class="form-group">Next Number<input class="form-control" id="nsNextNumber" type="number" min="1" value="${item.next_number || 1}" required><span class="series-field-error" data-field-error="next_number" role="alert" hidden></span></label>
-        <label class="form-group">Number Padding<input class="form-control" id="nsPadding" type="number" min="1" max="12" value="${item.padding || 5}" required><span class="series-field-error" data-field-error="padding" role="alert" hidden></span></label>
-        <label class="form-group">Financial Year (YY-YY; blank = all)<input class="form-control" id="nsFinancialYear" maxlength="5" value="${esc(item.financial_year || '')}" placeholder="26-27"><span class="series-field-error" data-field-error="financial_year" role="alert" hidden></span></label>
+        <label class="form-group">Starting Number<input class="form-control" id="nsStartingNumber" type="number" min="1" value="${item.starting_number || 1}"></label>
+        <label class="form-group">Next Number<input class="form-control" id="nsNextNumber" type="number" min="1" value="${item.next_number || 1}"></label>
+        <label class="form-group">Number Padding<input class="form-control" id="nsPadding" type="number" min="1" max="12" value="${item.padding || 5}"></label>
+        <label class="form-group">Financial Year (YY-YY; blank = all)<input class="form-control" id="nsFinancialYear" maxlength="5" value="${esc(item.financial_year || '')}" placeholder="26-27"></label>
         <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsResetAnnually" type="checkbox" ${item.reset_annually !== false ? 'checked' : ''}>Reset sequence annually</label>
         <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsActive" type="checkbox" ${item.active !== false ? 'checked' : ''}>Active</label>
         <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsGstCompliant" type="checkbox" ${item.gst_compliant ? 'checked' : ''}>Enforce GST invoice serial format (max 16 characters)</label>
         <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsManualSelection" type="checkbox" ${item.allow_manual_selection ? 'checked' : ''}>Permit admin-only manual series selection</label>
-        ${retainerOnly ? `<label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsDefault" type="checkbox" ${item.is_default ? 'checked' : ''}>Default for matching customer type and location</label>` : ''}
         ${series ? `<div class="sub" style="grid-column:1/-1;">Documents allocated: ${item.document_count}; cancelled: ${item.cancelled_count}. Existing numbers and historical sequence counters are retained.</div>` : ''}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-secondary" data-close-series>Cancel</button>
-        <button type="button" class="btn-primary" id="btnSaveDocumentNumberSeries">Save Serial Number Series</button>
+        <button type="button" class="btn-primary" id="btnSaveDocumentNumberSeries">Save Series</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
-  document.body.classList.add('modal-open');
-  const closeModal = () => {
-    modal.remove();
-    document.body.classList.remove('modal-open');
-    document.removeEventListener('keydown', onModalKeydown);
-    window.removeEventListener('hashchange', onModalNavigation);
-    window.removeEventListener('popstate', onModalNavigation);
-  };
-  const onModalKeydown = event => {
-    if (event.key === 'Escape') {
-      closeModal();
-      return;
-    }
-    if (event.key === 'Tab') {
-      const focusable = Array.from(modal.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-  };
-  const onModalNavigation = () => closeModal();
-  document.addEventListener('keydown', onModalKeydown);
-  window.addEventListener('hashchange', onModalNavigation);
-  window.addEventListener('popstate', onModalNavigation);
-  modal.addEventListener('click', event => {
-    if (event.target === modal) closeModal();
-  });
-  modal.querySelectorAll('[data-close-series]').forEach(button => button.addEventListener('click', closeModal));
-
-  const showFieldError = (fieldName, message) => {
-    const error = modal.querySelector(`[data-field-error="${fieldName}"]`);
-    if (!error) return false;
-    error.textContent = message;
-    error.hidden = false;
-    const control = {
-      name: '#nsName',
-      customer_type: '#nsCustomerType',
-      business_location: '#nsBusinessLocation',
-      prefix: '#nsPrefix',
-      starting_number: '#nsStartingNumber',
-      next_number: '#nsNextNumber',
-      padding: '#nsPadding',
-      financial_year: '#nsFinancialYear'
-    }[fieldName];
-    if (control) modal.querySelector(control).setAttribute('aria-invalid', 'true');
-    return true;
-  };
-  const clearFieldError = fieldName => {
-    const error = modal.querySelector(`[data-field-error="${fieldName}"]`);
-    if (error) {
-      error.textContent = '';
-      error.hidden = true;
-    }
-    const control = {
-      name: '#nsName',
-      customer_type: '#nsCustomerType',
-      business_location: '#nsBusinessLocation',
-      prefix: '#nsPrefix',
-      starting_number: '#nsStartingNumber',
-      next_number: '#nsNextNumber',
-      padding: '#nsPadding',
-      financial_year: '#nsFinancialYear'
-    }[fieldName];
-    if (control) modal.querySelector(control).removeAttribute('aria-invalid');
-  };
-  const clearFormErrors = () => {
-    modal.querySelectorAll('[data-field-error]').forEach(error => {
-      error.textContent = '';
-      error.hidden = true;
-    });
-    modal.querySelectorAll('[aria-invalid="true"]').forEach(control => control.removeAttribute('aria-invalid'));
-    const formError = modal.querySelector('[data-series-form-error]');
-    formError.textContent = '';
-    formError.hidden = true;
-  };
-  const formError = modal.querySelector('[data-series-form-error]');
-  const showFormError = message => {
-    formError.textContent = message;
-    formError.hidden = false;
-  };
-
-  const fieldForControl = {
-    nsName: 'name',
-    nsCustomerType: 'customer_type',
-    nsBusinessLocation: 'business_location',
-    nsPrefix: 'prefix',
-    nsStartingNumber: 'starting_number',
-    nsNextNumber: 'next_number',
-    nsPadding: 'padding',
-    nsFinancialYear: 'financial_year'
-  };
-  modal.querySelectorAll('input, select').forEach(control => {
-    const fieldName = fieldForControl[control.id];
-    if (!fieldName) return;
-    ['input', 'change'].forEach(eventName => control.addEventListener(eventName, () => {
-      clearFieldError(fieldName);
-      formError.textContent = '';
-      formError.hidden = true;
-    }));
-  });
-  modal.querySelector('#nsBusinessLocation')?.addEventListener('change', event => {
-    const option = event.currentTarget.selectedOptions[0];
-    modal.querySelector('#nsGstin').value = option?.dataset.gstin || '';
-    clearFieldError('business_location');
-  });
-  modal.querySelector('.modal-box').focus();
-
-  const validateSeries = () => {
-    clearFormErrors();
-    const name = modal.querySelector('#nsName').value.trim();
-    const customerType = modal.querySelector('#nsCustomerType').value;
-    const businessLocationSelect = modal.querySelector('#nsBusinessLocation');
-    const selectedLocationOption = businessLocationSelect?.selectedOptions[0];
-    const prefix = modal.querySelector('#nsPrefix').value.trim();
-    const startingValue = modal.querySelector('#nsStartingNumber').value;
-    const nextValue = modal.querySelector('#nsNextNumber').value;
-    const paddingValue = modal.querySelector('#nsPadding').value;
-    const financialYear = modal.querySelector('#nsFinancialYear').value.trim();
-    const errors = [];
-
-    if (!name) errors.push(['name', 'Enter a series name.']);
-    if (retainerOnly && !customerType) errors.push(['customer_type', 'Choose B2B or B2C.']);
-    if (retainerOnly && (!businessLocationSelect.value || !selectedLocationOption?.dataset.name)) {
-      errors.push(['business_location', 'Choose a business location for this retainer invoice series.']);
-    }
-    if (!prefix) errors.push(['prefix', 'Enter a prefix or template.']);
-    if (!Number.isInteger(Number(startingValue)) || Number(startingValue) < 1) {
-      errors.push(['starting_number', 'Starting number must be a positive whole number.']);
-    }
-    if (!Number.isInteger(Number(nextValue)) || Number(nextValue) < 1) {
-      errors.push(['next_number', 'Next number must be a positive whole number.']);
-    } else if (Number(nextValue) < Number(startingValue)) {
-      errors.push(['next_number', 'Next number cannot be lower than the starting number.']);
-    }
-    if (!Number.isInteger(Number(paddingValue)) || Number(paddingValue) < 1 || Number(paddingValue) > 12) {
-      errors.push(['padding', 'Number padding must be between 1 and 12.']);
-    }
-    if (financialYear && !/^\d{2}-\d{2}$/.test(financialYear)) {
-      errors.push(['financial_year', 'Use YY-YY format or leave the financial year blank.']);
-    }
-
-    errors.forEach(([fieldName, message]) => showFieldError(fieldName, message));
-    if (errors.length) {
-      const fieldControls = {
-        name: '#nsName',
-        customer_type: '#nsCustomerType',
-        business_location: '#nsBusinessLocation',
-        prefix: '#nsPrefix',
-        starting_number: '#nsStartingNumber',
-        next_number: '#nsNextNumber',
-        padding: '#nsPadding',
-        financial_year: '#nsFinancialYear'
-      };
-      modal.querySelector(fieldControls[errors[0][0]])?.focus();
-      return false;
-    }
-    return true;
-  };
-
+  modal.querySelectorAll('[data-close-series]').forEach(button => button.addEventListener('click', () => modal.remove()));
   modal.querySelector('#btnSaveDocumentNumberSeries').addEventListener('click', async event => {
     const saveButton = event.currentTarget;
-    if (!validateSeries()) return;
-    const businessLocationSelect = modal.querySelector('#nsBusinessLocation');
-    const selectedLocationOption = businessLocationSelect?.selectedOptions[0];
     const payload = {
       name: modal.querySelector('#nsName').value.trim(),
       document_type: modal.querySelector('#nsDocumentType').value,
       customer_type: modal.querySelector('#nsCustomerType').value,
-      branch: retainerOnly ? '' : modal.querySelector('#nsBranch').value.trim(),
-      location: retainerOnly ? (selectedLocationOption?.dataset.name || item.location || '') : modal.querySelector('#nsLocation').value.trim(),
-      business_location_id: retainerOnly ? (businessLocationSelect?.value || null) : null,
+      branch: modal.querySelector('#nsBranch').value.trim(),
+      location: modal.querySelector('#nsLocation').value.trim(),
       gstin: modal.querySelector('#nsGstin').value.trim().toUpperCase(),
       prefix: modal.querySelector('#nsPrefix').value.trim(),
       separator: modal.querySelector('#nsSeparator').value,
@@ -3105,46 +2751,20 @@ async function openDocumentNumberSeriesModal(series = null, retainerOnly = false
       reset_annually: modal.querySelector('#nsResetAnnually').checked,
       active: modal.querySelector('#nsActive').checked,
       gst_compliant: modal.querySelector('#nsGstCompliant').checked,
-      allow_manual_selection: modal.querySelector('#nsManualSelection').checked,
-      is_default: retainerOnly ? modal.querySelector('#nsDefault').checked : false
+      allow_manual_selection: modal.querySelector('#nsManualSelection').checked
     };
-    saveButton.disabled = true;
     try {
-      const endpoint = retainerOnly ? '/settings/retainer-number-series/' : '/settings/number-series/configured/';
-      await api(series ? `${endpoint}${series.id}/` : endpoint, {
+      saveButton.disabled = true;
+      await api(series ? `/settings/number-series/configured/${series.id}/` : '/settings/number-series/configured/', {
         method: series ? 'PUT' : 'POST',
         body: JSON.stringify(payload)
       });
+      modal.remove();
+      toast('Numbering series saved.', 'success');
+      await renderNumberSeriesPage($('#settingsMainPane'));
     } catch (err) {
+      toast(err.message || 'Failed to save numbering series.', 'error');
       saveButton.disabled = false;
-      const firstServerError = Object.entries(err.errors || {})[0];
-      const fieldAliases = {
-        business_location_id: 'business_location',
-        customer_type: 'customer_type',
-        starting_number: 'starting_number',
-        next_number: 'next_number',
-        financial_year: 'financial_year',
-        name: 'name',
-        prefix: 'prefix'
-      };
-      const serverField = firstServerError && fieldAliases[firstServerError[0]];
-      if (serverField) {
-        showFieldError(serverField, String(firstServerError[1]));
-      } else if (/business location|location/i.test(err.message || '')) {
-        showFieldError('business_location', err.message);
-      } else {
-        showFormError(err.message || 'Failed to save serial number series.');
-      }
-      const firstError = modal.querySelector('[aria-invalid="true"]');
-      if (firstError) firstError.focus();
-      return;
-    }
-    closeModal();
-    toast('Serial number series saved.', 'ok');
-    try {
-      await renderNumberSeriesPage($('#settingsMainPane'), retainerOnly);
-    } catch (err) {
-      toast(err.message || 'Serial number series was saved, but the list could not be refreshed.', 'err');
     }
   });
 }
@@ -3155,7 +2775,7 @@ function openEditNumberSeriesModal(moduleKey, moduleLabel, currentPrefix, curren
   modal.innerHTML = `
     <div class="modal-box" style="max-width:440px;">
       <div class="modal-header">
-        <h3>Configure Serial Numbers: ${esc(moduleLabel)}</h3>
+        <h3>Configure Numbering: ${esc(moduleLabel)}</h3>
         <button type="button" class="modal-close-btn" onclick="this.closest('.modal-backdrop').remove()">✕</button>
       </div>
       <div class="modal-body">
@@ -3185,11 +2805,11 @@ function openEditNumberSeriesModal(moduleKey, moduleLabel, currentPrefix, curren
         method: 'POST',
         body: JSON.stringify({ module: moduleKey, prefix, next_sequence })
       });
-      toast(`Serial numbers for ${moduleLabel} updated.`, 'success');
+      toast(`Number series for ${moduleLabel} updated.`, 'success');
       modal.remove();
       renderNumberSeriesPage($('#settingsMainPane'));
     } catch (err) {
-      toast(err.message || 'Failed to update serial numbers.', 'error');
+      toast(err.message || 'Failed to update numbering series.', 'error');
     }
   });
 }

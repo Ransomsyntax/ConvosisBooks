@@ -1378,28 +1378,19 @@ tr:hover td {
   pointer-events: none;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .user-menu-wrap:hover #umm.pop {
-    opacity: 1 !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-    transform: translateY(0) scale(1) !important;
-  }
-}
-
-.user-menu-wrap.menu-dismissed:hover #umm.pop {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  transform: translateY(-8px) scale(0.96) !important;
-}
-
 .user-menu-wrap.open #umm.pop,
 #umm.pop.on {
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
   transform: translateY(0) scale(1) !important;
+}
+
+.user-menu-wrap.menu-dismissed #umm.pop {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(-8px) scale(0.96) !important;
 }
 
 body.modal-open #convobot-launcher,
@@ -4284,4 +4275,44 @@ th.l, td.l, table th.l, table td.l {
 #btn-ret-sign:focus-visible {
   outline: 2px solid #3b82f6 !important;
   outline-offset: 1px !important;
+}
+
+.sig-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+.sig-meta-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
+.sig-meta-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px !important;
+}
+.sig-meta-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13px !important;
+  box-sizing: border-box;
+}
+.md:has(.sig-modal-container),
+.md.wide:has(.sig-modal-container) {
+  max-width: 760px;
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .sig-meta-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 12px !important;
+  }
 }

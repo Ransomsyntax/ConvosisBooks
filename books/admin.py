@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DefaultUserAdmin
-from django.contrib.auth.models import User, Group
+from django.contrib.auth.models import User
+from django.apps import apps
+from django.http import HttpResponseNotFound
 
 from . import models
 
@@ -9,31 +11,42 @@ def _platform_admin_permission(request):
 
 
 admin.site.has_permission = _platform_admin_permission
+admin.site.index_template = 'admin/platform_index.html'
+
+
+class RestrictedPlatformModelAdmin(admin.ModelAdmin):
+    safe_object_label = 'Record'
+    change_form_template = 'admin/platform_change_form.html'
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        context = dict(extra_context or {})
+        context.update({'original': self.safe_object_label, 'subtitle': self.safe_object_label})
+        return super().change_view(request, object_id, form_url, context)
+
+    def history_view(self, request, object_id, extra_context=None):
+        return HttpResponseNotFound()
+
 
 # ==============================================================================
 # USER MANAGEMENT & TENANT ROLE INLINE
 # ==============================================================================
 
-class UserProfileInline(admin.StackedInline):
-    model = models.UserProfile
-    can_delete = False
-    verbose_name_plural = 'Tenant Profile & Role'
-    fk_name = 'user'
-    fields = ('user_id_code', 'organization', 'role', 'phone', 'is_locked', 'mfa_enabled')
-    readonly_fields = ('user_id_code',)
-    extra = 0
+class CustomUserAdmin(RestrictedPlatformModelAdmin, DefaultUserAdmin):
+    safe_object_label = 'User account'
+    ordering = ('id',)
+    fieldsets = (
+        (None, {'fields': ('get_user_id', 'email', 'get_user_phone', 'get_subscription_status')}),
+    )
+    list_display = ('get_user_id', 'email', 'get_user_phone', 'get_subscription_status')
+    search_fields = ('email', 'profile__user_id_code')
+    readonly_fields = ('get_user_id', 'get_user_phone', 'get_subscription_status')
+    actions = ()
 
-class CustomUserAdmin(DefaultUserAdmin):
-    inlines = (UserProfileInline,)
-    list_display = ('get_user_id', 'username', 'email', 'get_organization_name', 'get_organization_id', 'get_role', 'is_active', 'is_staff', 'is_superuser')
-    list_filter = ('is_active', 'is_staff', 'is_superuser', 'profile__role', 'profile__organization')
-    search_fields = ('username', 'email', 'first_name', 'last_name', 'profile__user_id_code', 'profile__organization__organization_id', 'profile__organization__name')
-    actions = ('activate_users', 'deactivate_users')
+    def has_add_permission(self, request):
+        return False
 
-    def get_inline_instances(self, request, obj=None):
-        if not obj:
-            return []
-        return super().get_inline_instances(request, obj)
+    def has_delete_permission(self, request, obj=None):
+        return False
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
@@ -51,30 +64,23 @@ class CustomUserAdmin(DefaultUserAdmin):
         profile = getattr(obj, 'profile', None)
         return profile.user_id_code if (profile and profile.user_id_code) else f"USR-{obj.pk:08d}"
 
-    @admin.display(description='Role')
-    def get_role(self, obj):
+    @admin.display(description='Phone')
+    def get_user_phone(self, obj):
         profile = getattr(obj, 'profile', None)
-        return profile.get_role_display() if profile else '—'
+        return profile.phone if profile else '—'
 
-    @admin.display(description='Organization Name')
-    def get_organization_name(self, obj):
+    @admin.display(description='Subscription Status')
+    def get_subscription_status(self, obj):
         profile = getattr(obj, 'profile', None)
-        return profile.organization.name if (profile and profile.organization) else '—'
+        organization = profile.organization if profile else None
+        subscription = _latest_subscription(organization)
+        return subscription.status if subscription else '—'
 
-    @admin.display(description='Organization ID')
-    def get_organization_id(self, obj):
-        profile = getattr(obj, 'profile', None)
-        return profile.organization.organization_id if (profile and profile.organization) else '—'
 
-    @admin.action(description='Activate selected user accounts')
-    def activate_users(self, request, queryset):
-        count = queryset.update(is_active=True)
-        self.message_user(request, f"Activated {count} user account(s).")
-
-    @admin.action(description='Deactivate selected user accounts')
-    def deactivate_users(self, request, queryset):
-        count = queryset.filter(is_superuser=False).update(is_active=False)
-        self.message_user(request, f"Deactivated {count} non-superuser account(s).")
+def _latest_subscription(organization):
+    if not organization:
+        return None
+    return organization.subscriptions.order_by('-created_at', '-pk').first()
 
 try:
     admin.site.unregister(User)
@@ -88,23 +94,29 @@ admin.site.register(User, CustomUserAdmin)
 # ==============================================================================
 
 @admin.register(models.Organization)
-class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ('organization_id', 'name', 'code', 'org_type', 'parent', 'company_id', 'gstin', 'phone', 'email', 'website', 'get_users_count', 'get_subscription_plan', 'status', 'is_active')
-    list_filter = ('org_type', 'status', 'is_active', 'state')
-    search_fields = ('organization_id', 'name', 'code', 'company_id', 'gstin', 'email', 'phone')
+class OrganizationAdmin(RestrictedPlatformModelAdmin):
+    safe_object_label = 'Organization'
+    fields = ('organization_id', 'email', 'phone', 'get_subscription_id', 'get_subscription_status')
+    readonly_fields = ('organization_id', 'get_subscription_id', 'get_subscription_status')
+    list_display = ('organization_id', 'email', 'phone', 'get_subscription_id', 'get_subscription_status')
+    search_fields = ('organization_id', 'email', 'phone')
     ordering = ('id',)
-    readonly_fields = ('organization_id',)
 
-    @admin.display(description='Users Count')
-    def get_users_count(self, obj):
-        return obj.members.count()
+    def has_add_permission(self, request):
+        return False
 
-    @admin.display(description='Purchased Plan')
-    def get_subscription_plan(self, obj):
-        sub = getattr(obj, 'subscription', None)
-        if sub and getattr(sub, 'plan', None):
-            return sub.plan.name
-        return 'Free Plan'
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Subscription ID')
+    def get_subscription_id(self, obj):
+        subscription = _latest_subscription(obj)
+        return subscription.pk if subscription else '—'
+
+    @admin.display(description='Subscription Status')
+    def get_subscription_status(self, obj):
+        subscription = _latest_subscription(obj)
+        return subscription.status if subscription else '—'
 
 
 @admin.register(models.UserProfile)
@@ -461,10 +473,28 @@ class DPDPDataProcessorAdmin(admin.ModelAdmin):
 # ==============================================================================
 
 @admin.register(models.TenantSubscription)
-class TenantSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'organization', 'tier', 'status', 'billing_cycle', 'is_trial', 'record_limit', 'user_seat_limit', 'period_end')
-    list_filter = ('tier', 'status', 'billing_cycle', 'is_trial')
-    search_fields = ('organization__name',)
+class TenantSubscriptionAdmin(RestrictedPlatformModelAdmin):
+    safe_object_label = 'Subscription'
+    fields = ('get_subscription_id', 'get_organization_id', 'status')
+    readonly_fields = fields
+    list_display = fields
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Subscription ID')
+    def get_subscription_id(self, obj):
+        return obj.pk
+
+    @admin.display(description='Organization ID')
+    def get_organization_id(self, obj):
+        return obj.organization.organization_id if obj.organization else '—'
 
 
 @admin.register(models.SubscriptionInvoice)
@@ -487,3 +517,10 @@ class ProjectAdmin(admin.ModelAdmin):
     list_display = ('id', 'organization', 'name', 'code', 'customer', 'status', 'billing_method')
     list_filter = ('status', 'billing_method', 'organization')
     search_fields = ('name', 'code', 'customer__name')
+
+
+# The platform admin is deliberately limited to account and subscription metadata.
+_platform_admin_models = {User, models.Organization, models.TenantSubscription}
+for _registered_model in apps.get_models():
+    if admin.site.is_registered(_registered_model) and _registered_model not in _platform_admin_models:
+        admin.site.unregister(_registered_model)

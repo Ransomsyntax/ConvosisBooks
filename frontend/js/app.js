@@ -7,7 +7,7 @@ const NAV = [
   ['Inventory', 'inventory', ['Inventory Summary', 'Stock Adjustments', 'Stock Transfers', 'Warehouses']],
   ['Sales', 'sales', ['Customers', 'Quotes', 'Sales Orders', 'Invoices', 'Recurring Invoices', 'Retainer Invoices', 'Delivery Challans', 'Payments Received', 'Credit Notes', 'E-Way Bills']],
   ['Purchases', 'purchases', ['Vendors', 'Expenses', 'Purchase Orders', 'Bills', 'Payments Made', 'Vendor Credits']],
-  ['Time Tracking', 'time', ['Projects', 'Timesheets']],
+  ['Time Tracking', 'time', ['Projects', 'Tasks', 'Milestones', 'Timesheets']],
   ['Banking', 'banking', []],
   ['Filing & Compliance', 'filing', ['GST Filing', 'GSTR-1 Summary', 'GSTR-3B Summary', 'Input Tax Credit Summary', 'Tax Liability Summary']],
   ['Accountant', 'accountant', ['Manual Journals', 'Chart of Accounts', 'Transaction Locking', 'Statutory Audit Logs', 'Tenant Administration', 'Security & Compliance']],
@@ -375,8 +375,8 @@ const closePops = () => {
   let timer = null;
 
   wrap.addEventListener('mouseenter', () => {
+    if (wrap.classList.contains('menu-dismissed')) return;
     clearTimeout(timer);
-    wrap.classList.remove('menu-dismissed');
     menu.classList.add('on');
     wrap.classList.add('open');
   });
@@ -397,6 +397,21 @@ document.addEventListener('touchstart', e => {
     closePops();
   }
 }, { passive: true });
+
+document.addEventListener('click', e => {
+  if (e.target.classList && (e.target.classList.contains('modal-backdrop') || e.target.classList.contains('custom-modal-overlay'))) {
+    e.target.remove();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const bds = document.querySelectorAll('.modal-backdrop, .custom-modal-overlay');
+    if (bds.length) {
+      bds[bds.length - 1].remove();
+    }
+  }
+});
 const QC = [
   ['Customer', () => partyForm('customers')],
   ['Vendor', () => partyForm('vendors')],
@@ -512,7 +527,20 @@ document.addEventListener('click', async e => {
     }
     return true;
   };
-  if (t.closest('#btnCloseUserCard')) { closePops(); return; }
+  const closeUserCardBtn = t.closest('#btnCloseUserCard');
+  if (closeUserCardBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const wrap = $('#userMenuWrapper') || $('#um')?.closest('.user-menu-wrap');
+    if (wrap) {
+      wrap.classList.add('menu-dismissed');
+      wrap.classList.remove('open');
+    }
+    const menu = $('#umm');
+    if (menu) menu.classList.remove('on');
+    closePops();
+    return;
+  }
   if (tog('#notifBtn', '#notifPop')) { NotificationCenter.fetch(); return; }
   if (tog('#qc', '#qcm') || tog('#um', '#umm')) return;
 

@@ -1,7 +1,5 @@
 import os
 from pathlib import Path
-import urllib.parse
-import hashlib
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -10,24 +8,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 is_render = bool(os.environ.get('RENDER') or os.environ.get('RENDER_SERVICE_ID') or os.environ.get('RENDER_EXTERNAL_HOSTNAME'))
 default_debug = '0' if is_render else '1'
 DEBUG = os.environ.get('DJANGO_DEBUG', default_debug) == '1'
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-key-change-me')
-if not DEBUG and SECRET_KEY.startswith('dev-only'):
-    fallback_seed = os.environ.get('RENDER_SERVICE_ID', os.environ.get('RENDER_GIT_COMMIT', ''))
-    if fallback_seed:
-        SECRET_KEY = hashlib.sha256(f"render-secret-{fallback_seed}".encode('utf-8')).hexdigest()
-    else:
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '').strip()
+if not SECRET_KEY:
+    if not DEBUG:
         raise ImproperlyConfigured('Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0.')
+    SECRET_KEY = 'dev-only-insecure-key-change-me'
 
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver,convosisbooks.onrender.com,books-d8i1.onrender.com').split(',') if h.strip()]
-if '.onrender.com' not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append('.onrender.com')
 render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', 'https://convosisbooks.onrender.com').split(',') if o.strip()]
-if 'https://*.onrender.com' not in CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS.append('https://*.onrender.com')
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com').split(',') if o.strip()]
 if render_host:
     r_origin = f"https://{render_host}"
     if r_origin not in CSRF_TRUSTED_ORIGINS:
@@ -50,6 +42,8 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'books.middleware.AdminAccessAuditMiddleware',
+    'books.middleware.PlatformSuperuserApiPrivacyMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -149,6 +143,7 @@ LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
@@ -185,7 +180,6 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
-
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

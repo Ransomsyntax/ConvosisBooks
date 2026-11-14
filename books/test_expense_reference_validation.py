@@ -1,16 +1,22 @@
 import json
 
+from django.contrib.auth.models import User
 from django.test import Client
 
 from books.tests import BaseAccountingTestCase
-from books.models import Expense
+from books.models import Expense, UserProfile
 
 
 class ExpenseReferenceValidationTests(BaseAccountingTestCase):
     def setUp(self):
         super().setUp()
         self.client = Client()
-        self.client.force_login(self.admin_user)
+        self.expense_user = User.objects.create_user(username='exp_admin_user', password='TestPassword123!', is_staff=True, is_superuser=False)
+        UserProfile.objects.create(user=self.expense_user, organization=self.org, role=UserProfile.ADMIN)
+        self.client.force_login(self.expense_user)
+        session = self.client.session
+        session['active_org_id'] = self.org.id
+        session.save()
         self.expense_data = {
             'date': '2026-11-11',
             'expense_account': self.gl_exp.pk,
@@ -25,11 +31,11 @@ class ExpenseReferenceValidationTests(BaseAccountingTestCase):
             '/api/expenses/',
             data=json.dumps(payload),
             content_type='application/json',
+            HTTP_X_ORGANIZATION_ID=str(self.org.id),
         )
 
     def test_create_rejects_unsupported_reference_characters(self):
         response = self.create_expense('#@4567665fgbfgtsgvvts')
-
         self.assertEqual(response.status_code, 400)
         self.assertIn('reference', response.json()['errors'])
         self.assertFalse(Expense.objects.filter(reference='#@4567665fgbfgtsgvvts').exists())
@@ -49,6 +55,7 @@ class ExpenseReferenceValidationTests(BaseAccountingTestCase):
             f'/api/expenses/{expense_id}/',
             data=json.dumps({'reference': '#@4567665fgbfgtsgvvts'}),
             content_type='application/json',
+            HTTP_X_ORGANIZATION_ID=str(self.org.id),
         )
 
         self.assertEqual(update_response.status_code, 400)
@@ -66,6 +73,7 @@ class ExpenseReferenceValidationTests(BaseAccountingTestCase):
             f'/api/expenses/{expense_id}/',
             data=json.dumps({'reference': new_reference}),
             content_type='application/json',
+            HTTP_X_ORGANIZATION_ID=str(self.org.id),
         )
 
         self.assertEqual(update_response.status_code, 200)

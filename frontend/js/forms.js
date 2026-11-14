@@ -230,7 +230,7 @@ function confirmBox({ title, message, okText = 'Confirm', danger = false }) {
 }
 
 let uid = 0;
-var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
+var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; const selected = Array.isArray(sel) ? sel.map(String).includes(String(v)) : String(v) === String(sel == null ? '' : sel); return `<option value="${esc(v)}"${selected ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
 function fld(o) {
   const id = 'i' + (++uid), v = o.value == null ? '' : o.value, req = o.req ? ' required aria-required="true"' : '', at = o.attrs || '';
   let ctl;
@@ -743,6 +743,10 @@ function readForm(form) {
     if (!el.name || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
     if (el.type === 'radio') {
       if (el.checked) d[el.name] = el.value;
+      continue;
+    }
+    if (el.tagName === 'SELECT' && el.multiple) {
+      d[el.name] = Array.from(el.selectedOptions, option => option.value);
       continue;
     }
     d[el.name] = el.type === 'checkbox' ? el.checked : el.value;
@@ -1440,7 +1444,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
 
   const m = Modal.open({
     title: `✍️ Digital Signature · ${docTitle}`,
-    wide: false,
+    wide: true,
     body: `
       <div class="sig-modal-container" style="display:flex;flex-direction:column;gap:16px;">
         <div class="sig-mode-tabs" style="display:flex;gap:8px;border-bottom:1px solid var(--bd);padding-bottom:10px;">
@@ -1467,7 +1471,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
             </div>
           </div>
           <div style="background:#fff;border:1px dashed #cbd5e1;border-radius:8px;position:relative;overflow:hidden;touch-action:none;">
-            <canvas id="sig-draw-canvas" width="460" height="150" style="width:100%;height:150px;display:block;cursor:crosshair;"></canvas>
+            <canvas id="sig-draw-canvas" width="600" height="160" style="width:100%;height:160px;display:block;cursor:crosshair;"></canvas>
             <div id="sig-draw-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#94a3b8;font-size:14px;font-style:italic;">
               Draw signature here
             </div>
@@ -1509,16 +1513,16 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
           </div>
         </div>
 
-        <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:12px 14px;border:1px solid var(--bd);">
-          <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
+        <div style="background:var(--surface-glass-subtle);border-radius:8px;padding:14px 16px;border:1px solid var(--bd);">
+          <div style="font-weight:600;font-size:12px;color:var(--tx);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">Signatory Details</div>
           <div class="sig-meta-grid">
             <div class="fg sig-meta-field">
-              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Signer Name</label>
-              <input type="text" class="in sig-meta-input" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name">
+              <label style="font-size:12px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:6px;">Signer Name</label>
+              <input type="text" class="in sig-meta-input" id="sig-meta-name" value="${esc(currentName)}" placeholder="Full Name" style="width:100%;height:40px;box-sizing:border-box;">
             </div>
             <div class="fg sig-meta-field">
-              <label style="font-size:11px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:4px;">Designation / Title</label>
-              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory">
+              <label style="font-size:12px;font-weight:600;color:var(--tx-muted);display:block;margin-bottom:6px;">Designation / Title</label>
+              <input type="text" class="in sig-meta-input" id="sig-meta-title" value="${esc(currentTitle)}" placeholder="e.g. Authorized Signatory" style="width:100%;height:40px;box-sizing:border-box;">
             </div>
           </div>
         </div>
@@ -5387,7 +5391,511 @@ async function recordDocumentPaymentModal(doc, kind = 'invoices', onDone) {
 window.recordDocumentPaymentModal = recordDocumentPaymentModal;
 window.recordInvoicePaymentModal = (inv, onDone) => recordDocumentPaymentModal(inv, 'invoices', onDone);
 
+async function paymentReceivedForm(pre = {}) {
+  const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
+  let customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview;
+  try {
+    [customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview] = await Promise.all([
+      api('lookup/customers/'),
+      api('lookup/bank-accounts/'),
+      api('lookup/business-locations/'),
+      api('/settings/taxes/'),
+      api('custom-fields/?module=payments_received&page_size=100'),
+      payId ? api(`payments-received/${payId}/`) : Promise.resolve(null),
+      payId ? Promise.resolve(null) : api('lookup/next-payment-received-number/'),
+    ]);
+  } catch (error) {
+    toast(`Could not load payment form data: ${error.message}`, 'err');
+    return;
+  }
+  let customers = Array.isArray(customersResponse) ? customersResponse : (customersResponse.results || []);
+  const customFields = Array.isArray(customResponse) ? customResponse : (customResponse.results || []);
+  const data = existing || (typeof pre === 'object' ? pre : {});
+  const customerId = data.customer_id || data.customer || data.party_id || data.party || '';
+  const customer = customers.find(item => String(item.id) === String(customerId));
+  const bankOpts = [
+    ['', 'Select Bank or Cash Account…'],
+    ...bankAccounts.map(item => [
+      item.id,
+      `${item.display_name || item.name}${item.account_type === 'cash' ? ' (Cash)' : ''}`,
+    ]),
+    ['__add_new__', '+ Add New Bank Account…'],
+  ];
+  const stateOptions = GST_STATE_OPTIONS.map(([value, label]) => {
+    const clean = String(value).replace(/^\[\d+\]\s*/, '');
+    return [clean, clean || label.replace(/^\[\d+\]\s*/, '')];
+  });
+  const toState = value => {
+    const clean = String(value || '').replace(/^\[\d+\]\s*/, '').trim().toLowerCase();
+    const match = stateOptions.find(([state]) => state.toLowerCase() === clean);
+    return match ? match[0] : '';
+  };
+  const taxes = (taxResponse.taxes || []).filter(tax =>
+    tax && tax.active !== false && ['Tax Group', 'IGST'].includes(tax.type)
+  );
+  const taxOpts = [
+    ['', 'No Tax'],
+    ...taxes.map(tax => [tax.name, `${tax.name} (${tax.rate}%)`]),
+  ];
+  const paymentTypes = [
+    ['invoice_payment', 'Invoice Payment'],
+    ['customer_advance', 'Customer Advance'],
+  ];
+  const currency = customer && customer.currency ? customer.currency : (APP.org.base_currency || 'INR');
+  const number = data.number || (numberPreview && (numberPreview.next_number || numberPreview.number)) || '';
+  let invoiceList = [];
+  let customerDetail = null;
+  const initialCustomerId = String(customerId || '');
+  let pendingFiles = [];
+  let existingFiles = Array.isArray(data.attachments) ? [...data.attachments] : [];
+  let recipients = [];
+
+  const customFieldHtml = customFields.filter(field => field.active !== false).map(field => {
+    const value = (data.custom_fields_data || {})[field.name] || '';
+    const inputName = `cf__${field.name}`;
+    if (field.field_type === 'select') {
+      const options = String(field.options || '').split(',').map(item => item.trim()).filter(Boolean);
+      return fld({
+        name: inputName, label: field.label, req: field.required,
+        type: 'select', opts: [['', 'Select…'], ...options.map(item => [item, item])], value,
+      });
+    }
+    if (field.field_type === 'checkbox') {
+      return fld({ name: inputName, label: field.label, req: field.required, type: 'checkbox', value: value === true || value === 'true' });
+    }
+    return fld({
+      name: inputName, label: field.label, req: field.required,
+      type: field.field_type === 'date' || field.field_type === 'number' ? field.field_type : 'text',
+      value,
+    });
+  }).join('');
+
+  formModal({
+    title: payId ? `Edit draft receipt ${data.number || ''}` : 'New Payment Received',
+    wide: true,
+    actions: [
+      { label: 'Save as Draft', value: 'draft' },
+      { label: 'Save as Paid', value: 'paid', primary: true },
+    ],
+    body: `
+      <div class="zb-form-wrap">
+        <div class="zb-form-row fg c2">
+          <label class="zb-form-label">Payment Type</label>
+          <div class="zb-form-ctrl">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${paymentTypes.map(([value, label]) => `<label class="btn" style="display:flex;align-items:center;gap:7px;cursor:pointer;"><input type="radio" name="payment_type" value="${value}" ${String(data.payment_type || 'invoice_payment') === value ? 'checked' : ''}> ${label}</label>`).join('')}
+            </div>
+          </div>
+        </div>
+        ${fld({ name: 'customer', label: 'Customer Name', type: 'select', req: true, opts: [['', 'Select Customer…'], ...customers.map(item => [item.id, item.name])], value: customerId })}
+        ${fld({ name: 'number', label: 'Payment Number', value: number, attrs: 'readonly aria-readonly="true"' })}
+        ${fld({ name: 'date', label: 'Payment Date', type: 'date', req: true, value: data.date || APP.today })}
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">Currency</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-currency" readonly value="${esc(currency)}"></div>
+        </div>
+        ${fld({ name: 'reference', label: 'Reference Number', value: data.reference || '' })}
+        ${fld({ name: 'mode', label: 'Payment Mode', type: 'select', req: true, opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: data.mode || 'bank_transfer' })}
+        ${fld({ name: 'bank_account_id', label: 'Deposit To', type: 'select', req: true, opts: bankOpts, value: data.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : '') })}
+        ${fld({ name: 'amount', label: 'Amount Received', type: 'number', req: true, value: data.amount || '', attrs: 'min="0.01" step="0.01"' })}
+        ${fld({ name: 'bank_charges', label: 'Bank Charges', type: 'number', value: data.bank_charges || '0.00', attrs: 'min="0" step="0.01"' })}
+        ${fld({ name: 'branch', label: 'Branch', value: data.branch || '' })}
+        ${fld({ name: 'business_location_id', label: 'Business Location', type: 'select', opts: [['', 'Select Business Location…'], ...locations.map(item => [item.id, item.name])], value: data.business_location_id || '' })}
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">Customer Type</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-customer-type" readonly value="${customer && customer.customer_type === 'individual' ? 'B2C' : customer ? 'B2B' : ''}"></div>
+        </div>
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">GSTIN</label>
+          <div class="zb-form-ctrl"><input class="in" id="payment-customer-gstin" readonly value="${esc(customer && customer.gstin || '')}"></div>
+        </div>
+        <div class="zb-form-row fg">
+          <label class="zb-form-label">PAN</label>
+          <div class="zb-form-ctrl" style="display:flex;gap:8px;">
+            <input class="in" id="payment-customer-pan" readonly value="${esc(customer && customer.pan || '')}">
+            <button type="button" class="btn" id="payment-edit-pan" ${customerId ? '' : 'disabled'}>Add / Update PAN</button>
+          </div>
+        </div>
+        ${fld({ name: 'place_of_supply', label: 'Place of Supply', type: 'select', req: true, opts: [['', 'Select State…'], ...stateOptions], value: toState(data.place_of_supply || (customer && (customer.place_of_supply || customer.state))) })}
+        <div id="payment-advance-fields" style="display:none;">
+          ${fld({ name: 'tax_name', label: 'Tax', type: 'select', opts: taxOpts, value: data.tax_name || '' })}
+        </div>
+        <div class="zb-form-row fg c2" id="payment-tds-row">
+          <label class="zb-form-label">Income TDS</label>
+          <div class="zb-form-ctrl"><label class="ck"><input type="checkbox" name="income_tds" ${data.income_tds ? 'checked' : ''}> Yes, deduct TDS at the invoice’s originating quote rate</label><div class="er" data-err="income_tds" role="alert"></div></div>
+        </div>
+        <div class="zb-form-row fg c2">
+          <label class="zb-form-label">Thank You Email</label>
+          <div class="zb-form-ctrl">
+            <label class="ck"><input type="checkbox" name="thank_you_enabled" ${data.thank_you_enabled ? 'checked' : ''}> Send a thank-you email after saving as paid</label>
+            <div id="payment-email-fields" style="display:none;margin-top:8px;">
+              <div id="payment-email-recipients" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
+              <div class="er" data-err="thank_you_recipients" role="alert"></div>
+              <textarea class="in" name="thank_you_note" rows="2" maxlength="2000" placeholder="Optional thank-you note">${esc(data.thank_you_note || '')}</textarea>
+            </div>
+          </div>
+        </div>
+        ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: data.notes || '', col: 'c2' })}
+      </div>
+      <section id="payment-invoice-section" style="margin-top:16px;">
+        <h3 style="margin:0 0 8px;font-size:14px;">Apply to Invoices</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+          <label class="sub">Invoice date from <input class="in" type="date" id="payment-date-from" style="width:auto;"></label>
+          <label class="sub">to <input class="in" type="date" id="payment-date-to" style="width:auto;"></label>
+        </div>
+        <div id="payment-invoices"><div class="sub">Select a customer to load outstanding invoices.</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button type="button" class="btn" data-payment-auto>Auto-apply (oldest first)</button>
+          <button type="button" class="btn" data-payment-clear>Clear applied amounts</button>
+        </div>
+        <div class="er" data-err="allocations" role="alert"></div>
+      </section>
+      ${customFieldHtml ? `<section style="margin-top:16px;"><h3 style="font-size:14px;">Additional Fields</h3><div class="zb-form-wrap">${customFieldHtml}</div></section>` : ''}
+      <section style="margin-top:16px;">
+        <h3 style="font-size:14px;">Attachments</h3>
+        <input type="file" id="payment-files" multiple>
+        <div class="er" data-err="attachments" role="alert"></div>
+        <div id="payment-file-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"></div>
+      </section>
+      <div class="cs" style="margin-top:14px;">
+        <div><span>Applied</span><b id="payment-applied">₹0.00</b></div>
+        <div><span>Income TDS</span><b id="payment-tds-amount">₹0.00</b></div>
+        <div><span>Tax</span><b id="payment-tax-amount">₹0.00</b></div>
+        <div><span>Unapplied / Advance Balance</span><b id="payment-unapplied">₹0.00</b></div>
+        <div><span>Net Deposit</span><b id="payment-net-deposit">₹0.00</b></div>
+      </div>
+    `,
+    onReady: (form, modal) => {
+      const customerSelect = form.elements.customer;
+      const bankSelect = form.elements.bank_account_id;
+      const typeInputs = $$('input[name="payment_type"]', form);
+      const tdsInput = form.elements.income_tds;
+      const emailInput = form.elements.thank_you_enabled;
+      const taxSelect = form.elements.tax_name;
+      const fileList = $('#payment-file-list', form);
+      const invoiceBox = $('#payment-invoices', form);
+      const formData = existing || {};
+
+      setupSearchableSelect(customerSelect, {
+        placeholder: 'Search customers…',
+        onNew: () => partyForm('customers', null, async added => {
+          const fresh = await api('lookup/customers/');
+          const freshCustomers = Array.isArray(fresh) ? fresh : (fresh.results || []);
+          customers.splice(0, customers.length, ...freshCustomers);
+          customerSelect.innerHTML = '<option value="">Select Customer…</option>' +
+            freshCustomers.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('') +
+            '<option value="__new_customer__">+ Add New Customer…</option>';
+          const newCustomer = freshCustomers.find(item => String(item.id) === String(added.id));
+          if (newCustomer) {
+            customerSelect.value = newCustomer.id;
+            customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }),
+      });
+      if (bankSelect) setupSearchableSelect(bankSelect, {
+        placeholder: 'Search bank or cash accounts…',
+        onNew: () => bankAccountForm(null, async created => {
+          const fresh = await api('lookup/bank-accounts/');
+          bankSelect.innerHTML = '<option value="">Select Bank or Cash Account…</option>' +
+            fresh.map(item => `<option value="${item.id}">${esc(item.display_name || item.name)}</option>`).join('') +
+            '<option value="__add_new__">+ Add New Bank Account…</option>';
+          if (created && created.id) bankSelect.value = created.id;
+          if (bankSelect._searchableSync) bankSelect._searchableSync();
+        }),
+      });
+
+      const selectedType = () => (form.querySelector('input[name="payment_type"]:checked') || {}).value || 'invoice_payment';
+      let customerLoadId = 0;
+      let invoiceLoadId = 0;
+      const tdsFor = allocations => {
+        if (!tdsInput.checked) return 0;
+        let total = 0;
+        for (const input of allocations) {
+          const invoice = invoiceList.find(item => String(item.id) === input.dataset.id);
+          if (!invoice || num(invoice.income_tds_rate) <= 0 || num(invoice.total) <= 0) return null;
+          total += num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100;
+        }
+        return r2(total);
+      };
+      const allAllocationInputs = () => $$('.payment-allocation', form);
+      const updateSummary = () => {
+        const type = selectedType();
+        const allocations = type === 'invoice_payment' ? allAllocationInputs().filter(input => num(input.value) > 0) : [];
+        const applied = allocations.reduce((sum, input) => sum + num(input.value), 0);
+        const tds = type === 'invoice_payment' ? tdsFor(allocations) : 0;
+        const taxRow = taxes.find(item => item.name === (taxSelect && taxSelect.value));
+        const tax = type === 'customer_advance' && taxRow ? r2(num(form.elements.amount.value) * num(taxRow.rate) / 100) : 0;
+        const amount = num(form.elements.amount.value);
+        const settlement = amount + (type === 'customer_advance' ? tax : (tds || 0));
+        const cashReceived = amount + (type === 'customer_advance' ? tax : 0);
+        $('#payment-applied', form).textContent = inr(applied);
+        $('#payment-tds-amount', form).textContent = tds == null ? 'Rate unavailable' : inr(tds || 0);
+        $('#payment-tax-amount', form).textContent = inr(tax);
+        $('#payment-unapplied', form).textContent = inr(Math.max(0, settlement - applied));
+        $('#payment-net-deposit', form).textContent = inr(Math.max(0, cashReceived - num(form.elements.bank_charges.value)));
+        const err = form.querySelector('[data-err="allocations"]');
+        if (err && tds == null) err.textContent = 'Income TDS requires an allocated invoice with an originating quote TDS rate.';
+        else if (err && err.textContent.includes('Income TDS requires')) err.textContent = '';
+      };
+      const setCustomerInfo = async (id, preservePlace = false) => {
+        const requestId = ++customerLoadId;
+        const picked = customers.find(item => String(item.id) === String(id));
+        recipients = [];
+        customerDetail = null;
+        $('#payment-email-recipients', form).innerHTML = picked
+          ? '<span class="sub">Loading customer contacts…</span>'
+          : '';
+        if (!picked) {
+          $('#payment-customer-type', form).value = '';
+          $('#payment-customer-gstin', form).value = '';
+          $('#payment-customer-pan', form).value = '';
+          $('#payment-currency', form).value = APP.org.base_currency || 'INR';
+          $('#payment-edit-pan', form).disabled = true;
+          recipients = [];
+          $('#payment-email-recipients', form).innerHTML = '';
+          return;
+        }
+        $('#payment-customer-type', form).value = picked.customer_type === 'individual' ? 'B2C' : 'B2B';
+        $('#payment-customer-gstin', form).value = picked.gstin || '';
+        $('#payment-customer-pan', form).value = picked.pan || '';
+        $('#payment-currency', form).value = picked.currency || APP.org.base_currency || 'INR';
+        $('#payment-edit-pan', form).disabled = false;
+        if (!preservePlace) form.elements.place_of_supply.value = toState(picked.place_of_supply || picked.state);
+        try {
+          customerDetail = await api(`customers/${picked.id}/`);
+        } catch (error) {
+          toast(`Could not load customer details: ${error.message}`, 'err');
+          customerDetail = picked;
+        }
+        if (requestId !== customerLoadId || String(customerSelect.value) !== String(id)) return;
+        $('#payment-customer-type', form).value = customerDetail.customer_type === 'individual' ? 'B2C' : 'B2B';
+        $('#payment-customer-gstin', form).value = customerDetail.gstin || '';
+        $('#payment-customer-pan', form).value = customerDetail.pan || '';
+        $('#payment-currency', form).value = customerDetail.currency || APP.org.base_currency || 'INR';
+        const emails = [];
+        if (customerDetail.email) emails.push(customerDetail.email);
+        for (const contact of customerDetail.contact_persons_data || []) {
+          if (contact && contact.email) emails.push(contact.email);
+        }
+        recipients = [...new Set(emails.map(email => String(email).trim()).filter(Boolean))];
+        const selectedRecipients = String(id) === initialCustomerId
+          ? (formData.thank_you_recipients || data.thank_you_recipients || [])
+          : [];
+        const selected = new Set(selectedRecipients.map(email => String(email).toLowerCase()));
+        $('#payment-email-recipients', form).innerHTML = recipients.length
+          ? recipients.map(email => `<label class="ck"><input type="checkbox" class="payment-email-recipient" value="${esc(email)}" ${selected.has(email.toLowerCase()) ? 'checked' : ''}> ${esc(email)}</label>`).join('')
+          : '<span class="sub">No customer email addresses are available.</span>';
+      };
+      const renderFiles = () => {
+        fileList.innerHTML = [
+          ...existingFiles.map(file => `<div class="btn" style="display:flex;gap:8px;align-items:center;"><a href="${esc(file.url || '#')}" target="_blank" rel="noopener">${esc(file.filename)}</a><button type="button" class="lk" data-remove-existing="${file.id}" aria-label="Remove ${esc(file.filename)}">×</button></div>`),
+          ...pendingFiles.map((file, index) => `<div class="btn" style="display:flex;gap:8px;align-items:center;">${esc(file.filename)}<button type="button" class="lk" data-remove-pending="${index}" aria-label="Remove ${esc(file.filename)}">×</button></div>`),
+        ].join('');
+      };
+      const loadInvoices = async () => {
+        const requestId = ++invoiceLoadId;
+        const id = customerSelect.value;
+        if (!id || id.startsWith('__')) {
+          invoiceBox.innerHTML = '<div class="sub">Select a customer to load outstanding invoices.</div>';
+          invoiceList = [];
+          updateSummary();
+          return;
+        }
+        invoiceBox.innerHTML = spinner;
+        try {
+          const result = await api('invoices/?' + qs({
+            open: 1, customer: id, page_size: 100, ordering: 'due_date',
+            date_from: $('#payment-date-from', form).value || undefined,
+            date_to: $('#payment-date-to', form).value || undefined,
+          }));
+          if (requestId !== invoiceLoadId || customerSelect.value !== id) return;
+          invoiceList = result.results || [];
+          invoiceBox.innerHTML = invoiceList.length ? `
+            <div class="tw"><table><thead><tr><th>Invoice</th><th>Date</th><th class="r">Balance Due</th><th class="r">Apply (${esc($('#payment-currency', form).value || currency)})</th><th></th></tr></thead>
+            <tbody>${invoiceList.map(invoice => `<tr>
+              <td>${esc(invoice.number)}${tdsInput.checked ? `<div class="sub">TDS rate ${num(invoice.income_tds_rate)}%</div>` : ''}</td>
+              <td>${fd(invoice.date)}</td><td class="r">${inr(invoice.balance)}</td>
+              <td><input class="in payment-allocation r" type="number" min="0" max="${esc(invoice.balance)}" step="0.01" data-id="${invoice.id}" aria-label="Apply to ${esc(invoice.number)}"></td>
+              <td><button type="button" class="btn" data-pay-full="${invoice.id}">Pay in Full</button></td>
+            </tr>`).join('')}</tbody></table></div>` : '<div class="sub">No outstanding invoices for this customer.</div>';
+          const startingAllocations = existing && existing.allocations ? existing.allocations : (pre.doc ? [{ doc_id: pre.doc, amount: pre.amount || '' }] : []);
+          for (const allocation of startingAllocations) {
+            const input = $(`.payment-allocation[data-id="${allocation.doc_id}"]`, invoiceBox);
+            if (input) input.value = allocation.amount;
+          }
+        } catch (error) {
+          if (requestId !== invoiceLoadId || customerSelect.value !== id) return;
+          invoiceBox.innerHTML = errBox(error.message);
+          invoiceList = [];
+        }
+        updateSummary();
+      };
+      const toggleType = () => {
+        const advance = selectedType() === 'customer_advance';
+        if (advance) tdsInput.checked = false;
+        else if (taxSelect) taxSelect.value = '';
+        const amountLabel = form.elements.amount.closest('.zb-form-row').querySelector('.zb-form-label');
+        if (amountLabel && amountLabel.firstChild) {
+          amountLabel.firstChild.textContent = advance ? 'Customer Advance (before tax)' : 'Amount Received';
+        }
+        $('#payment-advance-fields', form).style.display = advance ? '' : 'none';
+        $('#payment-invoice-section', form).style.display = advance ? 'none' : '';
+        $('#payment-tds-row', form).style.display = advance ? 'none' : '';
+        updateSummary();
+      };
+      const toggleEmail = () => {
+        $('#payment-email-fields', form).style.display = emailInput.checked ? '' : 'none';
+      };
+      customerSelect.addEventListener('change', async () => {
+        await setCustomerInfo(customerSelect.value);
+        await loadInvoices();
+      });
+      typeInputs.forEach(input => input.addEventListener('change', toggleType));
+      form.addEventListener('input', updateSummary);
+      form.addEventListener('change', updateSummary);
+      emailInput.addEventListener('change', toggleEmail);
+      $('#payment-date-from', form).addEventListener('change', loadInvoices);
+      $('#payment-date-to', form).addEventListener('change', loadInvoices);
+      $('#payment-edit-pan', form).addEventListener('click', () => {
+        const id = customerSelect.value;
+        if (id && !id.startsWith('__')) partyForm('customers', id, async updated => {
+          if (String(customerSelect.value) === String(updated.id)) {
+            await setCustomerInfo(updated.id);
+          }
+        });
+      });
+      form.addEventListener('click', async event => {
+        const full = event.target.closest('[data-pay-full]');
+        if (full) {
+          const input = $(`.payment-allocation[data-id="${full.dataset.payFull}"]`, form);
+          const invoice = invoiceList.find(item => String(item.id) === String(full.dataset.payFull));
+          if (input && invoice) {
+            input.value = invoice.balance;
+            if (tdsInput.checked && num(invoice.income_tds_rate) > 0 && num(invoice.total) > 0) {
+              const tds = r2(num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100);
+              form.elements.amount.value = r2(num(input.value) - tds);
+            } else {
+              form.elements.amount.value = invoice.balance;
+            }
+            updateSummary();
+          }
+        }
+        if (event.target.closest('[data-payment-auto]')) {
+          let cashLeft = num(form.elements.amount.value);
+          for (const input of allAllocationInputs()) {
+            const invoice = invoiceList.find(item => String(item.id) === input.dataset.id);
+            let factor = 1;
+            if (tdsInput.checked) {
+              if (!invoice || num(invoice.income_tds_rate) <= 0 || num(invoice.total) <= 0) continue;
+              factor = 1 - num(invoice.subtotal) / num(invoice.total) * num(invoice.income_tds_rate) / 100;
+            }
+            const amount = Math.min(num(invoice.balance), factor > 0 ? cashLeft / factor : 0);
+            input.value = amount > 0 ? r2(amount) : '';
+            const tds = tdsInput.checked ? r2(num(invoice.subtotal) * num(input.value) / num(invoice.total) * num(invoice.income_tds_rate) / 100) : 0;
+            cashLeft = Math.max(0, r2(cashLeft - num(input.value) + tds));
+          }
+          updateSummary();
+        }
+        if (event.target.closest('[data-payment-clear]')) {
+          allAllocationInputs().forEach(input => { input.value = ''; });
+          updateSummary();
+        }
+        const removePending = event.target.closest('[data-remove-pending]');
+        if (removePending) {
+          pendingFiles.splice(Number(removePending.dataset.removePending), 1);
+          renderFiles();
+        }
+        const removeExisting = event.target.closest('[data-remove-existing]');
+        if (removeExisting) {
+          const id = removeExisting.dataset.removeExisting;
+          try {
+            await api(`attachments/${id}/`, { method: 'DELETE' });
+            existingFiles = existingFiles.filter(file => String(file.id) !== String(id));
+            renderFiles();
+          } catch (error) {
+            toast(error.message, 'err');
+          }
+        }
+      });
+      $('#payment-files', form).addEventListener('change', async event => {
+        const files = Array.from(event.target.files || []);
+        if (existingFiles.length + pendingFiles.length + files.length > 10) {
+          form.querySelector('[data-err="attachments"]').textContent = 'A payment can have no more than 10 files.';
+          event.target.value = '';
+          return;
+        }
+        for (const file of files) {
+          if (file.size > 10 * 1024 * 1024) {
+            form.querySelector('[data-err="attachments"]').textContent = `${file.name} exceeds the 10 MB limit.`;
+            continue;
+          }
+          try {
+            const fileData = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+              reader.readAsDataURL(file);
+            });
+            pendingFiles.push({ filename: file.name, mime_type: file.type || 'application/octet-stream', file_data: fileData });
+          } catch (error) {
+            form.querySelector('[data-err="attachments"]').textContent = error.message;
+          }
+        }
+        event.target.value = '';
+        renderFiles();
+      });
+      renderFiles();
+      toggleEmail();
+      toggleType();
+      if (customerId) {
+        setCustomerInfo(customerId, true).then(loadInvoices);
+      } else {
+        updateSummary();
+      }
+    },
+    onSubmit: async (d, action, form) => {
+      const paymentType = form.querySelector('input[name="payment_type"]:checked').value;
+      d.payment_type = paymentType;
+      d.status = action;
+      d.bank_account_id = d.bank_account_id && d.bank_account_id !== '__add_new__' ? Number(d.bank_account_id) : '';
+      d.business_location_id = d.business_location_id ? Number(d.business_location_id) : '';
+      d.place_of_supply = d.place_of_supply || '';
+      d.allocations = paymentType === 'invoice_payment'
+        ? $$('.payment-allocation', form).filter(input => num(input.value) > 0).map(input => ({ invoice: Number(input.dataset.id), amount: input.value }))
+        : [];
+      d.custom_fields_data = {};
+      customFields.forEach(field => {
+        const input = form.elements[`cf__${field.name}`];
+        if (input) d.custom_fields_data[field.name] = input.type === 'checkbox' ? input.checked : input.value;
+      });
+      d.thank_you_recipients = $$('.payment-email-recipient:checked', form).map(input => input.value);
+      d.attachments = pendingFiles;
+      if (!d.customer) throw new ApiErr(400, { customer: 'Customer is required.' }, 'Select a customer.');
+      if (!d.date) throw new ApiErr(400, { date: 'Payment date is required.' }, 'Select a payment date.');
+      if (num(d.amount) <= 0) throw new ApiErr(400, { amount: 'Amount received must be greater than zero.' }, 'Enter an amount greater than zero.');
+      if (!d.bank_account_id) throw new ApiErr(400, { bank_account_id: 'Deposit To is required.' }, 'Select a bank or cash account.');
+      if (d.income_tds && !d.allocations.length) throw new ApiErr(400, { allocations: 'Income TDS requires an allocated invoice.' }, 'Select an invoice to calculate TDS.');
+      const payment = await api(payId ? `payments-received/${payId}/` : 'payments-received/', {
+        method: payId ? 'PUT' : 'POST',
+        body: d,
+      });
+      if (action === 'paid' && d.thank_you_enabled) {
+        try {
+          await api(`payments-received/${payment.id}/send-thank-you/`, {
+            method: 'POST', body: { recipients: d.thank_you_recipients },
+          });
+        } catch (error) {
+          toast(`Receipt ${payment.number} was saved, but the thank-you email failed: ${error.message}`, 'err');
+        }
+      }
+      toast(`Payment ${payment.number} ${action === 'draft' ? 'saved as draft' : 'recorded as paid'}.`);
+      refresh();
+    },
+  });
+}
+
 async function paymentForm(kind, pre = {}) {
+  if (kind === 'payments-received') return paymentReceivedForm(pre);
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
   const [parties, bankAccounts, existing] = await Promise.all([
@@ -7225,8 +7733,12 @@ window.convobotAiAssistantModal = convobotAiAssistantModal;
 window.ziaAiAssistantModal = convobotAiAssistantModal;
 
 async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
-  const custs = await api('lookup/customers/');
-  const o = id ? await api(`projects/${id}/`) : { name: '', code: '', customer: defaultCustomerId, billing_method: 'hourly_rate', rate_per_hour: '0.00', budget_hours: '0.00', status: 'active', description: '' };
+  const [custs, staff] = await Promise.all([api('lookup/customers/'), api('lookup/employees/')]);
+  const o = id ? await api(`projects/${id}/`) : {
+    name: '', code: '', customer: defaultCustomerId, billing_method: 'project_hourly_rate',
+    rate_per_hour: '0.00', fixed_amount: '0.00', invoice_tax_rate: '',
+    budget_hours: '0.00', start_date: '', end_date: '', staff: [], status: 'active', description: ''
+  };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
     dialog: Boolean(onDone || Modal.count() > 0),
@@ -7235,15 +7747,24 @@ async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
       ${fld({ name: 'code', label: 'Project Code', value: o.code, col: 's6', ph: 'PRJ-001' })}
       ${fld({ name: 'customer', label: 'Customer', type: 'select', opts: [['', 'Internal / No Customer'], ...custs.map(c => [c.id, c.name])], value: o.customer_id || o.customer || '', col: 's6' })}
-      ${fld({ name: 'billing_method', label: 'Billing Method', type: 'select', opts: [['hourly_rate', 'Hourly Rate'], ['fixed_cost', 'Fixed Cost'], ['task_hours', 'Task Hours']], value: o.billing_method, col: 's6' })}
-      ${fld({ name: 'rate_per_hour', label: 'Rate Per Hour (₹)', type: 'number', value: o.rate_per_hour, col: 's6' })}
+      ${fld({ name: 'billing_method', label: 'Billing Method', type: 'select', opts: [['project_hourly_rate', 'Project Hourly Rate'], ['task_hourly_rate', 'Task Hourly Rate'], ['staff_hourly_rate', 'Staff Hourly Rate'], ['fixed_project_cost', 'Fixed Project Cost / Milestones']], value: o.billing_method, col: 's6' })}
+      ${fld({ name: 'rate_per_hour', label: 'Project / Staff Rate Per Hour (₹)', type: 'number', value: o.rate_per_hour, col: 's6', attrs: 'min="0" step="0.01"' })}
+      ${fld({ name: 'fixed_amount', label: 'Fixed Project Amount (₹)', type: 'number', value: o.fixed_amount, col: 's6', attrs: 'min="0" step="0.01"' })}
+      ${fld({ name: 'invoice_tax_rate', label: 'Invoice Tax Rate (%)', type: 'number', value: o.invoice_tax_rate, col: 's6', attrs: 'min="0" max="100" step="0.01"' })}
       ${fld({ name: 'budget_hours', label: 'Budget Hours', type: 'number', value: o.budget_hours, col: 's6' })}
+      ${fld({ name: 'start_date', label: 'Start Date', type: 'date', value: o.start_date, col: 's6' })}
+      ${fld({ name: 'end_date', label: 'End Date', type: 'date', value: o.end_date, col: 's6' })}
+      ${fld({ name: 'staff_ids', label: 'Assigned Staff', type: 'select', opts: staff.map(s => [s.id, s.name]), value: (o.staff || []).map(s => s.user_id), attrs: 'multiple size="5"', help: 'Select one or more active users in this organization.', col: 's12' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, col: 's12' })}
+      ${id ? `<div class="s12 sub">Tasks: ${o.task_count || 0} · Milestones: ${(o.milestones || []).length} · Invoices: ${(o.invoices || []).length}</div>` : ''}
     </div>`,
     onSubmit: async d => {
       d.customer = d.customer ? Number(d.customer) : null;
       d.rate_per_hour = num(d.rate_per_hour);
+      d.fixed_amount = num(d.fixed_amount);
+      d.invoice_tax_rate = d.invoice_tax_rate === '' ? null : num(d.invoice_tax_rate);
       d.budget_hours = num(d.budget_hours);
+      d.staff_ids = (d.staff_ids || []).map(Number);
       let res;
       if (id) res = await api(`projects/${id}/`, { method: 'PUT', body: d });
       else res = await api('projects/', { method: 'POST', body: d });
@@ -7264,22 +7785,150 @@ async function timelogModal(id) {
     return projectModal();
   }
   const o = rec || { project_id: prjs[0]?.id, date: APP.today, task: '', hours: '2.5', billable: true, notes: '' };
+  let taskSelect = null;
+  const loadTasks = async (projectId, selectedId) => {
+    const result = await api(`project-tasks/?project=${projectId}&page_size=100`);
+    const rows = result.results || [];
+    if (taskSelect) {
+      taskSelect.innerHTML = `<option value="">Select a task (or enter an activity below)</option>${rows.map(task => `<option value="${task.id}" ${String(task.id) === String(selectedId || '') ? 'selected' : ''}>${esc(task.name)}</option>`).join('')}`;
+    }
+  };
+  const initialTasks = await api(`project-tasks/?project=${o.project_id}&page_size=100`);
+  const taskRows = initialTasks.results || [];
   formModal({
     title: id ? 'Edit Timesheet Entry' : 'Log Project Timesheet',
+    actions: [{ label: id ? 'Save Changes' : 'Log Time', value: 'save', primary: true }, ...(!id ? [{ label: 'Start Timer', value: 'timer' }] : [])],
     body: `<div class="g">
       ${fld({ name: 'project', label: 'Project', type: 'select', opts: prjs.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
       ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date, col: 's6' })}
-      ${fld({ name: 'task', label: 'Task / Activity', req: true, value: o.task, col: 's8', ph: 'e.g. Deluge Scripting & Workflow Integration' })}
-      ${fld({ name: 'hours', label: 'Hours', type: 'number', req: true, value: o.hours, col: 's4' })}
+      ${fld({ name: 'task_id', label: 'Project Task', type: 'select', opts: [['', 'Select a task (or enter an activity below)'], ...taskRows.map(t => [t.id, t.name])], value: o.task_record_id || '', col: 's8' })}
+      ${fld({ name: 'task', label: 'Task / Activity', value: o.task_record_id ? '' : o.task, col: 's8', ph: 'e.g. Workflow integration' })}
+      ${fld({ name: 'hours', label: 'Hours', type: 'number', value: o.hours, col: 's4', attrs: 'min="0.01" max="24" step="0.01"' })}
       ${fld({ name: 'billable', label: 'Billable to customer', type: 'checkbox', value: o.billable, col: 's12' })}
       ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: o.notes || '', col: 's12', ph: 'Work accomplished...' })}
     </div>`,
-    onSubmit: async d => {
+    onReady: form => {
+      taskSelect = form.elements.task_id;
+      form.elements.project.addEventListener('change', async event => {
+        try {
+          await loadTasks(event.target.value, '');
+        } catch (error) {
+          toast(error.message || 'Tasks could not be loaded.', 'err');
+        }
+      });
+    },
+    onSubmit: async (d, action) => {
       d.project = Number(d.project);
-      d.hours = num(d.hours);
+      d.task_id = d.task_id ? Number(d.task_id) : null;
+      if (action === 'timer') {
+        d.start_timer = true;
+        d.hours = 0;
+      } else {
+        d.hours = num(d.hours);
+      }
       if (id) await api(`timelogs/${id}/`, { method: 'PUT', body: d });
       else await api('timelogs/', { method: 'POST', body: d });
-      toast(id ? 'Timesheet entry updated' : 'Timesheet entry logged');
+      toast(action === 'timer' ? 'Timer started' : id ? 'Timesheet entry updated' : 'Timesheet entry logged');
+      refresh();
+    }
+  });
+}
+
+async function projectTaskModal(id, projectId = '') {
+  const [projects, staff, rec] = await Promise.all([
+    api('lookup/projects/'), api('lookup/employees/'),
+    id ? api(`project-tasks/${id}/`) : Promise.resolve(null)
+  ]);
+  const o = rec || { project_id: projectId || projects[0]?.id, name: '', description: '', hourly_rate: '', estimated_hours: '0', progress_percent: '0', status: 'open', assigned_user_ids: [] };
+  formModal({
+    title: id ? 'Edit Project Task' : 'New Project Task',
+    body: `<div class="g">
+      ${fld({ name: 'project_id', label: 'Project', type: 'select', opts: projects.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
+      ${fld({ name: 'name', label: 'Task Name', value: o.name, req: true, col: 's6' })}
+      ${fld({ name: 'hourly_rate', label: 'Hourly Rate (₹)', type: 'number', value: o.hourly_rate, attrs: 'min="0.01" step="0.01"', col: 's6' })}
+      ${fld({ name: 'estimated_hours', label: 'Estimated Hours', type: 'number', value: o.estimated_hours, attrs: 'min="0" step="0.01"', col: 's6' })}
+      ${fld({ name: 'progress_percent', label: 'Progress (%)', type: 'number', value: o.progress_percent, attrs: 'min="0" max="100" step="0.01"', col: 's6' })}
+      ${fld({ name: 'status', label: 'Status', type: 'select', opts: [['open', 'Open'], ['in_progress', 'In Progress'], ['completed', 'Completed'], ...(id ? [['archived', 'Archived']] : [])], value: o.status, col: 's6' })}
+      ${fld({ name: 'assigned_user_ids', label: 'Assigned Staff', type: 'select', opts: staff.map(s => [s.id, s.name]), value: o.assigned_user_ids || [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, col: 's12' })}
+    </div>`,
+    onSubmit: async d => {
+      d.project_id = Number(d.project_id);
+      d.hourly_rate = d.hourly_rate === '' ? null : num(d.hourly_rate);
+      d.estimated_hours = num(d.estimated_hours);
+      d.progress_percent = num(d.progress_percent);
+      d.assigned_user_ids = (d.assigned_user_ids || []).map(Number);
+      if (id) await api(`project-tasks/${id}/`, { method: 'PUT', body: d });
+      else await api('project-tasks/', { method: 'POST', body: d });
+      toast('Project task saved');
+      refresh();
+    }
+  });
+}
+
+async function projectMilestoneModal(id, projectId = '') {
+  const [projects, rec] = await Promise.all([
+    api('projects/?page_size=100'), id ? api(`project-milestones/${id}/`) : Promise.resolve(null)
+  ]);
+  const projectRows = (projects.results || []).filter(project => project.billing_method === 'fixed_project_cost');
+  const o = rec || { project_id: projectId || projectRows[0]?.id, name: '', description: '', amount: '', invoice_tax_rate: '', due_date: '', status: 'planned' };
+  formModal({
+    title: id ? 'Edit Project Milestone' : 'New Project Milestone',
+    body: `<div class="g">
+      ${fld({ name: 'project_id', label: 'Project', type: 'select', opts: projectRows.map(p => [p.id, p.name]), value: o.project_id, req: true, col: 's6' })}
+      ${fld({ name: 'name', label: 'Milestone Name', value: o.name, req: true, col: 's6' })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', value: o.amount, req: true, attrs: 'min="0.01" step="0.01"', col: 's6' })}
+      ${fld({ name: 'invoice_tax_rate', label: 'Invoice Tax Rate (%)', type: 'number', value: o.invoice_tax_rate, attrs: 'min="0" max="100" step="0.01"', col: 's6' })}
+      ${fld({ name: 'due_date', label: 'Due Date', type: 'date', value: o.due_date, col: 's6' })}
+      ${fld({ name: 'description', label: 'Description', value: o.description, col: 's12' })}
+    </div>`,
+    onSubmit: async d => {
+      d.project_id = Number(d.project_id);
+      d.amount = num(d.amount);
+      d.invoice_tax_rate = d.invoice_tax_rate === '' ? null : num(d.invoice_tax_rate);
+      if (id) await api(`project-milestones/${id}/`, { method: 'PUT', body: d });
+      else await api('project-milestones/', { method: 'POST', body: d });
+      toast('Project milestone saved');
+      refresh();
+    }
+  });
+}
+
+async function generateProjectInvoiceModal(projectId) {
+  const [project, entries, expenses] = await Promise.all([
+    api(`projects/${projectId}/`),
+    api(`timesheets/?project=${projectId}&status=approved&page_size=100`),
+    api(`expenses/?project=${projectId}&billable=true&page_size=100`)
+  ]);
+  const billableEntries = (entries.results || []).filter(entry => entry.status === 'approved' && entry.billable && !entry.invoice_id);
+  const billableExpenses = (expenses.results || []).filter(expense => expense.billable_to_customer && !expense.invoice_id);
+  const fixed = project.billing_method === 'fixed_project_cost';
+  const milestones = fixed ? (project.milestones || []).filter(item => item.status === 'planned' && !item.invoice_id) : [];
+  formModal({
+    title: `Generate Project Invoice — ${project.name}`,
+    body: `<div class="g">
+      <div class="s12 sub">An invoice is created as a draft. No payment or accounting entry is generated until it is sent.</div>
+      ${fixed ? fld({ name: 'milestone_ids', label: 'Planned Milestones', type: 'select', opts: milestones.map(item => [item.id, `${item.name} — ${inr(item.amount)}`]), value: [], attrs: 'multiple size="5"', col: 's12' }) : fld({ name: 'time_entry_ids', label: 'Approved Billable Time Entries', type: 'select', opts: billableEntries.map(entry => [entry.id, `${fd(entry.date)} · ${entry.task} · ${qty(entry.hours)} hrs`]), value: [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'expense_ids', label: 'Billable Expenses', type: 'select', opts: billableExpenses.map(expense => [expense.id, `${expense.number} · ${expense.notes || 'Expense'} · ${inr(expense.amount)}`]), value: [], attrs: 'multiple size="5"', col: 's12' })}
+      ${fld({ name: 'date', label: 'Invoice Date', type: 'date', value: APP.today, req: true, col: 's6' })}
+      ${fld({ name: 'due_date', label: 'Due Date', type: 'date', value: '', col: 's6' })}
+    </div>`,
+    onSubmit: async d => {
+      for (const key of ['milestone_ids', 'time_entry_ids', 'expense_ids']) d[key] = (d[key] || []).map(Number);
+      const result = await api(`projects/${projectId}/generate-invoice/`, { method: 'POST', body: d });
+      toast(result.message || `Draft invoice ${result.invoice_number} created.`);
+      refresh();
+    }
+  });
+}
+
+function rejectTimesheetModal(row) {
+  formModal({
+    title: 'Reject Timesheet Entry',
+    body: `<div class="g">${fld({ name: 'reason', label: 'Reason', req: true, col: 's12', ph: 'Explain what needs correction' })}</div>`,
+    onSubmit: async data => {
+      await api(`timelogs/${row.id}/reject/`, { method: 'POST', body: data });
+      toast('Time entry rejected');
       refresh();
     }
   });

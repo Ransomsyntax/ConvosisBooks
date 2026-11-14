@@ -4533,7 +4533,9 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
     ['__new_item__', '+ Add New Item…'],
     ...items.map(i => [i.id, i.name + (i.sku ? ' (' + i.sku + ')' : '')])
   ];
-  const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: APP.org.notes_default || 'Thanks for your business.', terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
+  const isSalesOrderOrQuote = (kind === 'sales-orders' || kind === 'quotes');
+  const defaultDocNotes = isSalesOrderOrQuote ? '' : (APP.org.notes_default || 'Thanks for your business.');
+  const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: defaultDocNotes, terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
   const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
@@ -4637,7 +4639,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
           </div>
 
           <div class="zb-form-wrap" style="margin-top:20px;">
-            ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}
+            ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : defaultDocNotes, ph: isSalesOrderOrQuote ? 'Notes for the customer…' : '', col: 'c2' })}
             ${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}
           </div>
 
@@ -4996,7 +4998,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
     <div class="er" data-err="lines" role="alert"></div>
     <button type="button" class="btn" data-add style="margin-top:8px">+ Add line</button>
     <div class="tot" aria-live="polite"><div><span>Taxable value</span><b data-t="sub">₹0.00</b></div><div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div><div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div><div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div><div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div></div>
-    <div class="zb-form-wrap" style="margin-top:14px">${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : (APP.org.notes_default || 'Thanks for your business.'), col: 'c2' })}${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}</div>
+    <div class="zb-form-wrap" style="margin-top:14px">${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: r.notes != null ? r.notes : defaultDocNotes, ph: isSalesOrderOrQuote ? 'Notes for the customer…' : '', col: 'c2' })}${inv ? fld({ name: 'terms', label: 'Terms & conditions', type: 'textarea', value: r.terms != null ? r.terms : (APP.org.terms_default || 'Due on Receipt'), col: 'c2' }) : ''}</div>
     <div style="margin-top:14px;padding:12px;border:1px solid var(--bd-glass);border-radius:8px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <label style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;">
@@ -10267,7 +10269,7 @@ async function quoteForm(id, targetEl, onDone) {
   const qSalesperson = rec ? (rec.salesperson || '') : '';
   const qProject = rec ? (rec.project_name || '') : '';
   const qSubject = rec ? (rec.subject || '') : '';
-  const qNotes = rec ? (rec.notes != null ? rec.notes : 'Looking forward for your business.') : 'Looking forward for your business.';
+  const qNotes = rec ? (rec.notes != null ? rec.notes : '') : '';
   const qTerms = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const qTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
   const qTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
@@ -10497,7 +10499,7 @@ ${renderStockQuantityCell(l, items, whList)}
           <div>
             <div style="margin-bottom:18px;">
               <label for="q-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="q-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(qNotes)}</textarea>
+              <textarea class="in" id="q-notes" name="notes" rows="4" placeholder="Looking forward for your business." style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(qNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the quotation</span>
             </div>
             <div>
@@ -13090,7 +13092,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const invSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
   const invPlaceOfSupply = rec ? (rec.place_of_supply || '') : (srcQuote ? (srcQuote.place_of_supply || '') : (srcSO ? (srcSO.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala')));
   const invBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : (srcSO ? (srcSO.branch || '') : ''));
-  const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (srcQuote ? srcQuote.notes : (srcSO ? srcSO.notes : 'Thanks for your business.'));
+  const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (srcQuote ? (srcQuote.notes != null ? srcQuote.notes : '') : (srcSO ? (srcSO.notes != null ? srcSO.notes : '') : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')));
   const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : (srcQuote ? srcQuote.terms : (srcSO ? srcSO.terms : ''));
   const invTaxType = rec ? (rec.tax_type || 'tds') : (srcQuote ? (srcQuote.tax_type || 'tds') : 'tds');
   const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : (srcSO ? (srcSO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive'));

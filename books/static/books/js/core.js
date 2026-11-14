@@ -56,7 +56,7 @@ function toast(msg, kind) {
     : kind === 'ok' || kind === 'success' ? 'ok' : '';
   t.style.display = 'block';
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => { t.style.display = 'none'; }, kind === 'err' ? 5000 : 2600);
+  toast.t = setTimeout(() => { t.style.display = 'none'; }, (kind === 'err' || kind === 'error') ? 5000 : 2600);
 }
 
 class ApiErr extends Error {

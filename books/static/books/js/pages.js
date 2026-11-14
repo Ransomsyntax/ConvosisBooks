@@ -1380,15 +1380,15 @@ const LISTS = {
     api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => partyForm('customers'), empty: 'No customers yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'view' ? partyDetail('customers', r.id) : a === 'edit' ? partyForm('customers', r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'view' ? partyDetail('customers', r.id) : a === 'edit' ? partyForm('customers', r.id) : a === 'delete' ? deleteRecord('customers', r, 'Customer') : null,
   },
   vendors: {
     api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => partyForm('vendors'), empty: 'No vendors yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Payable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'view' ? partyDetail('vendors', r.id) : a === 'edit' ? partyForm('vendors', r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'view' ? partyDetail('vendors', r.id) : a === 'edit' ? partyForm('vendors', r.id) : a === 'delete' ? deleteRecord('vendors', r, 'Vendor') : null,
   },
   items: {
     api: 'items', title: 'Items & Services', bc: 'Items', newLabel: 'New item', onNew: () => itemForm(), empty: 'No items yet.',
@@ -1418,8 +1418,8 @@ const LISTS = {
       { h: 'Reorder at', r: 1, f: r => r.reorder_level == null ? '—' : qty(r.reorder_level) },
       { h: 'Status', f: r => badge(r.status) }
     ],
-    actions: r => [['edit', 'Edit'], ...(r.track_inventory ? [['adjust', 'Adjust']] : [])],
-    onAction: (a, r) => a === 'edit' ? itemForm(r.id) : a === 'adjust' ? adjustForm(r.id) : null,
+    actions: r => [['edit', 'Edit'], ...(r.track_inventory ? [['adjust', 'Adjust']] : []), ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? itemForm(r.id) : a === 'adjust' ? adjustForm(r.id) : a === 'delete' ? deleteRecord('items', r, 'Item') : null,
   },
   invoices: {
     api: 'invoices', title: 'All Invoices ▾', bc: 'Sales', newLabel: 'New', onNew: () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }), ordering: '-date', empty: 'No invoices yet.',
@@ -1853,8 +1853,8 @@ const LISTS = {
       { h: 'Amount', s: 'total', ...money(r => inr(r.total)) },
       { h: 'Tax Deductible', f: r => r.is_tax_deductible ? badge('Deductible', 'up') : badge('Non-deductible') }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? expenseForm(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? expenseForm(r.id) : a === 'delete' ? deleteRecord('expenses', r, 'Expense') : null,
   },
   'purchase-orders': {
     api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('purchase-orders'), ordering: '-date', empty: 'No purchase orders yet.',
@@ -1880,8 +1880,8 @@ const LISTS = {
       { h: 'Budget Hours', r: 1, f: r => qty(r.budget_hours) + ' hrs' },
       { h: 'Status', f: r => badge(r.status) }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? projectModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? projectModal(r.id) : a === 'delete' ? deleteRecord('projects', r, 'Project') : null,
   },
   timesheets: {
     api: 'timelogs', title: 'Timesheets', bc: 'Time Tracking', newLabel: 'Log time', onNew: () => timelogModal(), ordering: '-date', empty: 'No time entries logged yet.',
@@ -1893,8 +1893,8 @@ const LISTS = {
       { h: 'Billable', f: r => r.billable ? badge('Billable', 'up') : badge('Non-billable') },
       { h: 'Logged By', f: r => esc(r.user_name || 'Admin') }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? timelogModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? timelogModal(r.id) : a === 'delete' ? deleteRecord('timelogs', r, 'Time Entry') : null,
   },
   'bank-accounts': {
     api: 'bank-accounts', title: 'Bank Accounts', bc: 'Banking', newLabel: 'Add bank account', onNew: () => bankAccountForm(), empty: 'No bank accounts added yet.',
@@ -1934,8 +1934,8 @@ const LISTS = {
       { h: 'Total Debit', ...money(r => inr(r.total_debit)) },
       { h: 'Total Credit', ...money(r => inr(r.total_credit)) }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? journalForm(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? journalForm(r.id) : a === 'delete' ? deleteRecord('manual-journals', r, 'Manual Journal') : null,
   },
   accounts: {
     api: 'accounts', title: 'Chart of Accounts', bc: 'Accountant', newLabel: 'New account', onNew: () => accountForm(), ordering: 'code', empty: 'No accounts in Chart of Accounts.',
@@ -1948,20 +1948,20 @@ const LISTS = {
       { h: 'Balance', s: 'balance', ...money(r => inr(r.balance)) },
       { h: 'Status', f: r => r.active ? badge('Active', 'up') : badge('Inactive') }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? accountForm(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? accountForm(r.id) : a === 'delete' ? deleteRecord('accounts', r, 'Account') : null,
   },
   'item-categories': {
     api: 'item-categories', title: 'Item Categories', bc: 'Items', newLabel: 'New category', onNew: () => categoryModal(), ordering: 'name', empty: 'No item categories yet.',
     cols: [{ h: 'Category Name', s: 'name', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}"><b>${esc(r.name)}</b></button>` }, { h: 'Description', f: r => esc(r.description || '—') }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? categoryModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? categoryModal(r.id) : a === 'delete' ? deleteRecord('item-categories', r, 'Category') : null,
   },
   'price-lists': {
     api: 'price-lists', title: 'Price Lists', bc: 'Items', newLabel: 'New price list', onNew: () => priceListModal(), ordering: 'name', empty: 'No price lists yet.',
     cols: [{ h: 'Name', s: 'name', f: r => `<b>${esc(r.name)}</b>` }, { h: 'Pricing Scheme', f: r => esc(r.pricing_scheme) }, { h: 'Percentage', r: 1, f: r => num(r.percentage) + '%' }, { h: 'Status', f: r => r.active ? badge('Active', 'up') : badge('Inactive') }],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? priceListModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? priceListModal(r.id) : a === 'delete' ? deleteRecord('price-lists', r, 'Price List') : null,
   },
   warehouses: {
     api: 'warehouses', title: 'Warehouses', bc: 'Inventory', newLabel: 'New warehouse', onNew: () => warehouseModal(), ordering: 'name', empty: 'No warehouses configured.',
@@ -1973,8 +1973,8 @@ const LISTS = {
       { h: 'City', f: r => esc(r.city || '—') },
       { h: 'State', f: r => esc(r.state || '—') }
     ],
-    actions: () => [['edit', 'Edit']],
-    onAction: (a, r) => a === 'edit' ? warehouseModal(r.id) : null,
+    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'edit' ? warehouseModal(r.id) : a === 'delete' ? deleteRecord('warehouses', r, 'Warehouse') : null,
   },
   'payment-transactions': {
     api: 'payment-transactions', title: 'Payment Gateway Transactions', bc: 'Convosis Payments', ordering: '-created_at', empty: 'No online payment transactions yet.',
@@ -3970,10 +3970,8 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }
       if (act === 'close') {
         curDoc = null;
-        if (typeof LISTS !== 'undefined' && LISTS[kind]) {
-          listPage(root, LISTS[kind]);
-          return;
-        }
+        const splitView = root.querySelector('.split-view-container');
+        if (splitView) splitView.classList.remove('has-selection');
         renderMasterList();
         renderDetailPane();
         const filter = $('#master-filter-sel', root);
@@ -3982,6 +3980,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
           const master = $('.master-col', root);
           if (master) master.scrollIntoView({ block: 'start' });
         }
+        return;
       }
     }
   });
@@ -3993,6 +3992,18 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       loadList();
     });
   }
+  root.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && curDoc && !document.querySelector('.modal-backdrop, .custom-modal-overlay')) {
+      e.preventDefault();
+      curDoc = null;
+      const splitView = root.querySelector('.split-view-container');
+      if (splitView) splitView.classList.remove('has-selection');
+      renderMasterList();
+      renderDetailPane();
+      const filter = $('#master-filter-sel', root);
+      if (filter) filter.focus();
+    }
+  });
   const nBtn = $('#master-new-btn', root);
   if (nBtn) nBtn.addEventListener('click', () => openForm(null));
   const impBtn = $('#master-import-btn', root);

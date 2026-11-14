@@ -406,6 +406,7 @@ document.addEventListener('click', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    closePops();
     const bds = document.querySelectorAll('.modal-backdrop, .custom-modal-overlay');
     if (bds.length) {
       bds[bds.length - 1].remove();

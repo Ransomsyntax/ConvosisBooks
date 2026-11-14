@@ -368,10 +368,21 @@ function renderSettingsShell(root, activeSubKey, title, renderPageContentFn) {
 
   const pane = $('#settingsMainPane');
   if (pane) {
-    if (activeSubKey === 'taxes' || activeSubKey === 'direct-taxes') {
+    if (activeSubKey === 'enterprise-settings') {
+      pane.classList.add('settings-pane-fixed');
+      pane.style.padding = '18px 24px 18px';
+      pane.style.overflow = 'hidden';
+      pane.style.height = '100%';
+    } else if (activeSubKey === 'taxes' || activeSubKey === 'direct-taxes') {
+      pane.classList.remove('settings-pane-fixed');
       pane.style.padding = '0';
+      pane.style.overflow = 'auto';
+      pane.style.height = '';
     } else {
+      pane.classList.remove('settings-pane-fixed');
       pane.style.padding = '28px 36px 60px';
+      pane.style.overflow = 'auto';
+      pane.style.height = '';
     }
   }
   const renderer = renderPageContentFn || getSettingsPageRenderer(activeSubKey);
@@ -4028,38 +4039,83 @@ async function renderEnterpriseSettingsPage(container) {
   }
 
   container.innerHTML = `
-    <div class="settings-page-header">
-      <div class="settings-page-header-left">
-        <h1>Enterprise Settings Registry</h1>
+    <div class="enterprise-registry-layout">
+      <div class="enterprise-registry-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button type="button" class="enterprise-mobile-toggle-btn" id="btnToggleEnterpriseNav" title="Toggle Modules Menu">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            <span>Modules</span>
+          </button>
+          <h1>Enterprise Settings Registry</h1>
+        </div>
+        <div class="enterprise-registry-search-wrap">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="enterpriseNavSearch" placeholder="Filter settings modules..." autocomplete="off">
+        </div>
       </div>
-    </div>
-    <div class="settings-table-card" style="display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:24px;padding:20px;">
-      <nav id="enterpriseSettingsNav" aria-label="Enterprise settings categories">
-        ${categories.map(category => `
-          <div class="settings-nav-group open">
-            <button type="button" class="settings-nav-group-btn" data-enterprise-category-toggle>
-              <span class="settings-nav-group-label">${esc(category.title)}</span>
-            </button>
-            <div class="settings-nav-items">
-              ${category.submodules.map(submodule => `
-                <button type="button"
-                  class="settings-nav-item ${category.id === firstCategory.id && submodule.id === firstSubmodule.id ? 'active' : ''}"
-                  data-enterprise-category="${esc(category.id)}"
-                  data-enterprise-submodule="${esc(submodule.id)}"
-                  style="border:0;background:transparent;width:100%;text-align:left;cursor:pointer;font:inherit;">
-                  ${esc(submodule.title)}
-                </button>
-              `).join('')}
+      <div class="enterprise-settings-container">
+        <nav id="enterpriseSettingsNav" class="enterprise-middle-nav" aria-label="Enterprise settings categories">
+          ${categories.map(category => `
+            <div class="enterprise-category-group" data-category-group="${esc(category.id)}">
+              <div class="enterprise-category-title">${esc(category.title)}</div>
+              <div class="enterprise-category-items">
+                ${category.submodules.map(submodule => `
+                  <button type="button"
+                    class="enterprise-submodule-btn ${category.id === firstCategory.id && submodule.id === firstSubmodule.id ? 'active' : ''}"
+                    data-enterprise-category="${esc(category.id)}"
+                    data-enterprise-submodule="${esc(submodule.id)}"
+                    title="${esc(submodule.title)}">
+                    <span class="submodule-label">${esc(submodule.title)}</span>
+                    ${submodule.badge ? `<span class="submodule-chip">${esc(submodule.badge)}</span>` : ''}
+                  </button>
+                `).join('')}
+              </div>
             </div>
-          </div>
-        `).join('')}
-      </nav>
-      <section id="enterpriseSettingsDetail" aria-live="polite"></section>
+          `).join('')}
+        </nav>
+        <section id="enterpriseSettingsDetail" class="enterprise-right-detail" aria-live="polite"></section>
+      </div>
     </div>
   `;
 
   const nav = container.querySelector('#enterpriseSettingsNav');
   const detail = container.querySelector('#enterpriseSettingsDetail');
+  const searchInput = container.querySelector('#enterpriseNavSearch');
+  const mobileToggle = container.querySelector('#btnToggleEnterpriseNav');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      const groups = nav.querySelectorAll('.enterprise-category-group');
+      groups.forEach(group => {
+        let visibleCount = 0;
+        const buttons = group.querySelectorAll('.enterprise-submodule-btn');
+        buttons.forEach(btn => {
+          const text = btn.textContent.toLowerCase();
+          if (!q || text.includes(q)) {
+            btn.style.display = 'flex';
+            visibleCount++;
+          } else {
+            btn.style.display = 'none';
+          }
+        });
+        group.style.display = visibleCount > 0 ? '' : 'none';
+      });
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    });
+  }
+
+  if (mobileToggle) {
+    mobileToggle.addEventListener('click', () => {
+      nav.classList.toggle('mobile-open');
+    });
+  }
+
   let activeCategoryId = firstCategory.id;
   let activeSubmoduleId = firstSubmodule.id;
   let renderVersion = 0;
@@ -4073,18 +4129,18 @@ async function renderEnterpriseSettingsPage(container) {
     const version = ++renderVersion;
     const existingRoute = existingRoutes[submodule.id];
     const header = `
-      <div class="settings-page-header">
-        <div class="settings-page-header-left">
-          <h2>${esc(submodule.title)}</h2>
-          <p style="color:#6b7280;margin:6px 0 0;">${esc(submodule.description || '')}</p>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid #e2e8f0;">
+        <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;">
+          <h2 style="font-size:18px;font-weight:700;color:#0f172a;margin:0;">${esc(submodule.title)}</h2>
+          <span style="font-size:13px;color:#64748b;">${esc(submodule.description || '')}</span>
         </div>
       </div>
     `;
 
     if (existingRoute) {
       detail.innerHTML = `${header}
-        <div class="settings-form-card">
-          <p>A related existing configuration page is available.</p>
+        <div class="settings-form-card" style="padding:24px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+          <p style="color:#475569;margin-bottom:16px;font-size:14px;">A related existing configuration page is available.</p>
           <a class="btn-primary" href="${existingRoute}">Open related settings</a>
         </div>`;
       return;
@@ -4193,15 +4249,13 @@ async function renderEnterpriseSettingsPage(container) {
   }
 
   nav.addEventListener('click', event => {
-    const categoryToggle = event.target.closest('[data-enterprise-category-toggle]');
-    if (categoryToggle) {
-      categoryToggle.closest('.settings-nav-group').classList.toggle('open');
-      return;
-    }
     const item = event.target.closest('[data-enterprise-submodule]');
     if (!item) return;
     nav.querySelectorAll('[data-enterprise-submodule]').forEach(button => button.classList.remove('active'));
     item.classList.add('active');
+    if (nav.classList.contains('mobile-open')) {
+      nav.classList.remove('mobile-open');
+    }
     renderSubmodule(item.dataset.enterpriseCategory, item.dataset.enterpriseSubmodule);
   });
 

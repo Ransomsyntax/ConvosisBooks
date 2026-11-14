@@ -170,4 +170,35 @@ class SettingsAndAdjustmentTests(TestCase):
         }), content_type='application/json')
         self.assertEqual(dup_term.status_code, 400)
 
+    def test_enterprise_settings_registry_and_preferences(self):
+        # 1. GET enterprise registry
+        reg_resp = self.client.get('/api/settings/enterprise/registry/')
+        self.assertEqual(reg_resp.status_code, 200)
+        data = reg_resp.json()
+        self.assertIn('categories', data)
+        self.assertIn('preferences', data)
+        self.assertGreaterEqual(len(data['categories']), 11)
+
+        # 2. GET enterprise preferences for generalModules
+        pref_get = self.client.get('/api/settings/enterprise/preferences/generalModules/')
+        self.assertEqual(pref_get.status_code, 200)
+
+        # 3. PUT enterprise preferences
+        pref_put = self.client.put('/api/settings/enterprise/preferences/generalModules/', data=json.dumps({
+            'values': {
+                'enableQuotes': True,
+                'enableSalesOrders': True
+            }
+        }), content_type='application/json')
+        self.assertEqual(pref_put.status_code, 200)
+        pdata = pref_put.json()
+        self.assertEqual(pdata['values'].get('enableQuotes'), True)
+        self.assertEqual(pdata['values'].get('enableSalesOrders'), True)
+
+        # 4. Verify persistence in org
+        self.org.refresh_from_db()
+        ent_prefs = (self.org.general_settings or {}).get('enterprise_preferences', {})
+        self.assertEqual(ent_prefs.get('generalModules', {}).get('enableQuotes'), True)
+        self.assertEqual(ent_prefs.get('generalModules', {}).get('enableSalesOrders'), True)
+
 

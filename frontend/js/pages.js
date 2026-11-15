@@ -1380,8 +1380,20 @@ const LISTS = {
     api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => partyForm('customers'), empty: 'No customers yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
-    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
-    onAction: (a, r) => a === 'view' ? partyDetail('customers', r.id) : a === 'edit' ? partyForm('customers', r.id) : a === 'delete' ? deleteRecord('customers', r, 'Customer') : null,
+    actions: r => [['edit', 'Edit'], [r.active ? 'deactivate' : 'activate', r.active ? 'Deactivate' : 'Activate'], ['delete', 'Delete', 'dn']],
+    onAction: async (a, r) => {
+      if (a === 'view') return partyDetail('customers', r.id);
+      if (a === 'edit') return partyForm('customers', r.id);
+      if (a === 'delete') return deleteRecord('customers', r, 'Customer');
+      if (a === 'deactivate' || a === 'activate') {
+        try {
+          await api(`customers/${r.id}/${a}/`, { method: 'POST', body: {} });
+          toast(`Customer ${r.name} ${a === 'activate' ? 'activated' : 'deactivated'}`, 'ok');
+          refresh();
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+    },
   },
   vendors: {
     api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => partyForm('vendors'), empty: 'No vendors yet.',
@@ -1463,8 +1475,25 @@ const LISTS = {
   'payments-received': {
     api: 'payments-received', title: 'Payments Received', bc: 'Sales', newLabel: 'Record payment', onNew: () => paymentForm('payments-received'), ordering: '-date', empty: 'No payments recorded yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Receipt#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party) }, { h: 'Mode', f: r => esc(r.mode_label) }, { h: 'Reference', f: r => esc(r.reference || '—') }, { h: 'Amount', s: 'amount', ...money(r => inr(r.amount)) }, { h: 'Unapplied', ...money(r => inr(r.unapplied)) }],
-    actions: () => [['view', 'View'], ['edit', 'Edit']],
-    onAction: (a, r) => a === 'view' ? paymentDetail('payments-received', r.id) : a === 'edit' ? paymentForm('payments-received', r) : null,
+    actions: r => r.status === 'void' ? [['view', 'View']] : [['view', 'View'], ['edit', 'Edit'], ['void', 'Void Payment']],
+    onAction: async (a, r) => {
+      if (a === 'view') return paymentDetail('payments-received', r.id);
+      if (a === 'edit') return paymentForm('payments-received', r);
+      if (a === 'void') {
+        const conf = await confirmBox({
+          title: `Void Payment ${r.number}?`,
+          message: 'This will reverse all invoice allocations and restore balances.',
+          okText: 'Void Payment',
+          danger: true
+        });
+        if (!conf) return;
+        try {
+          await api(`payments-received/${r.id}/void/`, { method: 'POST', body: {} });
+          toast(`Payment ${r.number} voided successfully`, 'ok');
+          refresh();
+        } catch (err) { toast(err.message, 'err'); }
+      }
+    },
   },
   'payments-made': {
     api: 'payments-made', title: 'Payments Made', bc: 'Purchases', newLabel: 'Record payment', onNew: () => paymentForm('payments-made'), ordering: '-date', empty: 'No payments recorded yet.',
@@ -1696,8 +1725,14 @@ const LISTS = {
       ];
       if (r.status !== 'void' && r.status !== 'closed') {
         acts.push(['convert-inv', 'Convert to Invoice']);
+        acts.push(['convert-challan', 'Create Delivery Challan']);
+        acts.push(['check-stock', 'Check Stock']);
+        acts.push(['convert-po', 'Convert to Purchase Order']);
       }
       if (r.status === 'draft') {
+        acts.push(['open', 'Mark as Open']);
+        acts.push(['confirm', 'Mark as Confirmed']);
+      } else if (r.status === 'open') {
         acts.push(['confirm', 'Mark as Confirmed']);
       }
       return acts;
@@ -1709,6 +1744,12 @@ const LISTS = {
         salesOrderForm(r.id);
       } else if (a === 'sign') {
         openSignatureModal(r, 'sales-orders', () => refresh());
+      } else if (a === 'open') {
+        try {
+          await api(`sales-orders/${r.id}/convert-to-open/`, { method: 'POST', body: {} });
+          toast(`Sales Order ${r.number} marked as open!`, 'ok');
+          refresh();
+        } catch (err) { toast(err.message, 'err'); }
       } else if (a === 'convert-inv') {
         try {
           const res = await api(`sales-orders/${r.id}/convert-to-invoice/`, { method: 'POST', body: {} });
@@ -1717,6 +1758,60 @@ const LISTS = {
           setTimeout(() => {
             if (typeof docMasterDetail === 'function') docMasterDetail($('#pg'), 'invoices', res.id || res.invoice_id);
           }, 100);
+        } catch (err) { toast(err.message, 'err'); }
+      } else if (a === 'convert-challan') {
+        try {
+          const res = await api(`sales-orders/${r.id}/convert-to-challan/`, { method: 'POST', body: {} });
+          toast(res.message || `Delivery Challan created!`, 'ok');
+          location.hash = '#/sales/delivery-challans';
+        } catch (err) { toast(err.message, 'err'); }
+      } else if (a === 'convert-po') {
+        try {
+          const res = await api(`sales-orders/${r.id}/convert-to-po/`, { method: 'POST', body: {} });
+          toast(res.message || `Purchase Order created!`, 'ok');
+          location.hash = '#/purchases/purchase-orders';
+        } catch (err) { toast(err.message, 'err'); }
+      } else if (a === 'check-stock') {
+        try {
+          const res = await api(`sales-orders/${r.id}/check-stock/`, { method: 'POST', body: {} });
+          const rows = (res.items || []).map(it => `
+            <tr style="border-bottom:1px solid #e2e8f0;font-size:12px;">
+              <td style="padding:8px 10px;"><b>${esc(it.item_name)}</b></td>
+              <td style="padding:8px 10px;text-align:right;">${it.required}</td>
+              <td style="padding:8px 10px;text-align:right;">${it.available}</td>
+              <td style="padding:8px 10px;text-align:right;color:${it.is_low_stock ? '#dc2626;font-weight:700;' : '#16a34a;'}">${it.shortage > 0 ? '-' + it.shortage : 'In Stock'}</td>
+            </tr>
+          `).join('');
+          Modal.open({
+            title: `Stock Availability – SO ${r.number}`,
+            body: `
+              <div style="padding:16px;">
+                <div style="margin-bottom:12px;">
+                  ${res.has_low_stock ? '<span class="pastel-chip chip-rose" style="font-weight:700;"><i class="fa-solid fa-triangle-exclamation"></i> Low Stock Detected</span>' : '<span class="pastel-chip chip-mint" style="font-weight:700;"><i class="fa-solid fa-check"></i> All Items in Stock</span>'}
+                </div>
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead><tr style="background:#f1f5f9;font-size:11px;text-align:left;">
+                    <th style="padding:8px 10px;">Item</th><th style="padding:8px 10px;text-align:right;">Required</th><th style="padding:8px 10px;text-align:right;">Available</th><th style="padding:8px 10px;text-align:right;">Status</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            `,
+            footer: `
+              <div style="display:flex;justify-content:space-between;width:100%;">
+                ${res.has_low_stock ? `<button type="button" class="btn p" id="btn-modal-create-po" style="background:#0284c7;border:none;"><i class="fa-solid fa-cart-flatbed"></i> Convert to Purchase Order</button>` : '<span></span>'}
+                <button type="button" class="btn" data-close>Close</button>
+              </div>
+            `
+          });
+          $('#btn-modal-create-po')?.addEventListener('click', async () => {
+            Modal.close();
+            try {
+              const poRes = await api(`sales-orders/${r.id}/convert-to-po/`, { method: 'POST', body: {} });
+              toast(poRes.message || `Purchase Order created!`, 'ok');
+              location.hash = '#/purchases/purchase-orders';
+            } catch (err) { toast(err.message, 'err'); }
+          });
         } catch (err) { toast(err.message, 'err'); }
       } else if (a === 'confirm') {
         try {
@@ -1802,7 +1897,7 @@ const LISTS = {
     ],
     actions: r => {
       const actions = [['print', 'PDF / Print']];
-      if (r.status === 'draft') actions.unshift(['edit', 'Edit'], ['delete', 'Delete', 'd']);
+      if (r.status === 'draft') actions.unshift(['convert-to-open', 'Mark as Open'], ['edit', 'Edit'], ['delete', 'Delete', 'd']);
       if (!['returned', 'cancelled', 'closed'].includes(r.status)) {
         const remainingToDeliver = Number(r.total_quantity || 0) - Number(r.delivered_quantity || 0);
         if (!r.delivered_quantity || remainingToDeliver > 0) actions.push(['mark-as-delivered', 'Mark as Delivered']);
@@ -1822,9 +1917,35 @@ const LISTS = {
   },
   'credit-notes': {
     api: 'credit-notes', title: 'Credit Notes', bc: 'Sales', newLabel: 'New credit note', onNew: () => docForm('credit-notes'), ordering: '-date', empty: 'No credit notes yet.',
-    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit Note#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party || r.customer_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
-    actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('credit-notes', r.id) : (a === 'sign' ? openSignatureModal(r, 'credit-notes', () => refresh()) : null),
+    cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit Note#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Customer', f: r => esc(r.party || r.customer_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance !== undefined ? r.balance : r.total)) }],
+    actions: r => {
+      const acts = [['view', 'View']];
+      if (r.status === 'draft') {
+        acts.push(['edit', 'Edit'], ['send', 'Send / Open'], ['delete', 'Delete', 'd']);
+      } else {
+        acts.push(['edit', 'Edit']);
+      }
+      if (num(r.balance !== undefined ? r.balance : r.total) > 0 && r.status !== 'void' && r.status !== 'draft') {
+        acts.push(['apply-to-invoices', 'Apply to Invoices']);
+        acts.push(['refund', 'Refund']);
+      }
+      acts.push(['sign', r.signature_data ? 'Signed ✓' : 'Sign']);
+      return acts;
+    },
+    onAction: async (a, r) => {
+      if (a === 'view' || a === 'edit') return docForm('credit-notes', r.id);
+      if (a === 'sign') return openSignatureModal(r, 'credit-notes', () => refresh());
+      if (a === 'send') {
+        try {
+          await api(`credit-notes/${r.id}/send/`, { method: 'POST', body: {} });
+          toast(`Credit Note ${r.number} sent / opened`, 'ok');
+          refresh();
+        } catch (e) { toast(e.message, 'err'); }
+        return;
+      }
+      if (a === 'refund') return openCreditNoteRefundModal(r, () => refresh());
+      if (a === 'apply-to-invoices') return openCreditNoteApplyModal(r, () => refresh());
+    },
   },
   'e-way-bills': {
     api: 'e-way-bills', title: 'E-Way Bills', bc: 'Sales', newLabel: 'Generate e-Way Bill', onNew: () => ewayBillModal(), ordering: '-created_at', empty: 'No e-Way Bills generated yet.',
@@ -4733,6 +4854,216 @@ async function applyRetainerToInvoiceModal(invoiceDoc, onDone) {
   });
 }
 
+async function openCreditNoteRefundModal(doc, onDone) {
+  const avail = num(doc.balance !== undefined ? doc.balance : doc.total || 0);
+  if (avail <= 0) {
+    toast('No available credit balance to refund.', 'err');
+    return;
+  }
+  let bankOpts = [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash']];
+  try {
+    const bas = await api('lookup/bank-accounts/');
+    if (bas && bas.length) {
+      bankOpts = bas.map(b => [b.name, `${b.name} (${b.bank_name || 'Bank'})`]);
+      bankOpts.push(['Cash', 'Petty Cash']);
+    }
+  } catch (e) {}
+
+  formModal({
+    title: `Refund Credit Note · ${doc.number}`,
+    wide: false,
+    submit: 'Process Refund',
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:13px;line-height:1.5;">
+        <div><b>Customer:</b> ${esc(doc.party || doc.customer_name)}</div>
+        <div style="margin-top:2px;"><b>Credit Note Total:</b> ${inr(doc.total)} &nbsp;|&nbsp; <b>Available to Refund:</b> <span style="color:#059669;font-weight:700;">${inr(avail)}</span></div>
+      </div>
+      <div class="fgrid">
+        ${fld({ name: 'amount', label: 'Refund Amount (₹)', type: 'number', req: 1, value: avail.toFixed(2), attrs: `min="0.01" max="${avail}" step="0.01"` })}
+        ${fld({ name: 'date', label: 'Refund Date', type: 'date', req: 1, value: APP.today })}
+        ${fld({ name: 'mode', label: 'Refund Mode', type: 'select', opts: [['bank_transfer', 'Bank Transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Credit/Debit Card'], ['other', 'Other']], value: 'bank_transfer' })}
+        ${fld({ name: 'account', label: 'Paid From', type: 'select', opts: bankOpts, value: bankOpts[0][0] })}
+        ${fld({ name: 'reference', label: 'Reference#', col: 'c2', placeholder: 'UTR / Transaction ID / Cheque#' })}
+        ${fld({ name: 'notes', label: 'Notes / Reason', type: 'textarea', col: 'c2', placeholder: 'Reason for refund' })}
+      </div>
+    `,
+    onSubmit: async d => {
+      const refAmt = num(d.amount);
+      if (refAmt <= 0) throw new ApiErr(400, { amount: 'Refund amount must be greater than zero.' });
+      if (refAmt > avail + 0.009) throw new ApiErr(400, { amount: `Refund amount cannot exceed available balance (${inr(avail)}).` });
+
+      await api(`credit-notes/${doc.id}/refund/`, {
+        method: 'POST',
+        body: {
+          amount: refAmt,
+          date: d.date,
+          mode: d.mode,
+          account: d.account,
+          reference: d.reference,
+          notes: d.notes,
+        }
+      });
+      toast(`Refund of ${inr(refAmt)} processed successfully`, 'ok');
+      if (onDone) onDone();
+    }
+  });
+}
+
+async function openCreditNoteApplyModal(creditDoc, onDone) {
+  const avail = num(creditDoc.balance !== undefined ? creditDoc.balance : creditDoc.total || 0);
+  if (avail <= 0) {
+    toast('No available credit balance to apply.', 'err');
+    return;
+  }
+  let res;
+  try {
+    res = await api('invoices/?' + qs({ customer: creditDoc.customer_id || creditDoc.party_id || creditDoc.customer, open: '1', page_size: 100 }));
+  } catch (e) {
+    toast(e.message, 'err');
+    return;
+  }
+  const invoices = (res.results || []).filter(inv => inv.raw_status !== 'draft' && inv.raw_status !== 'void' && num(inv.balance) > 0);
+  if (!invoices.length) {
+    toast(`No unpaid invoices found for ${creditDoc.party || creditDoc.customer_name || 'this customer'}.`, 'err');
+    return;
+  }
+
+  const m = Modal.open({
+    title: `Apply Credit Note ${esc(creditDoc.number)} to Invoices`,
+    wide: true,
+    body: `
+      <div style="background:var(--surface-glass-subtle);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div><b>Customer:</b> ${esc(creditDoc.party || creditDoc.customer_name)}</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:2px;">Apply credit note balance against outstanding customer invoices.</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--sub);font-weight:600;">Available Credit</div>
+          <div style="font-size:18px;font-weight:800;color:#059669;" id="m-cn-avail-bal">${inr(avail)}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+        <label style="font-weight:600;font-size:13px;">Allocation Date:</label>
+        <input class="in" type="date" id="m-cn-alloc-date" value="${APP.today}" style="max-width:180px;">
+      </div>
+
+      <table class="lt" style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Invoice#</th>
+            <th>Date</th>
+            <th>Due Date</th>
+            <th class="r">Total</th>
+            <th class="r">Balance Due</th>
+            <th class="r" style="width:180px;">Amount to Apply (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${invoices.map(inv => `
+            <tr data-inv-id="${inv.id}" data-bal="${inv.balance}">
+              <td><b>${esc(inv.number)}</b></td>
+              <td>${fd(inv.date)}</td>
+              <td>${fd(inv.due_date)}</td>
+              <td class="r">${inr(inv.total)}</td>
+              <td class="r" style="font-weight:600;">${inr(inv.balance)}</td>
+              <td class="r">
+                <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;">
+                  <input type="number" class="in r cn-alloc-val" data-id="${inv.id}" step="0.01" min="0" max="${inv.balance}" placeholder="0.00" style="width:110px;padding:4px 6px;">
+                  <button type="button" class="btn btn-sm cn-alloc-max" data-id="${inv.id}" style="padding:2px 8px;font-size:11px;">Max</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <div style="margin-top:14px;padding:10px 14px;background:rgba(0,0,0,0.02);border-radius:6px;display:flex;justify-content:flex-end;gap:24px;font-size:13px;">
+        <div><span>Total Applied:</span> <b id="m-cn-tot-applied" style="color:#6366f1;">₹0.00</b></div>
+        <div><span>Remaining Credit:</span> <b id="m-cn-rem-credit" style="color:#059669;">${inr(avail)}</b></div>
+      </div>
+      <div id="m-cn-alloc-err" style="color:var(--err);font-size:12px;margin-top:8px;font-weight:600;"></div>
+    `,
+    footer: `
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn p" type="button" id="m-cn-submit-apply" style="background:#6366f1;border-color:#6366f1;">Apply Credit</button>
+    `
+  });
+
+  const updateCalcs = () => {
+    let tot = 0;
+    $$('.cn-alloc-val', m.el).forEach(inp => {
+      tot += num(inp.value);
+    });
+    const rem = avail - tot;
+    $('#m-cn-tot-applied', m.el).textContent = inr(tot);
+    const remEl = $('#m-cn-rem-credit', m.el);
+    remEl.textContent = inr(rem);
+    if (rem < -0.009) {
+      remEl.style.color = 'var(--err)';
+      $('#m-cn-alloc-err', m.el).textContent = `Total applied amount exceeds available balance by ${inr(Math.abs(rem))}`;
+    } else {
+      remEl.style.color = '#059669';
+      $('#m-cn-alloc-err', m.el).textContent = '';
+    }
+  };
+
+  m.el.addEventListener('input', e => {
+    if (e.target.classList.contains('cn-alloc-val')) updateCalcs();
+  });
+
+  m.el.addEventListener('click', async e => {
+    const maxBtn = e.target.closest('.cn-alloc-max');
+    if (maxBtn) {
+      const invId = maxBtn.dataset.id;
+      const row = m.el.querySelector(`tr[data-inv-id="${invId}"]`);
+      const bal = num(row ? row.dataset.bal : 0);
+      const input = m.el.querySelector(`.cn-alloc-val[data-id="${invId}"]`);
+      let otherUsed = 0;
+      $$('.cn-alloc-val', m.el).forEach(inp => {
+        if (inp !== input) otherUsed += num(inp.value);
+      });
+      const remainingAvail = Math.max(0, avail - otherUsed);
+      const toAlloc = Math.min(bal, remainingAvail);
+      input.value = toAlloc > 0 ? toAlloc.toFixed(2) : '';
+      updateCalcs();
+      return;
+    }
+
+    if (e.target.id === 'm-cn-submit-apply') {
+      const dt = $('#m-cn-alloc-date', m.el).value;
+      const allocs = [];
+      $$('.cn-alloc-val', m.el).forEach(inp => {
+        const amt = num(inp.value);
+        if (amt > 0) {
+          allocs.push({ invoice: Number(inp.dataset.id), amount: amt });
+        }
+      });
+      if (!allocs.length) {
+        $('#m-cn-alloc-err', m.el).textContent = 'Please enter an amount to apply to at least one invoice.';
+        return;
+      }
+      let tot = allocs.reduce((a, b) => a + b.amount, 0);
+      if (tot > avail + 0.009) {
+        $('#m-cn-alloc-err', m.el).textContent = 'Total applied amount exceeds available credit note balance.';
+        return;
+      }
+
+      try {
+        await api(`credit-notes/${creditDoc.id}/apply/`, {
+          method: 'POST',
+          body: { allocations: allocs, date: dt }
+        });
+        toast(`Credit note applied successfully to ${allocs.length} invoice(s)`);
+        m.close();
+        if (onDone) onDone();
+      } catch (err) {
+        $('#m-cn-alloc-err', m.el).textContent = err.message;
+      }
+    }
+  });
+}
+
 async function viewRecurringInvoiceModal(id) {
   try {
     const d = await api(`recurring-invoices/${id}/`);
@@ -4927,15 +5258,32 @@ async function viewRecurringInvoiceModal(id) {
 
 async function paymentDetail(kind, id) {
   const rec = kind === 'payments-received', d = await api(`${kind}/${id}/`);
+  const isVoid = d.status === 'void';
   const m = Modal.open({
     dialog: true,
-    title: `Payment ${d.number}`,
+    title: `Payment ${d.number}${isVoid ? ' (Void)' : ''}`,
     body: `${kvBox([[rec ? 'Customer' : 'Vendor', esc(d.party)], ['Date', fd(d.date)], ['Mode', esc(d.mode_label)], ['Account', esc(d.account)], ['Reference', esc(d.reference || '—')], ['Amount', inr(d.amount)], ['Applied', inr(d.applied)], ['Unapplied', inr(d.unapplied)]])}
 ${d.allocations.length ? `<table><thead><tr><th>${rec ? 'Invoice' : 'Bill'}</th><th class="r">Applied</th></tr></thead><tbody>${d.allocations.map(a => `<tr><td>${esc(a.number)}</td><td class="r">${inr(a.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="sub">Not applied to any document.</p>'}${d.notes ? `<p><span class="sub">Notes:</span> ${esc(d.notes)}</p>` : ''}
-<p class="hp">Deleting a payment restores the balance due on the documents it was applied to.</p>`,
-    footer: '<button class="btn" type="button" data-close>Close</button><button class="btn d" type="button" data-do="delete">Delete payment</button>',
+<p class="hp">Deleting or voiding a payment restores the balance due on the documents it was applied to.</p>`,
+    footer: `<button class="btn" type="button" data-close>Close</button><button class="btn" type="button" onclick="window.print()"><i class="fa-solid fa-print"></i> Print Receipt</button>${rec && !isVoid ? '<button class="btn" type="button" data-do="void" style="color:#d97706;"><i class="fa-solid fa-ban"></i> Void payment</button>' : ''}<button class="btn d" type="button" data-do="delete">Delete payment</button>`,
   });
   m.el.addEventListener('click', async e => {
+    if (e.target.closest('[data-do=void]')) {
+      try {
+        const conf = await confirmBox({
+          title: 'Void payment ' + d.number + '?',
+          message: 'Balances on the applied documents will be restored and journals reversed.',
+          okText: 'Void Payment',
+          danger: true
+        });
+        if (!conf) return;
+        await api(`${kind}/${id}/void/`, { method: 'POST', body: {} });
+        toast('Payment voided and reversed successfully', 'ok');
+        m.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+      return;
+    }
     if (!e.target.closest('[data-do=delete]')) return;
     try {
       if (!(await confirmBox({ title: 'Delete payment ' + d.number + '?', message: 'Balances on the applied documents will be restored.', okText: 'Delete', danger: true }))) return;
@@ -9797,14 +10145,17 @@ async function viewQuoteDetail(id) {
             ${!isConverted ? `<button type="button" class="btn" id="btn-view-edit-q"><i class="fa-solid fa-pen"></i> Edit Quote</button>` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            ${(q.status === 'invoiced' || q.converted_to_invoice_number) ? `
+            ${q.status === 'declined' ? `
+              <span class="pastel-chip chip-rose" style="font-size:12px;padding:6px 12px;"><i class="fa-solid fa-ban"></i> Quote Declined (Cannot be converted)</span>
+            ` : (q.status === 'invoiced' || q.converted_to_invoice_number) ? `
               <span class="pastel-chip chip-indigo" style="font-size:12px;padding:6px 12px;"><i class="fa-solid fa-check"></i> Converted to Invoice ${esc(q.converted_to_invoice_number || '')}</span>
             ` : (q.status === 'ordered' || q.converted_to_sales_order_number) ? `
               <span class="pastel-chip chip-indigo" style="font-size:12px;padding:6px 12px;"><i class="fa-solid fa-check"></i> Converted to Sales Order ${esc(q.converted_to_sales_order_number || '')}</span>
             ` : `
               ${q.status === 'draft' ? `<button type="button" class="btn" id="btn-q-mark-sent"><i class="fa-solid fa-paper-plane"></i> Mark Sent</button>` : ''}
-              ${q.status !== 'accepted' && q.status !== 'declined' ? `<button type="button" class="btn" id="btn-q-mark-accepted" style="color:#059669;"><i class="fa-solid fa-check"></i> Accept</button>` : ''}
-              ${q.status !== 'declined' ? `<button type="button" class="btn" id="btn-q-mark-declined" style="color:#dc2626;"><i class="fa-solid fa-xmark"></i> Decline</button>` : ''}
+              ${q.status === 'sent' ? `<button type="button" class="btn" id="btn-q-mark-viewed"><i class="fa-solid fa-eye"></i> Mark as Viewed</button>` : ''}
+              ${q.status !== 'accepted' ? `<button type="button" class="btn" id="btn-q-mark-accepted" style="color:#059669;"><i class="fa-solid fa-check"></i> Accept</button>` : ''}
+              <button type="button" class="btn" id="btn-q-mark-declined" style="color:#dc2626;"><i class="fa-solid fa-xmark"></i> Decline</button>
               <button type="button" class="btn p" id="btn-q-to-inv" style="background:#059669;border:none;">
                 <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
               </button>
@@ -9836,6 +10187,15 @@ async function viewQuoteDetail(id) {
         await api(`quotes/${q.id}/send/`, { method: 'POST', body: {} });
         toast(`Quote ${q.number} marked as sent!`, 'ok');
         Modal.close();
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-q-mark-viewed')?.addEventListener('click', async () => {
+      try {
+        await api(`quotes/${q.id}/view/`, { method: 'POST', body: {} });
+        toast(`Quote ${q.number} marked as viewed!`, 'ok');
+        Modal.close();
+        viewQuoteDetail(q.id);
         refresh();
       } catch (err) { toast(err.message, 'err'); }
     });
@@ -10001,13 +10361,19 @@ async function viewSalesOrderDetail(id) {
             <button type="button" class="btn" id="btn-so-sign"><i class="fa-solid fa-signature"></i> ${so.signature_data ? 'Signed ✓' : 'Sign'}</button>
             ${so.status !== 'void' ? `<button type="button" class="btn" id="btn-view-edit-so"><i class="fa-solid fa-pen"></i> Edit Order</button>` : ''}
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            ${so.status === 'draft' ? `
+              <button type="button" class="btn" id="btn-so-mark-open"><i class="fa-solid fa-folder-open"></i> Convert to Open</button>
+              <button type="button" class="btn" id="btn-so-mark-confirmed"><i class="fa-solid fa-check"></i> Confirm</button>
+            ` : ''}
             ${so.status !== 'void' && so.status !== 'closed' ? `
+              <button type="button" class="btn" id="btn-so-check-stock"><i class="fa-solid fa-boxes-stacked"></i> Check Stock</button>
+              <button type="button" class="btn" id="btn-so-to-po"><i class="fa-solid fa-file-lines"></i> Convert to PO</button>
+              <button type="button" class="btn" id="btn-so-to-challan"><i class="fa-solid fa-truck-ramp-box"></i> Delivery Challan</button>
               <button type="button" class="btn p" id="btn-so-to-inv" style="background:#059669;border:none;">
                 <i class="fa-solid fa-file-invoice"></i> Convert to Invoice
               </button>
             ` : ''}
-            ${so.status === 'draft' ? `<button type="button" class="btn" id="btn-so-mark-confirmed"><i class="fa-solid fa-check"></i> Confirm</button>` : ''}
             ${so.status !== 'void' ? `<button type="button" class="btn" id="btn-so-mark-void" style="color:#dc2626;"><i class="fa-solid fa-ban"></i> Void</button>` : ''}
             <button type="button" class="btn" data-close>Close</button>
           </div>
@@ -10027,6 +10393,58 @@ async function viewSalesOrderDetail(id) {
     $('#btn-view-edit-so')?.addEventListener('click', () => {
       Modal.close();
       salesOrderForm(so.id);
+    });
+    $('#btn-so-mark-open')?.addEventListener('click', async () => {
+      try {
+        await api(`sales-orders/${so.id}/convert-to-open/`, { method: 'POST', body: {} });
+        toast(`Sales Order ${so.number} marked as open!`, 'ok');
+        Modal.close();
+        viewSalesOrderDetail(so.id);
+        refresh();
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-so-check-stock')?.addEventListener('click', async () => {
+      try {
+        const check = await api(`sales-orders/${so.id}/check-stock/`);
+        const shortages = check.shortages || [];
+        if (shortages.length === 0) {
+          await alertBox({
+            title: 'Stock Status: Sufficient',
+            message: `All items in Sales Order ${so.number} have sufficient stock. You can fulfill via Delivery Challan or Convert to Invoice.`
+          });
+        } else {
+          const listHtml = shortages.map(s => `• <b>${esc(s.item_name)}</b>: Order qty ${s.ordered_quantity}, available ${s.available_stock} (Shortage: <span style="color:#dc2626;">${s.shortage}</span>)`).join('<br>');
+          const ok = await confirmBox({
+            title: 'Low Stock Detected!',
+            message: `<p>The following items are low in stock:</p><div style="margin:10px 0;padding:10px;background:#fef2f2;border-radius:6px;font-size:12px;">${listHtml}</div><p>Would you like to convert low-stock items into a Purchase Order?</p>`,
+            okText: 'Convert to PO'
+          });
+          if (ok) {
+            try {
+              const po = await api(`sales-orders/${so.id}/convert-to-po/`, { method: 'POST', body: {} });
+              toast(`Purchase Order ${po.number} created for low-stock items!`, 'ok');
+              Modal.close();
+              location.hash = '#/purchases/purchase-orders';
+            } catch (e) { toast(e.message, 'err'); }
+          }
+        }
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-so-to-po')?.addEventListener('click', async () => {
+      try {
+        const po = await api(`sales-orders/${so.id}/convert-to-po/`, { method: 'POST', body: {} });
+        toast(`Purchase Order ${po.number} created successfully!`, 'ok');
+        Modal.close();
+        location.hash = '#/purchases/purchase-orders';
+      } catch (err) { toast(err.message, 'err'); }
+    });
+    $('#btn-so-to-challan')?.addEventListener('click', async () => {
+      try {
+        const dc = await api(`sales-orders/${so.id}/convert-to-challan/`, { method: 'POST', body: {} });
+        toast(`Delivery Challan ${dc.number} created successfully!`, 'ok');
+        Modal.close();
+        location.hash = '#/sales/delivery-challans';
+      } catch (err) { toast(err.message, 'err'); }
     });
     $('#btn-so-to-inv')?.addEventListener('click', async () => {
       try {

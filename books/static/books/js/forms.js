@@ -8459,6 +8459,14 @@ async function challanAction(id, action) {
     return;
   }
   if (action === 'edit') return challanModal(id);
+  if (action === 'convert-to-open' || action === 'open') {
+    try {
+      await api(`delivery-challans/${id}/convert-to-open/`, { method: 'POST', body: {} });
+      toast('Delivery Challan marked as open', 'ok');
+      if (typeof refresh === 'function') refresh();
+    } catch (err) { toast(err.message, 'err'); }
+    return;
+  }
   const record = await api(`delivery-challans/${id}/`);
   if (action === 'delete') return deleteRecord('delivery-challans', record, 'delivery challan');
   if (action === 'sign') return openSignatureModal(record, 'delivery-challans', () => refresh());

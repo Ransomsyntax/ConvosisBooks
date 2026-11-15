@@ -1038,7 +1038,7 @@ def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
             raise ApiError(404, 'Invoice not found.')
         if inv.customer_id != retainer.customer_id:
             raise ApiError(400, f'Invoice {inv.number} does not belong to customer {retainer.customer.name}.')
-        if inv.status not in ('sent', 'partial'):
+        if inv.status not in ('sent', 'partial', 'unpaid'):
             raise ApiError(400, f'Invoice {inv.number} is {inv.status}; retainers can only be applied to open/sent invoices.')
 
         curr_paid = sum((a.amount for a in inv.allocations.all()), Decimal('0.00')) + \
@@ -1058,6 +1058,9 @@ def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
         post_retainer_apply_journal(alloc, user)
         if curr_paid + amt >= inv.total:
             inv.status = 'paid'
+            inv.save(update_fields=['status'])
+        elif curr_paid + amt > 0:
+            inv.status = 'partial'
             inv.save(update_fields=['status'])
         log_audit(user, 'apply_retainer', 'Invoice', inv.pk,
                   f'Applied retainer credit of ₹{amt} from {retainer.number} to invoice {inv.number}',
@@ -2339,6 +2342,44 @@ def post_invoice_void_journal(inv, user):
     elif diff < 0:
         items.append(('4900', Decimal('0.00'), abs(diff), f'Reversal of Adjustment discount on {inv.number}'))
     return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user, org=org)
+
+def post_credit_note_journal(cn, user):
+    """Debit Sales Revenue (4000) and Output Tax (2210/2220/2230), Credit AR (1200)."""
+    org = getattr(cn, 'organization', None)
+    items = [
+        ('4000', cn.subtotal, Decimal('0.00'), f'Sales Return on Credit Note {cn.number} - {cn.customer.name}'),
+    ]
+    if cn.cgst > 0:
+        items.append(('2210', cn.cgst, Decimal('0.00'), f'Output CGST reversal on {cn.number}'))
+    if cn.sgst > 0:
+        items.append(('2220', cn.sgst, Decimal('0.00'), f'Output SGST reversal on {cn.number}'))
+    if cn.igst > 0:
+        items.append(('2230', cn.igst, Decimal('0.00'), f'Output IGST reversal on {cn.number}'))
+    credits_sum = cn.subtotal + cn.cgst + cn.sgst + cn.igst
+    items.append(('1200', Decimal('0.00'), cn.total, f'Credit Note {cn.number} applied to AR'))
+    diff = cn.total - credits_sum
+    if diff != 0:
+        if diff > 0:
+            items.insert(-1, ('4900', diff, Decimal('0.00'), f'Adjustment on {cn.number}'))
+        else:
+            items.insert(-1, ('4900', Decimal('0.00'), abs(diff), f'Adjustment on {cn.number}'))
+    return post_journal_entry(cn.date, 'credit_note', cn.number, f'Credit Note {cn.number}', items, user, org=org)
+
+def post_credit_note_refund_journal(cn, amount, date_, acc_code='1010', user=None, org=None):
+    """Debit Accounts Receivable / Customer Credit (1200), Credit Bank/Cash (1010/1000)."""
+    items = [
+        ('1200', amount, Decimal('0.00'), f'Credit Note refund {cn.number} - {cn.customer.name}'),
+        (acc_code, Decimal('0.00'), amount, f'Refund payout on {cn.number}')
+    ]
+    return post_journal_entry(date_, 'credit_note_refund', f'{cn.number}_REF_{amount}', f'Refund of Credit Note {cn.number}', items, user, org=org)
+
+def post_credit_note_apply_journal(cn, invoice, amount, date_, user=None, org=None):
+    """Debit Customer Credit (1200), Credit target Invoice AR (1200)."""
+    items = [
+        ('1200', amount, Decimal('0.00'), f'Credit Note {cn.number} applied from customer balance'),
+        ('1200', Decimal('0.00'), amount, f'Credit applied to Invoice {invoice.number}')
+    ]
+    return post_journal_entry(date_, 'credit_note_apply', f'{cn.number}->{invoice.number}_{amount}', f'Credit Note {cn.number} applied to {invoice.number}', items, user, org=org)
 
 def post_bill_journal(bill, user):
     """Debit COGS/Expense, Debit Input Taxes, Credit AP."""

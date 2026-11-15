@@ -977,7 +977,7 @@ def party_stats(kind, ids):
     today = timezone.localdate()
     out = {i: {'billed': Z, 'outstanding': Z, 'overdue': Z} for i in ids}
     if kind == 'customer':
-        qs = invoice_qs().filter(customer_id__in=ids, status='sent')
+        qs = invoice_qs().filter(customer_id__in=ids, status__in=('sent', 'partial', 'partially_paid', 'unpaid', 'overdue'))
         key = 'customer_id'
     else:
         qs = bill_qs().filter(vendor_id__in=ids, status='open')
@@ -1329,6 +1329,26 @@ class CustomerResource(PartyResource):
             'portal_enabled': c.boolean('portal_enabled', default=False),
             'portal_language': c.text('portal_language', max_len=40, default='English'),
         }
+
+    def destroy(self, obj):
+        from django.db.models import ProtectedError
+        try:
+            obj.delete()
+        except ProtectedError:
+            raise ApiError(400, f'Cannot delete customer "{obj.name}" because they have existing transactions. You can deactivate this customer instead.')
+
+    def action(self, request, obj, name):
+        if name == 'deactivate':
+            obj.active = False
+            obj.save(update_fields=['active'])
+            services.log_audit(request.user, 'deactivate', 'Customer', obj.pk, f'Deactivated customer {obj.name}')
+            return j({'status': 'ok', 'active': False, 'message': f'Customer {obj.name} deactivated.'})
+        elif name == 'activate':
+            obj.active = True
+            obj.save(update_fields=['active'])
+            services.log_audit(request.user, 'activate', 'Customer', obj.pk, f'Activated customer {obj.name}')
+            return j({'status': 'ok', 'active': True, 'message': f'Customer {obj.name} activated.'})
+        return super().action(request, obj, name)
 
 class VendorResource(PartyResource):
     name = 'vendors'
@@ -2811,6 +2831,12 @@ class QuoteResource(DocResource):
             obj.save(update_fields=['status', 'sent_at'])
             services.log_audit(request.user, 'update', 'quote', obj.pk, f'Quote {obj.number} marked as sent')
             return j({'status': 'sent', 'number': obj.number})
+        elif name in ('view', 'mark-as-viewed'):
+            if obj.status == 'sent':
+                obj.status = 'viewed'
+                obj.save(update_fields=['status'])
+                services.log_audit(request.user, 'view', 'quote', obj.pk, f'Quote {obj.number} marked as viewed')
+            return j({'status': obj.status, 'number': obj.number})
         elif name == 'accept':
             if obj.status in ('invoiced', 'ordered') or obj.converted_to_invoice_id or obj.converted_to_sales_order_id:
                 raise ApiError(400, f'Quote {obj.number} has already been converted ({obj.status}).')
@@ -3175,6 +3201,13 @@ class PaymentResource(Resource):
         return pay
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         if self.party_attr in data:
             pid = c.integer(self.party_attr, lo=1, required=True)
@@ -3897,6 +3930,43 @@ class PaymentReceivedResource(PaymentResource):
                 )
                 sent.append(recipient)
             return j({'status': 'ok', 'sent_to': sent, 'message': 'Thank-you email sent.'})
+        elif name in ('void', 'reverse'):
+            if obj.status == 'void':
+                raise ApiError(400, f'Payment {obj.number} is already void.')
+            with transaction.atomic():
+                pay = PaymentReceived.objects.select_for_update().get(pk=obj.pk, organization=obj.organization)
+                invoices_to_sync = [alloc.invoice for alloc in pay.allocations.select_related('invoice').all()]
+                pay.allocations.all().delete()
+                for inv in invoices_to_sync:
+                    self._sync_invoice_status(inv)
+                if pay.bank_account:
+                    pay.bank_account.current_balance -= pay.amount
+                    pay.bank_account.bank_balance -= pay.amount
+                    pay.bank_account.save(update_fields=['current_balance', 'bank_balance'])
+                acc_code = '1000' if pay.mode == 'cash' else '1010'
+                if pay.bank_account and getattr(pay.bank_account, 'gl_account', None):
+                    acc_code = pay.bank_account.gl_account.code
+                rev_items = [
+                    ('1200', pay.amount, Decimal('0.00'), f'Reversal of Payment {pay.number}'),
+                    (acc_code, Decimal('0.00'), pay.amount, f'Reversal of payout/deposit on {pay.number}')
+                ]
+                services.post_journal_entry(timezone.localdate(), 'payment_in_void', pay.number, f'Reversal of Payment {pay.number}', rev_items, request.user, org=pay.organization)
+                pay.status = 'void'
+                pay.save(update_fields=['status'])
+                services.log_audit(request.user, 'void', 'PaymentReceived', pay.pk, f'Reversed payment {pay.number}')
+                return j({'status': 'void', 'message': f'Payment {pay.number} reversed successfully.'})
+        elif name in ('receipt', 'send-receipt'):
+            allocs = [{'invoice_number': a.invoice.number, 'amount': str(a.amount)} for a in obj.allocations.select_related('invoice').all()]
+            return j({
+                'receipt_number': obj.number,
+                'customer_name': obj.customer.name,
+                'date': obj.date.isoformat(),
+                'amount': str(obj.amount),
+                'mode': obj.mode,
+                'reference': obj.reference,
+                'allocations': allocs,
+                'status': obj.status
+            })
         raise ApiError(404, 'Unknown action.')
 
 class PaymentMadeResource(PaymentResource):
@@ -4372,6 +4442,13 @@ class JournalResource(Resource):
         return jrn
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         if 'date' in data:
             obj.date = c.date('date', required=True)
@@ -4515,6 +4592,13 @@ class CustomFieldResource(Resource):
         return CustomField.objects.create(module=mod, name=nm, label=lbl, field_type=ftype, options=opts_val, required=req)
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         obj.label = c.text('label', required=True, max_len=100)
         obj.options = c.text('options', max_len=1000)
@@ -4762,6 +4846,13 @@ class BankTransactionResource(Resource):
         return txn
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         old_dep = obj.deposit
         old_wd = obj.withdrawal
@@ -4999,6 +5090,13 @@ class DocumentFolderResource(Resource):
         return DocumentFolder.objects.create(name=nm, description=desc, color=clr)
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         obj.name = c.text('name', required=True, max_len=100)
         obj.description = c.text('description', max_len=500)
@@ -5429,6 +5527,151 @@ class SalesOrderResource(Resource):
             obj.save(update_fields=['status', 'converted_to_invoice', 'converted_at'])
             services.log_audit(request.user, 'convert', 'SalesOrder', obj.number, f"Converted sales order {obj.number} to Invoice {inv.number}")
             return j({'invoice_id': inv.pk, 'id': inv.pk, 'number': inv.number})
+        elif name in ('convert-to-open', 'open'):
+            if obj.status not in ('draft', 'open'):
+                raise ApiError(400, f'Cannot open {obj.status} sales order.')
+            obj.status = 'open'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'open', 'SalesOrder', obj.number, f"Converted sales order {obj.number} to open")
+            return j({'status': obj.status})
+        elif name == 'check-stock':
+            lines_status = []
+            shortages = []
+            has_low_stock = False
+            for l in obj.lines.all():
+                if not l.item:
+                    continue
+                current = getattr(l.item, 'stock', None)
+                if current is None:
+                    current = getattr(l.item, 'current_stock', Decimal('0.00')) or Decimal('0.00')
+                shortage = max(Decimal('0.00'), l.quantity - current)
+                if shortage > Decimal('0.00'):
+                    has_low_stock = True
+                    shortages.append({
+                        'item_id': l.item.id,
+                        'item_name': l.item.name,
+                        'ordered_quantity': str(l.quantity),
+                        'available_stock': str(current),
+                        'shortage': str(shortage)
+                    })
+                lines_status.append({
+                    'item_id': l.item.id,
+                    'item_name': l.item.name,
+                    'required': str(l.quantity),
+                    'available': str(current),
+                    'shortage': str(shortage),
+                    'is_low_stock': shortage > Decimal('0.00')
+                })
+            return j({
+                'has_low_stock': has_low_stock,
+                'has_shortage': has_low_stock,
+                'shortages': shortages,
+                'items': lines_status,
+                'status': 'low_stock' if has_low_stock else 'sufficient_stock'
+            })
+        elif name in ('convert-to-po', 'convert-to-purchase-order'):
+            if obj.status == 'void':
+                raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
+            b = body(request)
+            vendor_id = b.get('vendor_id') or b.get('vendor')
+            vendor = None
+            if vendor_id:
+                vendor = Vendor.objects.filter(pk=vendor_id, organization=obj.organization).first()
+            if not vendor:
+                first_item = obj.lines.first().item if obj.lines.exists() else None
+                if first_item and getattr(first_item, 'preferred_vendor', None):
+                    vendor = first_item.preferred_vendor
+                else:
+                    vendor = Vendor.objects.filter(organization=obj.organization, active=True).first()
+            if not vendor:
+                raise ApiError(400, 'No active vendor found. Please specify a vendor for the Purchase Order.')
+
+            po_date = timezone.localdate()
+            po_num = services.next_document_number(
+                'PO', org=obj.organization, date=po_date,
+                customer_type='registered', branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+            )
+            po = PurchaseOrder.objects.create(
+                organization=obj.organization,
+                vendor=vendor,
+                number=po_num,
+                date=po_date,
+                due_date=po_date + timedelta(days=15),
+                delivery_date=obj.expected_shipment_date or (po_date + timedelta(days=7)),
+                place_of_supply=obj.place_of_supply,
+                tax_pricing_type=getattr(obj, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
+                customer_type='registered',
+                status='draft',
+                subtotal=obj.subtotal,
+                cgst=obj.cgst,
+                sgst=obj.sgst,
+                igst=obj.igst,
+                total=obj.total,
+                order_number=obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                notes=f"Generated from Sales Order {obj.number}\n{obj.notes or ''}".strip(),
+                terms=obj.terms
+            )
+            for l in obj.lines.all():
+                rate = l.item.purchase_rate if (l.item and getattr(l.item, 'purchase_rate', None) and l.item.purchase_rate > 0) else l.rate
+                taxable = rate * l.quantity
+                tax_amt = taxable * (l.gst_rate / Decimal('100')) if l.gst_rate else Decimal('0.00')
+                PurchaseOrderLine.objects.create(
+                    order=po,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=rate,
+                    discount_percent=Decimal('0.00'),
+                    gst_rate=l.gst_rate,
+                    taxable=taxable,
+                    tax_amount=tax_amt,
+                    line_total=taxable + tax_amt,
+                    position=l.position
+                )
+            services.log_audit(request.user, 'create', 'purchase_order', po.pk, f'Created Purchase Order {po.number} from Sales Order {obj.number}')
+            return j({'purchase_order_id': po.pk, 'id': po.pk, 'number': po.number, 'message': f'Purchase Order {po.number} created from Sales Order {obj.number}.'})
+        elif name in ('convert-to-challan', 'convert-to-delivery-challan'):
+            if obj.status == 'void':
+                raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
+            dc_date = timezone.localdate()
+            dc_num = services.next_document_number(
+                'DC', org=obj.organization, date=dc_date,
+                branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                gstin=getattr(obj.organization, 'gstin', ''), user=request.user
+            )
+            dc = DeliveryChallan.objects.create(
+                organization=obj.organization,
+                customer=obj.customer,
+                number=dc_num,
+                date=dc_date,
+                reference_number=obj.number,
+                branch=getattr(obj, 'branch', ''),
+                location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                challan_type='delivering_goods',
+                status='draft',
+                subtotal=obj.subtotal,
+                adjustment=Decimal('0.00'),
+                total=obj.total,
+                notes=f"Delivery for Sales Order {obj.number}\n{obj.notes or ''}".strip(),
+                terms=obj.terms
+            )
+            for l in obj.lines.all():
+                DeliveryChallanLine.objects.create(
+                    challan=dc,
+                    item=l.item,
+                    description=l.description,
+                    hsn_sac=l.hsn_sac,
+                    quantity=l.quantity,
+                    rate=l.rate,
+                    line_total=l.line_total,
+                    position=l.position
+                )
+            services.log_audit(request.user, 'create', 'delivery_challan', dc.pk, f'Created Delivery Challan {dc.number} from Sales Order {obj.number}')
+            return j({'delivery_challan_id': dc.pk, 'id': dc.pk, 'number': dc.number, 'message': f'Delivery Challan {dc.number} created from Sales Order {obj.number}.'})
         raise ApiError(404, 'Unknown action.')
 
 class PurchaseOrderResource(Resource):
@@ -5625,6 +5868,13 @@ class PurchaseOrderResource(Resource):
         return po
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         ven_id = c.integer('vendor', required=True, lo=1)
         ven = Vendor.objects.filter(pk=ven_id).first()
@@ -6019,14 +6269,26 @@ class CreditNoteResource(Resource):
                     doc_map[num] = doc_copy
         return grouped
 
+    def _credit_balances(self, o):
+        applied_sum = PaymentReceived.objects.filter(
+            customer=o.customer, reference=f'Credit Note {o.number}', organization=o.organization
+        ).aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+        refunded_sum = BankTransaction.objects.filter(
+            matched_entity_type='credit_note_refund', matched_entity_id=o.pk, organization=o.organization
+        ).aggregate(s=Sum('withdrawal'))['s'] or Decimal('0.00')
+        remaining = max(Decimal('0.00'), o.total - applied_sum - refunded_sum)
+        return applied_sum, refunded_sum, remaining
+
     def row(self, o):
+        applied_sum, refunded_sum, remaining = self._credit_balances(o)
         return {
             'id': o.pk, 'number': o.number, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'party': o.customer.name, 'date': o.date,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
-            'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
+            'total': o.total, 'balance': remaining, 'applied_amount': applied_sum, 'refunded_amount': refunded_sum,
+            'reason': o.reason, 'status': o.status,
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
@@ -6093,6 +6355,13 @@ class CreditNoteResource(Resource):
         return cn
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         cid = c.integer('customer', required=True, lo=1)
         cust = Customer.objects.filter(pk=cid).first()
@@ -6132,11 +6401,136 @@ class CreditNoteResource(Resource):
         services.log_audit(user, 'update', 'CreditNote', obj.number, f"Updated credit note {obj.number}")
         return obj
 
+    @transaction.atomic
     def action(self, request, obj, name):
         if name == 'sign':
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
+        elif name == 'send':
+            if obj.status == 'draft':
+                obj.status = 'open'
+                obj.save(update_fields=['status'])
+                services.post_credit_note_journal(obj, request.user)
+                services.log_audit(request.user, 'send', 'CreditNote', obj.number, f"Sent credit note {obj.number}")
+            return j(self.detail(obj))
+        elif name == 'refund':
+            b = dict(body(request))
+            c = Cleaner(b)
+            applied_sum, refunded_sum, remaining = self._credit_balances(obj)
+            if remaining <= Decimal('0.00'):
+                raise ApiError(400, 'This credit note has no available credit balance to refund.')
+            amt = c.number('amount', lo=Decimal('0.01'), default=remaining)
+            if amt > remaining:
+                raise ApiError(400, f'Refund amount (₹{amt}) exceeds available credit balance (₹{remaining}).')
+            dt = c.date('date') or timezone.localdate()
+            mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
+            account = c.text('account', default='Bank Account', max_len=60)
+            ref = c.text('reference', max_len=80)
+            notes = c.text('notes', max_len=2000)
+            c.done()
+
+            user_org = obj.organization or get_user_org(request.user)
+            bank_acc = BankAccount.objects.filter(name=account, organization=user_org).first() if user_org else BankAccount.objects.filter(name=account).first()
+            if not bank_acc and account:
+                bank_acc = BankAccount.objects.filter(bank_name__iexact=account, organization=user_org).first()
+            acc_code = '1000' if mode == 'cash' else '1010'
+            if bank_acc:
+                if getattr(bank_acc, 'gl_account', None):
+                    acc_code = bank_acc.gl_account.code
+                bank_acc.current_balance -= amt
+                bank_acc.bank_balance -= amt
+                bank_acc.save(update_fields=['current_balance', 'bank_balance'])
+                pay_num = services.next_document_number('PM', org=user_org, date=dt)
+                BankTransaction.objects.create(
+                    organization=user_org,
+                    bank_account=bank_acc,
+                    date=dt,
+                    description=f"Credit Note Refund {obj.number} - {obj.customer.name}",
+                    reference=ref or pay_num,
+                    transaction_type='Payment Made',
+                    payee=obj.customer.name,
+                    withdrawal=amt,
+                    deposit=Decimal('0.00'),
+                    balance=bank_acc.current_balance,
+                    status='categorized',
+                    matched_entity_type='credit_note_refund',
+                    matched_entity_id=obj.pk
+                )
+            services.post_credit_note_refund_journal(obj, amt, dt, acc_code=acc_code, user=request.user, org=user_org)
+            new_remaining = max(Decimal('0.00'), remaining - amt)
+            if new_remaining == Decimal('0.00'):
+                obj.status = 'closed' if applied_sum > 0 else 'refunded'
+            else:
+                obj.status = 'partially_refunded'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'refund', 'CreditNote', obj.number, f"Refunded ₹{amt} on credit note {obj.number}")
+            return j({'status': 'ok', 'credit_note_status': obj.status, 'refunded_amount': str(amt), 'remaining_balance': str(new_remaining)})
+        elif name in ('apply', 'apply-to-invoices'):
+            b = body(request)
+            raw_allocs = b.get('allocations', [])
+            if not raw_allocs or not isinstance(raw_allocs, list):
+                raise ApiError(400, 'Expected non-empty allocations list.')
+            applied_sum, refunded_sum, remaining = self._credit_balances(obj)
+            if remaining <= Decimal('0.00'):
+                raise ApiError(400, 'This credit note has no available credit balance to apply.')
+            total_req = sum((q2(a.get('amount') or 0) for a in raw_allocs), Decimal('0.00'))
+            if total_req <= Decimal('0.00'):
+                raise ApiError(400, 'Total applied amount must be positive.')
+            if total_req > remaining:
+                raise ApiError(400, f'Total amount to apply (₹{total_req}) exceeds available credit balance (₹{remaining}).')
+            dt = Cleaner(b).date('date') or timezone.localdate()
+            user_org = obj.organization or get_user_org(request.user)
+
+            for item in raw_allocs:
+                inv_id = item.get('invoice') or item.get('invoice_id')
+                inv = inv_id if hasattr(inv_id, 'pk') else Invoice.objects.filter(pk=inv_id, organization=user_org).first()
+                if not inv:
+                    raise ApiError(404, 'Invoice not found in your organization.')
+                if inv.customer_id != obj.customer_id:
+                    raise ApiError(400, f'Invoice {inv.number} does not belong to customer {obj.customer.name}.')
+                if inv.status in ('paid', 'void'):
+                    raise ApiError(400, f'Invoice {inv.number} is already paid or void.')
+                curr_paid = sum((a.amount for a in inv.allocations.all()), Decimal('0.00')) + \
+                            sum((a.amount for a in inv.retainer_allocations.all()), Decimal('0.00'))
+                inv_bal = max(Decimal('0.00'), inv.total - curr_paid)
+                amt = q2(item.get('amount') or 0)
+                if amt <= Decimal('0.00'):
+                    continue
+                if amt > inv_bal:
+                    raise ApiError(400, f'Amount for {inv.number} (₹{amt}) exceeds the invoice balance due (₹{inv_bal}).')
+
+                pay_num = services.next_document_number('PR', org=user_org, date=dt)
+                pay = PaymentReceived.objects.create(
+                    organization=user_org,
+                    customer=obj.customer,
+                    number=pay_num,
+                    date=dt,
+                    mode='credit_note',
+                    account='Accounts Receivable',
+                    amount=amt,
+                    reference=f'Credit Note {obj.number}',
+                    notes=item.get('notes', '') or f'Applied from Credit Note {obj.number}',
+                    status='paid'
+                )
+                ReceivedAllocation.objects.create(payment=pay, invoice=inv, amount=amt)
+                services.post_credit_note_apply_journal(obj, inv, amt, dt, user=request.user, org=user_org)
+                if curr_paid + amt >= inv.total:
+                    inv.status = 'paid'
+                    inv.save(update_fields=['status'])
+                elif curr_paid + amt > 0:
+                    inv.status = 'partial'
+                    inv.save(update_fields=['status'])
+                services.log_audit(request.user, 'apply_credit', 'Invoice', inv.pk, f'Applied credit of ₹{amt} from {obj.number} to {inv.number}')
+
+            new_remaining = max(Decimal('0.00'), remaining - total_req)
+            if new_remaining == Decimal('0.00'):
+                obj.status = 'closed'
+            else:
+                obj.status = 'partially_applied'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'apply', 'CreditNote', obj.number, f'Applied ₹{total_req} from credit note {obj.number}')
+            return j({'status': 'ok', 'credit_note_status': obj.status, 'applied_amount': str(total_req), 'remaining_balance': str(new_remaining)})
         raise ApiError(404, 'Unknown action.')
 
 class VendorCreditResource(Resource):
@@ -6292,6 +6686,13 @@ class VendorCreditResource(Resource):
         return vc
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         vid = c.integer('vendor', required=True, lo=1)
         ven = Vendor.objects.filter(pk=vid).first()
@@ -7236,6 +7637,13 @@ class DeliveryChallanResource(Resource):
             return sign_document_action(obj, request)
         elif name == 'unsign':
             return unsign_document_action(obj, request)
+        elif name in ('convert-to-open', 'open'):
+            if obj.status not in ('draft', 'open'):
+                raise ApiError(400, f'Cannot open {obj.status} delivery challan.')
+            obj.status = 'open'
+            obj.save(update_fields=['status'])
+            services.log_audit(request.user, 'open', 'DeliveryChallan', obj.number, f"Converted delivery challan {obj.number} to open")
+            return j(self.detail(obj))
         elif name == 'mark-as-delivered':
             if obj.challan_type not in ('relocating_goods', 'delivering_goods'):
                 raise ApiError(400, 'Choose a supported challan type before marking goods delivered.')
@@ -8246,6 +8654,13 @@ class ItemCategoryResource(Resource):
         return ItemCategory.objects.create(name=name, description=desc)
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         if 'name' in data:
             old_name = obj.name
@@ -8288,6 +8703,13 @@ class PriceListResource(Resource):
         return PriceList.objects.create(name=name, pricing_scheme=scheme, description=desc, percentage=pct)
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         obj.name = c.text('name', required=True, max_len=100, pattern=PRICE_LIST_NAME_RE,
                           pattern_msg='Price List Name cannot contain special characters like @, #, $, %, ^, *.')

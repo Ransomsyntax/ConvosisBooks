@@ -38,6 +38,46 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         self.client = Client()
         self.client.force_login(self.user)
 
+    def test_preview_uses_document_type_when_series_and_group_id_are_provided(self):
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='Preview Isolation Series',
+            is_active=True,
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='invoices',
+            prefix='INV/${FY}/',
+            next_number=20,
+            padding=5,
+            active=True,
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='sales_orders',
+            prefix='CON-SO-',
+            next_number=2621,
+            padding=6,
+            active=True,
+        )
+
+        invoice_preview = services.preview_document_number(
+            'INV', org=self.org, series=group.name, series_id=group.pk
+        )
+        sales_order_preview = services.preview_document_number(
+            'SO', org=self.org, series=group.name, series_id=group.pk
+        )
+
+        self.assertEqual(
+            invoice_preview['formatted'],
+            f"INV/{services.get_financial_year(org=self.org)}/00020",
+        )
+        self.assertEqual(sales_order_preview['formatted'], 'CON-SO-002621')
+
     def test_all_18_cases(self):
         org = self.org
         client = self.client

@@ -402,21 +402,8 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
     ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
 
-    # 1. By series_id / numbering_series_id
-    if series_id:
-        try:
-            s_id = int(series_id)
-            s_obj = DocumentNumberSeries.objects.filter(organization=org, pk=s_id).first()
-            if not s_obj:
-                s_obj = DocumentNumberSeries.objects.filter(organization=org, series_group_id=s_id, document_type=doc_type).first()
-            if s_obj:
-                if not s_obj.active:
-                    raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
-                return s_obj
-        except (ValueError, TypeError):
-            pass
-
-    # 2. By series name (e.g. 'Kerala Branch' or 'Default Transaction Series')
+    # 1. Resolve the named series first; its document type disambiguates group IDs
+    # from DocumentNumberSeries IDs, which may have the same integer value.
     if series:
         s_name = str(series).strip()
         if s_name:
@@ -435,6 +422,24 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
                 s_obj = DocumentNumberSeries.objects.filter(organization=org, series_group=grp, document_type=doc_type).first()
                 if s_obj:
                     return s_obj
+
+    # 2. By series_id / numbering_series_id
+    if series_id:
+        try:
+            s_id = int(series_id)
+            s_obj = DocumentNumberSeries.objects.filter(
+                organization=org, pk=s_id, document_type=doc_type
+            ).first()
+            if not s_obj:
+                s_obj = DocumentNumberSeries.objects.filter(
+                    organization=org, series_group_id=s_id, document_type=doc_type
+                ).first()
+            if s_obj:
+                if not s_obj.active:
+                    raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
+                return s_obj
+        except (ValueError, TypeError):
+            pass
 
     # 3. By branch or location
     clean_branch = (branch or '').strip()

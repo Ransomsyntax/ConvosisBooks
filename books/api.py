@@ -2572,7 +2572,13 @@ class RetainerInvoiceResource(DocResource):
         elif user_org and location_qs.filter(active=True).exists() and (location_id or location_name or 'business_location_id' in c.d or 'business_location' in c.d):
             c.err('business_location_id', 'Select an active business location belonging to your organization.')
         elif user_org and location_qs.filter(active=True).exists() and 'retainer-invoices' in getattr(self, 'name', ''):
-            c.err('business_location_id', 'Select a business location before creating a retainer invoice.')
+            def_loc = location_qs.filter(active=True, is_default=True).first() or location_qs.filter(active=True).first()
+            if def_loc:
+                res.update({
+                    'business_location': def_loc,
+                    'location': def_loc.name,
+                    'business_location_gstin': def_loc.gstin,
+                })
         return res
 
     def extra_detail(self, o):

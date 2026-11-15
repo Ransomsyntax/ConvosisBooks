@@ -2578,249 +2578,411 @@ async function renderDirectTaxesPage(container) {
 // 9. TRANSACTION NUMBER SERIES (Section 9)
 // =========================================================================
 
-async function renderNumberSeriesPage(container) {
-  const [data, configuredData] = await Promise.all([
-    api('/settings/number-series/'),
-    api('/settings/number-series/configured/')
-  ]);
-  const series = data.series || [];
-  const configuredSeries = configuredData.series || [];
+async function renderNumberSeriesPage(container, selectedSeriesId = null) {
+  const url = selectedSeriesId ? `/settings/transaction-series/?series_id=${selectedSeriesId}` : '/settings/transaction-series/';
+  const data = await api(url).catch(() => ({ series_list: [], items: [], current_series: null }));
+  const seriesList = data.series_list || [];
+  const currentSeries = data.current_series || (seriesList[0] || null);
+  const items = data.items || [];
 
   container.innerHTML = `
     <div class="settings-page-header">
       <div class="settings-page-header-left">
         <h1>Transaction Number Series</h1>
-      </div>
-    </div>
-
-    <div class="settings-table-card">
-      <table class="settings-data-table">
-        <thead>
-          <tr>
-            <th>MODULE</th>
-            <th>PREFIX</th>
-            <th>NEXT SEQUENCE</th>
-            <th>FINANCIAL YEAR</th>
-            <th>SAMPLE PREVIEW</th>
-            <th style="text-align:right;">ACTION</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${series.map(s => `
-            <tr>
-              <td><b>${esc(s.label)}</b></td>
-              <td><code>${esc(s.prefix)}</code></td>
-              <td>${s.next_sequence}</td>
-              <td>${esc(s.financial_year || 'N/A')}</td>
-              <td><span class="pastel-chip chip-sky"><b>${esc(s.formatted)}</b></span></td>
-              <td style="text-align:right;">
-                <button type="button" class="btn-table-action" onclick="openEditNumberSeriesModal('${s.module}', '${esc(s.label)}', '${esc(s.prefix)}', ${s.next_sequence})">
-                  Configure
-                </button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-    <div class="settings-page-header" style="margin-top:24px;">
-      <div class="settings-page-header-left">
-        <h2>Independent Numbering Series</h2>
-        <p class="sub">Add customer-, branch-, location-, GSTIN-, or financial-year-specific sequences. Existing numbering preferences remain available above.</p>
+        <p class="sub">Centralized numbering configuration across all sales, purchase, and inventory modules.</p>
       </div>
       <div class="settings-page-header-right">
-        <button type="button" class="btn-primary" id="btnAddDocumentNumberSeries">+ Add Series</button>
+        <button type="button" class="btn-primary" id="btnAddNewSeries">+ Add New Series</button>
       </div>
     </div>
-    <div class="settings-table-card">
-      <table class="settings-data-table">
-        <thead>
-          <tr>
-            <th>NAME / DOCUMENT TYPE</th>
-            <th>CUSTOMER / BRANCH</th>
-            <th>LOCATION / GSTIN</th>
-            <th>PREFIX</th>
-            <th>NEXT / FY</th>
-            <th>STATUS</th>
-            <th>DOCUMENTS / VOID</th>
-            <th style="text-align:right;">ACTION</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${configuredSeries.map(s => `
-            <tr>
-              <td><b>${esc(s.name)}</b><div class="sub">${esc(s.document_type.replace(/_/g, ' '))}</div></td>
-              <td>${esc(s.customer_type || 'Any')}${s.branch ? `<div class="sub">${esc(s.branch)}</div>` : ''}</td>
-              <td>${esc(s.location || 'Any')}${s.gstin ? `<div class="sub">${esc(s.gstin)}</div>` : ''}</td>
-              <td><code>${esc(s.prefix + (s.separator || '') + '…')}</code></td>
-              <td>${s.next_number}<div class="sub">${esc(s.financial_year || (s.reset_annually ? 'Current / annual' : 'All years'))}</div></td>
-              <td>${s.active ? 'Active' : 'Inactive'}</td>
-              <td>${s.document_count} / ${s.cancelled_count}</td>
-              <td style="text-align:right;white-space:nowrap;">
-                <button type="button" class="btn-table-action" data-edit-document-number-series="${s.id}">Configure</button>
-                ${s.active ? `<button type="button" class="btn-table-action" data-deactivate-document-number-series="${s.id}">Deactivate</button>` : ''}
-              </td>
-            </tr>
-          `).join('') || '<tr><td colspan="8" class="sub" style="text-align:center;padding:18px;">No independent numbering series configured. Existing numbering settings remain active.</td></tr>'}
-        </tbody>
-      </table>
+
+    <!-- Series Tabs / Switcher -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+      <span style="font-size:12.5px;font-weight:600;color:#64748b;margin-right:4px;">SERIES:</span>
+      ${seriesList.map(s => `
+        <button type="button" class="btn ${currentSeries && currentSeries.id === s.id ? 'btn-primary' : 'btn-secondary'}" data-switch-series="${s.id}" style="padding:6px 14px;font-size:12.5px;">
+          ${esc(s.name)}
+          ${s.is_default ? '<span style="font-size:10px;background:rgba(255,255,255,0.3);padding:2px 6px;border-radius:10px;margin-left:6px;">Default</span>' : ''}
+          ${!s.is_active ? '<span style="font-size:10px;color:#ef4444;margin-left:4px;">(Inactive)</span>' : ''}
+        </button>
+      `).join('')}
     </div>
+
+    ${currentSeries ? `
+      <!-- Series Header Card -->
+      <div class="settings-card" style="margin-bottom:16px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;background:#f8fafc;border:1px solid var(--bd);border-radius:6px;">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--tx);display:flex;align-items:center;gap:8px;">
+            ${esc(currentSeries.name)}
+            ${currentSeries.is_default ? '<span class="pastel-chip chip-sky">Default Series</span>' : ''}
+            <span class="pastel-chip ${currentSeries.is_active ? 'chip-green' : 'chip-rose'}">${currentSeries.is_active ? 'Active' : 'Inactive'}</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;">
+            Branch / Location: <b>${esc(currentSeries.branch || currentSeries.location || 'All Branches / Head Office')}</b>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${!currentSeries.is_default ? `
+            <button type="button" class="btn s" id="btnSetAsDefault" style="font-size:12px;">Set as Default</button>
+            <button type="button" class="btn s" id="btnToggleActive" style="font-size:12px;color:${currentSeries.is_active ? '#ef4444' : '#10b981'};">
+              ${currentSeries.is_active ? 'Deactivate' : 'Activate'}
+            </button>
+          ` : ''}
+          <button type="button" class="btn s" id="btnEditSeriesMeta" style="font-size:12px;">Edit Series Info</button>
+        </div>
+      </div>
+
+      <!-- Transaction Numbering Table -->
+      <div class="settings-table-card">
+        <table class="settings-data-table">
+          <thead>
+            <tr>
+              <th>MODULE / TRANSACTION</th>
+              <th>PREFIX</th>
+              <th>NEXT NUMBER</th>
+              <th>SAMPLE PREVIEW</th>
+              <th style="text-align:right;">ACTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td><b>${esc(item.label)}</b></td>
+                <td><code>${esc(item.prefix)}</code></td>
+                <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
+                <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
+                <td style="text-align:right;">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${item.document_type}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}">
+                    Configure
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '<div style="padding:24px;text-align:center;color:#64748b;">No transaction series found.</div>'}
   `;
 
-  container.querySelector('#btnAddDocumentNumberSeries')?.addEventListener('click', () => openDocumentNumberSeriesModal());
-  container.querySelectorAll('[data-edit-document-number-series]').forEach(button => {
-    button.addEventListener('click', () => {
-      const selected = configuredSeries.find(item => String(item.id) === button.dataset.editDocumentNumberSeries);
-      if (selected) openDocumentNumberSeriesModal(selected);
+  // Bind Switch Series
+  container.querySelectorAll('[data-switch-series]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      renderNumberSeriesPage(container, btn.dataset.switchSeries);
     });
   });
-  container.querySelectorAll('[data-deactivate-document-number-series]').forEach(button => {
-    button.addEventListener('click', async () => {
-      if (!confirm('Deactivate this numbering series? Existing document numbers will remain unchanged.')) return;
-      try {
-        await api(`/settings/number-series/configured/${button.dataset.deactivateDocumentNumberSeries}/`, { method: 'DELETE' });
-        toast('Numbering series deactivated.', 'success');
-        await renderNumberSeriesPage(container);
-      } catch (err) {
-        toast(err.message || 'Failed to deactivate numbering series.', 'error');
+
+  // Bind Add New Series
+  container.querySelector('#btnAddNewSeries')?.addEventListener('click', () => {
+    openAddTransactionSeriesModal(container);
+  });
+
+  // Bind Set As Default
+  container.querySelector('#btnSetAsDefault')?.addEventListener('click', async () => {
+    if (!currentSeries) return;
+    try {
+      await api(`/settings/transaction-series/${currentSeries.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_default: true })
+      });
+      toast(`"${currentSeries.name}" is now the default series.`, 'success');
+      await renderNumberSeriesPage(container, currentSeries.id);
+    } catch (e) {
+      toast(e.message || 'Failed to update default series.', 'error');
+    }
+  });
+
+  // Bind Toggle Active
+  container.querySelector('#btnToggleActive')?.addEventListener('click', async () => {
+    if (!currentSeries) return;
+    const newActive = !currentSeries.is_active;
+    try {
+      if (!newActive) {
+        await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
+      } else {
+        await api(`/settings/transaction-series/${currentSeries.id}/`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_active: true })
+        });
       }
+      toast(`Series "${currentSeries.name}" ${newActive ? 'activated' : 'deactivated'}.`, 'success');
+      await renderNumberSeriesPage(container, currentSeries.id);
+    } catch (e) {
+      toast(e.message || 'Action failed.', 'error');
+    }
+  });
+
+  // Bind Edit Series Info
+  container.querySelector('#btnEditSeriesMeta')?.addEventListener('click', () => {
+    if (currentSeries) openEditSeriesMetaModal(container, currentSeries);
+  });
+
+  // Bind Edit Item Configure
+  container.querySelectorAll('[data-edit-item-doc]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openEditSeriesItemModal(container, currentSeries, {
+        document_type: btn.dataset.editItemDoc,
+        label: btn.dataset.editItemLabel,
+        prefix: btn.dataset.editItemPrefix,
+        next_number: btn.dataset.editItemNext,
+        padding: btn.dataset.editItemPad
+      });
     });
   });
 }
 
-function openDocumentNumberSeriesModal(series = null) {
-  const item = series || {};
+function openEditSeriesItemModal(container, currentSeries, item) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
+  const paddedNext = String(item.next_number || 1).padStart(Number(item.padding) || 1, '0');
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;">
+    <div class="modal-box" style="max-width:440px;">
       <div class="modal-header">
-        <h3>${series ? 'Configure' : 'Add'} Numbering Series</h3>
-        <button type="button" class="modal-close-btn" data-close-series>✕</button>
+        <h3>Configure Numbering: ${esc(item.label)}</h3>
+        <button type="button" class="modal-close-btn" data-close-item>✕</button>
       </div>
-      <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <label class="form-group">Series Name*<input class="form-control" id="nsName" maxlength="120" value="${esc(item.name || '')}" required></label>
-        <label class="form-group">Document Type*
-          <select class="form-control" id="nsDocumentType" ${series ? 'disabled' : ''}>
-            ${[
-              ['invoices','Invoice'],['retainer_invoices','Retainer Invoice'],['recurring_invoices','Recurring Invoice'],
-              ['quotes','Quote'],['sales_orders','Sales Order'],['credit_notes','Credit Note'],
-              ['delivery_challans','Delivery Challan'],['bills','Bill'],['purchase_orders','Purchase Order'],
-              ['expenses','Expense'],['debit_notes','Debit Note']
-            ].map(([value,label]) => `<option value="${value}" ${item.document_type === value ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
-        <label class="form-group">Customer Type
-          <select class="form-control" id="nsCustomerType">
-            <option value="" ${!item.customer_type ? 'selected' : ''}>Any</option>
-            <option value="b2b" ${item.customer_type === 'b2b' ? 'selected' : ''}>B2B</option>
-            <option value="b2c" ${item.customer_type === 'b2c' ? 'selected' : ''}>B2C</option>
-          </select>
-        </label>
-        <label class="form-group">Branch<input class="form-control" id="nsBranch" maxlength="120" value="${esc(item.branch || '')}"></label>
-        <label class="form-group">Business Location<input class="form-control" id="nsLocation" maxlength="120" value="${esc(item.location || '')}"></label>
-        <label class="form-group">GSTIN<input class="form-control" id="nsGstin" maxlength="15" value="${esc(item.gstin || '')}"></label>
-        <label class="form-group">Prefix / Template*
-          <input class="form-control" id="nsPrefix" maxlength="100" value="${esc(item.prefix || '')}" placeholder="\${ORG}/INV/\${FY}">
-        </label>
-        <label class="form-group">Separator
-          <select class="form-control" id="nsSeparator">${['/','-','.','_'].map(value => `<option value="${value}" ${(item.separator || '/') === value ? 'selected' : ''}>${value === '/' ? 'Slash /' : value}</option>`).join('')}</select>
-        </label>
-        <label class="form-group">Starting Number<input class="form-control" id="nsStartingNumber" type="number" min="1" value="${item.starting_number || 1}"></label>
-        <label class="form-group">Next Number<input class="form-control" id="nsNextNumber" type="number" min="1" value="${item.next_number || 1}"></label>
-        <label class="form-group">Number Padding<input class="form-control" id="nsPadding" type="number" min="1" max="12" value="${item.padding || 5}"></label>
-        <label class="form-group">Financial Year (YY-YY; blank = all)<input class="form-control" id="nsFinancialYear" maxlength="5" value="${esc(item.financial_year || '')}" placeholder="26-27"></label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsResetAnnually" type="checkbox" ${item.reset_annually !== false ? 'checked' : ''}>Reset sequence annually</label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsActive" type="checkbox" ${item.active !== false ? 'checked' : ''}>Active</label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsGstCompliant" type="checkbox" ${item.gst_compliant ? 'checked' : ''}>Enforce GST invoice serial format (max 16 characters)</label>
-        <label class="form-group" style="display:flex;align-items:center;gap:8px;"><input id="nsManualSelection" type="checkbox" ${item.allow_manual_selection ? 'checked' : ''}>Permit admin-only manual series selection</label>
-        ${series ? `<div class="sub" style="grid-column:1/-1;">Documents allocated: ${item.document_count}; cancelled: ${item.cancelled_count}. Existing numbers and historical sequence counters are retained.</div>` : ''}
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:12.5px;color:#64748b;">Series: <b>${esc(currentSeries.name)}</b></div>
+        <div class="form-group">
+          <label>Prefix*</label>
+          <input type="text" id="seriesPrefixInput" value="${esc(item.prefix)}" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Next Sequence Number* (e.g. 000001 or 1)</label>
+          <input type="text" id="seriesNextSeqInput" value="${esc(paddedNext)}" class="form-control" style="font-family:monospace;">
+        </div>
+        <div style="font-size:12px;color:#64748b;background:#f8fafc;padding:8px 12px;border-radius:4px;border:1px solid #e2e8f0;">
+          Sample Preview: <b id="seriesSamplePreview">${esc(item.prefix + paddedNext)}</b>
+        </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" data-close-series>Cancel</button>
-        <button type="button" class="btn-primary" id="btnSaveDocumentNumberSeries">Save Series</button>
+        <button type="button" class="btn-secondary" data-close-item>Cancel</button>
+        <button type="button" class="btn-primary" id="btnSaveSeriesItem">Save</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
-  modal.querySelectorAll('[data-close-series]').forEach(button => button.addEventListener('click', () => modal.remove()));
-  modal.querySelector('#btnSaveDocumentNumberSeries').addEventListener('click', async event => {
-    const saveButton = event.currentTarget;
-    const payload = {
-      name: modal.querySelector('#nsName').value.trim(),
-      document_type: modal.querySelector('#nsDocumentType').value,
-      customer_type: modal.querySelector('#nsCustomerType').value,
-      branch: modal.querySelector('#nsBranch').value.trim(),
-      location: modal.querySelector('#nsLocation').value.trim(),
-      gstin: modal.querySelector('#nsGstin').value.trim().toUpperCase(),
-      prefix: modal.querySelector('#nsPrefix').value.trim(),
-      separator: modal.querySelector('#nsSeparator').value,
-      starting_number: Number(modal.querySelector('#nsStartingNumber').value),
-      next_number: Number(modal.querySelector('#nsNextNumber').value),
-      padding: Number(modal.querySelector('#nsPadding').value),
-      financial_year: modal.querySelector('#nsFinancialYear').value.trim(),
-      reset_annually: modal.querySelector('#nsResetAnnually').checked,
-      active: modal.querySelector('#nsActive').checked,
-      gst_compliant: modal.querySelector('#nsGstCompliant').checked,
-      allow_manual_selection: modal.querySelector('#nsManualSelection').checked
-    };
+
+  const prefixInp = modal.querySelector('#seriesPrefixInput');
+  const nextInp = modal.querySelector('#seriesNextSeqInput');
+  const prevEl = modal.querySelector('#seriesSamplePreview');
+
+  const updatePreview = () => {
+    prevEl.textContent = (prefixInp.value || '') + (nextInp.value || '1');
+  };
+  prefixInp.addEventListener('input', updatePreview);
+  nextInp.addEventListener('input', updatePreview);
+
+  modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', () => modal.remove()));
+
+  modal.querySelector('#btnSaveSeriesItem').addEventListener('click', async () => {
+    const prefix = prefixInp.value.trim();
+    const rawNext = nextInp.value.trim();
+    const next_number = parseInt(rawNext, 10) || 1;
+    const padding = rawNext.length > 1 ? rawNext.length : 1;
+
     try {
-      saveButton.disabled = true;
-      await api(series ? `/settings/number-series/configured/${series.id}/` : '/settings/number-series/configured/', {
-        method: series ? 'PUT' : 'POST',
-        body: JSON.stringify(payload)
+      await api(`/settings/transaction-series/${currentSeries.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          items: [{
+            document_type: item.document_type,
+            prefix: prefix,
+            next_number: next_number,
+            padding: padding
+          }]
+        })
       });
+      toast(`Number series for ${item.label} updated successfully.`, 'success');
       modal.remove();
-      toast('Numbering series saved.', 'success');
-      await renderNumberSeriesPage($('#settingsMainPane'));
+      await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
-      toast(err.message || 'Failed to save numbering series.', 'error');
-      saveButton.disabled = false;
+      toast(err.message || 'Failed to update numbering series.', 'error');
     }
   });
 }
 
-function openEditNumberSeriesModal(moduleKey, moduleLabel, currentPrefix, currentSeq) {
+function openAddTransactionSeriesModal(container) {
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:440px;">
+    <div class="modal-box" style="max-width:760px;max-height:90vh;overflow-y:auto;">
       <div class="modal-header">
-        <h3>Configure Numbering: ${esc(moduleLabel)}</h3>
-        <button type="button" class="modal-close-btn" onclick="this.closest('.modal-backdrop').remove()">✕</button>
+        <h3>+ Add Transaction Number Series</h3>
+        <button type="button" class="modal-close-btn" data-close-series>✕</button>
       </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>Prefix*</label>
-          <input type="text" id="seriesPrefixInput" value="${esc(currentPrefix)}" class="form-control" style="text-transform:uppercase;">
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <label class="form-group">Series Name*<input class="form-control" id="newSeriesName" placeholder="e.g. Kerala Branch" required></label>
+          <label class="form-group">Branch / Location<input class="form-control" id="newSeriesBranch" placeholder="e.g. Kerala Branch"></label>
         </div>
-        <div class="form-group" style="margin-top:12px;">
-          <label>Next Sequence Number*</label>
-          <input type="number" id="seriesNextSeqInput" value="${currentSeq}" class="form-control" min="1">
+        <div style="display:flex;align-items:center;gap:16px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="newSeriesDefault"> Set as default series
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="newSeriesActive" checked> Active
+          </label>
+        </div>
+
+        <div style="margin-top:6px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--tx);">Configure Transaction Types:</div>
+          <table class="settings-data-table" style="font-size:12px;">
+            <thead>
+              <tr>
+                <th>MODULE</th>
+                <th>PREFIX</th>
+                <th>NEXT NUMBER</th>
+              </tr>
+            </thead>
+            <tbody id="newSeriesItemsTbody">
+              ${[
+                ['invoices','Invoice','INV-','000001'],
+                ['sales_orders','Sales Order','SO-','000001'],
+                ['quotes','Estimate / Quote','QT-','000001'],
+                ['credit_notes','Credit Note','CN-','000001'],
+                ['payments_received','Customer Payment','PAY-','000001'],
+                ['retainer_invoices','Retainer Invoice','RET-','000001'],
+                ['recurring_invoices','Recurring Invoice','RINV-','000001'],
+                ['purchase_orders','Purchase Order','PO-','000001'],
+                ['bills','Bill','BILL-','000001'],
+                ['payments_made','Vendor Payment','VP-','000001'],
+                ['vendor_credits','Vendor Credit','VC-','000001'],
+                ['delivery_challans','Delivery Challan','DC-','000001'],
+                ['stock_adjustments','Inventory Adjustment','ADJ-','000001'],
+                ['stock_transfers','Stock Transfer','ST-','000001']
+              ].map(([k, label, pfx, nxt]) => `
+                <tr data-type="${k}">
+                  <td><b>${label}</b></td>
+                  <td><input type="text" class="form-control s-pfx" value="${pfx}" style="padding:4px 8px;font-size:12px;"></td>
+                  <td><input type="text" class="form-control s-nxt" value="${nxt}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn-secondary" onclick="this.closest('.modal-backdrop').remove()">Cancel</button>
-        <button type="button" class="btn-primary" id="btnSaveSeriesConfig">Save</button>
+        <button type="button" class="btn-secondary" data-close-series>Cancel</button>
+        <button type="button" class="btn-primary" id="btnSaveNewSeries">Save Series</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
 
-  modal.querySelector('#btnSaveSeriesConfig').addEventListener('click', async () => {
-    const prefix = modal.querySelector('#seriesPrefixInput').value.trim().toUpperCase();
-    const next_sequence = parseInt(modal.querySelector('#seriesNextSeqInput').value, 10);
+  // Auto update prefixes if user types name
+  const nameInput = modal.querySelector('#newSeriesName');
+  const pfxInputs = modal.querySelectorAll('.s-pfx');
+  nameInput.addEventListener('blur', () => {
+    const val = nameInput.value.trim();
+    if (val && !val.toLowerCase().includes('default')) {
+      const pfxWord = val.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+      pfxInputs.forEach(input => {
+        if (!input.dataset.userEdited && !input.value.startsWith(pfxWord)) {
+          input.value = `${pfxWord}-${input.value}`;
+        }
+      });
+    }
+  });
+  pfxInputs.forEach(inp => inp.addEventListener('input', () => { inp.dataset.userEdited = '1'; }));
+
+  modal.querySelectorAll('[data-close-series]').forEach(b => b.addEventListener('click', () => modal.remove()));
+
+  modal.querySelector('#btnSaveNewSeries').addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      toast('Please enter a Series Name.', 'error');
+      return;
+    }
+    const branch = modal.querySelector('#newSeriesBranch').value.trim();
+    const isDefault = modal.querySelector('#newSeriesDefault').checked;
+    const isActive = modal.querySelector('#newSeriesActive').checked;
+
+    const items = [];
+    modal.querySelectorAll('#newSeriesItemsTbody tr').forEach(row => {
+      const type = row.dataset.type;
+      const pfx = row.querySelector('.s-pfx').value.trim();
+      const rawNxt = row.querySelector('.s-nxt').value.trim();
+      const nxt = parseInt(rawNxt, 10) || 1;
+      const pad = rawNxt.length > 1 ? rawNxt.length : 1;
+      items.push({ document_type: type, prefix: pfx, next_number: nxt, padding: pad });
+    });
 
     try {
-      await api('/settings/number-series/', {
+      const res = await api('/settings/transaction-series/', {
         method: 'POST',
-        body: JSON.stringify({ module: moduleKey, prefix, next_sequence })
+        body: JSON.stringify({
+          name: name,
+          branch: branch,
+          location: branch,
+          is_default: isDefault,
+          is_active: isActive,
+          items: items
+        })
       });
-      toast(`Number series for ${moduleLabel} updated.`, 'success');
+      toast(`Series "${name}" created successfully.`, 'success');
       modal.remove();
-      renderNumberSeriesPage($('#settingsMainPane'));
+      await renderNumberSeriesPage(container, res.id);
     } catch (err) {
-      toast(err.message || 'Failed to update numbering series.', 'error');
+      toast(err.message || 'Failed to create series.', 'error');
+    }
+  });
+}
+
+function openEditSeriesMetaModal(container, currentSeries) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-header">
+        <h3>Edit Series: ${esc(currentSeries.name)}</h3>
+        <button type="button" class="modal-close-btn" data-close-meta>✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
+        <label class="form-group">Series Name*<input class="form-control" id="editMetaName" value="${esc(currentSeries.name)}" required></label>
+        <label class="form-group">Branch / Location<input class="form-control" id="editMetaBranch" value="${esc(currentSeries.branch || currentSeries.location || '')}"></label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="editMetaDefault" ${currentSeries.is_default ? 'checked' : ''}> Default series
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="editMetaActive" ${currentSeries.is_active ? 'checked' : ''}> Active
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" data-close-meta>Cancel</button>
+        <button type="button" class="btn-primary" id="btnSaveSeriesMeta">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.querySelectorAll('[data-close-meta]').forEach(b => b.addEventListener('click', () => modal.remove()));
+
+  modal.querySelector('#btnSaveSeriesMeta').addEventListener('click', async () => {
+    const name = modal.querySelector('#editMetaName').value.trim();
+    if (!name) {
+      toast('Series name is required.', 'error');
+      return;
+    }
+    const branch = modal.querySelector('#editMetaBranch').value.trim();
+    const isDefault = modal.querySelector('#editMetaDefault').checked;
+    const isActive = modal.querySelector('#editMetaActive').checked;
+
+    try {
+      await api(`/settings/transaction-series/${currentSeries.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: name,
+          branch: branch,
+          location: branch,
+          is_default: isDefault,
+          is_active: isActive
+        })
+      });
+      toast('Series updated successfully.', 'success');
+      modal.remove();
+      await renderNumberSeriesPage(container, currentSeries.id);
+    } catch (err) {
+      toast(err.message || 'Failed to update series.', 'error');
     }
   });
 }

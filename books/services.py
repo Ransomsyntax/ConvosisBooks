@@ -171,71 +171,175 @@ def get_document_module_config(module_or_pfx):
         clean_pfx = re.sub(r'[^A-Z0-9]', '', raw)[:10] or 'DOC'
         return {'pfx': clean_pfx, 'digits': 5, 'has_fy': True, 'model': None, 'field': 'number'}
 
-def get_doc_number_preference(module_or_pfx, org=None, series=None):
-    from .models import DocumentNumberPreference, Organization
-    if not org:
-        org = Organization.get()
-    if not org:
-        return None
-    raw = (module_or_pfx or '').strip()
-    canon_map = {
-        'INV': 'invoices', 'INVOICE': 'invoices', 'INVOICES': 'invoices',
-        'RET': 'retainer_invoices', 'RETAINER': 'retainer_invoices', 'RETAINER-INVOICES': 'retainer_invoices', 'RETAINER_INVOICE': 'retainer_invoices',
-        'SO': 'sales_orders', 'SALES_ORDER': 'sales_orders', 'SALES-ORDERS': 'sales_orders', 'SALESORDER': 'sales_orders',
-        'QTN': 'quotes', 'QT': 'quotes', 'QUOTE': 'quotes', 'QUOTES': 'quotes', 'QUOTATION': 'quotes',
-        'PO': 'purchase_orders', 'PURCHASE_ORDER': 'purchase_orders', 'PURCHASE-ORDERS': 'purchase_orders', 'PURCHASEORDER': 'purchase_orders',
-        'BILL': 'bills', 'BILLS': 'bills',
-        'REC': 'recurring_invoices', 'RECURRING': 'recurring_invoices', 'RECURRING_INVOICE': 'recurring_invoices', 'RECURRING-INVOICES': 'recurring_invoices'
-    }
-    clean_doc = canon_map.get(raw.upper(), raw.lower())
-    if series:
-        pref = DocumentNumberPreference.objects.filter(
-            organization=org, document_type=clean_doc, transaction_series=series
-        ).first()
-        if pref:
-            return pref
-    return DocumentNumberPreference.objects.filter(
-        organization=org, document_type=clean_doc
-    ).first()
+SUPPORTED_TRANSACTION_TYPES = [
+    {'key': 'invoices', 'label': 'Invoice', 'default_prefix': 'INV-', 'pfx': 'INV', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'sales_orders', 'label': 'Sales Order', 'default_prefix': 'SO-', 'pfx': 'SO', 'model_name': 'SalesOrder', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'quotes', 'label': 'Estimate / Quote', 'default_prefix': 'QT-', 'pfx': 'QTN', 'model_name': 'Quote', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'credit_notes', 'label': 'Credit Note', 'default_prefix': 'CN-', 'pfx': 'CN', 'model_name': 'CreditNote', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'payments_received', 'label': 'Customer Payment', 'default_prefix': 'PAY-', 'pfx': 'PR', 'model_name': 'PaymentReceived', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'retainer_invoices', 'label': 'Retainer Invoice', 'default_prefix': 'RET-', 'pfx': 'RET', 'model_name': 'RetainerInvoice', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'recurring_invoices', 'label': 'Recurring Invoice', 'default_prefix': 'RINV-', 'pfx': 'REC', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'purchase_orders', 'label': 'Purchase Order', 'default_prefix': 'PO-', 'pfx': 'PO', 'model_name': 'PurchaseOrder', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'bills', 'label': 'Bill', 'default_prefix': 'BILL-', 'pfx': 'BILL', 'model_name': 'Bill', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'payments_made', 'label': 'Vendor Payment', 'default_prefix': 'VP-', 'pfx': 'PM', 'model_name': 'PaymentMade', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'vendor_credits', 'label': 'Vendor Credit', 'default_prefix': 'VC-', 'pfx': 'DN', 'model_name': 'VendorCredit', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'delivery_challans', 'label': 'Delivery Challan', 'default_prefix': 'DC-', 'pfx': 'DC', 'model_name': 'DeliveryChallan', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'stock_adjustments', 'label': 'Inventory Adjustment', 'default_prefix': 'ADJ-', 'pfx': 'ADJ', 'model_name': 'StockMovement', 'field': 'reference', 'default_next': 1, 'padding': 6},
+    {'key': 'stock_transfers', 'label': 'Stock Transfer', 'default_prefix': 'ST-', 'pfx': 'ST', 'model_name': 'StockTransfer', 'field': 'number', 'default_next': 1, 'padding': 6},
+]
 
 
 def _number_series_doc_type(module_or_pfx):
     raw = str(module_or_pfx or '').strip().lower().replace('-', '_')
     canonical = {
-        'invoice': 'invoices', 'inv': 'invoices',
-        'retainer': 'retainer_invoices', 'retainer_invoice': 'retainer_invoices',
-        'sales_order': 'sales_orders', 'so': 'sales_orders',
-        'quote': 'quotes', 'quotation': 'quotes', 'qtn': 'quotes', 'qt': 'quotes',
-        'purchase_order': 'purchase_orders', 'po': 'purchase_orders',
-        'bill': 'bills', 'credit_note': 'credit_notes', 'cn': 'credit_notes',
-        'debit_note': 'debit_notes', 'vendor_credit': 'debit_notes', 'dn': 'debit_notes',
-        'delivery_challan': 'delivery_challans', 'dc': 'delivery_challans',
-        'expense': 'expenses', 'recurring': 'recurring_invoices',
-        'recurring_invoice': 'recurring_invoices',
+        'invoice': 'invoices', 'inv': 'invoices', 'invoices': 'invoices',
+        'retainer': 'retainer_invoices', 'retainer_invoice': 'retainer_invoices', 'retainer_invoices': 'retainer_invoices', 'ret': 'retainer_invoices',
+        'sales_order': 'sales_orders', 'sales_orders': 'sales_orders', 'so': 'sales_orders', 'salesorder': 'sales_orders',
+        'quote': 'quotes', 'quotes': 'quotes', 'quotation': 'quotes', 'qtn': 'quotes', 'qt': 'quotes', 'estimate': 'quotes', 'estimates': 'quotes',
+        'purchase_order': 'purchase_orders', 'purchase_orders': 'purchase_orders', 'po': 'purchase_orders', 'purchaseorder': 'purchase_orders',
+        'bill': 'bills', 'bills': 'bills',
+        'credit_note': 'credit_notes', 'credit_notes': 'credit_notes', 'cn': 'credit_notes', 'creditnote': 'credit_notes',
+        'payment_received': 'payments_received', 'payments_received': 'payments_received', 'pr': 'payments_received', 'pay': 'payments_received', 'customer_payment': 'payments_received', 'receipt': 'payments_received',
+        'payment_made': 'payments_made', 'payments_made': 'payments_made', 'pm': 'payments_made', 'vp': 'payments_made', 'vendor_payment': 'payments_made', 'payment': 'payments_made',
+        'vendor_credit': 'vendor_credits', 'vendor_credits': 'vendor_credits', 'vc': 'vendor_credits', 'debit_note': 'vendor_credits', 'debit_notes': 'vendor_credits', 'dn': 'vendor_credits',
+        'delivery_challan': 'delivery_challans', 'delivery_challans': 'delivery_challans', 'dc': 'delivery_challans', 'deliverychallan': 'delivery_challans',
+        'stock_adjustment': 'stock_adjustments', 'stock_adjustments': 'stock_adjustments', 'adj': 'stock_adjustments', 'adjustment': 'stock_adjustments',
+        'stock_transfer': 'stock_transfers', 'stock_transfers': 'stock_transfers', 'st': 'stock_transfers', 'transfer': 'stock_transfers',
+        'recurring': 'recurring_invoices', 'recurring_invoice': 'recurring_invoices', 'recurring_invoices': 'recurring_invoices', 'rinv': 'recurring_invoices', 'rec': 'recurring_invoices',
+        'expense': 'expenses', 'expenses': 'expenses', 'exp': 'expenses',
+        'journal': 'manual_journals', 'journals': 'manual_journals', 'manual_journal': 'manual_journals', 'manual_journals': 'manual_journals', 'jrn': 'manual_journals',
+        'item': 'items', 'items': 'items', 'sku': 'items',
+        'customer': 'customers', 'customers': 'customers', 'cust': 'customers',
+        'vendor': 'vendors', 'vendors': 'vendors', 'vend': 'vendors',
     }.get(raw)
     if canonical:
         return canonical
-    pfx = get_document_module_config(module_or_pfx)['pfx']
+    cfg = get_document_module_config(module_or_pfx)
+    pfx = cfg.get('pfx', '')
     return {
         'INV': 'invoices', 'RET': 'retainer_invoices', 'SO': 'sales_orders',
         'QTN': 'quotes', 'PO': 'purchase_orders', 'BILL': 'bills', 'CN': 'credit_notes',
-        'DN': 'debit_notes', 'DC': 'delivery_challans', 'EXP': 'expenses',
-        'REC': 'recurring_invoices',
+        'PR': 'payments_received', 'PM': 'payments_made', 'DN': 'vendor_credits',
+        'DC': 'delivery_challans', 'EXP': 'expenses', 'REC': 'recurring_invoices',
+        'ST': 'stock_transfers', 'ADJ': 'stock_adjustments', 'JRN': 'manual_journals',
+        'ITEM': 'items', 'CUST': 'customers', 'VEND': 'vendors',
     }.get(pfx, str(module_or_pfx or '').strip().lower())
+
+
+def ensure_default_transaction_series(org):
+    """
+    Ensure the organization has a default TransactionSeries and active DocumentNumberSeries
+    records for every supported transaction type, preserving any existing preferences.
+    """
+    if not org:
+        return None
+    from .models import TransactionSeries, DocumentNumberSeries
+    def_groups = list(TransactionSeries.objects.filter(organization=org, is_default=True))
+    if len(def_groups) > 1:
+        default_group = def_groups[0]
+        for extra in def_groups[1:]:
+            extra.is_default = False
+            extra.save(update_fields=['is_default', 'updated_at'])
+            DocumentNumberSeries.objects.filter(series_group=extra).update(is_default=False)
+    elif def_groups:
+        default_group = def_groups[0]
+    else:
+        default_group = TransactionSeries.objects.filter(organization=org, name='Default Transaction Series').first()
+
+    if not default_group:
+        any_group = TransactionSeries.objects.filter(organization=org).first()
+        if any_group:
+            any_group.is_default = True
+            any_group.save(update_fields=['is_default', 'updated_at'])
+            default_group = any_group
+        else:
+            default_group = TransactionSeries.objects.create(
+                organization=org,
+                name='Default Transaction Series',
+                branch='',
+                location='',
+                is_default=True,
+                is_active=True
+            )
+
+    org_ns = getattr(org, 'number_series', None) or {}
+    for item in SUPPORTED_TRANSACTION_TYPES:
+        doc_key = item['key']
+        pfx_code = item['pfx']
+        doc_series = DocumentNumberSeries.objects.filter(
+            organization=org, document_type=doc_key, series_group=default_group
+        ).first()
+        if not doc_series:
+            doc_series = DocumentNumberSeries.objects.filter(
+                organization=org, document_type=doc_key, name=default_group.name
+            ).first()
+            if doc_series:
+                doc_series.series_group = default_group
+                doc_series.is_default = default_group.is_default
+                doc_series.active = default_group.is_active
+                doc_series.save(update_fields=['series_group', 'is_default', 'active', 'updated_at'])
+        if not doc_series:
+            configured_pfx = item['default_prefix']
+            configured_next = item['default_next']
+            configured_pad = item['padding']
+            if pfx_code in org_ns and isinstance(org_ns[pfx_code], dict):
+                configured_pfx = org_ns[pfx_code].get('prefix') or configured_pfx
+                configured_next = int(org_ns[pfx_code].get('next_sequence') or configured_next)
+                configured_pad = max(configured_pad, len(str(configured_next)))
+
+            from .models import DocumentNumberPreference
+            pref = DocumentNumberPreference.objects.filter(organization=org, document_type=doc_key).first()
+            if pref:
+                if pref.prefix:
+                    configured_pfx = pref.prefix
+                if pref.next_number:
+                    configured_next = int(pref.next_number)
+                    configured_pad = max(configured_pad, len(str(configured_next)))
+
+            # If default_group is default, clear existing is_default on other series for this doc_key
+            if default_group.is_default:
+                DocumentNumberSeries.objects.filter(organization=org, document_type=doc_key, is_default=True).update(is_default=False)
+
+            DocumentNumberSeries.objects.create(
+                organization=org,
+                series_group=default_group,
+                name=default_group.name,
+                document_type=doc_key,
+                prefix=configured_pfx,
+                starting_number=1,
+                next_number=configured_next,
+                padding=configured_pad,
+                separator='',
+                active=default_group.is_active,
+                is_default=default_group.is_default,
+                branch=default_group.branch,
+                location=default_group.location,
+            )
+    return default_group
+
+
+def get_active_transaction_series(org):
+    ensure_default_transaction_series(org)
+    from .models import TransactionSeries
+    return TransactionSeries.objects.filter(organization=org, is_active=True).order_by('-is_default', 'name')
 
 
 def has_document_number_series(module_or_pfx, org=None):
     from .models import DocumentNumberSeries
-    return bool(org and DocumentNumberSeries.objects.filter(
+    if not org:
+        return False
+    doc_type = _number_series_doc_type(module_or_pfx)
+    return DocumentNumberSeries.objects.filter(
         organization=org,
-        document_type=_number_series_doc_type(module_or_pfx),
+        document_type=doc_type,
         active=True,
-    ).exists())
+    ).exists()
 
 
 def mark_document_number_cancelled(org, document_type, number):
     if not org or not number:
         return 0
+    from .models import DocumentNumberAllocation
     return DocumentNumberAllocation.objects.filter(
         organization=org,
         document_type=_number_series_doc_type(document_type),
@@ -248,249 +352,202 @@ def _series_context_matches(series_obj, context):
     actual_location_id = context.get('business_location_id')
     if required_location_id and str(required_location_id) != str(actual_location_id or ''):
         return False
-    for field in ('customer_type', 'branch', 'location', 'gstin'):
-        required = getattr(series_obj, field)
+    for field in ('branch', 'location'):
+        required = getattr(series_obj, field, '')
         actual = context.get(field, '')
         if required and str(required).strip().casefold() != str(actual or '').strip().casefold():
             return False
     return True
 
 
-def _select_document_number_series(module_or_pfx, org, date, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
+def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None):
+    from .models import Organization, DocumentNumberSeries, TransactionSeries
+    if isinstance(module_or_pfx, Organization):
+        actual_org = module_or_pfx
+        actual_module = org
+        module_or_pfx = actual_module
+        org = actual_org
+    if not org:
+        org = Organization.get()
     if not org:
         return None
+    ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
-    fy = get_financial_year(date, org=org)
-    query = DocumentNumberSeries.objects.filter(
-        organization=org, document_type=doc_type, active=True
-    ).filter(Q(financial_year='') | Q(financial_year=fy))
-    gstin_context = org.gstin if gstin is None or (not gstin and doc_type != 'retainer_invoices') else (gstin or '')
-    context = {
-        'customer_type': (customer_type or '').strip().lower(),
-        'branch': (branch or '').strip(),
-        'location': (location or '').strip(),
-        'gstin': gstin_context.strip().upper(),
-        'business_location_id': business_location_id,
-    }
+
+    # 1. By series_id / numbering_series_id
     if series_id:
-        selected = query.filter(pk=series_id).first()
-        if not selected:
-            raise ApiError(400, 'The selected numbering series is unavailable for this document type or financial year.')
-        profile = getattr(user, 'profile', None) if user else None
-        is_admin = bool(profile and profile.role == 'admin')
-        if not (is_admin and selected.allow_manual_selection):
-            raise ApiError(403, 'Manual numbering-series selection is not permitted.')
-        if not _series_context_matches(selected, context):
-            raise ApiError(400, 'The selected numbering series does not match the document customer, branch, location, or GSTIN.')
-        return selected
+        try:
+            s_id = int(series_id)
+            s_obj = DocumentNumberSeries.objects.filter(organization=org, pk=s_id).first()
+            if not s_obj:
+                s_obj = DocumentNumberSeries.objects.filter(organization=org, series_group_id=s_id, document_type=doc_type).first()
+            if s_obj:
+                if not s_obj.active:
+                    raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
+                return s_obj
+        except (ValueError, TypeError):
+            pass
 
-    active_series = DocumentNumberSeries.objects.filter(
+    # 2. By series name (e.g. 'Kerala Branch' or 'Default Transaction Series')
+    if series:
+        s_name = str(series).strip()
+        if s_name:
+            s_obj = DocumentNumberSeries.objects.filter(
+                organization=org, document_type=doc_type, name__iexact=s_name
+            ).first()
+            if s_obj:
+                if not s_obj.active:
+                    raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
+                return s_obj
+            # Check by series group name
+            grp = TransactionSeries.objects.filter(organization=org, name__iexact=s_name).first()
+            if grp:
+                if not grp.is_active:
+                    raise ApiError(400, f'Transaction series "{grp.name}" is inactive.')
+                s_obj = DocumentNumberSeries.objects.filter(organization=org, series_group=grp, document_type=doc_type).first()
+                if s_obj:
+                    return s_obj
+
+    # 3. By branch or location
+    clean_branch = (branch or '').strip()
+    clean_loc = (location or '').strip()
+    if clean_branch or clean_loc or business_location_id:
+        q_loc = Q()
+        if clean_branch:
+            q_loc |= Q(branch__iexact=clean_branch)
+        if clean_loc:
+            q_loc |= Q(location__iexact=clean_loc)
+        if business_location_id:
+            q_loc |= Q(business_location_id=business_location_id)
+        s_obj = DocumentNumberSeries.objects.filter(
+            organization=org, document_type=doc_type, active=True
+        ).filter(q_loc).first()
+        if s_obj:
+            return s_obj
+
+    # 4. Default series for this org
+    def_grp = TransactionSeries.objects.filter(organization=org, is_default=True, is_active=True).first()
+    if def_grp:
+        s_obj = DocumentNumberSeries.objects.filter(
+            organization=org, series_group=def_grp, document_type=doc_type, active=True
+        ).first()
+        if s_obj:
+            return s_obj
+
+    s_obj = DocumentNumberSeries.objects.filter(
+        organization=org, document_type=doc_type, active=True, is_default=True
+    ).first()
+    if s_obj:
+        return s_obj
+
+    # 5. First active series for this document type
+    s_obj = DocumentNumberSeries.objects.filter(
         organization=org, document_type=doc_type, active=True
+    ).first()
+    if s_obj:
+        return s_obj
+
+    # 6. Fallback
+    fallback = DocumentNumberSeries.objects.filter(organization=org, document_type=doc_type).first()
+    if fallback:
+        return fallback
+    cfg = get_document_module_config(module_or_pfx)
+    pfx = cfg.get('pfx') or (module_or_pfx or 'DOC').upper().strip()
+    if not pfx.endswith('-') and not pfx.endswith('/'):
+        pfx += '-'
+    digits = cfg.get('digits', 6)
+    def_grp = TransactionSeries.objects.filter(organization=org, is_default=True).first()
+    return DocumentNumberSeries.objects.create(
+        organization=org,
+        series_group=def_grp,
+        name=f"Default {doc_type.replace('_', ' ').title()}",
+        document_type=doc_type,
+        prefix=pfx,
+        next_number=1,
+        padding=digits,
+        active=True,
+        is_default=True
     )
-    if not active_series.exists():
-        return None
-
-    matches = [
-        item for item in query
-        if _series_context_matches(item, context)
-    ]
-    if not matches:
-        raise ApiError(400, f'No active numbering series matches {doc_type} for FY {fy}. Configure a series for the selected customer type, branch, location, and GSTIN.')
-    specificity = max(sum(bool(getattr(item, field)) for field in ('customer_type', 'branch', 'location', 'gstin')) for item in matches)
-    best = [item for item in matches if sum(bool(getattr(item, field)) for field in ('customer_type', 'branch', 'location', 'gstin')) == specificity]
-    if len(best) != 1:
-        defaults = [item for item in best if item.is_default]
-        if len(defaults) == 1:
-            return defaults[0]
-        raise ApiError(409, f'Multiple active numbering series match {doc_type} for FY {fy}. Refine the series configuration or choose a default series.')
-    return best[0]
 
 
-def _format_series_number(series_obj, value, org, date, branch='', location='', gstin=None, customer_type=''):
+def _format_series_number(series_obj, value, org, date=None, branch='', location='', gstin=None, customer_type=''):
     import datetime
-    if isinstance(date, str):
-        date = datetime.date.fromisoformat(date[:10])
+    if not date:
+        date_val = timezone.localdate()
+    elif isinstance(date, str):
+        try:
+            date_val = datetime.date.fromisoformat(date[:10])
+        except Exception:
+            date_val = timezone.localdate()
     elif isinstance(date, datetime.datetime):
-        date = date.date()
-    fy = get_financial_year(date, org=org)
-    year = date.year
-    start_yy, end_yy = fy.split('-')
-    prefix = series_obj.prefix or org.get_code()
-    gstin_value = org.gstin if gstin is None or (not gstin and series_obj.document_type != 'retainer_invoices') else (gstin or '')
+        date_val = date.date()
+    else:
+        date_val = date
+
+    fy = get_financial_year(date_val, org=org)
+    yr = date_val.year
+    start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
+    end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
+
+    prefix = series_obj.prefix if series_obj.prefix is not None else ''
     replacements = {
         '%FYS_YY%': start_yy, '${FYS_YY}': start_yy,
         '%FYE_YY%': end_yy, '${FYE_YY}': end_yy,
-        '%FY%': fy, '${FY}': fy, '%YEAR%': str(year), '${YEAR}': str(year),
-        '%ORG%': org.get_code(), '${ORG}': org.get_code(),
+        '%FY%': fy, '${FY}': fy,
+        '%YEAR%': str(yr), '${YEAR}': str(yr),
+        '%ORG%': org.get_code() if org else '', '${ORG}': org.get_code() if org else '',
         '%BRANCH%': branch or series_obj.branch, '${BRANCH}': branch or series_obj.branch,
         '%LOCATION%': location or series_obj.location, '${LOCATION}': location or series_obj.location,
-        '%GSTIN%': gstin_value, '${GSTIN}': gstin_value,
-        '%CUSTOMER_TYPE%': (customer_type or series_obj.customer_type).upper(),
-        '${CUSTOMER_TYPE}': (customer_type or series_obj.customer_type).upper(),
     }
     for token, replacement in replacements.items():
         prefix = prefix.replace(token, replacement)
+
+    padding = max(1, series_obj.padding or 1)
+    num_str = f"{value:0{padding}d}"
+
     separator = series_obj.separator or ''
-    if separator and prefix and not prefix.endswith(separator):
-        prefix = f'{prefix}{separator}'
-    candidate = f'{prefix}{value:0{series_obj.padding}d}'
+    if separator and prefix and not prefix.endswith(separator) and not prefix.endswith('-') and not prefix.endswith('/'):
+        prefix = f"{prefix}{separator}"
+
+    candidate = f"{prefix}{num_str}"
     if len(candidate) > 60:
         raise ApiError(400, 'Generated document numbers cannot exceed 60 characters.')
-    if series_obj.gst_compliant and series_obj.document_type == 'invoices':
-        if len(candidate) > 16 or not re.fullmatch(r'[A-Za-z0-9/-]+', candidate):
-            raise ApiError(400, 'GST invoice series numbers must be no more than 16 characters and contain only letters, numbers, hyphens, or slashes.')
     return candidate
 
 
 def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
     """
     Generate an atomic, collision-free organization-wise document number.
-    Format:
-      {Organization Code}/{Module Prefix}/{Financial Year}/{Sequential Number}
-      or custom format based on DocumentNumberPreference.
+    Format: Document Number = Prefix + Next Number
+    Preserves leading zeros and padding.
     Guarantees uniqueness using select_for_update() row locks and DB collision verification.
     """
-    import datetime
-    from .models import Organization, Sequence
+    from .models import Organization, DocumentNumberSeries, DocumentNumberSeriesCounter, DocumentNumberAllocation
     if not org:
         org = Organization.get()
-    
-    org_code = org.get_code() if org else 'ABC'
-    org_id = org.pk if org else 1
-    fy = get_financial_year(date, org=org)
-    
-    date_val = date
-    if not date_val:
-        date_val = timezone.localdate()
-    elif isinstance(date_val, str):
-        try:
-            date_val = datetime.date.fromisoformat(date_val[:10])
-        except Exception:
-            date_val = timezone.localdate()
-    elif isinstance(date_val, datetime.datetime):
-        date_val = date_val.date()
-
-    yr = date_val.year
-    start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
-    end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
-    
-    cfg = get_document_module_config(module_or_pfx)
-    pfx = cfg['pfx']
-    digits = cfg['digits']
-    has_fy = cfg['has_fy']
-    model = cfg.get('model')
-    field = cfg.get('field', 'number')
-
-    selected_series = _select_document_number_series(
-        module_or_pfx, org, date_val, customer_type, branch, location, gstin,
-        series_id=series_id, user=user, business_location_id=business_location_id
-    )
-    if selected_series:
-        doc_type = _number_series_doc_type(module_or_pfx)
-        counter_period = fy if selected_series.reset_annually else '*'
-        with transaction.atomic():
-            selected_series = type(selected_series).objects.select_for_update().get(pk=selected_series.pk)
-            if (
-                not selected_series.active
-                or selected_series.document_type != doc_type
-                or selected_series.financial_year not in ('', fy)
-            ):
-                raise ApiError(409, 'The selected numbering series changed while the document was being created. Please retry.')
-            context = {
-                'customer_type': (customer_type or '').strip().lower(),
-                'branch': (branch or '').strip(),
-                'location': (location or '').strip(),
-                'gstin': (gstin or '').strip().upper(),
-                'business_location_id': business_location_id,
-            }
-            if not _series_context_matches(selected_series, context):
-                raise ApiError(409, 'The selected numbering series no longer matches this document. Please retry.')
-            if series_id:
-                profile = getattr(user, 'profile', None) if user else None
-                if not (profile and profile.role == 'admin' and selected_series.allow_manual_selection):
-                    raise ApiError(403, 'Manual numbering-series selection is not permitted.')
-            has_prior_counter = selected_series.counters.exists()
-            initial_number = selected_series.next_number
-            if selected_series.reset_annually and has_prior_counter and selected_series.financial_year != fy:
-                initial_number = selected_series.starting_number
-            counter, _ = DocumentNumberSeriesCounter.objects.select_for_update().get_or_create(
-                series=selected_series,
-                financial_year=counter_period,
-                defaults={'next_number': initial_number},
-            )
-            while True:
-                value = counter.next_number
-                candidate = _format_series_number(
-                    selected_series, value, org, date_val, branch=branch,
-                    location=location, gstin=gstin, customer_type=customer_type
-                )
-                collision = model.objects.filter(**{field: candidate}).exists() if model and field else False
-                allocation_exists = DocumentNumberAllocation.objects.filter(
-                    organization=org, document_type=doc_type, number=candidate
-                ).exists()
-                counter.next_number = value + 1
-                counter.save(update_fields=['next_number', 'updated_at'])
-                if selected_series.financial_year in ('', fy):
-                    selected_series.next_number = value + 1
-                    selected_series.save(update_fields=['next_number', 'updated_at'])
-                if collision or allocation_exists:
-                    continue
-                try:
-                    with transaction.atomic():
-                        DocumentNumberAllocation.objects.create(
-                            organization=org,
-                            series=selected_series,
-                            document_type=doc_type,
-                            number=candidate,
-                            financial_year=fy,
-                            branch=branch or '',
-                            location=location or '',
-                            gstin=(gstin or '') if doc_type == 'retainer_invoices' else (gstin or org.gstin or ''),
-                            customer_type=customer_type or '',
-                        )
-                except IntegrityError:
-                    if DocumentNumberAllocation.objects.filter(
-                        organization=org, document_type=doc_type, number=candidate
-                    ).exists():
-                        continue
-                    raise
-                return candidate
-
-    pref = get_doc_number_preference(module_or_pfx, org=org, series=series)
-
-    if has_fy:
-        seq_key = f"{org_id}_{pfx}_{fy}"
-    else:
-        seq_key = f"{org_id}_{pfx}"
+    ensure_default_transaction_series(org)
+    doc_type = _number_series_doc_type(module_or_pfx)
 
     with transaction.atomic():
-        seq, _ = Sequence.objects.select_for_update().get_or_create(key=seq_key)
-        if pref and pref.next_number:
-            try:
-                p_start = int(pref.next_number)
-                if seq.value < p_start - 1:
-                    seq.value = p_start - 1
-            except Exception:
-                pass
-        
-        while True:
-            seq.value += 1
-            num_digits = digits
-            if pref and pref.next_number:
-                num_digits = max(digits, len(str(pref.next_number).strip()))
-            if pref and pref.prefix:
-                eval_pfx = pref.prefix
-                eval_pfx = eval_pfx.replace('%FYS_YY%', start_yy).replace('${FYS_YY}', start_yy)
-                eval_pfx = eval_pfx.replace('%FYE_YY%', end_yy).replace('${FYE_YY}', end_yy)
-                eval_pfx = eval_pfx.replace('%FY%', fy).replace('${FY}', fy)
-                eval_pfx = eval_pfx.replace('%YEAR%', str(yr)).replace('${YEAR}', str(yr))
-                eval_pfx = eval_pfx.replace('%ORG%', org_code).replace('${ORG}', org_code)
-                candidate = f"{eval_pfx}{seq.value:0{num_digits}d}"
-            elif has_fy:
-                candidate = f"{org_code}/{pfx}/{fy}/{seq.value:0{num_digits}d}"
-            else:
-                candidate = f"{org_code}/{pfx}/{seq.value:0{num_digits}d}"
+        series_obj = _select_document_number_series(
+            module_or_pfx, org, date=date, customer_type=customer_type,
+            branch=branch, location=location, gstin=gstin, series_id=series_id,
+            series=series, user=user, business_location_id=business_location_id
+        )
+        if not series_obj:
+            raise ApiError(400, f'No active numbering series found for {doc_type}.')
 
+        series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
+        if not series_obj.active:
+            raise ApiError(400, f'Transaction series "{series_obj.name}" is inactive.')
+
+        cfg = get_document_module_config(module_or_pfx)
+        model = cfg.get('model')
+        field = cfg.get('field', 'number')
+
+        while True:
+            val = series_obj.next_number
+            candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
             collision = False
             if model and field:
                 kwargs = {field: candidate}
@@ -499,150 +556,104 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
                     qs = qs.filter(organization=org)
                 if qs.exists():
                     collision = True
-            
-            if not collision:
-                seq.save(update_fields=['value'])
-                if pref:
-                    try:
-                        nxt_seq = seq.value + 1
-                        pad = len(str(pref.next_number or ''))
-                        pref.next_number = f"{nxt_seq:0{pad}d}" if pad > 1 else str(nxt_seq)
-                        pref.save(update_fields=['next_number'])
-                    except Exception:
-                        pass
-                return candidate
+
+            allocated = DocumentNumberAllocation.objects.filter(
+                organization=org, document_type=doc_type, number=candidate
+            ).exists()
+
+            series_obj.next_number = val + 1
+            series_obj.save(update_fields=['next_number', 'updated_at'])
+
+            # Sync counter object if exists
+            latest_counter = series_obj.counters.order_by('-updated_at', '-pk').first()
+            if latest_counter:
+                latest_counter.next_number = val + 1
+                latest_counter.save(update_fields=['next_number', 'updated_at'])
+
+            from .models import DocumentNumberPreference
+            DocumentNumberPreference.objects.filter(
+                organization=org, document_type=doc_type
+            ).update(next_number=series_obj.next_number)
+
+            if collision or allocated:
+                continue
+
+            try:
+                DocumentNumberAllocation.objects.create(
+                    organization=org,
+                    series=series_obj,
+                    document_type=doc_type,
+                    number=candidate,
+                    financial_year=get_financial_year(date, org=org),
+                    branch=branch or series_obj.branch,
+                    location=location or series_obj.location,
+                    gstin=gstin or getattr(org, 'gstin', ''),
+                    customer_type=customer_type or series_obj.customer_type,
+                )
+            except Exception:
+                pass
+
+            return candidate
+
 
 def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None):
     """
     Preview the next document number without incrementing the sequence counter.
     """
-    import datetime
-    from .models import Organization, Sequence
+    from .models import Organization, DocumentNumberAllocation
     if not org:
         org = Organization.get()
-    
-    org_code = org.get_code() if org else 'ABC'
-    org_id = org.pk if org else 1
-    fy = get_financial_year(date, org=org)
-    
-    date_val = date
-    if not date_val:
-        date_val = timezone.localdate()
-    elif isinstance(date_val, str):
-        try:
-            date_val = datetime.date.fromisoformat(date_val[:10])
-        except Exception:
-            date_val = timezone.localdate()
-    elif isinstance(date_val, datetime.datetime):
-        date_val = date_val.date()
-
-    yr = date_val.year
-    start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
-    end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
-    
-    cfg = get_document_module_config(module_or_pfx)
-    pfx = cfg['pfx']
-    digits = cfg['digits']
-    has_fy = cfg['has_fy']
-    model = cfg.get('model')
-    field = cfg.get('field', 'number')
-
-    context_available = any((customer_type, branch, location, gstin, series_id, business_location_id))
+    ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
-    if not context_available and DocumentNumberSeries.objects.filter(
-        organization=org, document_type=doc_type, active=True
-    ).filter(
-        Q(customer_type__gt='') | Q(branch__gt='') | Q(location__gt='') |
-        Q(gstin__gt='') | Q(business_location__isnull=False)
-    ).exists():
-        use_configured_series = False
 
-    try:
-        selected_series = _select_document_number_series(
-            module_or_pfx, org, date_val, customer_type, branch, location, gstin,
-            series_id=series_id, user=user,
-            business_location_id=business_location_id,
-        ) if use_configured_series else None
-    except ApiError as exc:
-        if series_id is not None or (doc_type == 'retainer_invoices' and context_available) or exc.status not in (400, 409):
-            raise
-        selected_series = None
-    if selected_series:
-        doc_type = _number_series_doc_type(module_or_pfx)
-        counter_period = fy if selected_series.reset_annually else '*'
-        counter = DocumentNumberSeriesCounter.objects.filter(
-            series=selected_series, financial_year=counter_period
-        ).first()
-        val = counter.next_number if counter else (
-            selected_series.next_number if selected_series.financial_year in ('', fy)
-            else selected_series.starting_number
-        )
-        while True:
-            candidate = _format_series_number(selected_series, val, org, date_val)
-            collision = model.objects.filter(**{field: candidate}).exists() if model and field else False
-            allocated = DocumentNumberAllocation.objects.filter(
-                organization=org, document_type=doc_type, number=candidate
-            ).exists()
-            if not collision and not allocated:
-                return {
-                    'next_number': candidate,
-                    'prefix': selected_series.prefix,
-                    'next_sequence': val,
-                    'formatted': candidate,
-                    'financial_year': fy,
-                    'org_code': org_code,
-                    'auto_generate': True,
-                    'numbering_series_id': selected_series.pk,
-                    'numbering_series': selected_series.name,
-                }
-            val += 1
+    series_obj = _select_document_number_series(
+        module_or_pfx, org, date=date, customer_type=customer_type,
+        branch=branch, location=location, gstin=gstin, series_id=series_id,
+        series=series, user=user, business_location_id=business_location_id
+    )
+    if not series_obj:
+        return {'next_number': '', 'formatted': '', 'prefix': '', 'next_sequence': 1}
 
-    pref = get_doc_number_preference(module_or_pfx, org=org, series=series)
+    from .models import DocumentNumberPreference
+    pref = DocumentNumberPreference.objects.filter(organization=org, document_type=doc_type).first()
     if pref and not pref.auto_generate:
         return {
             'next_number': '',
-            'prefix': pref.prefix or pfx,
-            'next_sequence': 1,
             'formatted': '',
-            'financial_year': fy if has_fy else '',
-            'org_code': org_code,
-            'auto_generate': False
+            'prefix': series_obj.prefix,
+            'next_sequence': series_obj.next_number,
+            'padding': series_obj.padding,
+            'auto_generate': False,
+            'series_id': series_obj.series_group_id or series_obj.pk,
+            'numbering_series_id': series_obj.pk,
+            'series_name': series_obj.name,
+            'is_default': series_obj.is_default,
+            'active': series_obj.active,
+            'document_type': doc_type,
+            'branch': series_obj.branch,
+            'location': series_obj.location,
+            'financial_year': get_financial_year(date, org=org),
+            'org_code': org.get_code(),
         }
 
-    if has_fy:
-        seq_key = f"{org_id}_{pfx}_{fy}"
-    else:
-        seq_key = f"{org_id}_{pfx}"
+    if pref and pref.prefix and series_obj.prefix != pref.prefix:
+        series_obj.prefix = pref.prefix
+        if pref.next_number:
+            try:
+                series_obj.next_number = int(pref.next_number)
+                if len(str(pref.next_number)) > 1:
+                    series_obj.padding = len(str(pref.next_number))
+            except Exception:
+                pass
+        series_obj.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
 
-    seq = Sequence.objects.filter(key=seq_key).first()
-    curr_val = seq.value if seq else 0
-    if pref and pref.next_number:
-        try:
-            p_start = int(pref.next_number)
-            if curr_val < p_start - 1:
-                curr_val = p_start - 1
-        except Exception:
-            pass
+    cfg = get_document_module_config(module_or_pfx)
+    model = cfg.get('model')
+    field = cfg.get('field', 'number')
 
-    val = curr_val
+    val = series_obj.next_number
     while True:
-        val += 1
-        num_digits = digits
-        if pref and pref.next_number:
-            num_digits = max(digits, len(str(pref.next_number).strip()))
-        if pref and pref.prefix:
-            eval_pfx = pref.prefix
-            eval_pfx = eval_pfx.replace('%FYS_YY%', start_yy).replace('${FYS_YY}', start_yy)
-            eval_pfx = eval_pfx.replace('%FYE_YY%', end_yy).replace('${FYE_YY}', end_yy)
-            eval_pfx = eval_pfx.replace('%FY%', fy).replace('${FY}', fy)
-            eval_pfx = eval_pfx.replace('%YEAR%', str(yr)).replace('${YEAR}', str(yr))
-            eval_pfx = eval_pfx.replace('%ORG%', org_code).replace('${ORG}', org_code)
-            candidate = f"{eval_pfx}{val:0{num_digits}d}"
-        elif has_fy:
-            candidate = f"{org_code}/{pfx}/{fy}/{val:0{num_digits}d}"
-        else:
-            candidate = f"{org_code}/{pfx}/{val:0{num_digits}d}"
-
+        candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
         collision = False
         if model and field:
             kwargs = {field: candidate}
@@ -651,17 +662,72 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
                 qs = qs.filter(organization=org)
             if qs.exists():
                 collision = True
-        
-        if not collision:
+
+        allocated = DocumentNumberAllocation.objects.filter(
+            organization=org, document_type=doc_type, number=candidate
+        ).exists()
+
+        if not collision and not allocated:
             return {
                 'next_number': candidate,
-                'prefix': (pref.prefix if pref and pref.prefix else pfx),
-                'next_sequence': val,
                 'formatted': candidate,
-                'financial_year': fy if has_fy else '',
-                'org_code': org_code,
-                'auto_generate': True
+                'prefix': series_obj.prefix,
+                'next_sequence': val,
+                'padding': series_obj.padding,
+                'auto_generate': True,
+                'series_id': series_obj.series_group_id or series_obj.pk,
+                'numbering_series_id': series_obj.pk,
+                'series_name': series_obj.name,
+                'is_default': series_obj.is_default,
+                'active': series_obj.active,
+                'document_type': doc_type,
+                'branch': series_obj.branch,
+                'location': series_obj.location,
+                'financial_year': get_financial_year(date, org=org),
+                'org_code': org.get_code(),
             }
+        val += 1
+
+
+def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, series=None, series_id=None):
+    """
+    Safely advance the series counter if a manual document number has a numeric suffix >= next_number.
+    Never moves the counter backwards.
+    """
+    if not org or not number_str:
+        return
+    import re
+    from .models import DocumentNumberSeries
+    series_obj = _select_document_number_series(module_or_pfx, org, series=series, series_id=series_id)
+    if not series_obj:
+        return
+    num = str(number_str).strip()
+    m = re.search(r'(\d+)$', num)
+    if m:
+        seq_val = int(m.group(1))
+        with transaction.atomic():
+            series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
+            if seq_val >= series_obj.next_number:
+                series_obj.next_number = seq_val + 1
+                series_obj.save(update_fields=['next_number', 'updated_at'])
+
+
+def get_doc_number_preference(module_or_pfx, org=None, series=None):
+    from .models import DocumentNumberPreference, Organization
+    if not org:
+        org = Organization.get()
+    if not org:
+        return None
+    clean_doc = _number_series_doc_type(module_or_pfx)
+    if series:
+        pref = DocumentNumberPreference.objects.filter(
+            organization=org, document_type=clean_doc, transaction_series=series
+        ).first()
+        if pref:
+            return pref
+    return DocumentNumberPreference.objects.filter(
+        organization=org, document_type=clean_doc
+    ).first()
 
 def next_number(prefix, org=None, date=None):
     """Call inside the same transaction that creates the record so a rollback frees the number."""
@@ -1899,9 +1965,8 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
 
     is_tax_inclusive = (getattr(profile, 'tax_pricing_type', 'tax_exclusive') == 'tax_inclusive')
     comp, tot = compute(parsed_lines, intra, is_tax_inclusive=is_tax_inclusive)
-    numbering_type = 'REC' if has_document_number_series('REC', org=org) else 'INV'
     inv_num = next_document_number(
-        numbering_type, org=org, date=target_date,
+        'INV', org=org, date=target_date,
         customer_type=getattr(profile, 'customer_type', 'b2b') or 'b2b',
         branch=getattr(profile, 'branch', ''), location=getattr(profile, 'location', ''),
         gstin=getattr(org, 'gstin', ''), user=user
@@ -8231,10 +8296,14 @@ def create_stock_transfer(data, user):
         raise ApiError(400, 'Destination warehouse is invalid or inactive.')
 
     num = (data.get('number') or '').strip()
+    series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+    series_id = data.get('numbering_series_id') or data.get('series_id')
     if not num:
-        num = next_document_number('ST', org=user_org, date=transfer_date)
+        num = next_document_number('ST', org=user_org, date=transfer_date, series=series_name, series_id=series_id)
     elif StockTransfer.objects.filter(number=num, organization=user_org).exists():
-        raise ApiError(400, f'Stock transfer number {num} already exists.')
+        raise ApiError(400, f'Stock transfer number {num} already exists in your organization.')
+    else:
+        sync_series_counter_from_manual_number(user_org, 'ST', num, series=series_name, series_id=series_id)
 
     lines_data = data.get('lines', [])
     if not lines_data or not isinstance(lines_data, list):

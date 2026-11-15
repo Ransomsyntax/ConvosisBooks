@@ -159,6 +159,8 @@ urlpatterns = [
     path('settings/payment-terms/', api.settings_payment_terms_view),
     path('settings/payment-terms/<int:term_id>/', api.settings_payment_terms_view),
     path('settings/number-series/', api.settings_number_series_view),
+    path('settings/transaction-series/', api.settings_transaction_series_view),
+    path('settings/transaction-series/<int:series_id>/', api.settings_transaction_series_view),
     path('settings/number-series/configured/', api.settings_document_number_series_view),
     path('settings/number-series/configured/<int:series_id>/', api.settings_document_number_series_view),
     path('settings/retainer-number-series/', api.settings_document_number_series_view, {'retainer_only': True}),

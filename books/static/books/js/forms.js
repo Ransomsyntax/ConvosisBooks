@@ -5,17 +5,26 @@ function bindDocumentNumberPreview(form, options) {
   if (!numberInput) return;
 
   let latestRequest = 0;
-  let lastSuggestedNumber = numberInput.value;
-  const refresh = async () => {
+  let lastSuggestedNumber = numberInput.value || '';
+  let userManuallyEdited = false;
+
+  numberInput.addEventListener('input', () => {
+    userManuallyEdited = (numberInput.value.trim() !== lastSuggestedNumber);
+  });
+
+  const refresh = async (forceUpdate = false) => {
     const requestId = ++latestRequest;
     const params = new URLSearchParams();
     [
       ['date', options.date],
       ['customer_type', options.customerType],
       ['branch', options.branch],
-      ['location', options.location]
+      ['location', options.location],
+      ['series', options.series],
+      ['series_id', options.seriesId]
     ].forEach(([name, selector]) => {
-      const value = selector ? form.querySelector(selector)?.value : '';
+      const el = selector ? form.querySelector(selector) : null;
+      const value = el ? el.value : '';
       if (value) params.set(name, value);
     });
     const gstin = options.getGstin ? options.getGstin() : '';
@@ -24,13 +33,14 @@ function bindDocumentNumberPreview(form, options) {
     try {
       const preview = await api(`lookup/${options.endpoint}/?${params.toString()}`);
       if (requestId !== latestRequest || !preview || !preview.next_number) return;
-      if (!numberInput.value || numberInput.value === lastSuggestedNumber) {
+      if (forceUpdate || !numberInput.value || !userManuallyEdited || numberInput.value === lastSuggestedNumber) {
         numberInput.value = preview.next_number;
         lastSuggestedNumber = preview.next_number;
+        userManuallyEdited = false;
       }
     } catch (error) {
       if (requestId === latestRequest) {
-        toast(`Could not refresh document number preview: ${error.message}`, 'err');
+        console.warn(`Could not refresh document number preview: ${error.message}`);
       }
     }
   };
@@ -38,17 +48,51 @@ function bindDocumentNumberPreview(form, options) {
   [options.date, options.customerType, options.location, options.party]
     .filter(Boolean)
     .forEach(selector => {
-      form.querySelector(selector)?.addEventListener('change', refresh);
+      form.querySelector(selector)?.addEventListener('change', () => refresh(false));
     });
-  if (options.branch) {
-    let branchTimer;
-    form.querySelector(options.branch)?.addEventListener('input', () => {
-      clearTimeout(branchTimer);
-      branchTimer = setTimeout(refresh, 250);
+
+  if (options.series) {
+    form.querySelector(options.series)?.addEventListener('change', () => {
+      refresh(true);
     });
   }
-  void refresh();
+  if (options.seriesId) {
+    form.querySelector(options.seriesId)?.addEventListener('change', () => {
+      refresh(true);
+    });
+  }
+
+  if (options.branch) {
+    const branchEl = form.querySelector(options.branch);
+    const seriesEl = options.series ? form.querySelector(options.series) : null;
+    const onBranchChange = () => {
+      if (branchEl && seriesEl && branchEl.value.trim()) {
+        const bVal = branchEl.value.trim().toLowerCase();
+        const match = Array.from(seriesEl.options).find(opt => {
+          const b = (opt.dataset.branch || '').toLowerCase();
+          const l = (opt.dataset.location || '').toLowerCase();
+          return (b && b === bVal) || (l && l === bVal);
+        });
+        if (match && seriesEl.value !== match.value) {
+          seriesEl.value = match.value;
+          refresh(true);
+          return;
+        }
+      }
+      refresh(false);
+    };
+
+    let branchTimer;
+    branchEl?.addEventListener('input', () => {
+      clearTimeout(branchTimer);
+      branchTimer = setTimeout(onBranchChange, 250);
+    });
+    branchEl?.addEventListener('change', onBranchChange);
+  }
+
+  void refresh(false);
 }
+window.bindDocumentNumberPreview = bindDocumentNumberPreview;
 
 const Modal = (() => {
   const stack = [];
@@ -10416,21 +10460,23 @@ async function quoteForm(id, targetEl, onDone) {
   }
   const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
 
-  const [parties, items, projects, salespersons, whList, nextNum, rec] = await Promise.all([
+  const [parties, items, projects, salespersons, whList, nextNum, rec, txSeriesList] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/projects/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
-    id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const qSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const qBranch = rec ? (rec.branch || '') : '';
-  const qSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
   const qOrderNum = rec ? (rec.order_number || '') : (rec ? (rec.reference_number || '') : '');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
@@ -10562,10 +10608,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <select class="in" id="q-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(qSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${qSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${qSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${qSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
               <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:180px;">
               <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
@@ -11242,6 +11285,20 @@ ${renderStockQuantityCell(l, items, whList)}
   $('#btn-q-save-draft', target)?.addEventListener('click', () => saveQuote(false));
   $('#btn-q-save-send', target)?.addEventListener('click', () => saveQuote(true));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-quote-number',
+      number: '#q-number',
+      date: '#q-date',
+      series: '#q-series',
+      branch: '#q-branch',
+      location: '#q-location',
+      customerType: '#q-customer-type',
+      party: '#q-customer',
+      getGstin: () => $('#q-customer-gstin', form)?.textContent?.trim() || ''
+    });
+  }
+
   updateProjectFilter();
   renderAttach();
   calcQuote();
@@ -11262,19 +11319,21 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     srcQuote = await api(`quotes/${extraOpts.fromQuote}/`).catch(() => null);
   }
 
-  const [parties, items, salespersons, whList, nextNum, rec] = await Promise.all([
+  const [parties, items, salespersons, whList, nextNum, rec, txSeriesList] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
-    id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const soLocation = rec ? (rec.location || 'HO Kottayam') : (srcQuote ? (srcQuote.location || 'HO Kottayam') : 'HO Kottayam');
   const soBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : '');
-  const soSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (srcQuote ? (srcQuote.transaction_series || 'Default Transaction Series') : 'Default Transaction Series');
+  const soSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (srcQuote ? (srcQuote.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name));
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
   const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -11403,10 +11462,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <select class="in" id="so-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(soSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${soSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${soSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${soSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(soSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
               <input class="in" id="so-number" name="number" value="${soNumber}" required style="width:180px;">
               <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
@@ -11902,6 +11958,20 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-so-save-draft', target).addEventListener('click', () => saveSo(true));
   $('#btn-so-save-confirm', target).addEventListener('click', () => saveSo(false));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-so-number',
+      number: '#so-number',
+      date: '#so-date',
+      series: '#so-series',
+      branch: '#so-branch',
+      location: '#so-location',
+      customerType: '#so-customer-type',
+      party: '#so-customer',
+      getGstin: () => $('#so-customer-gstin', form)?.textContent?.trim() || ''
+    });
+  }
+
   calcSo();
 }
 window.salesOrderForm = salesOrderForm;
@@ -11920,18 +11990,20 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
     srcPO = await api(`purchase-orders/${extraOpts.fromPO}/`).catch(() => null);
   }
 
-  const [parties, items, whList, nextNum, rec] = await Promise.all([
+  const [parties, items, whList, nextNum, rec, txSeriesList] = await Promise.all([
     api('lookup/vendors/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-bill-number/').catch(() => ({ next_number: 'BILL-000001' })),
-    id ? api(`bills/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`bills/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const billLocation = rec ? (rec.location || 'HO Kottayam') : (srcPO ? (srcPO.location || 'HO Kottayam') : 'HO Kottayam');
   const billBranch = rec ? (rec.branch || '') : (srcPO ? (srcPO.branch || '') : '');
-  const billSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const billSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const billAccountsPay = rec ? (rec.accounts_payable || 'Accounts Payable') : 'Accounts Payable';
   const billProject = rec ? (rec.project_name || '') : '';
   const billNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'BILL-000001');
@@ -12059,10 +12131,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <select class="in" id="bill-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(billSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${billSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${billSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${billSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(billSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
               <input class="in" id="bill-number" name="number" value="${billNum}" required style="width:180px;">
               <button type="button" class="btn ic" id="btn-bill-num-pref" title="Configure Bill Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
@@ -12567,6 +12636,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       endpoint: 'next-bill-number',
       number: '#bill-number',
       date: '#bill-date',
+      series: '#bill-series',
       customerType: '#bill-customer-type',
       branch: '#bill-branch',
       location: '#bill-location',
@@ -12586,18 +12656,20 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   }
   const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
 
-  const [parties, items, whList, nextNum, rec] = await Promise.all([
+  const [parties, items, whList, nextNum, rec, txSeriesList] = await Promise.all([
     api('lookup/vendors/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-po-number/').catch(() => ({ next_number: 'PO-000001' })),
-    id ? api(`purchase-orders/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`purchase-orders/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
   const warehouses = (whList && whList.length) ? whList : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const poLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const poBranch = rec ? (rec.branch || '') : '';
-  const poSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series';
+  const poSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const poProject = rec ? (rec.project_name || '') : '';
   const poNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'PO-000001');
   const poVendor = rec ? (rec.vendor_id || rec.party_id) : '';
@@ -12724,10 +12796,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order#*</label>
             <div style="display:flex;align-items:center;gap:8px;">
               <select class="in" id="po-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(poSeries === 'Default Transaction Series') ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${poSeries === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${poSeries === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${poSeries === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(poSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
               <input class="in" id="po-number" name="number" value="${poNumber}" required style="width:180px;">
               <button type="button" class="btn ic" id="btn-po-num-pref" title="Configure Purchase Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
@@ -13210,6 +13279,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       endpoint: 'next-po-number',
       number: '#po-number',
       date: '#po-date',
+      series: '#po-series',
       customerType: '#po-customer-type',
       branch: '#po-branch',
       location: '#po-location',
@@ -13241,15 +13311,18 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   } else if (!id && extraOpts && extraOpts.fromSO) {
     srcSO = await api(`sales-orders/${extraOpts.fromSO}/`).catch(() => null);
   }
-  const [parties, items, salespersons, nextNum, rec, warehouses] = await Promise.all([
+  const [parties, items, salespersons, nextNum, rec, warehouses, txSeriesList] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-invoice-number/').catch(() => ({ next_number: 'INV-000001' })),
     id ? api(`invoices/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/warehouses/').catch(() => [])
+    api('lookup/warehouses/').catch(() => []),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const invSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const whList = (warehouses && warehouses.length) ? warehouses : [{ id: 1, name: 'HO Kottayam', code: 'WH-MAIN' }];
   const invNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'INV-000001');
   const invCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : (srcSO ? srcSO.customer_id : ''));
@@ -13363,6 +13436,9 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             <div>
               <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Invoice#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="inv-series" name="transaction_series" style="width:160px;min-width:130px;font-size:12.5px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(invSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
                 <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required style="flex:1;">
                 <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
                   <i class="fa-solid fa-gear"></i>
@@ -13599,7 +13675,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const handleNumPref = () => {
     openDocNumberPreferencesModal({
       kind: 'invoices',
-      series: (rec && rec.transaction_series) || 'Default Transaction Series',
+      series: $('#inv-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
       location: (rec && rec.location) || 'HO Kottayam',
       branch: (rec && rec.branch) || '',
       onSave: (res) => {
@@ -13978,7 +14054,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       number: numVal,
       location: (rec && rec.location) || 'HO Kottayam',
       branch: (rec && rec.branch) || '',
-      transaction_series: (rec && rec.transaction_series) || 'Default Transaction Series',
+      transaction_series: $('#inv-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
       accounts_receivable: $('#inv-accounts-receivable', form)?.value || 'Accounts Receivable',
       order_number: $('#inv-order-number', form).value.trim(),
       date: dt,
@@ -14054,6 +14130,18 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-inv-save-draft', target).addEventListener('click', () => saveInvoice(true));
   $('#btn-inv-save-send', target).addEventListener('click', () => saveInvoice(false));
 
+  if (!id) {
+    bindDocumentNumberPreview(form, {
+      endpoint: 'next-invoice-number',
+      number: '#inv-number',
+      date: '#inv-date',
+      series: '#inv-series',
+      branch: '#inv-branch',
+      party: '#inv-customer',
+      getGstin: () => parties.find(p => String(p.id) === String($('#inv-customer', form)?.value))?.gstin || ''
+    });
+  }
+
   renderAttach();
   calcInvoice();
 }
@@ -14062,12 +14150,15 @@ window.invoiceForm = invoiceForm;
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;
-  const [parties, nextNum, rec] = await Promise.all([
+  const [parties, nextNum, rec, txSeriesList] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-retainer-number/').catch(() => ({ next_number: 'RET-000001' })),
-    id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null)
+    id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
 
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const retSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const retOrg = APP && APP.org ? APP.org : {};
   const retNum = rec ? rec.number : (nextNum ? (nextNum.next_number || nextNum.formatted || 'RET-000001') : 'RET-000001');
   const retPdfTheme = retOrg.template_theme || 'convosis';
@@ -14181,6 +14272,9 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
                 Retainer Invoice Number <span style="color:#ef4444;">*</span>
               </label>
               <div style="display:flex;align-items:center;gap:6px;">
+                <select class="in" id="ret-series" name="transaction_series" style="width:160px;min-width:130px;min-height:38px;font-size:12.5px;border-radius:6px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(retSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
                 <input class="in" id="ret-number" name="number" value="${retNum}" required style="flex:1;min-height:38px;font-size:13px;font-weight:600;border-radius:6px;">
                 <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Series" style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:38px;height:38px;color:#3b82f6;cursor:pointer;flex-shrink:0;">
                   <i class="fa-solid fa-gear"></i>
@@ -14524,6 +14618,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       due_date: dt,
       project_id: /^\d+$/.test($('#ret-project', form)?.value || '') ? $('#ret-project', form).value : null,
       project_name: $('#ret-project option:checked', form)?.dataset?.projectName || '',
+      transaction_series: $('#ret-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
       notes: $('#ret-notes', form)?.value || '',
       terms_conditions: $('#ret-terms-text', form)?.value || '',
       lines: lines,
@@ -14595,6 +14690,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       endpoint: 'next-retainer-number',
       number: '#ret-number',
       date: '#ret-date',
+      series: '#ret-series',
       party: '#ret-customer',
       getGstin: () => parties.find(p => String(p.id) === String($('#ret-customer', form)?.value))?.gstin || ''
     });

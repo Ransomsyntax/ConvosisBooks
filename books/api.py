@@ -2256,9 +2256,15 @@ class DocResource(Resource):
         services.check_transaction_lock(head['date'], org=user_org)
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
-        num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (self.Model.objects.filter(number=num).exists() if num else False)
-        series_configured = services.has_document_number_series(pfx, org=user_org)
-        if not num or num_exists or series_configured:
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+
+        if num:
+            num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
+            if num_exists:
+                raise ApiError(400, f'{self.Model.__name__} number "{num}" already exists in your organization.')
+            services.sync_series_counter_from_manual_number(user_org, pfx, num, series=series_name, series_id=series_id)
+        else:
             party = head.get(self.party_attr)
             explicit_customer_type = str(head.get('customer_type') or data.get('customer_type') or '').strip().lower()
             customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else (
@@ -2273,22 +2279,13 @@ class DocResource(Resource):
                     if 'business_location' in head
                     else data.get('gstin') or (getattr(user_org, 'gstin', '') if user_org else '')
                 ),
-                series_id=data.get('numbering_series_id'), user=user,
+                series=series_name, series_id=series_id, user=user,
             )
-        else:
-            import re
-            m = re.search(r'(\d+)$', num)
-            if m:
-                val = int(m.group(1))
-                fy = services.get_financial_year(head['date'])
-                seq_key = f"{user_org.pk}_{pfx}_{fy}" if user_org else f"{pfx}_{fy}"
-                seq, _ = Sequence.objects.get_or_create(key=seq_key)
-                if seq.value < val:
-                    seq.value = val
-                    seq.save(update_fields=['value'])
         obj = self.Model(number=num, status='draft')
         if hasattr(self.Model, 'organization'):
             obj.organization = user_org
+        if hasattr(obj, 'transaction_series') and series_name:
+            obj.transaction_series = series_name
         self.write(obj, head, lines, user=user, user_org=user_org)
         return obj
 
@@ -2873,6 +2870,7 @@ class QuoteResource(DocResource):
                     'INV', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    series=getattr(obj, 'transaction_series', None),
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -2935,6 +2933,7 @@ class QuoteResource(DocResource):
                     'SO', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    series=getattr(obj, 'transaction_series', None),
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -3161,9 +3160,14 @@ class PaymentResource(Resource):
         if hasattr(self.Model, 'organization'):
             extra['organization'] = user_org
         pay_num = (data.get('number') or '').strip()
-        num_exists = self.Model.objects.filter(number=pay_num, organization=user_org).exists() if (pay_num and user_org) else False
-        if not pay_num or num_exists:
-            pay_num = services.next_document_number(self.prefix, org=user_org, date=out['date'])
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        if pay_num:
+            if user_org and self.Model.objects.filter(number=pay_num, organization=user_org).exists():
+                raise ApiError(400, f'{self.Model.__name__} number "{pay_num}" already exists in your organization.')
+            services.sync_series_counter_from_manual_number(user_org, self.prefix, pay_num, series=series_name, series_id=series_id)
+        else:
+            pay_num = services.next_document_number(self.prefix, org=user_org, date=out['date'], series=series_name, series_id=series_id)
 
         with transaction.atomic():
             pay = self.Model.objects.create(number=pay_num, created_by=user, bank_account=bank_acc, **{self.party_attr: party}, **extra, **out)
@@ -5487,6 +5491,7 @@ class SalesOrderResource(Resource):
                     'INV', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    series=getattr(obj, 'transaction_series', None),
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -5590,6 +5595,7 @@ class SalesOrderResource(Resource):
             po_num = services.next_document_number(
                 'PO', org=obj.organization, date=po_date,
                 customer_type='registered', branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                series=getattr(obj, 'transaction_series', None),
                 gstin=getattr(obj.organization, 'gstin', ''), user=request.user
             )
             po = PurchaseOrder.objects.create(
@@ -5641,6 +5647,7 @@ class SalesOrderResource(Resource):
             dc_num = services.next_document_number(
                 'DC', org=obj.organization, date=dc_date,
                 branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                series=getattr(obj, 'transaction_series', None),
                 gstin=getattr(obj.organization, 'gstin', ''), user=request.user
             )
             dc = DeliveryChallan.objects.create(
@@ -6323,13 +6330,18 @@ class CreditNoteResource(Resource):
 
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
-        num_exists = CreditNote.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (CreditNote.objects.filter(number=num).exists() if num else False)
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
         cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
-        if not num or num_exists or services.has_document_number_series('CN', org=user_org):
+        if num:
+            if user_org and CreditNote.objects.filter(number=num, organization=user_org).exists():
+                raise ApiError(400, f'Credit note number "{num}" already exists in your organization.')
+            services.sync_series_counter_from_manual_number(user_org, 'CN', num, series=series_name, series_id=series_id)
+        else:
             num = services.next_document_number(
                 'CN', org=user_org, date=dt, customer_type=cust_type,
                 branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), user=user
+                gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id, user=user
             )
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         cn = CreditNote.objects.create(
@@ -6653,14 +6665,19 @@ class VendorCreditResource(Resource):
 
         user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
-        num_exists = VendorCredit.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (VendorCredit.objects.filter(number=num).exists() if num else False)
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
         cust_type = str(data.get('customer_type') or 'registered').strip().lower()
-        if not num or num_exists or services.has_document_number_series('DN', org=user_org):
+        if num:
+            if user_org and VendorCredit.objects.filter(number=num, organization=user_org).exists():
+                raise ApiError(400, f'Vendor credit number "{num}" already exists in your organization.')
+            services.sync_series_counter_from_manual_number(user_org, 'VC', num, series=series_name, series_id=series_id)
+        else:
             num = services.next_document_number(
-                'DN', org=user_org, date=dt,
+                'VC', org=user_org, date=dt,
                 customer_type='b2b' if cust_type == 'registered' else 'b2c',
                 branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), user=user
+                gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id, user=user
             )
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         vc = VendorCredit.objects.create(
@@ -7414,13 +7431,22 @@ class DeliveryChallanResource(Resource):
             data.get('lines'), user_org, ctype, source_warehouse,
             allow_unmatched_items=allow_unmatched_items,
         )
-        num = services.next_document_number(
-            'DC', org=user_org, date=dt, customer_type=customer_type,
-            branch=branch, location=location,
-            gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or user_org.gstin),
-            business_location_id=business_location.pk if business_location else None,
-            user=user,
-        )
+        num = (data.get('number') or '').strip()
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        if num:
+            if DeliveryChallan.objects.filter(number=num, organization=user_org).exists():
+                raise ApiError(400, f'Delivery challan number "{num}" already exists in your organization.')
+            services.sync_series_counter_from_manual_number(user_org, 'DC', num, series=series_name, series_id=series_id)
+        else:
+            num = services.next_document_number(
+                'DC', org=user_org, date=dt, customer_type=customer_type,
+                branch=branch, location=location,
+                gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or user_org.gstin),
+                business_location_id=business_location.pk if business_location else None,
+                series=series_name, series_id=series_id,
+                user=user,
+            )
         subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
         total = max(Decimal('0.00'), subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + adjustment)
         dc = DeliveryChallan.objects.create(
@@ -9567,11 +9593,12 @@ def lookup(request, name):
                 existing_names.add(uname.strip().lower())
                 data.append({'id': f"u_{u.pk}", 'name': uname, 'email': u.email, 'phone': getattr(u.profile, 'phone', '') if hasattr(u, 'profile') else ''})
     elif name == 'transaction-series':
+        services.ensure_default_transaction_series(user_org)
+        from .models import TransactionSeries
+        series_qs = TransactionSeries.objects.filter(organization=user_org, is_active=True).order_by('-is_default', 'name') if user_org else TransactionSeries.objects.filter(is_active=True).order_by('-is_default', 'name')
         data = [
-            {'id': 'Default Transaction Series', 'name': 'Default Transaction Series'},
-            {'id': 'Online Store Series', 'name': 'Online Store Series'},
-            {'id': 'Export Series', 'name': 'Export Series'},
-            {'id': 'Retail Series', 'name': 'Retail Series'},
+            {'id': s.pk, 'name': s.name, 'branch': s.branch, 'location': s.location, 'is_default': s.is_default}
+            for s in series_qs
         ]
     elif name == 'employees':
         from django.contrib.auth import get_user_model
@@ -9582,12 +9609,13 @@ def lookup(request, name):
         data = [{'id': u.pk, 'name': u.get_full_name() or u.username} for u in eq_qs.order_by('username')]
     elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
-        pfx = org.quote_prefix or 'QTN' if org else 'QTN'
         data = services.preview_document_number(
-            pfx, org=org, date=request.GET.get('date'),
+            'QTN', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
             branch=request.GET.get('branch'), location=request.GET.get('location'),
-            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-so-number', 'next-sales-order-number'):
@@ -9596,7 +9624,9 @@ def lookup(request, name):
             'SO', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
             branch=request.GET.get('branch'), location=request.GET.get('location'),
-            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-invoice-number', 'next-inv-number'):
@@ -9605,7 +9635,9 @@ def lookup(request, name):
             'INV', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
             branch=request.GET.get('branch'), location=request.GET.get('location'),
-            gstin=request.GET.get('gstin'), series_id=request.GET.get('numbering_series_id'),
+            gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-delivery-challan-number', 'next-dc-number'):
@@ -9616,10 +9648,6 @@ def lookup(request, name):
         business_location = BusinessLocation.objects.filter(
             organization=org, pk=location_id, active=True
         ).first() if location_id and org else None
-        if customer_id and not customer:
-            raise ApiError(400, 'Select an active customer belonging to your organization.')
-        if location_id and not business_location:
-            raise ApiError(400, 'Select an active business location belonging to your organization.')
         data = services.preview_document_number(
             'DC', org=org, date=request.GET.get('date'),
             customer_type=(
@@ -9630,6 +9658,8 @@ def lookup(request, name):
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else (customer.gstin if customer else request.GET.get('gstin')),
             business_location_id=business_location.pk if business_location else None,
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):
@@ -9640,14 +9670,8 @@ def lookup(request, name):
             business_location = BusinessLocation.objects.filter(
                 organization=org, pk=location_id, active=True
             ).first()
-            if not business_location:
-                raise ApiError(400, 'Select an active business location belonging to your organization.')
         customer_id = request.GET.get('customer_id')
-        customer = None
-        if customer_id:
-            customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first()
-            if not customer:
-                raise ApiError(400, 'Select an active customer belonging to your organization.')
+        customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first() if customer_id and org else None
         customer_type = (
             'b2c' if customer and customer.customer_type == 'individual'
             else 'b2b' if customer
@@ -9659,9 +9683,21 @@ def lookup(request, name):
             branch=request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            series_id=request.GET.get('numbering_series_id'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
             business_location_id=business_location.pk if business_location else None,
+        )
+    elif name in ('next-recurring-invoice-number', 'next-rec-number', 'next-rinv-number'):
+        org = user_org or Organization.get()
+        data = services.preview_document_number(
+            'REC', org=org, date=request.GET.get('date'),
+            customer_type=request.GET.get('customer_type'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user,
         )
     elif name in ('next-po-number', 'next-purchase-order-number'):
         org = user_org or Organization.get()
@@ -9670,7 +9706,10 @@ def lookup(request, name):
             'PO', org=org, date=request.GET.get('date'),
             customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
             branch=request.GET.get('branch'), location=request.GET.get('location'),
-            gstin=request.GET.get('gstin'), user=request.user,
+            gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user,
         )
     elif name in ('next-bill-number',):
         org = user_org or Organization.get()
@@ -9680,6 +9719,8 @@ def lookup(request, name):
             customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
             branch=request.GET.get('branch'),
             location=request.GET.get('location'), gstin=request.GET.get('gstin'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-customer-code', 'next-cust-code', 'next-cust-number'):
@@ -9693,31 +9734,64 @@ def lookup(request, name):
         data = services.preview_document_number('ITEM', org=org)
     elif name in ('next-journal-number', 'next-jrn-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('JRN', org=org)
+        data = services.preview_document_number('JRN', org=org, series=request.GET.get('series') or request.GET.get('transaction_series'), series_id=request.GET.get('series_id'))
     elif name in ('next-expense-number', 'next-exp-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('EXP', org=org)
-    elif name in ('next-payment-received-number', 'next-pr-number'):
+        data = services.preview_document_number('EXP', org=org, series=request.GET.get('series') or request.GET.get('transaction_series'), series_id=request.GET.get('series_id'))
+    elif name in ('next-payment-received-number', 'next-pr-number', 'next-pay-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('PR', org=org)
-    elif name in ('next-payment-made-number', 'next-pm-number'):
+        data = services.preview_document_number(
+            'PR', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
+    elif name in ('next-payment-made-number', 'next-pm-number', 'next-vp-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('PM', org=org)
+        data = services.preview_document_number(
+            'PM', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
     elif name in ('next-credit-note-number', 'next-cn-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('CN', org=org)
-    elif name in ('next-debit-note-number', 'next-dn-number', 'next-vc-number'):
+        data = services.preview_document_number(
+            'CN', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
+    elif name in ('next-debit-note-number', 'next-dn-number', 'next-vc-number', 'next-vendor-credit-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('DN', org=org)
-    elif name in ('next-delivery-challan-number', 'next-dc-number'):
-        org = user_org or Organization.get()
-        data = services.preview_document_number('DC', org=org)
+        data = services.preview_document_number(
+            'DN', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
     elif name in ('next-stock-transfer-number', 'next-st-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('ST', org=org)
+        data = services.preview_document_number(
+            'ST', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
     elif name in ('next-stock-adjustment-number', 'next-adj-number'):
         org = user_org or Organization.get()
-        data = services.preview_document_number('ADJ', org=org)
+        data = services.preview_document_number(
+            'ADJ', org=org, date=request.GET.get('date'),
+            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            series=request.GET.get('series') or request.GET.get('transaction_series'),
+            series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
+            user=request.user
+        )
     else:
         raise ApiError(404, 'Unknown lookup.')
     return j(data)
@@ -12358,6 +12432,8 @@ def settings_number_series_view(request):
     """View and configure document numbering series for all modules."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
+    services.ensure_default_transaction_series(org)
+    from .models import TransactionSeries, DocumentNumberSeries
 
     modules = [
         ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
@@ -12371,9 +12447,7 @@ def settings_number_series_view(request):
     if request.method == 'GET':
         res = []
         for mod_key, label in modules:
-            prev = services.preview_document_number(
-                mod_key, org=org, use_configured_series=False
-            )
+            prev = services.preview_document_number(mod_key, org=org)
             res.append({
                 'module': mod_key,
                 'label': label,
@@ -12390,17 +12464,30 @@ def settings_number_series_view(request):
     if not cfg:
         raise ApiError(400, f'Invalid module key "{mod_key}".')
 
-    prefix = str(data.get('prefix', '')).strip().upper() or cfg['pfx']
-    next_seq = int(data.get('next_sequence', 1))
+    prefix = str(data.get('prefix', '')).strip() or cfg['pfx']
+    raw_next = str(data.get('next_sequence') or data.get('next_number') or 1).strip()
+    next_seq = int(raw_next) if raw_next.isdigit() else 1
+    pad_val = int(data.get('padding') or (len(raw_next) if raw_next.isdigit() and len(raw_next) > 1 else 6))
 
-    # Update sequence in DB
-    fy = services.get_financial_year() if cfg['has_fy'] else None
-    org_code = org.get_code()
-    seq_key = f"{org.pk}:{org_code}:{prefix}:{fy}" if fy else f"{org.pk}:{org_code}:{prefix}"
+    doc_type = services._number_series_doc_type(mod_key)
+    def_grp = TransactionSeries.objects.filter(organization=org, is_default=True).first()
+    series_item = DocumentNumberSeries.objects.filter(
+        organization=org, document_type=doc_type, series_group=def_grp
+    ).first()
+    if not series_item:
+        series_item = DocumentNumberSeries.objects.filter(
+            organization=org, document_type=doc_type, is_default=True
+        ).first()
+    if not series_item:
+        series_item = DocumentNumberSeries.objects.filter(
+            organization=org, document_type=doc_type
+        ).first()
 
-    seq_obj, _ = Sequence.objects.get_or_create(key=seq_key, defaults={'value': max(0, next_seq - 1)})
-    seq_obj.value = max(0, next_seq - 1)
-    seq_obj.save()
+    if series_item:
+        series_item.prefix = prefix
+        series_item.next_number = max(1, next_seq)
+        series_item.padding = pad_val
+        series_item.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
 
     # Also record in org.number_series for display persistence
     ns = org.number_series or {}
@@ -12408,9 +12495,238 @@ def settings_number_series_view(request):
     org.number_series = ns
     org.save(update_fields=['number_series'])
 
-    services.log_audit(request.user, 'update', 'Sequence', seq_key, f"Updated numbering series for {mod_key}: next sequence {next_seq}")
+    services.log_audit(request.user, 'update', 'DocumentNumberSeries', series_item.pk if series_item else 0, f"Updated numbering series for {mod_key}: {prefix}{next_seq}")
     prev = services.preview_document_number(mod_key, org=org)
     return j({'status': 'ok', 'module': mod_key, 'preview': prev})
+
+
+@api_view
+def settings_transaction_series_view(request, series_id=None):
+    """Centralized Transaction Number Series Management."""
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
+    org = get_user_org(request.user) or Organization.get()
+    services.ensure_default_transaction_series(org)
+    from .models import TransactionSeries, DocumentNumberSeries
+
+    if request.method == 'GET':
+        series_qs = TransactionSeries.objects.filter(organization=org).order_by('-is_default', 'name')
+        if not series_qs.exists():
+            services.ensure_default_transaction_series(org)
+            series_qs = TransactionSeries.objects.filter(organization=org).order_by('-is_default', 'name')
+
+        active_id = series_id or request.GET.get('series_id')
+        current_series = None
+        if active_id:
+            current_series = series_qs.filter(pk=active_id).first()
+        if not current_series:
+            current_series = series_qs.filter(is_default=True).first() or series_qs.first()
+
+        series_list = []
+        for s in series_qs:
+            series_list.append({
+                'id': s.pk,
+                'name': s.name,
+                'branch': s.branch,
+                'location': s.location,
+                'is_default': s.is_default,
+                'is_active': s.is_active,
+                'created_at': s.created_at.isoformat() if s.created_at else '',
+            })
+
+        items = []
+        if current_series:
+            for t in services.SUPPORTED_TRANSACTION_TYPES:
+                doc_key = t['key']
+                s_item = DocumentNumberSeries.objects.filter(
+                    organization=org, series_group=current_series, document_type=doc_key
+                ).first()
+                if not s_item:
+                    s_item = DocumentNumberSeries.objects.filter(
+                        organization=org, name=current_series.name, document_type=doc_key
+                    ).first()
+                if not s_item:
+                    s_item = DocumentNumberSeries.objects.create(
+                        organization=org,
+                        series_group=current_series,
+                        name=current_series.name,
+                        document_type=doc_key,
+                        prefix=t['default_prefix'],
+                        starting_number=1,
+                        next_number=t['default_next'],
+                        padding=t['padding'],
+                        active=current_series.is_active,
+                        is_default=current_series.is_default,
+                        branch=current_series.branch,
+                        location=current_series.location,
+                    )
+                prev = services.preview_document_number(
+                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk
+                )
+                items.append({
+                    'document_type': doc_key,
+                    'module': t['pfx'],
+                    'label': t['label'],
+                    'prefix': s_item.prefix,
+                    'next_number': s_item.next_number,
+                    'padding': s_item.padding,
+                    'formatted': prev.get('formatted', ''),
+                    'sample_preview': prev.get('formatted', ''),
+                })
+
+        return j({
+            'status': 'ok',
+            'series_list': series_list,
+            'current_series': {
+                'id': current_series.pk if current_series else None,
+                'name': current_series.name if current_series else '',
+                'branch': current_series.branch if current_series else '',
+                'location': current_series.location if current_series else '',
+                'is_default': current_series.is_default if current_series else False,
+                'is_active': current_series.is_active if current_series else True,
+            } if current_series else None,
+            'items': items,
+        })
+
+    if request.method == 'POST':
+        data = body(request)
+        name = str(data.get('name') or '').strip()
+        if not name:
+            raise ApiError(400, 'Series Name is required.')
+        if TransactionSeries.objects.filter(organization=org, name__iexact=name).exists():
+            raise ApiError(400, f'A series with name "{name}" already exists.')
+
+        branch = str(data.get('branch') or '').strip()
+        location = str(data.get('location') or '').strip()
+        is_default = bool(data.get('is_default', False))
+        is_active = bool(data.get('is_active', True))
+
+        with transaction.atomic():
+            if is_default:
+                TransactionSeries.objects.filter(organization=org).update(is_default=False)
+                DocumentNumberSeries.objects.filter(organization=org).update(is_default=False)
+
+            grp = TransactionSeries.objects.create(
+                organization=org,
+                name=name,
+                branch=branch,
+                location=location,
+                is_default=is_default,
+                is_active=is_active
+            )
+
+            # Process items
+            items_input = data.get('items', [])
+            item_dict = {i.get('document_type'): i for i in items_input if isinstance(i, dict) and i.get('document_type')}
+
+            for t in services.SUPPORTED_TRANSACTION_TYPES:
+                doc_key = t['key']
+                cfg = item_dict.get(doc_key, {})
+                prefix = str(cfg.get('prefix') if cfg.get('prefix') is not None else t['default_prefix']).strip()
+                raw_next = str(cfg.get('next_number', t['default_next'])).strip()
+                padding = int(cfg.get('padding') or (len(raw_next) if raw_next.isdigit() and len(raw_next) > 1 else t['padding']))
+                next_val = max(1, int(raw_next) if raw_next.isdigit() else 1)
+
+                DocumentNumberSeries.objects.create(
+                    organization=org,
+                    series_group=grp,
+                    name=grp.name,
+                    document_type=doc_key,
+                    prefix=prefix,
+                    starting_number=1,
+                    next_number=next_val,
+                    padding=padding,
+                    active=is_active,
+                    is_default=is_default,
+                    branch=branch,
+                    location=location,
+                )
+
+            services.log_audit(request.user, 'create', 'TransactionSeries', grp.pk, f"Created transaction series {grp.name}", org=org)
+            return j({'status': 'ok', 'id': grp.pk, 'message': f'Series "{grp.name}" created successfully.'}, status=201)
+
+    if request.method in ('PUT', 'PATCH'):
+        if not series_id:
+            raise ApiError(400, 'Series ID is required.')
+        grp = TransactionSeries.objects.filter(organization=org, pk=series_id).first()
+        if not grp:
+            raise ApiError(404, 'Transaction series not found.')
+
+        data = body(request)
+        with transaction.atomic():
+            if 'name' in data:
+                new_name = str(data['name']).strip()
+                if not new_name:
+                    raise ApiError(400, 'Series name cannot be blank.')
+                if new_name.lower() != grp.name.lower() and TransactionSeries.objects.filter(organization=org, name__iexact=new_name).exclude(pk=grp.pk).exists():
+                    raise ApiError(400, f'A series named "{new_name}" already exists.')
+                grp.name = new_name
+            if 'branch' in data:
+                grp.branch = str(data['branch']).strip()
+            if 'location' in data:
+                grp.location = str(data['location']).strip()
+            if 'is_default' in data:
+                is_def = bool(data['is_default'])
+                grp.is_default = is_def
+                if is_def:
+                    TransactionSeries.objects.filter(organization=org).exclude(pk=grp.pk).update(is_default=False)
+                    DocumentNumberSeries.objects.filter(organization=org).exclude(series_group=grp).update(is_default=False)
+                    DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(is_default=True)
+                else:
+                    DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(is_default=False)
+            if 'is_active' in data:
+                grp.is_active = bool(data['is_active'])
+
+            grp.save()
+
+            # Update DocumentNumberSeries items
+            items_input = data.get('items', [])
+            for item_data in items_input:
+                if not isinstance(item_data, dict):
+                    continue
+                doc_type = services._number_series_doc_type(item_data.get('document_type') or item_data.get('module'))
+                s_item = DocumentNumberSeries.objects.filter(
+                    organization=org, series_group=grp, document_type=doc_type
+                ).first()
+                if not s_item:
+                    s_item = DocumentNumberSeries.objects.filter(
+                        organization=org, name=grp.name, document_type=doc_type
+                    ).first()
+                if s_item:
+                    if 'prefix' in item_data and item_data['prefix'] is not None:
+                        s_item.prefix = str(item_data['prefix']).strip()
+                    if 'next_number' in item_data:
+                        raw_next = str(item_data['next_number']).strip()
+                        if raw_next.isdigit():
+                            s_item.next_number = max(1, int(raw_next))
+                            if 'padding' not in item_data and len(raw_next) > 1:
+                                s_item.padding = len(raw_next)
+                    if 'padding' in item_data:
+                        s_item.padding = max(1, int(item_data['padding']))
+                    s_item.name = grp.name
+                    s_item.branch = grp.branch
+                    s_item.location = grp.location
+                    s_item.active = grp.is_active
+                    s_item.is_default = grp.is_default
+                    s_item.save()
+
+            services.log_audit(request.user, 'update', 'TransactionSeries', grp.pk, f"Updated transaction series {grp.name}", org=org)
+            return j({'status': 'ok', 'id': grp.pk, 'message': f'Series "{grp.name}" updated successfully.'})
+
+    if request.method == 'DELETE':
+        if not series_id:
+            raise ApiError(400, 'Series ID is required.')
+        grp = TransactionSeries.objects.filter(organization=org, pk=series_id).first()
+        if not grp:
+            raise ApiError(404, 'Transaction series not found.')
+        if grp.is_default:
+            raise ApiError(400, 'Cannot deactivate the default transaction series. Please designate another series as default first.')
+        with transaction.atomic():
+            grp.is_active = False
+            grp.save(update_fields=['is_active', 'updated_at'])
+            DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(active=False)
+            DocumentNumberSeries.objects.filter(organization=org, name=grp.name).update(active=False)
+        services.log_audit(request.user, 'deactivate', 'TransactionSeries', grp.pk, f"Deactivated transaction series {grp.name}", org=org)
+        return j({'status': 'ok', 'message': f'Series "{grp.name}" deactivated.'})
 
 
 def _number_series_payload(series):
@@ -12671,6 +12987,10 @@ def doc_number_preferences_view(request):
         series = str(request.GET.get('transaction_series') or 'Default Transaction Series').strip()
         location = str(request.GET.get('location') or 'HO Kottayam').strip()
 
+        services.ensure_default_transaction_series(org)
+        doc_type = services._number_series_doc_type(clean_doc)
+        dns = services._select_document_number_series(doc_type, org=org, series=series, location=location)
+
         pref = DocumentNumberPreference.objects.filter(
             organization=org, document_type=clean_doc, transaction_series=series
         ).first()
@@ -12679,18 +12999,16 @@ def doc_number_preferences_view(request):
                 organization=org, document_type=clean_doc
             ).first()
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series, use_configured_series=False)
-        default_pfx = prev.get('prefix') or 'INV'
-        if not default_pfx.endswith('/'):
-            default_pfx = f"{default_pfx}/"
+        prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
+        default_pfx = dns.prefix if dns else (prev.get('prefix') or 'INV')
 
         return j({
             'document_type': clean_doc,
             'transaction_series': series,
             'location': location,
             'auto_generate': pref.auto_generate if pref else True,
-            'prefix': pref.prefix if (pref and pref.prefix) else default_pfx,
-            'next_number': pref.next_number if pref else prev.get('next_sequence', 1),
+            'prefix': dns.prefix if dns else (pref.prefix if (pref and pref.prefix) else default_pfx),
+            'next_number': dns.next_number if dns else (pref.next_number if pref else prev.get('next_sequence', 1)),
             'restart_yearly': pref.restart_yearly if pref else True,
             'preview_formatted': prev.get('formatted', '')
         })
@@ -12722,6 +13040,19 @@ def doc_number_preferences_view(request):
             }
         )
 
+        services.ensure_default_transaction_series(org)
+        doc_type = services._number_series_doc_type(clean_doc)
+        dns = services._select_document_number_series(doc_type, org=org, series=series, location=location)
+        if dns:
+            dns.prefix = prefix
+            dns.next_number = max(1, next_number)
+            raw_next_str = str(d.get('next_number', '')).strip()
+            if raw_next_str.startswith('0') and raw_next_str.isdigit():
+                dns.padding = len(raw_next_str)
+            elif raw_next_str == '1':
+                dns.padding = 1
+            dns.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
+
         cfg = services.get_document_module_config(clean_doc)
         pfx = cfg['pfx'] if cfg else 'DOC'
         fy = services.get_financial_year()
@@ -12730,7 +13061,7 @@ def doc_number_preferences_view(request):
         seq.value = max(0, next_number - 1)
         seq.save(update_fields=['value'])
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series, use_configured_series=False)
+        prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
 
         services.log_audit(
             request.user, 'update', 'DocumentNumberPreference', pref.pk,

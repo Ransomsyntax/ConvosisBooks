@@ -195,6 +195,10 @@ class Party(models.Model):
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def current_stock(self):
+        return self.stock
+
     class Meta:
         abstract = True
         ordering = ['name']
@@ -257,6 +261,10 @@ class Item(models.Model):
     inventory_account = models.CharField(max_length=100, default='Inventory Asset', blank=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def current_stock(self):
+        return self.stock
 
     class Meta:
         ordering = ['name']
@@ -507,6 +515,10 @@ class Account(models.Model):
     is_system = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def current_stock(self):
+        return self.stock
 
     class Meta:
         ordering = ['code', 'name']
@@ -1175,6 +1187,10 @@ class PriceList(models.Model):
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def current_stock(self):
+        return self.stock
+
     class Meta:
         ordering = ['name']
 
@@ -1393,6 +1409,10 @@ class BankRule(models.Model):
     auto_reconcile = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def current_stock(self):
+        return self.stock
 
     class Meta:
         ordering = ['priority', 'name']
@@ -2066,10 +2086,32 @@ class DocumentNumberPreference(models.Model):
         return f'{self.document_type} - {self.transaction_series} ({self.prefix}{self.next_number})'
 
 
+class TransactionSeries(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='transaction_series_groups')
+    name = models.CharField(max_length=120)
+    branch = models.CharField(max_length=120, blank=True, default='')
+    location = models.CharField(max_length=120, blank=True, default='')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.SET_NULL, related_name='transaction_series_groups')
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_default', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'name'], name='uniq_org_transaction_series_name'),
+        ]
+
+    def __str__(self):
+        return f"{self.organization.name} - {self.name}"
+
+
 class DocumentNumberSeries(models.Model):
     CUSTOMER_TYPES = [('', 'Any'), ('b2b', 'B2B'), ('b2c', 'B2C')]
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='document_number_series')
+    series_group = models.ForeignKey('TransactionSeries', null=True, blank=True, on_delete=models.CASCADE, related_name='number_series_items')
     name = models.CharField(max_length=120)
     document_type = models.CharField(max_length=50)
     customer_type = models.CharField(max_length=10, choices=CUSTOMER_TYPES, blank=True, default='')

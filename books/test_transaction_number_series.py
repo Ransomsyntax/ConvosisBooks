@@ -307,3 +307,4 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
             n = to_str(services.next_document_number(alias, org=org, series='Head Office'))
             self.assertTrue(bool(n), f"Failed allocation for {alias}")
             self.assertTrue(bool(p['formatted']), f"Failed preview for {alias}")
+

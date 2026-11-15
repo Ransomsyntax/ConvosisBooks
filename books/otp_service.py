@@ -251,7 +251,7 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
         getattr(settings, 'EMAIL_HOST', '').strip(),
         getattr(settings, 'EMAIL_HOST_USER', '').strip(),
         getattr(settings, 'EMAIL_HOST_PASSWORD', '').strip(),
-    )) and getattr(settings, 'EMAIL_BACKEND', '') == 'django.core.mail.backends.smtp.EmailBackend'
+    ))
     api_error = None
     if api_key:
         try:
@@ -283,7 +283,7 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
                 raise RuntimeError(f"Brevo API rejected the email with HTTP {resp.status}.")
         except Exception as api_err:
             api_error = api_err
-            logger.warning("Brevo REST API delivery failed (%s).", api_err)
+            logger.warning("Brevo REST API delivery failed (%s), attempting configured SMTP backend...", api_err)
 
     if not smtp_configured:
         if api_error:
@@ -291,7 +291,7 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
                 "Brevo API delivery failed and SMTP fallback is not configured."
             ) from api_error
         raise RuntimeError(
-            "Email delivery is not configured. Set BREVO_API_KEY or complete SMTP credentials with the SMTP email backend."
+            "Email delivery is not configured. Set BREVO_API_KEY or complete SMTP credentials."
         )
 
     # 3. Deliver via the configured SMTP backend.

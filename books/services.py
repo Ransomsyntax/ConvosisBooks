@@ -6986,8 +6986,12 @@ def reset_tenant_user_password(user_id, new_password, requesting_user=None):
     u = User.objects.filter(pk=user_id).first()
     if not u:
         raise ApiError(404, 'User not found.')
-    if not new_password or len(str(new_password).strip()) < 4:
-        raise ApiError(400, 'Password must be at least 4 characters long.')
+    from django.core.exceptions import ValidationError
+    from .validators import validate_strong_password
+    try:
+        validate_strong_password(str(new_password).strip(), user=u)
+    except ValidationError as ve:
+        raise ApiError(400, ve.messages[0] if hasattr(ve, 'messages') else str(ve))
     u.set_password(str(new_password).strip())
     u.save(update_fields=['password'])
     return {'status': 'success', 'user_id': u.id, 'message': f'Password for {u.username} has been reset successfully.'}

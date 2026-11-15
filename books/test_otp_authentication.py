@@ -370,3 +370,94 @@ class OTPAuthenticationTests(TestCase):
             content_type="application/json"
         )
         self.assertEqual(res.status_code, 401)
+
+    def test_strong_password_validator_acceptance_and_rejections(self):
+        """StrongPasswordValidator accepts compliant passwords and rejects non-compliant ones."""
+        from django.core.exceptions import ValidationError
+        from books.validators import validate_strong_password
+
+        # Compliant passwords must pass
+        validate_strong_password("Surya@123")
+        validate_strong_password("Admin#2026")
+        validate_strong_password("P@ssw0rd!Secure")
+
+        # Length < 8
+        with self.assertRaises(ValidationError) as ctx:
+            validate_strong_password("S@123")
+        self.assertIn("at least 8 characters", str(ctx.exception))
+
+        # No uppercase
+        with self.assertRaises(ValidationError) as ctx:
+            validate_strong_password("surya@123")
+        self.assertIn("uppercase letter", str(ctx.exception))
+
+        # No lowercase
+        with self.assertRaises(ValidationError) as ctx:
+            validate_strong_password("SURYA@123")
+        self.assertIn("lowercase letter", str(ctx.exception))
+
+        # No digit
+        with self.assertRaises(ValidationError) as ctx:
+            validate_strong_password("Surya@abc")
+        self.assertIn("number", str(ctx.exception))
+
+        # No special character
+        with self.assertRaises(ValidationError) as ctx:
+            validate_strong_password("Surya1234")
+        self.assertIn("special character", str(ctx.exception))
+
+    def test_signup_weak_password_rejected_by_api(self):
+        """Signup API rejects weak passwords and accepts strong passwords."""
+        # Weak password (length < 8)
+        res = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps({
+                "username": "testuser_weak",
+                "email": "testuser_weak@example.com",
+                "mobile": "+919988776655",
+                "password": "weak",
+                "confirm_password": "weak"
+            }),
+            content_type="application/json"
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("at least 8 characters", res.json()["message"])
+
+        # No special character
+        res2 = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps({
+                "username": "testuser_nospec",
+                "email": "testuser_nospec@example.com",
+                "mobile": "+919988776654",
+                "password": "Password123",
+                "confirm_password": "Password123"
+            }),
+            content_type="application/json"
+        )
+        self.assertEqual(res2.status_code, 400)
+        self.assertIn("special character", res2.json()["message"])
+
+    def test_smtp_failure_prevents_false_positive_and_rolls_back(self):
+        """When SMTP delivery fails, API returns error, does not create orphan user, and deletes pending OTP."""
+        with patch("books.otp_service.send_brevo_email", side_effect=Exception("Brevo SMTP auth rejected (code 535)")):
+            res = self.client.post(
+                "/api/auth/register-with-otp/",
+                data=json.dumps({
+                    "username": "smtp_fail_user",
+                    "email": "smtp_fail@example.com",
+                    "mobile": "+919988776633",
+                    "password": "Surya@123",
+                    "confirm_password": "Surya@123"
+                }),
+                content_type="application/json"
+            )
+        self.assertIn(res.status_code, [400, 502])
+        data = res.json()
+        self.assertTrue("failed" in data["message"].lower() or "rejected" in data["message"].lower())
+
+        # Ensure user was NOT created in DB (atomic rollback)
+        self.assertFalse(User.objects.filter(username="smtp_fail_user").exists())
+        self.assertFalse(User.objects.filter(email="smtp_fail@example.com").exists())
+        # Ensure no pending OTP verification was left orphaned
+        self.assertFalse(OTPVerification.objects.filter(target_value="smtp_fail@example.com").exists())

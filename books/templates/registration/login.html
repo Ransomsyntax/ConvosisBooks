@@ -188,6 +188,27 @@
   color: #166534;
   border: 1px solid #bbf7d0;
 }
+.pwd-rule-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tx-muted, #64748b);
+  transition: color 0.15s ease;
+}
+.pwd-rule-item.valid {
+  color: #16a34a !important;
+  font-weight: 600;
+}
+.pwd-rule-item.valid .pwd-rule-icon {
+  color: #16a34a;
+  font-weight: 700;
+}
+[data-theme="dark"] .pwd-rule-item.valid {
+  color: #4ade80 !important;
+}
+[data-theme="dark"] .pwd-rule-item.valid .pwd-rule-icon {
+  color: #4ade80;
+}
 </style>
 </head>
 <body class="login">
@@ -288,6 +309,7 @@
       <strong>Registration notice:</strong> {{ signup_error }}
     </div>
     {% endif %}
+    <div id="signupAlertBanner" class="auth-msg-banner error" style="display:none;" role="alert"></div>
 
     <form method="post" action="{% url 'signup' %}" id="formSignUp" novalidate>{% csrf_token %}
       <input type="hidden" name="action" value="signup">
@@ -321,7 +343,7 @@
       <div class="login-field-group">
         <label for="id_signup_password" class="login-label">Password<span class="rq">*</span></label>
         <div class="login-password-wrapper">
-          <input class="login-input in" type="password" name="signup_password" id="id_signup_password" placeholder="Minimum 4 characters" required autocomplete="new-password">
+          <input class="login-input in" type="password" name="signup_password" id="id_signup_password" placeholder="e.g. Surya@123 (min 8 chars)" required autocomplete="new-password">
           <button type="button" id="toggleSignupPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M1 12s4-8 11-8s11 8 11 8s-4 8-11 8s-11-8-11-8"></path>
@@ -329,11 +351,43 @@
             </svg>
           </button>
         </div>
+        <div class="pwd-strength-container" id="signupPwdStrength" style="display:none;margin-top:6px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:11.5px;color:var(--tx-muted,#64748b);">
+            <span>Strength: <strong id="signupPwdStrengthLabel" style="font-weight:600;">Weak</strong></span>
+            <span id="signupPwdStrengthScore">0/5</span>
+          </div>
+          <div style="height:4px;background:var(--bd,#e2e8f0);border-radius:2px;overflow:hidden;margin-bottom:8px;">
+            <div id="signupPwdStrengthBar" style="height:100%;width:0%;background:#ef4444;transition:all 0.25s ease;"></div>
+          </div>
+          <div class="pwd-rules-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;font-size:11.5px;color:var(--tx-muted,#64748b);">
+            <div id="rule_signup_len" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> 8+ characters
+            </div>
+            <div id="rule_signup_case" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> Upper &amp; lowercase
+            </div>
+            <div id="rule_signup_num" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> At least 1 number
+            </div>
+            <div id="rule_signup_spec" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> Special char (@#$%)
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="login-field-group">
         <label for="id_signup_confirm_password" class="login-label">Confirm Password<span class="rq">*</span></label>
-        <input class="login-input in" type="password" name="signup_confirm_password" id="id_signup_confirm_password" placeholder="Re-enter password" required autocomplete="new-password">
+        <div class="login-password-wrapper">
+          <input class="login-input in" type="password" name="signup_confirm_password" id="id_signup_confirm_password" placeholder="Re-enter password" required autocomplete="new-password">
+          <button type="button" id="toggleSignupConfirmPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8s11 8 11 8s-4 8-11 8s-11-8-11-8"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <div id="signupMatchNotice" style="display:none;font-size:11.5px;margin-top:4px;font-weight:500;"></div>
       </div>
 
       <button class="btn p login-btn-submit" id="submitSignupBtn" type="submit">
@@ -424,7 +478,7 @@
     </div>
 
     <p style="font-size:13px;color:var(--tx-muted,#64748b);margin:0 0 16px;line-height:1.5;">
-      Choose a secure new password for your account (minimum 6 characters).
+      Choose a secure new password for your account (minimum 8 characters with upper, lower, number, and special character).
     </p>
 
     <div id="resetAlertBanner" class="auth-msg-banner error" style="display:none;" role="alert"></div>
@@ -433,7 +487,36 @@
       <div class="login-field-group">
         <label for="id_reset_new_password" class="login-label">New Password<span class="rq">*</span></label>
         <div class="login-password-wrapper">
-          <input class="login-input in" type="password" id="id_reset_new_password" placeholder="Minimum 6 characters" autocomplete="new-password" required>
+          <input class="login-input in" type="password" id="id_reset_new_password" placeholder="e.g. Surya@123 (min 8 chars)" autocomplete="new-password" required>
+          <button type="button" id="toggleResetNewPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8s11 8 11 8s-4 8-11 8s-11-8-11-8"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <div class="pwd-strength-container" id="resetPwdStrength" style="display:none;margin-top:6px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:11.5px;color:var(--tx-muted,#64748b);">
+            <span>Strength: <strong id="resetPwdStrengthLabel" style="font-weight:600;">Weak</strong></span>
+            <span id="resetPwdStrengthScore">0/5</span>
+          </div>
+          <div style="height:4px;background:var(--bd,#e2e8f0);border-radius:2px;overflow:hidden;margin-bottom:8px;">
+            <div id="resetPwdStrengthBar" style="height:100%;width:0%;background:#ef4444;transition:all 0.25s ease;"></div>
+          </div>
+          <div class="pwd-rules-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;font-size:11.5px;color:var(--tx-muted,#64748b);">
+            <div id="rule_reset_len" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> 8+ characters
+            </div>
+            <div id="rule_reset_case" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> Upper &amp; lowercase
+            </div>
+            <div id="rule_reset_num" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> At least 1 number
+            </div>
+            <div id="rule_reset_spec" class="pwd-rule-item">
+              <span class="pwd-rule-icon">○</span> Special char (@#$%)
+            </div>
+          </div>
         </div>
       </div>
 
@@ -441,7 +524,14 @@
         <label for="id_reset_confirm_password" class="login-label">Confirm New Password<span class="rq">*</span></label>
         <div class="login-password-wrapper">
           <input class="login-input in" type="password" id="id_reset_confirm_password" placeholder="Re-enter password" autocomplete="new-password" required>
+          <button type="button" id="toggleResetConfirmPasswordBtn" title="Show or hide password" aria-label="Toggle password visibility" class="login-password-toggle">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8s11 8 11 8s-4 8-11 8s-11-8-11-8"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
         </div>
+        <div id="resetMatchNotice" style="display:none;font-size:11.5px;margin-top:4px;font-weight:500;"></div>
       </div>
 
       <button class="btn p login-btn-submit" id="submitResetBtn" type="submit">
@@ -533,7 +623,7 @@
 
   // Back buttons
   const btnBackOtp = document.getElementById('btnBackFromOtp');
-  if (btnBackOtp) btnBackOtp.addEventListener('click', () => switchPane('signin'));
+  if (btnBackOtp) btnBackOtp.addEventListener('click', () => switchPane(otpState.purpose === 'signup' ? 'signup' : 'signin'));
   const btnBackForgot = document.getElementById('btnBackFromForgot');
   if (btnBackForgot) btnBackForgot.addEventListener('click', () => switchPane('signin'));
   const btnBackReset = document.getElementById('btnBackFromReset');
@@ -582,11 +672,128 @@
       if (user) { user.value = 'user_' + randNum; flashInput(user); }
       if (email) { email.value = 'user' + randNum + '@example.com'; flashInput(email); }
       if (mobile) { mobile.value = '+91 98765 ' + randNum + '10'; flashInput(mobile); }
-      if (pass) { pass.value = 'admin123'; flashInput(pass); }
-      if (conf) { conf.value = 'admin123'; flashInput(conf); }
+      if (pass) { pass.value = 'Surya@123'; flashInput(pass); }
+      if (conf) { conf.value = 'Surya@123'; flashInput(conf); }
+      updateStrengthUI('signup', 'Surya@123');
+      checkPasswordMatch('id_signup_password', 'id_signup_confirm_password', 'signupMatchNotice');
       const btn = document.getElementById('submitSignupBtn');
       if (btn) btn.focus();
     });
+  }
+
+  // Password evaluation & strength indicator logic
+  function evaluatePassword(pwd) {
+    if (!pwd) return { hasLen: false, hasCase: false, hasNum: false, hasSpec: false, score: 0, isValid: false };
+    const hasLen = pwd.length >= 8;
+    const hasUpper = /[A-Z]/.test(pwd);
+    const hasLower = /[a-z]/.test(pwd);
+    const hasCase = hasUpper && hasLower;
+    const hasNum = /[0-9]/.test(pwd);
+    const hasSpec = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd);
+
+    let score = 0;
+    if (pwd.length >= 8) score++;
+    if (pwd.length >= 12) score++;
+    if (hasCase) score++;
+    if (hasNum) score++;
+    if (hasSpec) score++;
+
+    // Strict requirements: min 8 chars, >=1 upper, >=1 lower, >=1 number, >=1 special char
+    const isValid = hasLen && hasUpper && hasLower && hasNum && hasSpec;
+
+    return {
+      hasLen,
+      hasCase,
+      hasNum,
+      hasSpec,
+      score,
+      isValid
+    };
+  }
+
+  function updateStrengthUI(prefix, pwd) {
+    const container = document.getElementById(prefix + 'PwdStrength');
+    if (!container) return;
+    if (!pwd) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+    const res = evaluatePassword(pwd);
+
+    const bar = document.getElementById(prefix + 'PwdStrengthBar');
+    const label = document.getElementById(prefix + 'PwdStrengthLabel');
+    const scoreText = document.getElementById(prefix + 'PwdStrengthScore');
+
+    function setRule(ruleId, valid) {
+      const el = document.getElementById(ruleId);
+      if (!el) return;
+      if (valid) {
+        el.classList.add('valid');
+        const icon = el.querySelector('.pwd-rule-icon');
+        if (icon) icon.textContent = '✓';
+      } else {
+        el.classList.remove('valid');
+        const icon = el.querySelector('.pwd-rule-icon');
+        if (icon) icon.textContent = '○';
+      }
+    }
+
+    setRule('rule_' + prefix + '_len', res.hasLen);
+    setRule('rule_' + prefix + '_case', res.hasCase);
+    setRule('rule_' + prefix + '_num', res.hasNum);
+    setRule('rule_' + prefix + '_spec', res.hasSpec);
+
+    let percent = 0;
+    let color = '#ef4444';
+    let labelStr = 'Weak';
+
+    if (res.score <= 1) {
+      percent = 20; color = '#ef4444'; labelStr = 'Weak';
+    } else if (res.score === 2) {
+      percent = 40; color = '#f97316'; labelStr = 'Fair';
+    } else if (res.score === 3) {
+      percent = 60; color = '#eab308'; labelStr = 'Moderate';
+    } else if (res.score === 4) {
+      percent = 80; color = '#3b82f6'; labelStr = 'Good';
+    } else {
+      percent = 100; color = '#10b981'; labelStr = 'Strong';
+    }
+
+    if (bar) {
+      bar.style.width = percent + '%';
+      bar.style.backgroundColor = color;
+    }
+    if (label) {
+      label.textContent = labelStr;
+      label.style.color = color;
+    }
+    if (scoreText) {
+      scoreText.textContent = res.score + '/5';
+    }
+  }
+
+  function checkPasswordMatch(pwdId, confId, noticeId) {
+    const pwdEl = document.getElementById(pwdId);
+    const confEl = document.getElementById(confId);
+    const noticeEl = document.getElementById(noticeId);
+    if (!pwdEl || !confEl || !noticeEl) return;
+
+    const p = pwdEl.value;
+    const c = confEl.value;
+
+    if (!c) {
+      noticeEl.style.display = 'none';
+      return;
+    }
+    noticeEl.style.display = 'block';
+    if (p === c) {
+      noticeEl.style.color = '#16a34a';
+      noticeEl.textContent = '✓ Passwords match';
+    } else {
+      noticeEl.style.color = '#dc2626';
+      noticeEl.textContent = '✗ Passwords do not match';
+    }
   }
 
   // Password visibility toggles
@@ -606,6 +813,38 @@
 
   wirePasswordToggle('togglePasswordBtn', 'id_password');
   wirePasswordToggle('toggleSignupPasswordBtn', 'id_signup_password');
+  wirePasswordToggle('toggleSignupConfirmPasswordBtn', 'id_signup_confirm_password');
+  wirePasswordToggle('toggleResetNewPasswordBtn', 'id_reset_new_password');
+  wirePasswordToggle('toggleResetConfirmPasswordBtn', 'id_reset_confirm_password');
+
+  // Input listeners for real-time validation
+  const signupPwdInp = document.getElementById('id_signup_password');
+  const signupConfInp = document.getElementById('id_signup_confirm_password');
+  if (signupPwdInp) {
+    signupPwdInp.addEventListener('input', () => {
+      updateStrengthUI('signup', signupPwdInp.value);
+      checkPasswordMatch('id_signup_password', 'id_signup_confirm_password', 'signupMatchNotice');
+    });
+  }
+  if (signupConfInp) {
+    signupConfInp.addEventListener('input', () => {
+      checkPasswordMatch('id_signup_password', 'id_signup_confirm_password', 'signupMatchNotice');
+    });
+  }
+
+  const resetPwdInp = document.getElementById('id_reset_new_password');
+  const resetConfInp = document.getElementById('id_reset_confirm_password');
+  if (resetPwdInp) {
+    resetPwdInp.addEventListener('input', () => {
+      updateStrengthUI('reset', resetPwdInp.value);
+      checkPasswordMatch('id_reset_new_password', 'id_reset_confirm_password', 'resetMatchNotice');
+    });
+  }
+  if (resetConfInp) {
+    resetConfInp.addEventListener('input', () => {
+      checkPasswordMatch('id_reset_new_password', 'id_reset_confirm_password', 'resetMatchNotice');
+    });
+  }
 
   // --- OTP 6-DIGIT INPUT CONTROLLER ---
   const otpBoxes = Array.from(document.querySelectorAll('.otp-box'));
@@ -794,9 +1033,13 @@
   // --- SIGNUP SUBMISSION WITH EMAIL OTP ---
   const formSignUp = document.getElementById('formSignUp');
   const submitSignupBtn = document.getElementById('submitSignupBtn');
+  const signupAlertBanner = document.getElementById('signupAlertBanner');
 
   if (formSignUp) {
     formSignUp.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (signupAlertBanner) signupAlertBanner.style.display = 'none';
+
       const email = document.getElementById('id_signup_email').value.trim();
       const username = document.getElementById('id_signup_username').value.trim();
       const mobile = document.getElementById('id_signup_mobile').value.trim();
@@ -805,14 +1048,31 @@
       const name = document.getElementById('id_signup_name').value.trim();
       const org = document.getElementById('id_signup_org').value.trim();
 
-      if (!email || !username || !pass) return; // let native validation highlight
-      if (pass !== conf) {
-        alert('Passwords do not match.');
-        e.preventDefault();
+      if (!email || !username || !pass) {
+        if (signupAlertBanner) {
+          signupAlertBanner.textContent = 'Please fill in all required fields.';
+          signupAlertBanner.style.display = 'block';
+        }
         return;
       }
 
-      e.preventDefault();
+      const evalRes = evaluatePassword(pass);
+      if (!evalRes.isValid) {
+        if (signupAlertBanner) {
+          signupAlertBanner.textContent = 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character (e.g. Surya@123).';
+          signupAlertBanner.style.display = 'block';
+        }
+        return;
+      }
+
+      if (pass !== conf) {
+        if (signupAlertBanner) {
+          signupAlertBanner.textContent = 'Passwords do not match.';
+          signupAlertBanner.style.display = 'block';
+        }
+        return;
+      }
+
       submitSignupBtn.disabled = true;
       submitSignupBtn.textContent = 'Creating account…';
 
@@ -839,10 +1099,16 @@
           startResendCountdown(data.cooldown_seconds || 60);
           startExpiryCountdown(data.expires_in_seconds || 300);
         } else {
-          alert(data.message || data.error || 'Registration failed.');
+          if (signupAlertBanner) {
+            signupAlertBanner.textContent = data.message || data.error || 'Registration failed.';
+            signupAlertBanner.style.display = 'block';
+          }
         }
       } catch (err) {
-        formSignUp.submit();
+        if (signupAlertBanner) {
+          signupAlertBanner.textContent = 'Network or server communication error. Please try again.';
+          signupAlertBanner.style.display = 'block';
+        }
       } finally {
         submitSignupBtn.disabled = false;
         submitSignupBtn.textContent = 'Create Account & Verify Email';
@@ -938,8 +1204,14 @@
       const newPwd = document.getElementById('id_reset_new_password').value;
       const confPwd = document.getElementById('id_reset_confirm_password').value;
 
-      if (!newPwd || newPwd.length < 6) {
-        resetAlertBanner.textContent = 'Password must be at least 6 characters long.';
+      if (!newPwd) {
+        resetAlertBanner.textContent = 'New password is required.';
+        resetAlertBanner.style.display = 'block';
+        return;
+      }
+      const evalReset = evaluatePassword(newPwd);
+      if (!evalReset.isValid) {
+        resetAlertBanner.textContent = 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character (e.g. Surya@123).';
         resetAlertBanner.style.display = 'block';
         return;
       }

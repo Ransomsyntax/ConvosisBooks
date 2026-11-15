@@ -231,43 +231,56 @@ def render_otp_email_html(otp: str, purpose: str, recipient_name: str = '') -> t
 
 def send_brevo_email(to_email: str, subject: str, html_content: str, text_content: str) -> bool:
     """
-    Deliver transactional email via Brevo REST API v3 or Brevo SMTP/Django mail backend.
+    Deliver transactional email via Brevo SMTP / Django mail backend,
+    with fallback to Brevo REST API v3 if API key is provided.
+    Never silently suppress delivery failures.
     """
-    api_key = getattr(settings, 'BREVO_API_KEY', '').strip()
-    sender_email = getattr(settings, 'BREVO_SENDER_EMAIL', 'no-reply@convosis.com').strip()
+    # 1. Determine sender address
+    default_from = getattr(settings, 'DEFAULT_FROM_EMAIL', '').strip()
+    brevo_sender = getattr(settings, 'BREVO_SENDER_EMAIL', '').strip()
     sender_name = getattr(settings, 'BREVO_SENDER_NAME', 'CONVOSIS Books').strip()
 
-    if api_key:
-        payload = {
-            "sender": {"name": sender_name, "email": sender_email},
-            "to": [{"email": to_email}],
-            "subject": subject,
-            "htmlContent": html_content,
-            "textContent": text_content,
-        }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(
-            url="https://api.brevo.com/v3/smtp/email",
-            data=data,
-            headers={
-                "accept": "application/json",
-                "api-key": api_key,
-                "content-type": "application/json"
-            },
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if 200 <= resp.status < 300:
-                    logger.info("Brevo email dispatched successfully to %s", mask_identifier(to_email, 'email'))
-                    return True
-        except (urllib.error.URLError, urllib.error.HTTPError) as err:
-            logger.warning("Brevo API delivery encountered error: %s. Falling back to Django mail.", str(err))
+    from_email = default_from or brevo_sender
+    if not from_email or 'localhost' in from_email:
+        from_email = f"{sender_name} <no-reply@convosis.com>"
+    elif '<' not in from_email and '@' in from_email:
+        from_email = f"{sender_name} <{from_email}>"
 
-    # Fallback to configured Django mail backend (SMTP or console/locmem in testing)
+    # 2. If Brevo REST API key is explicitly configured, attempt REST dispatch first
+    api_key = getattr(settings, 'BREVO_API_KEY', '').strip()
+    if api_key:
+        try:
+            pure_sender = from_email
+            if '<' in pure_sender and '>' in pure_sender:
+                pure_sender = pure_sender.split('<')[1].split('>')[0].strip()
+            payload = {
+                "sender": {"name": sender_name, "email": pure_sender},
+                "to": [{"email": to_email}],
+                "subject": subject,
+                "htmlContent": html_content,
+                "textContent": text_content,
+            }
+            data = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(
+                url="https://api.brevo.com/v3/smtp/email",
+                data=data,
+                headers={
+                    "accept": "application/json",
+                    "api-key": api_key,
+                    "content-type": "application/json"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=getattr(settings, 'EMAIL_TIMEOUT', 15)) as resp:
+                if 200 <= resp.status < 300:
+                    logger.info("Brevo REST API email dispatched successfully to %s", mask_identifier(to_email, 'email'))
+                    return True
+        except Exception as api_err:
+            logger.warning("Brevo REST API delivery failed (%s), attempting configured SMTP backend...", api_err)
+
+    # 3. Deliver via Django mail backend (Brevo SMTP in production, locmem in testing)
     try:
-        from_email = f"{sender_name} <{sender_email}>"
-        send_mail(
+        sent_count = send_mail(
             subject=subject,
             message=text_content,
             from_email=from_email,
@@ -275,11 +288,14 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
             html_message=html_content,
             fail_silently=False
         )
-        logger.info("Email dispatched via Django mail backend to %s", mask_identifier(to_email, 'email'))
-        return True
+        if sent_count > 0:
+            logger.info("Email dispatched successfully via %s to %s", getattr(settings, 'EMAIL_BACKEND', 'mail'), mask_identifier(to_email, 'email'))
+            return True
+        else:
+            raise RuntimeError(f"Email backend returned 0 delivered messages to {mask_identifier(to_email, 'email')}.")
     except Exception as exc:
-        logger.error("Failed to deliver email to %s: %s", mask_identifier(to_email, 'email'), str(exc))
-        return False
+        logger.error("Failed to deliver email to %s: %s", mask_identifier(to_email, 'email'), str(exc), exc_info=True)
+        raise
 
 
 def send_msg91_sms(mobile: str, otp: str, template_id: str = None) -> bool:
@@ -384,12 +400,30 @@ def create_and_send_otp(
     sent = False
     if target_type == 'email':
         subj, html_body, plain_body = render_otp_email_html(otp, purpose, recipient_name=recipient_name)
-        sent = send_brevo_email(target_value, subj, html_body, plain_body)
+        try:
+            sent = send_brevo_email(target_value, subj, html_body, plain_body)
+        except Exception as exc:
+            # Clean up pending record so invalid/unreceived OTP is not stored
+            record.delete()
+            err_str = str(exc)
+            logger.error("Failed to dispatch OTP email to %s: %s", mask_identifier(target_value, 'email'), err_str)
+            if "STARTTLS" in err_str or "TLS" in err_str:
+                user_msg = "SMTP TLS connection error. Please ensure EMAIL_USE_TLS is True in hosting environment."
+            elif "Authentication" in err_str or "535" in err_str:
+                user_msg = "SMTP authentication failed. Please verify your Brevo SMTP login and key."
+            elif "Sender" in err_str or "550" in err_str:
+                user_msg = "Sender address was rejected by Brevo. Please check your verified sender in DEFAULT_FROM_EMAIL."
+            else:
+                user_msg = f"Failed to deliver verification email: {err_str}"
+            raise OTPServiceError(user_msg, code="email_delivery_failed", status_code=502)
     elif target_type == 'mobile':
         sent = send_msg91_sms(target_value, otp)
+        if not sent:
+            record.delete()
+            raise OTPServiceError("Failed to deliver SMS verification code. Please try again.", code="sms_delivery_failed", status_code=502)
 
     dispatch_info = {
-        'status': 'sent' if sent else 'queued',
+        'status': 'sent',
         'target_type': target_type,
         'masked_target': mask_identifier(target_value, target_type),
         'expires_in_seconds': expiry_minutes * 60,

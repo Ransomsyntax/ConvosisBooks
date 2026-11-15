@@ -120,21 +120,51 @@ else:
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'books.validators.StrongPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+def _parse_bool_env(val, default=False):
+    if val is None or val == '':
+        return default
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() in ('1', 'true', 'yes', 'on', 't')
+
 EMAIL_HOST = os.environ.get('EMAIL_HOST', '').strip()
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', '1') == '1'
-EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', '0') == '1'
-EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '10'))
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'CONVOSIS Books <no-reply@localhost>')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '').strip()
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '').strip()
+
+# Port 587 requires STARTTLS (EMAIL_USE_TLS=True). Never enable SSL simultaneously.
+raw_tls = os.environ.get('EMAIL_USE_TLS')
+raw_ssl = os.environ.get('EMAIL_USE_SSL')
+
+if EMAIL_PORT == 587:
+    EMAIL_USE_TLS = True if raw_tls is None else _parse_bool_env(raw_tls, default=True)
+    EMAIL_USE_SSL = False
+elif EMAIL_PORT == 465:
+    EMAIL_USE_TLS = False
+    EMAIL_USE_SSL = True if raw_ssl is None else _parse_bool_env(raw_ssl, default=True)
+else:
+    EMAIL_USE_TLS = _parse_bool_env(raw_tls, default=False)
+    EMAIL_USE_SSL = _parse_bool_env(raw_ssl, default=False)
+
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '15'))
+
+# Verified sender address for transactional Brevo SMTP
+configured_from = os.environ.get('DEFAULT_FROM_EMAIL', '').strip()
+if not configured_from or 'localhost' in configured_from:
+    configured_from = os.environ.get('BREVO_SENDER_EMAIL', '').strip()
+if not configured_from:
+    configured_from = 'CONVOSIS Books <no-reply@convosis.com>'
+
+DEFAULT_FROM_EMAIL = configured_from
+SERVER_EMAIL = os.environ.get('SERVER_EMAIL', '').strip() or DEFAULT_FROM_EMAIL
+
 PASSWORD_RESET_EMAIL_CONFIGURED = bool(
-    EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD and os.environ.get('DEFAULT_FROM_EMAIL', '').strip()
+    EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD
 )
 EMAIL_BACKEND = (
     'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST

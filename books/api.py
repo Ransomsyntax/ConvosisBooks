@@ -11935,7 +11935,17 @@ def settings_users_view(request, user_id=None):
         role_id = data.get('role_id')
         r_obj = Role.objects.filter(organization=org, pk=role_id).first() if role_id else Role.objects.filter(organization=org, name='Staff').first()
 
-        password = data.get('password') or 'Convosis@123'
+        password = data.get('password')
+        if password:
+            from django.core.exceptions import ValidationError
+            from .validators import validate_strong_password
+            try:
+                validate_strong_password(str(password).strip())
+            except ValidationError as ve:
+                msg = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
+                raise ApiError(400, msg, {'password': msg})
+        else:
+            password = 'Convosis@123'
         u = User.objects.create_user(
             username=username,
             email=email,
@@ -11977,8 +11987,13 @@ def settings_users_view(request, user_id=None):
                 u.email = new_email
         if 'password' in data and data['password']:
             pwd = str(data['password']).strip()
-            if len(pwd) < 4:
-                raise ApiError(400, 'Password must be at least 4 characters long.')
+            from django.core.exceptions import ValidationError
+            from .validators import validate_strong_password
+            try:
+                validate_strong_password(pwd, user=u)
+            except ValidationError as ve:
+                msg = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
+                raise ApiError(400, msg, {'password': msg})
             u.set_password(pwd)
         u.save()
 
@@ -14327,10 +14342,6 @@ def api_register_with_otp_view(request):
             raise ApiError(400, 'Username and password are required.')
         if len(username) < 3:
             raise ApiError(400, 'Username must be at least 3 characters long.')
-        if len(password) < 4:
-            raise ApiError(400, 'Password must be at least 4 characters long.')
-        if confirm_password and password != confirm_password:
-            raise ApiError(400, 'Passwords do not match.', {'password': 'Passwords do not match.'})
 
         if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
             raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
@@ -14343,6 +14354,17 @@ def api_register_with_otp_view(request):
 
         if User.objects.filter(username__iexact=username).exists():
             raise ApiError(400, f'Username "{username}" is already registered. Please sign in.', {'username': f'Username "{username}" is already registered. Please sign in.'})
+
+        if ('confirm_password' in data or 'signup_confirm_password' in data) and password != confirm_password:
+            raise ApiError(400, 'Passwords do not match.', {'confirm_password': 'Passwords do not match.'})
+
+        from django.core.exceptions import ValidationError
+        from .validators import validate_strong_password
+        try:
+            validate_strong_password(password)
+        except ValidationError as ve:
+            msg = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
+            raise ApiError(400, msg, {'password': msg})
 
         # Create user in inactive status until email OTP is verified
         with transaction.atomic():
@@ -14395,6 +14417,8 @@ def api_register_with_otp_view(request):
             'cooldown_seconds': dispatch_info['cooldown_seconds'],
             'message': f"Account registered. A 6-digit verification code has been sent to {dispatch_info['masked_target']}."
         }, 201)
+    except otp_service.OTPServiceError as oe:
+        return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
     except Exception as exc:
@@ -14480,10 +14504,15 @@ def api_reset_password_view(request):
             raise ApiError(400, 'Email and verification token are required.')
         if not new_password:
             raise ApiError(400, 'New password is required.')
-        if len(new_password) < 6:
-            raise ApiError(400, 'Password must be at least 6 characters long.')
         if confirm_password and new_password != confirm_password:
-            raise ApiError(400, 'Passwords do not match.')
+            raise ApiError(400, 'Passwords do not match.', {'confirm_password': 'Passwords do not match.'})
+        from django.core.exceptions import ValidationError
+        from .validators import validate_strong_password
+        try:
+            validate_strong_password(new_password)
+        except ValidationError as ve:
+            msg = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
+            raise ApiError(400, msg, {'new_password': msg})
 
         # Validate reset token against verified record within 15 minutes
         fifteen_mins_ago = timezone.now() - datetime.timedelta(minutes=15)

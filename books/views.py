@@ -84,8 +84,6 @@ def login_view(request, tab=None):
                 signup_error = 'Username and password are required.'
             elif len(username) < 3:
                 signup_error = 'Username must be at least 3 characters long.'
-            elif len(password) < 4:
-                signup_error = 'Password must be at least 4 characters long.'
             elif password != confirm_password:
                 signup_error = 'Passwords do not match.'
             elif User.objects.filter(email__iexact=normalized_email).exists() or UserProfile.objects.filter(normalized_email=normalized_email).exists():
@@ -95,6 +93,13 @@ def login_view(request, tab=None):
             elif User.objects.filter(username__iexact=username).exists():
                 signup_error = f'Username "{username}" is already registered. Please sign in.'
             else:
+                from .validators import validate_strong_password
+                try:
+                    validate_strong_password(password)
+                except ValidationError as ve:
+                    signup_error = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
+
+            if not signup_error:
                 try:
                     with transaction.atomic():
                         # Final concurrency check inside transaction lock

@@ -2299,7 +2299,7 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
         return jrn
 
 def post_invoice_journal(inv, user):
-    """Debit AR, Credit Sales Revenue, Credit Output Taxes."""
+    """Debit AR, Credit Sales Revenue, Credit Output Taxes, balance Adjustment/TCS."""
     org = getattr(inv, 'organization', None)
     items = [
         ('1200', inv.total, Decimal('0.00'), f'Invoice {inv.number} - {inv.customer.name}'),
@@ -2311,6 +2311,12 @@ def post_invoice_journal(inv, user):
         items.append(('2220', Decimal('0.00'), inv.sgst, f'Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', Decimal('0.00'), inv.igst, f'Output IGST on {inv.number}'))
+    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst
+    diff = inv.total - credits_sum
+    if diff > 0:
+        items.append(('4900', Decimal('0.00'), diff, f'Adjustment / TCS on {inv.number}'))
+    elif diff < 0:
+        items.append(('4900', abs(diff), Decimal('0.00'), f'Adjustment discount on {inv.number}'))
     return post_journal_entry(inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}', items, user, org=org)
 
 def post_invoice_void_journal(inv, user):
@@ -2326,6 +2332,12 @@ def post_invoice_void_journal(inv, user):
         items.append(('2220', inv.sgst, Decimal('0.00'), f'Reversal of Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', inv.igst, Decimal('0.00'), f'Reversal of Output IGST on {inv.number}'))
+    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst
+    diff = inv.total - credits_sum
+    if diff > 0:
+        items.append(('4900', diff, Decimal('0.00'), f'Reversal of Adjustment / TCS on {inv.number}'))
+    elif diff < 0:
+        items.append(('4900', Decimal('0.00'), abs(diff), f'Reversal of Adjustment discount on {inv.number}'))
     return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user, org=org)
 
 def post_bill_journal(bill, user):

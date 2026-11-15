@@ -2178,6 +2178,9 @@ class DocResource(Resource):
         for fld in ('branch', 'location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
             if fld in data:
                 head[fld] = str(data.get(fld) or '').strip()
+        for num_fld in ('adjustment', 'tcs_rate', 'tcs_amount', 'discount_percent'):
+            if num_fld in data:
+                head[num_fld] = str(data.get(num_fld) or '0').strip()
         if 'signature_data' in data:
             head['signature_data'] = str(data.get('signature_data') or '')
         if 'signed_by' in data:
@@ -2194,13 +2197,20 @@ class DocResource(Resource):
         intra = is_intra_state(head['place_of_supply'], org_state)
         is_tax_inclusive = (head.get('tax_pricing_type') or getattr(obj, 'tax_pricing_type', 'tax_exclusive')) == 'tax_inclusive'
         comp, tot = compute(lines, intra, is_tax_inclusive=is_tax_inclusive)
+        model_fields = {f.name for f in obj._meta.fields}
         for k, v in head.items():
-            setattr(obj, k, v)
+            if k in model_fields:
+                setattr(obj, k, v)
         for k, v in tot.items():
             setattr(obj, k, v)
         if isinstance(obj, Quote):
             adj = getattr(obj, 'adjustment', Decimal('0.00')) or Decimal('0.00')
             obj.total = max(Decimal('0.00'), obj.total + adj)
+        elif isinstance(obj, Invoice):
+            adj = Decimal(str(head.get('adjustment') or 0)) if head.get('adjustment') else Decimal('0.00')
+            tcs = Decimal(str(head.get('tcs_amount') or 0)) if head.get('tcs_amount') else Decimal('0.00')
+            if adj or tcs:
+                obj.total = max(Decimal('0.00'), obj.total + adj + tcs)
         obj.save()
         obj.lines.all().delete()
         self.Line.objects.bulk_create([self.Line(**{self.line_fk: obj}, item=l['item'],
@@ -6452,6 +6462,13 @@ class RecurringInvoiceResource(Resource):
         return d
 
     def create(self, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         user_org = get_user_org(user) or Organization.get()
         pname = c.text('profile_name', required=True, max_len=150)
@@ -6552,6 +6569,13 @@ class RecurringInvoiceResource(Resource):
         return rec
 
     def update(self, obj, data, user):
+        if 'payment_terms' in data and isinstance(data['payment_terms'], str):
+            terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
+            pt_clean = data['payment_terms'].strip().lower()
+            if pt_clean in terms_map:
+                data['payment_terms'] = terms_map[pt_clean]
+            elif pt_clean.isdigit():
+                data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
         user_org = obj.organization or get_user_org(user)
         if 'profile_name' in data:

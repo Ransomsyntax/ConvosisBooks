@@ -8797,71 +8797,58 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     id = null;
   }
 
-  const [parties, items, whList, rec] = await Promise.all([
+  const [parties, items, whList, rec, salespersons] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
-    id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData)
+    id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData),
+    api('lookup/salespersons/').catch(() => [])
   ]);
 
-  const rLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
-  const rBranch = rec ? (rec.branch || '') : '';
-  const rOrderNum = rec ? (rec.order_number || '') : '';
-  const rSalesperson = rec ? (rec.salesperson || '') : '';
-  const rProject = rec ? (rec.project_name || '') : '';
-  const rSubject = rec ? (rec.subject || '') : '';
-  const rCreateDraft = rec ? (rec.create_as_draft !== undefined ? !!rec.create_as_draft : true) : true;
-  const rRepeatEvery = rec ? (rec.repeat_every != null ? rec.repeat_every : 1) : 1;
-
-  const rProfileName = rec ? (rec.profile_name || rec.name || '') : '';
   const rCustomer = rec ? (rec.customer_id || rec.customer) : '';
+  const rProfileName = rec ? (rec.profile_name || rec.name || '') : '';
+  const rOrderNum = rec ? (rec.order_number || '') : '';
+  const rRepeatEvery = rec ? (rec.repeat_every != null ? rec.repeat_every : 1) : 1;
   const rFrequency = rec ? (rec.frequency || 'monthly') : 'monthly';
   const rStartDate = rec ? (rec.start_date || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10))) : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
-  const rNextDate = rec ? (rec.next_date || rStartDate) : rStartDate;
   const rEndDate = rec ? (rec.end_date || '') : '';
   const rNeverEnds = rec ? (rec.never_ends !== undefined ? !!rec.never_ends : !rec.end_date) : true;
-  const rTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
-  const rCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
-  const rPaymentTerms = rec ? (rec.payment_terms != null ? Number(rec.payment_terms) : 30) : 30;
-  const rStatus = rec ? (rec.status || 'active') : 'active';
-  const rAutoSend = rec ? !!rec.auto_send : false;
-  const rNotes = rec ? (rec.notes || '') : '';
-  const rTerms = rec ? (rec.terms || '') : '';
-  const rLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ description: rProfileName || 'Service Retainer', quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
+  const rPaymentTerms = rec ? (rec.payment_terms != null ? String(rec.payment_terms) : 'Due on Receipt') : 'Due on Receipt';
+  const rAccountsReceivable = rec ? (rec.accounts_receivable || 'Accounts Receivable') : 'Accounts Receivable';
+  const rSalesperson = rec ? (rec.salesperson || '') : '';
+  const rSubject = rec ? (rec.subject || '') : '';
+  const rNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.');
+  const rTerms = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
+  const rCreateDraft = rec ? (rec.create_as_draft !== undefined ? !!rec.create_as_draft : true) : true;
+  const rLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, gst_rate: 18 }];
+  const rDiscountPct = (rLines[0] && num(rLines[0].discount_percent)) || 0;
+  const rAdj = rec ? (num(rec.adjustment) || 0) : 0;
+  const rTcs = rec ? (num(rec.tcs_rate) || 0) : 0;
+  const pendingFiles = [];
 
   const rowHtml = (l = {}) => `
     <tr class="ln-rec" style="border-bottom:1px solid var(--bd);">
-      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+      <td style="width:40px;text-align:center;padding:10px 4px;vertical-align:top;">
         <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
           <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
-          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+          <i class="fa-regular fa-image" style="font-size:15px;"></i>
         </div>
       </td>
       <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
         <select class="in l-item" aria-label="Item" style="width:100%;margin-bottom:6px;">
           <option value="">Type or click to select an item.</option>
           <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-          ${items.map(it => `<option value="${it.id}" ${String(l.item) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+          ${items.map(it => `<option value="${it.id}" ${String(l.item || l.item_id) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
         </select>
         <input class="in l-desc" aria-label="Description" placeholder="Description / details" maxlength="500" value="${esc(l.description || '')}" style="font-size:12px;padding:4px 8px;width:100%;">
-        <div class="l-stock-badge" style="font-size:11px;color:#0284c7;margin-top:3px;font-weight:500;display:none;"></div>
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
-${renderStockQuantityCell(l, items, whList)}
-      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+      ${renderStockQuantityCell(l, items, whList)}
+      <td style="width:130px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
-      <td style="width:140px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+      <td style="width:160px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="TDS" style="width:100%;">
           <option value="0">Select a Tax</option>
           <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
           <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
@@ -8870,7 +8857,7 @@ ${renderStockQuantityCell(l, items, whList)}
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
-      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
       <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
@@ -8880,138 +8867,137 @@ ${renderStockQuantityCell(l, items, whList)}
   `;
 
   target.innerHTML = `
-    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+    <div class="recurring-invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
         <div style="display:flex;align-items:center;gap:12px;">
-          <i class="fa-solid fa-rotate" style="font-size:22px;color:#1e293b;"></i>
+          <i class="fa-solid fa-rotate" style="font-size:22px;color:#2563eb;"></i>
           <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Recurring Invoice' : 'New Recurring Invoice'}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
           <button type="button" class="btn ic" id="btn-rec-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
 
-      <form id="recurring-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="recurring-form-element" style="padding:24px 28px;max-width:1120px;width:100%;box-sizing:border-box;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="rec-customer" name="customer" required style="flex:1;">
-                <option value="">Select or add a customer</option>
-                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
+        <!-- Section 1: Customer & Profile Information -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+          <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;">
+            <i class="fa-regular fa-calendar-check" style="color:#3b82f6;"></i> Recurring Profile &amp; Customer Information
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Profile Name*</label>
-            <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Support Retainer" style="max-width:440px;width:100%;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
-            <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-8" style="max-width:440px;width:100%;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Branch / Location</label>
-            <input class="in" id="rec-branch" name="branch" maxlength="120" value="${esc(rBranch)}" placeholder="Optional branch" style="width:210px;">
-            <input class="in" id="rec-location" name="location" maxlength="120" value="${esc(rLocation)}" placeholder="Location" style="width:210px;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="rec-customer-type" name="customer_type" style="width:260px;">
-                <option value="b2b" ${rCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                <option value="b2c" ${rCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-              </select>
-              <div id="rec-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
-                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                <span id="rec-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(rCustomer))?.gstin) || 'Not provided'}</span>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:18px;">
+            <!-- Customer Name* -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="rec-customer" name="customer" required style="flex:1;">
+                  <option value="">Select or add a customer</option>
+                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                </button>
+                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
               </div>
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:#ef4444;">Repeat Every*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" type="number" id="rec-repeat-every" name="repeat_every" min="1" value="${rRepeatEvery}" style="width:70px;text-align:center;">
-              <select class="in" id="rec-frequency" name="frequency" style="width:160px;">
-                <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Week(s)</option>
-                <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Month(s)</option>
-                <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Year(s)</option>
+            <!-- Accounts Receivable -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+                Accounts Receivable
+                <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
+              </label>
+              <select class="in" id="rec-accounts-receivable" name="accounts_receivable" style="width:100%;">
+                <option value="Accounts Receivable" selected>Accounts Receivable</option>
               </select>
             </div>
 
-            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Starts On*</label>
-            <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:150px;">
+            <!-- Profile Name* -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Profile Name*</label>
+              <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Support Retainer" style="width:100%;">
+            </div>
 
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Ends On</label>
-            <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:150px;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
-
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;cursor:pointer;margin-left:10px;">
-              <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''}> Never Expires
-            </label>
+            <!-- Order Number -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Order Number</label>
+              <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-001" style="width:100%;">
+            </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Payment Terms</label>
-            <select class="in" id="rec-payment-terms" name="payment_terms" style="width:200px;">
-              <option value="Due on Receipt" ${String(rec ? rec.payment_terms : '') === 'Due on Receipt' || rPaymentTerms === 0 ? 'selected' : ''}>Due on Receipt</option>
-              <option value="Net 15" ${String(rec ? rec.payment_terms : '') === 'Net 15' || rPaymentTerms === 15 ? 'selected' : ''}>Net 15</option>
-              <option value="Net 30" ${String(rec ? rec.payment_terms : '') === 'Net 30' || rPaymentTerms === 30 ? 'selected' : ''}>Net 30</option>
-              <option value="Net 45" ${String(rec ? rec.payment_terms : '') === 'Net 45' || rPaymentTerms === 45 ? 'selected' : ''}>Net 45</option>
-              <option value="Net 60" ${String(rec ? rec.payment_terms : '') === 'Net 60' || rPaymentTerms === 60 ? 'selected' : ''}>Net 60</option>
-              <option value="Due end of the month" ${String(rec ? rec.payment_terms : '') === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
-            </select>
+          <!-- Schedule Row: Repeat Every, Starts On, Ends On -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:18px;margin-top:16px;">
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Repeat Every*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" type="number" id="rec-repeat-every" name="repeat_every" min="1" value="${rRepeatEvery}" style="width:65px;text-align:center;">
+                <select class="in" id="rec-frequency" name="frequency" style="flex:1;">
+                  <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Week(s)</option>
+                  <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Month(s)</option>
+                  <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Year(s)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Starts On*</label>
+              <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:100%;">
+            </div>
+
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <label style="font-weight:600;font-size:12.5px;color:var(--tx);">Ends On</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;cursor:pointer;color:var(--tx);">
+                  <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''} style="cursor:pointer;"> Never Expires
+                </label>
+              </div>
+              <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:100%;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
+            </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div id="rec-salesperson-container"></div>
-          </div>
+          <!-- Terms & Salesperson Sub-row -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:18px;margin-top:16px;">
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Payment Terms</label>
+              <select class="in" id="rec-payment-terms" name="payment_terms" style="width:100%;">
+                <option value="Due on Receipt" ${rPaymentTerms === 'Due on Receipt' || rPaymentTerms === '0' ? 'selected' : ''}>Due on Receipt</option>
+                <option value="Net 15" ${rPaymentTerms === 'Net 15' || rPaymentTerms === '15' ? 'selected' : ''}>Net 15</option>
+                <option value="Net 30" ${rPaymentTerms === 'Net 30' || rPaymentTerms === '30' ? 'selected' : ''}>Net 30</option>
+                <option value="Net 45" ${rPaymentTerms === 'Net 45' || rPaymentTerms === '45' ? 'selected' : ''}>Net 45</option>
+                <option value="Net 60" ${rPaymentTerms === 'Net 60' || rPaymentTerms === '60' ? 'selected' : ''}>Net 60</option>
+                <option value="Due end of the month" ${rPaymentTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
+              </select>
+            </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="rec-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this customer.</option>
-            </select>
-          </div>
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Salesperson</label>
+              <div id="rec-salesperson-container"></div>
+            </div>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:150px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="rec-subject" name="subject" rows="2" placeholder="Let your customer know what this Recurring Invoice is for" style="width:260px;font-size:12px;">${esc(rSubject)}</textarea>
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+                Subject <i class="fa-solid fa-circle-info" style="color:#94a3b8;font-size:12px;cursor:help;" title="Brief summary of transaction visible to customer"></i>
+              </label>
+              <input class="in" id="rec-subject" name="subject" value="${esc(rSubject)}" placeholder="Let your customer know what this Recurring Invoice is for" style="width:100%;">
+            </div>
           </div>
         </div>
 
-        <div style="margin-top:32px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="rec-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${rTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${rTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="recurring-invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
-              </button>
+        <!-- Section 2: Item Table -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#3b82f6;"></i> Item Table
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-rec-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-rec-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-rec-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-rec-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
@@ -9021,13 +9007,14 @@ ${renderStockQuantityCell(l, items, whList)}
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>
-                  <th style="width:50px;"></th>
-                  <th style="min-width:280px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">ITEM DETAILS</th>
-                  <th style="width:140px;min-width:130px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">QUANTITY</th>
-                  <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
-                  <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
-                  <th class="th-tax-explainer" data-doc-kind="recurring-invoices" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
-                  <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
+                  <th style="width:40px;text-align:center;"></th>
+                  <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
+                  <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
+                  <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">
+                    RATE <i class="fa-solid fa-calculator" style="font-size:11px;color:#64748b;margin-left:2px;"></i>
+                  </th>
+                  <th style="width:160px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TDS</th>
+                  <th style="width:120px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
               </thead>
@@ -9047,55 +9034,118 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
-          <div>
-            <div style="margin-bottom:18px;">
+        <!-- Section 3: Calculations & Summary (Two Column Grid) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:22px;">
+          <!-- Left: Notes & Terms -->
+          <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:18px;">
+            <div>
               <label for="rec-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="rec-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;" placeholder="Notes will be copied to generated invoices">${esc(rNotes)}</textarea>
-              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on recurring invoices</span>
+              <textarea class="in" id="rec-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rNotes)}</textarea>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on generated recurring invoices</span>
             </div>
             <div>
-              <label for="rec-terms" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="rec-terms" name="terms" rows="4" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rTerms)}</textarea>
+              <label for="rec-terms-text" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
+              <textarea class="in" id="rec-terms-text" name="terms_conditions" rows="4" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rTerms)}</textarea>
             </div>
           </div>
 
-          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:10px;padding:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
-              <span style="font-weight:600;color:var(--tx);">Sub Total</span>
-              <span id="rec-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
+          <!-- Right: Calculation Summary Card -->
+          <div class="form-card" style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:22px;">
+            <!-- Sub Total -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);font-size:13.5px;">Sub Total</span>
+              <span id="rec-subtotal-val" style="font-size:15px;font-weight:700;color:#0f172a;">0.00</span>
             </div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
-              <span style="font-weight:600;color:var(--tx);">Tax Amount</span>
-              <span id="rec-tax-val" style="font-size:16px;font-weight:700;">0.00</span>
+            <!-- Discount % -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <span style="font-weight:500;color:var(--tx);font-size:13px;">Discount</span>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="display:flex;align-items:center;border:1px solid var(--bd);border-radius:4px;background:#fff;padding:0 6px;">
+                  <input type="number" step="0.01" min="0" max="100" id="rec-discount-pct" name="discount_percent" value="${rDiscountPct}" style="width:50px;border:none;outline:none;text-align:right;font-size:13px;padding:5px 2px;">
+                  <span style="font-size:12px;color:#64748b;padding-left:4px;">%</span>
+                </div>
+                <span id="rec-discount-amt" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
+              </div>
             </div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
-              <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
+            <!-- Adjustment -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:500;color:var(--tx);font-size:13px;">Adjustment</span>
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Add or subtract an adjustment amount to round or balance the total"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="number" step="0.01" class="in" id="rec-adj-val" name="adjustment" value="${rAdj}" style="width:90px;text-align:right;font-size:13px;">
+                <span id="rec-adj-display" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
+              </div>
+            </div>
+
+            <!-- TCS -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:500;color:var(--tx);font-size:13px;">TCS</span>
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Tax Collected at Source applicable under Income Tax Section 206C"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <select class="in" id="rec-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;">
+                  <option value="0">Select a Tax</option>
+                  <option value="0.075" ${rTcs === 0.075 ? 'selected' : ''}>TCS [0.075%]</option>
+                  <option value="0.1" ${rTcs === 0.1 ? 'selected' : ''}>TCS [0.1%]</option>
+                  <option value="1" ${rTcs === 1 ? 'selected' : ''}>TCS [1%]</option>
+                  <option value="2" ${rTcs === 2 ? 'selected' : ''}>TCS [2%]</option>
+                  <option value="5" ${rTcs === 5 ? 'selected' : ''}>TCS [5%]</option>
+                </select>
+                <span id="rec-tcs-amt" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
+              </div>
+            </div>
+
+            <!-- Total Amount ( ₹ ) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:14px;">
+              <span style="font-size:16px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
               <span id="rec-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
             </div>
           </div>
         </div>
 
-        ${renderPaymentGatewayBanner()}
+        <!-- Section 4: Attachments, Payment Gateway & Preferences -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;">
+          <!-- Attach File(s) -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div>
+              <div style="font-weight:600;font-size:13px;color:#0f172a;">Attach File(s) to Recurring Invoice</div>
+              <div style="font-size:11.5px;color:#64748b;margin-top:2px;">You can upload a maximum of 10 files, 10MB each</div>
+            </div>
+            <input type="file" id="rec-file-input" multiple style="display:none;">
+            <button type="button" class="btn" id="btn-rec-upload" style="font-size:12px;background:#f8fafc;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:4px;">
+              <i class="fa-solid fa-upload"></i> Upload File ▾
+            </button>
+          </div>
+          <div id="rec-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;"></div>
 
-        <div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:12px 16px;background:#f8fafc;border:1px solid var(--bd);border-radius:6px;">
-          <input type="checkbox" id="rec-create-as-draft" name="create_as_draft" ${rCreateDraft ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
-          <label for="rec-create-as-draft" style="font-weight:600;font-size:13px;color:var(--tx);cursor:pointer;display:flex;align-items:center;gap:6px;">
-            Preferences : Create Invoices as Drafts <i class="fa-solid fa-gear" style="color:#2563eb;font-size:12px;"></i>
-          </label>
+          <!-- Payment Gateway Banner -->
+          ${renderPaymentGatewayBanner()}
+
+          <!-- Preferences: Create Invoices as Drafts -->
+          <div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding-top:14px;border-top:1px solid #f1f5f9;font-size:13px;">
+            <input type="checkbox" id="rec-create-as-draft" name="create_as_draft" ${rCreateDraft ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+            <label for="rec-create-as-draft" style="font-weight:600;font-size:13px;color:var(--tx);cursor:pointer;display:flex;align-items:center;gap:6px;">
+              Preferences : Create Invoices as Drafts <i class="fa-solid fa-gear" style="color:#2563eb;font-size:12px;"></i>
+            </label>
+          </div>
         </div>
 
-        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:24px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+        <!-- Sticky Bottom Bar -->
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:24px;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -2px 10px rgba(0,0,0,0.05);">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn p" id="btn-rec-save" style="font-weight:600;cursor:pointer;">Save Profile</button>
             <button type="button" class="btn" id="btn-rec-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
             <button type="button" class="btn" id="btn-rec-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>
           </div>
           <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
-            <span>Total Amount: <span id="rec-bar-total-amount">₹ 0.00</span></span>
+            <span style="color:#64748b;font-weight:400;">PDF Template: <b style="color:#0f172a;">'Spreadsheet Template'</b> <a href="#/settings/pdf-templates" style="color:#2563eb;text-decoration:none;font-size:12px;">Change</a></span>
             <span>Total Quantity: <span id="rec-bar-total-qty">0.00</span></span>
+            <span>Total Amount: <span id="rec-bar-total-amount">₹ 0.00</span></span>
           </div>
         </div>
       </form>
@@ -9108,121 +9158,6 @@ ${renderStockQuantityCell(l, items, whList)}
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcRecTotals());
 
   createSalespersonCustomDropdown($('#rec-salesperson-container', form), rSalesperson, () => {});
-  setupProjectSelectorForCustomer($('#rec-project', form), rCustomer, rProject);
-  $('#rec-customer', form)?.addEventListener('change', (e) => {
-    setupProjectSelectorForCustomer($('#rec-project', form), e.target.value);
-  });
-
-  async function saveRecurringInvoice(forceDraft = false) {
-    const custId = $('#rec-customer', form).value;
-    if (!custId || custId === '__new_customer__') {
-      toast('Please select a customer.', 'err');
-      $('#rec-customer', form).focus();
-      return;
-    }
-    const profName = ($('#rec-profile-name', form).value || '').trim();
-    if (!profName) {
-      toast('Please enter a profile name.', 'err');
-      $('#rec-profile-name', form).focus();
-      return;
-    }
-    const sd = $('#rec-start-date', form).value;
-    if (!sd) {
-      toast('Please enter start date.', 'err');
-      $('#rec-start-date', form).focus();
-      return;
-    }
-
-    const lines = [];
-    $$('.ln-rec', tbody).forEach((tr, idx) => {
-      const itVal = $('.l-item', tr).value;
-      const descVal = $('.l-desc', tr).value.trim();
-      const qVal = num($('.l-qty', tr).value) || 1;
-      const rVal = num($('.l-rate', tr).value) || 0;
-      const dVal = num($('.l-disc', tr).value) || 0;
-      const gVal = num($('.l-gst', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value || 'percent';
-
-      let taxable = qVal * rVal;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - dVal) / 100;
-      } else {
-        taxable = Math.max(0, taxable - dVal);
-      }
-      taxable = r2(taxable);
-      const lTot = r2(taxable * (1 + gVal / 100));
-
-      lines.push({
-        item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
-        warehouse: $('.l-wh-select', tr)?.value || null,
-        warehouse_id: $('.l-wh-select', tr)?.value || null,
-        description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
-        hsn_sac: $('.l-hsn', tr).value.trim(),
-        quantity: qVal,
-        rate: rVal,
-        discount_percent: dVal,
-        gst_rate: gVal,
-        line_total: lTot,
-        position: idx
-      });
-    });
-
-    if (!lines.length) {
-      toast('At least one line item is required.', 'err');
-      return;
-    }
-
-    const payload = {
-      customer: Number(custId),
-      customer_id: Number(custId),
-      profile_name: profName,
-      name: profName,
-      order_number: ($('#rec-order-number', form)?.value || '').trim(),
-      branch: ($('#rec-branch', form)?.value || '').trim(),
-      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
-      frequency: $('#rec-frequency', form)?.value || 'monthly',
-      repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
-      start_date: sd,
-      end_date: $('#rec-never-ends', form).checked ? null : ($('#rec-end-date', form).value || null),
-      never_ends: $('#rec-never-ends', form).checked,
-      payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
-      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
-      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
-      salesperson: form.querySelector('#rec-salesperson-container select.sp-select')?.value || '',
-      project_name: $('#rec-project', form)?.value || '',
-      subject: ($('#rec-subject', form)?.value || '').trim(),
-      notes: ($('#rec-notes', form)?.value || '').trim(),
-      terms: ($('#rec-terms', form)?.value || '').trim(),
-      create_as_draft: forceDraft ? true : ($('#rec-create-as-draft', form)?.checked ?? true),
-      status: forceDraft ? 'draft' : 'active',
-      lines: lines
-    };
-
-    const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
-    actionBtns.forEach(b => { if (b) b.disabled = true; });
-
-    try {
-      let saved;
-      if (id) {
-        saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
-      } else {
-        saved = await api('recurring-invoices/', { method: 'POST', body: payload });
-      }
-      toast(`Recurring profile "${profName}" saved successfully!`, 'ok');
-      if (onDone) onDone(saved);
-      else {
-        location.hash = '#/sales/recurring-invoices';
-        if (typeof route === 'function') route();
-      }
-    } catch (err) {
-      toast(err.message, 'err');
-    } finally {
-      actionBtns.forEach(b => { if (b) b.disabled = false; });
-    }
-  }
-
-  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurringInvoice(false));
-  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurringInvoice(true));
 
   const neverEndsCb = $('#rec-never-ends', form);
   const endDateIn = $('#rec-end-date', form);
@@ -9244,61 +9179,58 @@ ${renderStockQuantityCell(l, items, whList)}
   }
 
   function calcRecTotals() {
-    const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
-    let totalTax = 0;
+    let totalLineTax = 0;
     let totalQty = 0;
+    const discPct = num($('#rec-discount-pct', form)?.value) || 0;
+
     $$('.ln-rec', tbody).forEach(tr => {
       const q = num($('.l-qty', tr).value) || 0;
       const r = num($('.l-rate', tr).value) || 0;
-      const discVal = num($('.l-disc', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value || 'percent';
+      const lineAmt = q * r;
       const gst = num($('.l-gst', tr).value) || 0;
 
       totalQty += q;
-      const gross = q * r;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
-      const net = Math.max(0, gross - disc);
-      let taxable = net;
-      let taxAmt = 0;
-      let lineTot = net;
+      subtotal += lineAmt;
 
-      if (isTaxInclusive && gst > 0) {
-        taxable = r2(net / (1 + gst / 100));
-        taxAmt = r2(net - taxable);
-        lineTot = net;
-      } else {
-        taxable = r2(net);
-        taxAmt = r2(taxable * (gst / 100));
-        lineTot = r2(taxable + taxAmt);
-      }
-
-      subtotal += taxable;
-      totalTax += taxAmt;
+      const discountedLine = lineAmt * (100 - discPct) / 100;
+      const lineTax = discountedLine * gst / 100;
+      totalLineTax += lineTax;
 
       const amtEl = $('.l-amt', tr);
-      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (amtEl) amtEl.textContent = lineAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
-    const totalGrand = r2(subtotal + totalTax);
+    const discAmt = subtotal * discPct / 100;
+    const taxableSubtotal = Math.max(0, subtotal - discAmt);
+    const adj = num($('#rec-adj-val', form)?.value) || 0;
+    const tcsRate = num($('#rec-tcs-tax', form)?.value) || 0;
+    const tcsAmt = taxableSubtotal * tcsRate / 100;
+
+    let grand = taxableSubtotal + totalLineTax + tcsAmt + adj;
+    grand = Math.max(0, grand);
 
     const subEl = $('#rec-subtotal-val', form);
-    const taxEl = $('#rec-tax-val', form);
+    const discEl = $('#rec-discount-amt', form);
+    const adjEl = $('#rec-adj-display', form);
+    const tcsEl = $('#rec-tcs-amt', form);
     const grandEl = $('#rec-grandtotal-val', form);
     const barTot = $('#rec-bar-total-amount', form);
     const barQty = $('#rec-bar-total-qty', form);
 
-    if (subEl) subEl.textContent = inr(subtotal).replace('₹', '').trim();
-    if (taxEl) taxEl.textContent = inr(totalTax).replace('₹', '').trim();
-    if (grandEl) grandEl.textContent = inr(totalGrand).replace('₹', '').trim();
-    if (barTot) barTot.textContent = inr(totalGrand);
+    if (subEl) subEl.textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (discEl) discEl.textContent = discAmt.toFixed(2);
+    if (adjEl) adjEl.textContent = adj.toFixed(2);
+    if (tcsEl) tcsEl.textContent = tcsAmt.toFixed(2);
+    if (grandEl) grandEl.textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (barTot) barTot.textContent = inr(grand);
     if (barQty) barQty.textContent = totalQty.toFixed(2);
 
-    return { subtotal, totalTax, totalGrand, totalQty };
+    return { subtotal, discAmt, totalLineTax, tcsAmt, adj, totalGrand: grand, totalQty };
   }
 
   tbody.addEventListener('input', e => {
-    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcRecTotals();
+    if (e.target.matches('.l-qty, .l-rate')) calcRecTotals();
   });
 
   tbody.addEventListener('change', e => {
@@ -9307,6 +9239,7 @@ ${renderStockQuantityCell(l, items, whList)}
         handleQuickCreateSelect(e.target, newItem => {
           items.push(newItem);
           byId[String(newItem.id)] = newItem;
+          stockTracker.updateRow(e.target.closest('tr'), true);
           calcRecTotals();
         });
         return;
@@ -9322,7 +9255,7 @@ ${renderStockQuantityCell(l, items, whList)}
       }
       calcRecTotals();
     }
-    if (e.target.matches('.l-gst, .l-disc-type')) calcRecTotals();
+    if (e.target.matches('.l-gst')) calcRecTotals();
   });
 
   tbody.addEventListener('click', e => {
@@ -9338,37 +9271,59 @@ ${renderStockQuantityCell(l, items, whList)}
   });
 
   $('#btn-rec-add-row', form)?.addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, gst_rate: 18 }));
     stockTracker.updateRow(tbody.lastElementChild, false);
     calcRecTotals();
   });
 
   $('#btn-rec-bulk-items', form)?.addEventListener('click', () => {
-    openBulkItemModal(items, selectedItems => {
+    bulkItemPickerModal(items, selectedItems => {
       selectedItems.forEach(it => {
         tbody.insertAdjacentHTML('beforeend', rowHtml({
-          item: it.id,
-          description: it.name,
+          item: it.item || it.id,
+          description: it.description || it.name,
           hsn_sac: it.hsn_sac || '',
-          quantity: 1,
-          rate: it.selling_price || 0,
-          discount_percent: 0,
+          quantity: it.quantity || 1,
+          rate: it.rate || it.selling_price || 0,
           gst_rate: num(it.gst_rate) || 18
         }));
+        stockTracker.updateRow(tbody.lastElementChild, true);
       });
       calcRecTotals();
     });
   });
 
+  $('#btn-rec-scan', form)?.addEventListener('click', () => {
+    openBarcodeScannerModal(items, scannedItem => {
+      tbody.insertAdjacentHTML('beforeend', rowHtml({
+        item: scannedItem.id,
+        description: scannedItem.name,
+        hsn_sac: scannedItem.hsn_sac || '',
+        quantity: 1,
+        rate: scannedItem.selling_price || 0,
+        gst_rate: num(scannedItem.gst_rate) || 18
+      }));
+      stockTracker.updateRow(tbody.lastElementChild, true);
+      calcRecTotals();
+    });
+  });
+
+  $('#btn-rec-bulk-actions', form)?.addEventListener('click', () => {
+    openItemBulkActionsModal(tbody, () => calcRecTotals());
+  });
+
   $('#btn-rec-cust-lookup', form)?.addEventListener('click', () => {
-    handleQuickCreateSelect($('#rec-customer', form), newCust => {
-      parties.push(newCust);
-      const opt = document.createElement('option');
-      opt.value = newCust.id;
-      opt.textContent = newCust.name;
-      opt.selected = true;
-      $('#rec-customer', form).appendChild(opt);
-      $('#rec-customer', form).value = newCust.id;
+    partyForm('customers', null, newCust => {
+      if (newCust && newCust.id) {
+        parties.push(newCust);
+        const sel = $('#rec-customer', form);
+        sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
+        sel.value = newCust.id;
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) $('#rec-payment-terms', form).value = termsMap[newCust.payment_terms];
+        }
+      }
     });
   });
 
@@ -9376,31 +9331,84 @@ ${renderStockQuantityCell(l, items, whList)}
     if (e.target.value === '__new_customer__') {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        const opt = document.createElement('option');
-        opt.value = newCust.id;
-        opt.textContent = newCust.name;
-        opt.selected = true;
-        e.target.appendChild(opt);
-        e.target.value = newCust.id;
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) $('#rec-payment-terms', form).value = termsMap[newCust.payment_terms];
+        }
       });
       return;
     }
     const cId = $('#rec-customer', form).value;
     const cObj = parties.find(p => String(p.id) === String(cId));
-    if (cObj) {
-      const gstinEl = $('#rec-customer-gstin', form);
-      const custTypeEl = $('#rec-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cObj.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cObj.gstin && cObj.gstin.trim()) {
-          custTypeEl.value = 'b2b';
-        } else if (cObj.customer_type === 'individual') {
-          custTypeEl.value = 'b2c';
-        }
-      }
+    if (cObj && cObj.payment_terms) {
+      const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+      if (termsMap[cObj.payment_terms]) $('#rec-payment-terms', form).value = termsMap[cObj.payment_terms];
     }
   });
-  $('#rec-tax-pricing', form)?.addEventListener('change', calcRecTotals);
+
+  $('#rec-discount-pct', form)?.addEventListener('input', calcRecTotals);
+  $('#rec-adj-val', form)?.addEventListener('input', calcRecTotals);
+  $('#rec-tcs-tax', form)?.addEventListener('change', calcRecTotals);
+
+  function renderRecAttach() {
+    const box = $('#rec-attach-badges', form);
+    if (!box) return;
+    let h = '';
+    if (rec && rec.attachments && rec.attachments.length) {
+      h += rec.attachments.map(a => `
+        <div class="attach-file-badge">
+          <span>📎 ${esc(a.filename)} (${fmtBytes(a.file_size)})</span>
+          <button type="button" data-del-att="${a.id}">×</button>
+        </div>
+      `).join('');
+    }
+    h += pendingFiles.map((f, i) => `
+      <div class="attach-file-badge" style="border-style:dashed;">
+        <span>📎 ${esc(f.name)} (${fmtBytes(f.size)}) <small style="color:var(--accent);">new</small></span>
+        <button type="button" data-rem-pen="${i}">×</button>
+      </div>
+    `).join('');
+    if (!h) h = '<span class="sub" style="font-size:12px;">No files attached yet.</span>';
+    box.innerHTML = h;
+  }
+
+  const recFileInput = $('#rec-file-input', form);
+  $('#btn-rec-upload', form)?.addEventListener('click', () => recFileInput.click());
+  recFileInput?.addEventListener('change', () => {
+    Array.from(recFileInput.files).forEach(f => {
+      if (pendingFiles.length >= 10) {
+        toast('Maximum 10 files can be attached.', 'err');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = ev => {
+        pendingFiles.push({ name: f.name, size: f.size, type: f.type, data: ev.target.result });
+        renderRecAttach();
+      };
+      reader.readAsDataURL(f);
+    });
+    recFileInput.value = '';
+  });
+
+  $('#rec-attach-badges', form)?.addEventListener('click', async e => {
+    const delBtn = e.target.closest('[data-del-att]');
+    if (delBtn) {
+      const attId = delBtn.dataset.delAtt;
+      if (!(await confirmBox({ title: 'Delete attachment?', message: 'This file will be permanently removed.', okText: 'Delete', danger: true }))) return;
+      try {
+        await api(`attachments/${attId}/`, { method: 'DELETE' });
+        rec.attachments = (rec.attachments || []).filter(a => String(a.id) !== String(attId));
+        renderRecAttach();
+        toast('Attachment deleted', 'ok');
+      } catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    const remBtn = e.target.closest('[data-rem-pen]');
+    if (remBtn) {
+      pendingFiles.splice(Number(remBtn.dataset.remPen), 1);
+      renderRecAttach();
+    }
+  });
 
   const handleClose = () => {
     if (onDone) onDone();
@@ -9413,77 +9421,61 @@ ${renderStockQuantityCell(l, items, whList)}
   $('#btn-rec-close-x', target)?.addEventListener('click', handleClose);
   $('#btn-rec-cancel', target)?.addEventListener('click', handleClose);
 
-  async function saveRecurring(isDraft = false) {
-    const pName = ($('#rec-profile-name', form).value || '').trim();
-    if (!pName) {
-      toast('Profile Name is required.', 'err');
-      $('#rec-profile-name', form).focus();
-      return;
-    }
-    if (/[#@!$%^*+=~`<>?[\]\{}]/.test(pName)) {
-      toast('Profile Name contains invalid special characters.', 'err');
-      $('#rec-profile-name', form).focus();
-      return;
-    }
-
+  async function saveRecurringInvoice(forceDraft = false) {
     const custId = $('#rec-customer', form).value;
     if (!custId || custId === '__new_customer__') {
       toast('Please select a customer.', 'err');
       $('#rec-customer', form).focus();
       return;
     }
-
-    const sDateVal = $('#rec-start-date', form).value;
-    if (!sDateVal) {
-      toast('Please enter a start date.', 'err');
+    const profName = ($('#rec-profile-name', form).value || '').trim();
+    if (!profName) {
+      toast('Please enter a profile name.', 'err');
+      $('#rec-profile-name', form).focus();
+      return;
+    }
+    const sd = $('#rec-start-date', form).value;
+    if (!sd) {
+      toast('Please enter start date.', 'err');
       $('#rec-start-date', form).focus();
       return;
     }
 
-    const nextDateVal = $('#rec-next-date', form).value || sDateVal;
-    if (sDateVal && nextDateVal && new Date(nextDateVal) < new Date(sDateVal)) {
-      toast('Next Invoice Date cannot be earlier than Start Date.', 'err');
-      $('#rec-next-date', form).focus();
+    const neverEnds = !!(neverEndsCb && neverEndsCb.checked);
+    const ed = neverEnds ? null : ($('#rec-end-date', form).value || null);
+    if (!neverEnds && !ed) {
+      toast('Please specify an End Date or check Never Expires.', 'err');
+      $('#rec-end-date', form).focus();
       return;
     }
-
-    const neverEnds = !!(neverEndsCb && neverEndsCb.checked);
-    const edVal = neverEnds ? null : ($('#rec-end-date', form).value || null);
-    if (!neverEnds && edVal && sDateVal && new Date(edVal) < new Date(sDateVal)) {
-      toast('End Date cannot be earlier than Start Date.', 'err');
+    if (!neverEnds && ed && new Date(ed) < new Date(sd)) {
+      toast('End date cannot be earlier than start date.', 'err');
       $('#rec-end-date', form).focus();
       return;
     }
 
+    const discPct = num($('#rec-discount-pct', form)?.value) || 0;
     const lines = [];
     $$('.ln-rec', tbody).forEach((tr, idx) => {
       const itVal = $('.l-item', tr).value;
       const descVal = $('.l-desc', tr).value.trim();
       const qVal = num($('.l-qty', tr).value) || 1;
       const rVal = num($('.l-rate', tr).value) || 0;
-      const dVal = num($('.l-disc', tr).value) || 0;
       const gVal = num($('.l-gst', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value || 'percent';
 
-      let taxable = qVal * rVal;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - dVal) / 100;
-      } else {
-        taxable = Math.max(0, taxable - dVal);
-      }
-      taxable = r2(taxable);
-      const lTot = r2(taxable * (1 + gVal / 100));
+      const lineAmt = qVal * rVal;
+      const discountedLine = lineAmt * (100 - discPct) / 100;
+      const lTot = r2(discountedLine * (1 + gVal / 100));
 
       lines.push({
         item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
         warehouse: $('.l-wh-select', tr)?.value || null,
         warehouse_id: $('.l-wh-select', tr)?.value || null,
-        warehouse_code: $('.l-wh-code', tr)?.value || '',
         description: descVal || (itVal && byId[itVal] ? byId[itVal].name : 'Line item'),
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qVal,
         rate: rVal,
-        discount_percent: dVal,
+        discount_percent: discPct,
         gst_rate: gVal,
         line_total: lTot,
         position: idx
@@ -9498,24 +9490,36 @@ ${renderStockQuantityCell(l, items, whList)}
     const totals = calcRecTotals();
 
     const payload = {
-      profile_name: pName,
       customer: Number(custId),
-      frequency: $('#rec-frequency', form).value,
-      branch: ($('#rec-branch', form)?.value || '').trim(),
-      location: ($('#rec-location', form)?.value || 'HO Kottayam').trim(),
-      tax_pricing_type: $('#rec-tax-pricing', form)?.value || 'tax_exclusive',
-      customer_type: $('#rec-customer-type', form)?.value || 'b2b',
-      start_date: sDateVal,
-      next_date: nextDateVal,
-      end_date: edVal,
+      customer_id: Number(custId),
+      profile_name: profName,
+      name: profName,
+      order_number: ($('#rec-order-number', form)?.value || '').trim(),
+      accounts_receivable: $('#rec-accounts-receivable', form)?.value || 'Accounts Receivable',
+      branch: (rec && rec.branch) || '',
+      location: (rec && rec.location) || 'HO Kottayam',
+      frequency: $('#rec-frequency', form)?.value || 'monthly',
+      repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
+      start_date: sd,
+      next_date: rec ? rec.next_date : sd,
+      end_date: ed,
       never_ends: neverEnds,
-      payment_terms: Number($('#rec-payment-terms', form).value) || 0,
-      status: isDraft ? 'paused' : ($('#rec-status', form).value || 'active'),
-      auto_send: !!($('#rec-auto-send', form) && $('#rec-auto-send', form).checked),
-      notes: $('#rec-notes', form).value.trim(),
-      terms: $('#rec-terms', form).value.trim(),
-      lines: lines,
-      total: totals.totalGrand.toFixed(2)
+      payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
+      tax_pricing_type: 'tax_exclusive',
+      customer_type: 'b2b',
+      salesperson: form.querySelector('#rec-salesperson-container select.sp-select')?.value || '',
+      subject: ($('#rec-subject', form)?.value || '').trim(),
+      notes: ($('#rec-notes', form)?.value || '').trim(),
+      terms: ($('#rec-terms-text', form)?.value || '').trim(),
+      create_as_draft: forceDraft ? true : ($('#rec-create-as-draft', form)?.checked ?? true),
+      status: forceDraft ? 'paused' : 'active',
+      adjustment: totals.adj,
+      tcs_rate: num($('#rec-tcs-tax', form)?.value) || 0,
+      tcs_amount: totals.tcsAmt,
+      discount_percent: discPct,
+      subtotal: totals.subtotal,
+      total: totals.totalGrand,
+      lines: lines
     };
 
     const actionBtns = [$('#btn-rec-save', target), $('#btn-rec-save-draft', target)];
@@ -9525,12 +9529,27 @@ ${renderStockQuantityCell(l, items, whList)}
       let saved;
       if (id) {
         saved = await api(`recurring-invoices/${id}/`, { method: 'PUT', body: payload });
-        toast('Recurring profile updated successfully!', 'ok');
       } else {
         saved = await api('recurring-invoices/', { method: 'POST', body: payload });
-        toast('Recurring profile created successfully!', 'ok');
       }
 
+      for (const pf of pendingFiles) {
+        try {
+          await api('attachments/', {
+            method: 'POST',
+            body: {
+              entity_type: 'recurring_invoice',
+              entity_id: saved.id,
+              filename: pf.name,
+              file_size: pf.size,
+              mime_type: pf.type,
+              file_data: pf.data
+            }
+          });
+        } catch (e) { console.error('Attachment upload error:', e); }
+      }
+
+      toast(`Recurring profile "${profName}" saved successfully!`, 'ok');
       if (onDone) onDone(saved);
       else {
         location.hash = '#/sales/recurring-invoices';
@@ -9543,9 +9562,10 @@ ${renderStockQuantityCell(l, items, whList)}
     }
   }
 
-  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurring(false));
-  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurring(true));
+  $('#btn-rec-save', target)?.addEventListener('click', () => saveRecurringInvoice(false));
+  $('#btn-rec-save-draft', target)?.addEventListener('click', () => saveRecurringInvoice(true));
 
+  renderRecAttach();
   calcRecTotals();
 }
 window.recurringInvoiceForm = recurringInvoiceForm;
@@ -10239,6 +10259,147 @@ function bulkItemPickerModal(items, onSelect) {
 
   renderList();
 }
+
+function openBarcodeScannerModal(items, onScan) {
+  const m = Modal.open({
+    title: 'Scan Item Barcode / SKU',
+    dialog: true,
+    body: `
+      <div style="padding:16px 0;">
+        <p style="font-size:13px;color:#64748b;margin-bottom:14px;">Scan an item barcode with your hardware scanner or enter the SKU / Item Name below.</p>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="barcode-scan-input" class="in" placeholder="Scan or enter barcode / SKU…" style="flex:1;font-size:14px;padding:8px 12px;">
+          <button type="button" class="btn p" id="btn-barcode-scan-submit"><i class="fa-solid fa-barcode"></i> Add</button>
+        </div>
+        <div id="barcode-scan-msg" style="margin-top:12px;font-size:12.5px;min-height:20px;"></div>
+      </div>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:flex-end;width:100%;">
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
+    `
+  });
+
+  const inp = $('#barcode-scan-input', m.el);
+  const msg = $('#barcode-scan-msg', m.el);
+  const btn = $('#btn-barcode-scan-submit', m.el);
+
+  setTimeout(() => { if (inp) inp.focus(); }, 100);
+
+  function doScan() {
+    const q = (inp.value || '').trim();
+    if (!q) return;
+    const lower = q.toLowerCase();
+    const match = items.find(it => 
+      String(it.sku || '').toLowerCase() === lower ||
+      String(it.name || '').toLowerCase() === lower ||
+      String(it.sku || '').toLowerCase().includes(lower) ||
+      String(it.name || '').toLowerCase().includes(lower)
+    );
+    if (match) {
+      msg.innerHTML = `<span style="color:#16a34a;font-weight:600;"><i class="fa-solid fa-circle-check"></i> Found "${esc(match.name)}" (SKU: ${esc(match.sku || 'N/A')})</span>`;
+      inp.value = '';
+      if (onScan) onScan(match);
+      toast(`Added "${match.name}"`, 'ok');
+    } else {
+      msg.innerHTML = `<span style="color:#ef4444;font-weight:500;"><i class="fa-solid fa-circle-exclamation"></i> No item found matching "${esc(q)}".</span>`;
+    }
+  }
+
+  if (btn) btn.addEventListener('click', doScan);
+  if (inp) {
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        doScan();
+      }
+    });
+  }
+}
+window.openBarcodeScannerModal = openBarcodeScannerModal;
+
+function openItemBulkActionsModal(tbody, onDone) {
+  const m = Modal.open({
+    title: 'Bulk Line Actions',
+    dialog: true,
+    body: `
+      <div style="padding:10px 0;display:flex;flex-direction:column;gap:16px;">
+        <div style="background:#f8fafc;padding:14px;border-radius:6px;border:1px solid var(--bd);">
+          <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px;color:#0f172a;">Set Tax Rate for All Items</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select class="in" id="bulk-set-tax" style="flex:1;">
+              <option value="0">GST [0%]</option>
+              <option value="5">GST [5%]</option>
+              <option value="12">GST [12%]</option>
+              <option value="18" selected>GST [18%]</option>
+              <option value="28">GST [28%]</option>
+            </select>
+            <button type="button" class="btn p" id="btn-apply-bulk-tax">Apply to All</button>
+          </div>
+        </div>
+        <div style="background:#f8fafc;padding:14px;border-radius:6px;border:1px solid var(--bd);">
+          <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px;color:#0f172a;">Table Row Operations</label>
+          <div style="display:flex;gap:10px;">
+            <button type="button" class="btn s" id="btn-clear-blank-rows" style="font-size:12px;">Remove Empty Rows</button>
+            <button type="button" class="btn danger" id="btn-reset-all-rows" style="font-size:12px;">Reset All Rows</button>
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <div style="display:flex;justify-content:flex-end;width:100%;">
+        <button type="button" class="btn" data-close>Done</button>
+      </div>
+    `
+  });
+
+  $('#btn-apply-bulk-tax', m.el)?.addEventListener('click', () => {
+    const rate = $('#bulk-set-tax', m.el).value;
+    tbody.querySelectorAll('.l-gst').forEach(sel => { sel.value = rate; });
+    toast(`Applied GST [${rate}%] to all rows`, 'ok');
+    if (onDone) onDone();
+  });
+
+  $('#btn-clear-blank-rows', m.el)?.addEventListener('click', () => {
+    let removed = 0;
+    const trs = Array.from(tbody.querySelectorAll('tr'));
+    if (trs.length <= 1) {
+      toast('At least one row must remain.', 'err');
+      return;
+    }
+    trs.forEach(tr => {
+      const it = tr.querySelector('.l-item')?.value;
+      const desc = tr.querySelector('.l-desc')?.value.trim();
+      const rate = Number(tr.querySelector('.l-rate')?.value || 0);
+      if (!it && !desc && rate === 0 && tbody.querySelectorAll('tr').length > 1) {
+        tr.remove();
+        removed++;
+      }
+    });
+    toast(`Removed ${removed} empty row(s)`, 'ok');
+    if (onDone) onDone();
+  });
+
+  $('#btn-reset-all-rows', m.el)?.addEventListener('click', () => {
+    const trs = Array.from(tbody.querySelectorAll('tr'));
+    if (trs.length > 1) {
+      for (let i = 1; i < trs.length; i++) trs[i].remove();
+    }
+    const firstTr = tbody.querySelector('tr');
+    if (firstTr) {
+      if (firstTr.querySelector('.l-item')) firstTr.querySelector('.l-item').value = '';
+      if (firstTr.querySelector('.l-desc')) firstTr.querySelector('.l-desc').value = '';
+      if (firstTr.querySelector('.l-qty')) firstTr.querySelector('.l-qty').value = '1';
+      if (firstTr.querySelector('.l-rate')) firstTr.querySelector('.l-rate').value = '0.00';
+      if (firstTr.querySelector('.l-gst')) firstTr.querySelector('.l-gst').value = '18';
+      if (firstTr.querySelector('.l-amt')) firstTr.querySelector('.l-amt').textContent = '0.00';
+    }
+    toast('Rows reset', 'ok');
+    if (onDone) onDone();
+  });
+}
+window.openItemBulkActionsModal = openItemBulkActionsModal;
 
 async function quoteForm(id, targetEl, onDone) {
   if (typeof targetEl === 'function') {
@@ -13090,24 +13251,21 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const invOrderNum = rec ? (rec.order_number || '') : (srcQuote ? (srcQuote.reference_number || srcQuote.number) : (srcSO ? srcSO.number : ''));
   const invSalesperson = rec ? (rec.salesperson || '') : (srcQuote ? (srcQuote.salesperson || '') : '');
   const invSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
-  const invPlaceOfSupply = rec ? (rec.place_of_supply || '') : (srcQuote ? (srcQuote.place_of_supply || '') : (srcSO ? (srcSO.place_of_supply || '') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala')));
-  const invBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : (srcSO ? (srcSO.branch || '') : ''));
   const invNotes = rec ? (rec.notes != null ? rec.notes : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')) : (srcQuote ? (srcQuote.notes != null ? srcQuote.notes : '') : (srcSO ? (srcSO.notes != null ? srcSO.notes : '') : (window.APP && window.APP.org && window.APP.org.notes_default ? window.APP.org.notes_default : 'Thanks for your business.')));
   const invTermsText = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : (srcQuote ? srcQuote.terms : (srcSO ? srcSO.terms : ''));
-  const invTaxType = rec ? (rec.tax_type || 'tds') : (srcQuote ? (srcQuote.tax_type || 'tds') : 'tds');
-  const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : (srcSO ? (srcSO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive'));
-  const invCustType = rec ? (rec.customer_type || 'b2b') : (srcQuote ? (srcQuote.customer_type || 'b2b') : (srcSO ? (srcSO.customer_type || 'b2b') : 'b2b'));
-  const invTdsTax = rec ? num(rec.tds_tcs_tax || 0) : (srcQuote ? num(srcQuote.tds_tcs_tax || 0) : 0);
-  const invAdj = rec ? num(rec.adjustment || 0) : (srcQuote ? num(srcQuote.adjustment || 0) : 0);
-  const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : ((srcSO && srcSO.lines && srcSO.lines.length) ? srcSO.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]));
+  const invAccountsReceivable = rec ? (rec.accounts_receivable || 'Accounts Receivable') : 'Accounts Receivable';
+  const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : ((srcSO && srcSO.lines && srcSO.lines.length) ? srcSO.lines : [{ quantity: 1, rate: 0, gst_rate: 18 }]));
+  const invDiscountPct = (invLines[0] && num(invLines[0].discount_percent)) || 0;
+  const invAdj = rec ? (num(rec.adjustment) || 0) : 0;
+  const invTcs = rec ? (num(rec.tcs_rate) || 0) : 0;
   const pendingFiles = [];
 
   const rowHtml = (l = {}) => `
     <tr class="ln-invoice" style="border-bottom:1px solid var(--bd);">
-      <td style="width:50px;text-align:center;padding:10px 4px;vertical-align:top;">
+      <td style="width:40px;text-align:center;padding:10px 4px;vertical-align:top;">
         <div style="display:flex;align-items:center;justify-content:center;gap:6px;color:#94a3b8;padding-top:6px;">
           <i class="fa-solid fa-grip-vertical" style="cursor:grab;font-size:13px;"></i>
-          <i class="fa-regular fa-image" style="font-size:16px;"></i>
+          <i class="fa-regular fa-image" style="font-size:15px;"></i>
         </div>
       </td>
       <td style="min-width:280px;padding:10px 8px;vertical-align:top;">
@@ -13120,20 +13278,11 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         <input type="hidden" class="l-hsn" value="${esc(l.hsn_sac || '')}">
       </td>
       ${renderStockQuantityCell(l, items, whList)}
-      <td style="width:110px;padding:10px 8px;vertical-align:top;">
+      <td style="width:130px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
-      <td style="width:140px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
+      <td style="width:160px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="TDS" style="width:100%;">
           <option value="0">Select a Tax</option>
           <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
           <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
@@ -13142,7 +13291,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
-      <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
+      <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
       <td style="width:36px;text-align:center;vertical-align:top;padding-top:14px;">
@@ -13153,151 +13302,124 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
 
   target.innerHTML = `
     <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+      <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
         <div style="display:flex;align-items:center;gap:12px;">
           <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
           <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Invoice' : 'New Invoice'}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" title="Settings" id="btn-inv-top-pref" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
           <button type="button" class="btn ic" id="btn-inv-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
 
-      <form id="invoice-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="invoice-form-element" style="padding:24px 28px;max-width:1120px;width:100%;box-sizing:border-box;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="inv-customer" name="customer" required style="flex:1;">
-                <option value="">Select or add a customer</option>
-                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
+        <!-- Section 1: Customer & Invoice Information -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+          <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;">
+            <i class="fa-regular fa-building" style="color:#3b82f6;"></i> Customer &amp; Invoice Information
           </div>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:18px;">
+            <!-- Customer Name* -->
             <div>
-              <select class="in" id="inv-location" name="location" style="width:260px;">
-                ${whList.map(w => `<option value="${esc(w.name)}" ${(rec && rec.location === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-              </select>
-              <div id="inv-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Source of Supply: ${esc(invPlaceOfSupply || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-              </div>
-              <input class="in" id="inv-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(invBranch)}" style="width:260px;margin-top:6px;">
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="inv-customer-type" name="customer_type" style="width:260px;">
-                <option value="b2b" ${invCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                <option value="b2c" ${invCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-              </select>
-              <div id="inv-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
-                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                <span id="inv-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(invCustomer))?.gstin) || 'Not provided'}</span>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="inv-customer" name="customer" required style="flex:1;">
+                  <option value="">Select or add a customer</option>
+                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                </button>
+                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
               </div>
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Invoice#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="inv-series" name="transaction_series" style="width:180px;">
-                <option value="Default Transaction Series" ${(rec && rec.transaction_series === 'Default Transaction Series') || !rec ? 'selected' : ''}>Default Transaction Series</option>
-                <option value="Online Store Series" ${rec && rec.transaction_series === 'Online Store Series' ? 'selected' : ''}>Online Store Series</option>
-                <option value="Export Series" ${rec && rec.transaction_series === 'Export Series' ? 'selected' : ''}>Export Series</option>
-                <option value="Retail Series" ${rec && rec.transaction_series === 'Retail Series' ? 'selected' : ''}>Retail Series</option>
+            <!-- Accounts Receivable -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+                Accounts Receivable
+                <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
+              </label>
+              <select class="in" id="inv-accounts-receivable" name="accounts_receivable" style="width:100%;">
+                <option value="Accounts Receivable" selected>Accounts Receivable</option>
               </select>
-              <input class="in" id="inv-number" name="number" value="${invNum}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
+            </div>
+
+            <!-- Invoice Number* -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Invoice#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required style="flex:1;">
+                <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
+                  <i class="fa-solid fa-gear"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Order Number -->
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Order Number</label>
+              <input class="in" id="inv-order-number" name="order_number" value="${esc(invOrderNum)}" placeholder="e.g. PO-8921" style="width:100%;">
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
-            <input class="in" id="inv-order-number" name="order_number" value="${esc(invOrderNum)}" style="width:260px;">
+          <!-- Dates & Terms Sub-row -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:18px;margin-top:16px;">
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Invoice Date*</label>
+              <input class="in" type="date" id="inv-date" name="date" value="${invDate}" required style="width:100%;">
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Payment Terms</label>
+              <select class="in" id="inv-terms" name="terms" style="width:100%;">
+                <option value="Due on Receipt" ${invTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
+                <option value="Net 15" ${invTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
+                <option value="Net 30" ${invTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
+                <option value="Net 45" ${invTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
+                <option value="Net 60" ${invTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
+                <option value="Due end of the month" ${invTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Due Date</label>
+              <input class="in" type="date" id="inv-due-date" name="due_date" value="${invDueDate}" style="width:100%;">
+            </div>
           </div>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Invoice Date*</label>
-            <input class="in" type="date" id="inv-date" name="date" value="${invDate}" required style="width:260px;">
-            
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Terms</label>
-            <select class="in" id="inv-terms" name="terms" style="width:180px;">
-              <option value="Due on Receipt" ${invTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
-              <option value="Net 15" ${invTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
-              <option value="Net 30" ${invTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
-              <option value="Net 45" ${invTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
-              <option value="Net 60" ${invTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
-              <option value="Due end of the month" ${invTerms === 'Due end of the month' ? 'selected' : ''}>Due end of the month</option>
-            </select>
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
-            <input class="in" type="date" id="inv-due-date" name="due_date" value="${invDueDate}" style="width:160px;">
+          <!-- Salesperson & Subject Sub-row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px;">
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Salesperson</label>
+              <div id="inv-salesperson-container"></div>
+            </div>
+            <div>
+              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+                Subject <i class="fa-solid fa-circle-info" style="color:#94a3b8;font-size:12px;cursor:help;" title="Brief summary of transaction visible to customer"></i>
+              </label>
+              <input class="in" id="inv-subject" name="subject" value="${esc(invSubject)}" placeholder="Let your customer know what this Invoice is for" style="width:100%;">
+            </div>
           </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
-              Accounts Receivable
-              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
-            </label>
-            <select class="in" id="inv-accounts-receivable" name="accounts_receivable" style="width:260px;">
-              <option value="Accounts Receivable" selected>Accounts Receivable</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div id="inv-salesperson-container"></div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="inv-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this customer.</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="inv-subject" name="subject" rows="2" placeholder="Let your customer know what this Invoice is for" style="width:260px;font-size:12px;">${esc(invSubject)}</textarea>
-          </div>
-
-          <input type="hidden" id="inv-place-of-supply" name="place_of_supply" value="${esc(invPlaceOfSupply)}">
         </div>
 
-        <div style="margin-top:32px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="inv-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${invTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${invTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="invoices" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
-              </button>
+        <!-- Section 2: Item Table -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#3b82f6;"></i> Item Table
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-inv-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-inv-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-inv-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-inv-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
@@ -13307,13 +13429,14 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>
-                  <th style="width:50px;"></th>
+                  <th style="width:40px;text-align:center;"></th>
                   <th style="min-width:280px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">ITEM DETAILS</th>
-                  <th style="width:140px;min-width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
-                  <th style="width:110px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">RATE <i class="fa-regular fa-rectangle-list" style="font-size:11px;"></i></th>
-                  <th style="width:120px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
-                  <th class="th-tax-explainer" data-doc-kind="invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
-                  <th style="width:100px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
+                  <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">QUANTITY</th>
+                  <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">
+                    RATE <i class="fa-solid fa-calculator" style="font-size:11px;color:#64748b;margin-left:2px;"></i>
+                  </th>
+                  <th style="width:160px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TDS</th>
+                  <th style="width:120px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
               </thead>
@@ -13333,9 +13456,11 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:28px;">
-          <div>
-            <div style="margin-bottom:18px;">
+        <!-- Section 3: Calculations & Summary (Two Column Grid) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:22px;">
+          <!-- Left: Notes & Terms -->
+          <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:18px;">
+            <div>
               <label for="inv-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
               <textarea class="in" id="inv-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(invNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the invoice</span>
@@ -13346,91 +13471,95 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             </div>
           </div>
 
-          <div style="background:#f8fafc;border:1px solid var(--bd);border-radius:10px;padding:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
-              <span style="font-weight:600;color:var(--tx);">Sub Total</span>
-              <span id="inv-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
+          <!-- Right: Calculation Summary Card -->
+          <div class="form-card" style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:22px;">
+            <!-- Sub Total -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
+              <span style="font-weight:600;color:var(--tx);font-size:13.5px;">Sub Total</span>
+              <span id="inv-subtotal-val" style="font-size:15px;font-weight:700;color:#0f172a;">0.00</span>
             </div>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-              <div style="display:flex;align-items:center;gap:14px;">
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
-                  <input type="radio" name="tax_type" value="tds" ${invTaxType === 'tds' ? 'checked' : ''}> TDS
-                </label>
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
-                  <input type="radio" name="tax_type" value="tcs" ${invTaxType === 'tcs' ? 'checked' : ''}> TCS
-                </label>
-              </div>
+            <!-- Discount % -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <span style="font-weight:500;color:var(--tx);font-size:13px;">Discount</span>
               <div style="display:flex;align-items:center;gap:10px;">
-                <select class="in" id="inv-tds-tax" name="tds_tcs_tax" style="width:150px;">
-                  <option value="0">Select a Tax</option>
-                  <option value="1" ${invTdsTax === 1 ? 'selected' : ''}>1%</option>
-                  <option value="2" ${invTdsTax === 2 ? 'selected' : ''}>2%</option>
-                  <option value="5" ${invTdsTax === 5 ? 'selected' : ''}>5%</option>
-                  <option value="10" ${invTdsTax === 10 ? 'selected' : ''}>10%</option>
-                </select>
-                <span id="inv-tds-amt" style="font-weight:600;min-width:60px;text-align:right;">- 0.00</span>
+                <div style="display:flex;align-items:border:1px solid var(--bd);border-radius:4px;background:#fff;padding:0 6px;">
+                  <input type="number" step="0.01" min="0" max="100" id="inv-discount-pct" name="discount_percent" value="${invDiscountPct}" style="width:50px;border:none;outline:none;text-align:right;font-size:13px;padding:5px 2px;">
+                  <span style="font-size:12px;color:#64748b;padding-left:4px;">%</span>
+                </div>
+                <span id="inv-discount-amt" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
               </div>
             </div>
 
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <!-- Adjustment -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <div style="display:flex;align-items:center;gap:6px;">
-                <div style="border:1px dashed var(--bd);border-radius:4px;padding:4px 10px;font-size:12px;font-weight:500;color:var(--tx);">Adjustment</div>
-                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;" title="Add or subtract adjustment amount"></i>
+                <span style="font-weight:500;color:var(--tx);font-size:13px;">Adjustment</span>
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Add or subtract an adjustment amount to round or balance the total"></i>
               </div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <input type="number" step="0.01" class="in" id="inv-adj-val" name="adjustment" value="${invAdj}" style="width:110px;text-align:right;">
-                <span id="inv-adj-display" style="font-weight:600;min-width:60px;text-align:right;">0.00</span>
+                <input type="number" step="0.01" class="in" id="inv-adj-val" name="adjustment" value="${invAdj}" style="width:90px;text-align:right;font-size:13px;">
+                <span id="inv-adj-display" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
               </div>
             </div>
 
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:16px;">
-              <span style="font-size:17px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
+            <!-- TCS -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:500;color:var(--tx);font-size:13px;">TCS</span>
+                <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Tax Collected at Source applicable under Income Tax Section 206C"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <select class="in" id="inv-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;">
+                  <option value="0">Select a Tax</option>
+                  <option value="0.075" ${invTcs === 0.075 ? 'selected' : ''}>TCS [0.075%]</option>
+                  <option value="0.1" ${invTcs === 0.1 ? 'selected' : ''}>TCS [0.1%]</option>
+                  <option value="1" ${invTcs === 1 ? 'selected' : ''}>TCS [1%]</option>
+                  <option value="2" ${invTcs === 2 ? 'selected' : ''}>TCS [2%]</option>
+                  <option value="5" ${invTcs === 5 ? 'selected' : ''}>TCS [5%]</option>
+                </select>
+                <span id="inv-tcs-amt" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
+              </div>
+            </div>
+
+            <!-- Total Amount ( ₹ ) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:16px;border-top:2px solid var(--bd);margin-top:14px;">
+              <span style="font-size:16px;font-weight:700;color:#0f172a;">Total ( ₹ )</span>
               <span id="inv-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
             </div>
           </div>
         </div>
 
-        <div style="margin-top:28px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <!-- Section 4: Attachments, Payment Gateway & Preferences -->
+        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;">
+          <!-- Attach File(s) -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div>
               <div style="font-weight:600;font-size:13px;color:#0f172a;">Attach File(s) to Invoice</div>
               <div style="font-size:11.5px;color:#64748b;margin-top:2px;">You can upload a maximum of 10 files, 10MB each</div>
             </div>
             <input type="file" id="inv-file-input" multiple style="display:none;">
-            <button type="button" class="btn" id="btn-inv-upload" style="font-size:12px;background:#fff;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn" id="btn-inv-upload" style="font-size:12px;background:#f8fafc;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:4px;">
               <i class="fa-solid fa-upload"></i> Upload File ▾
             </button>
           </div>
-          <div id="inv-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
-        </div>
+          <div id="inv-attach-badges" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;"></div>
 
-        <div style="margin-top:20px;padding:18px;background:#f8fafc;border:1px solid var(--bd);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:20px;">
-          <div>
-            <div style="font-weight:600;font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-signature" style="color:#2563eb;"></i> Authorized Digital Signature
-            </div>
-            <div style="font-size:11.5px;color:#64748b;margin-top:2px;" id="inv-sig-desc">
-              ${rec && rec.signature_data ? 'Document has an attached digital signature.' : (window.APP && window.APP.org && window.APP.org.signature_data ? 'Using company default signature.' : 'No signature attached. Click to add a signature to this invoice.')}
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div id="inv-sig-preview-box" style="height:44px;min-width:90px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:2px 8px;">
-              <img id="inv-sig-preview" src="${esc((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data) || '')}" alt="Signature preview" style="max-height:40px;max-width:110px;object-fit:contain;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'block' : 'none'};">
-              <span id="inv-sig-none" style="font-size:11px;color:#94a3b8;display:${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'none' : 'inline'};">None</span>
-            </div>
-            <input type="hidden" id="inv-signature-data" name="signature_data" value="${esc((rec && rec.signature_data) || '')}">
-            <input type="hidden" id="inv-signed-by" name="signed_by" value="${esc((rec && rec.signed_by) || '')}">
-            <input type="hidden" id="inv-signature-title" name="signature_title" value="${esc((rec && rec.signature_title) || '')}">
-            <button type="button" class="btn btn-doc-sign" id="btn-inv-sign" style="font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 14px;background:#ffffff;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--tx,#0f172a);font-weight:500;">
-              <i class="fa-solid fa-pen-nib"></i> ${((rec && rec.signature_data) || (window.APP && window.APP.org && window.APP.org.signature_data)) ? 'Change Signature' : 'Sign Invoice'}
+          <!-- Payment Gateway Banner -->
+          ${renderPaymentGatewayBanner()}
+
+          <!-- Preferences: Create Invoices as Drafts -->
+          <div style="display:flex;align-items:center;gap:8px;margin-top:20px;padding-top:14px;border-top:1px solid #f1f5f9;font-size:13px;">
+            <span style="font-weight:600;color:var(--tx);">Preferences :</span>
+            <span style="color:#64748b;">Create Invoices as Drafts</span>
+            <button type="button" class="btn ic" id="btn-inv-pref-gear" title="Invoice Preferences" style="border:none;background:none;color:#3b82f6;cursor:pointer;font-size:13px;">
+              <i class="fa-solid fa-gear"></i>
             </button>
           </div>
         </div>
 
-        ${renderPaymentGatewayBanner()}
-
-        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:36px;padding:14px 0;display:flex;align-items:center;justify-content:space-between;z-index:15;">
+        <!-- Sticky Bottom Bar -->
+        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:24px;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -2px 10px rgba(0,0,0,0.05);">
           <div style="display:flex;align-items:center;gap:10px;">
             <button type="button" class="btn" id="btn-inv-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
             <button type="button" class="btn p" id="btn-inv-save-send" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -13442,8 +13571,9 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             <a href="javascript:void(0)" id="btn-inv-make-recurring" style="color:#2563eb;text-decoration:none;font-weight:500;display:flex;align-items:center;gap:5px;">
               <i class="fa-solid fa-rotate"></i> Make Recurring
             </a>
+            <span style="color:#64748b;font-weight:400;">PDF Template: <b style="color:#0f172a;">'Spreadsheet Template'</b> <a href="#/settings/pdf-templates" style="color:#2563eb;text-decoration:none;font-size:12px;">Change</a></span>
+            <span>Total Quantity: <span id="inv-bar-total-qty">0.00</span></span>
             <span>Total Amount: <span id="inv-bar-total-amount">₹ 0.00</span></span>
-            <span>Total Quantity: <span id="inv-bar-total-qty">0</span></span>
           </div>
         </div>
       </form>
@@ -13455,27 +13585,25 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcInvoice());
 
-  // Initialize custom salesperson dropdown and projects
   createSalespersonCustomDropdown($('#inv-salesperson-container', form), invSalesperson, () => {});
-  setupProjectSelectorForCustomer($('#inv-project', form), invCustomer, rec ? rec.project_name : '');
-  $('#inv-customer', form)?.addEventListener('change', (e) => {
-    setupProjectSelectorForCustomer($('#inv-project', form), e.target.value);
-  });
 
-  // Wire up Configure Invoice Preferences gear icon
-  $('#btn-inv-num-pref', form)?.addEventListener('click', () => {
+  // Configure Number Preferences gear
+  const handleNumPref = () => {
     openDocNumberPreferencesModal({
       kind: 'invoices',
-      series: $('#inv-series', form)?.value || 'Default Transaction Series',
-      location: $('#inv-location', form)?.value || 'HO Kottayam',
-      branch: $('#inv-branch', form)?.value || '',
+      series: (rec && rec.transaction_series) || 'Default Transaction Series',
+      location: (rec && rec.location) || 'HO Kottayam',
+      branch: (rec && rec.branch) || '',
       onSave: (res) => {
         if (res && res.preview_formatted) {
           $('#inv-number', form).value = res.preview_formatted;
         }
       }
     });
-  });
+  };
+  $('#btn-inv-num-pref', form)?.addEventListener('click', handleNumPref);
+  $('#btn-inv-top-pref', target)?.addEventListener('click', handleNumPref);
+  $('#btn-inv-pref-gear', form)?.addEventListener('click', handleNumPref);
 
   function updateDueDate() {
     const dVal = $('#inv-date', form).value;
@@ -13503,61 +13631,50 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   }
 
   function calcInvoice() {
-    const isTaxInclusive = ($('#inv-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
-    let totalTax = 0;
+    let totalLineTax = 0;
     let totalQty = 0;
+    const discPct = num($('#inv-discount-pct', form)?.value) || 0;
+
     $$('.ln-invoice', tbody).forEach(tr => {
       const qty = num($('.l-qty', tr).value) || 0;
       const rate = num($('.l-rate', tr).value) || 0;
-      const discVal = num($('.l-disc', tr).value) || 0;
-      const discType = $('.l-disc-type', tr).value;
-      const gross = qty * rate;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
-      const net = Math.max(0, gross - disc);
+      const lineAmt = qty * rate;
       const gstRate = num($('.l-gst', tr).value) || 0;
-      let taxable = net;
-      let tax = 0;
-      let lineTot = net;
-      if (isTaxInclusive && gstRate > 0) {
-        taxable = Math.round((net / (1 + gstRate / 100)) * 100) / 100;
-        tax = Math.round((net - taxable) * 100) / 100;
-        lineTot = net;
-      } else {
-        taxable = Math.round(net * 100) / 100;
-        tax = Math.round((taxable * gstRate / 100) * 100) / 100;
-        lineTot = taxable + tax;
-      }
-      $('.l-amt', tr).textContent = (lineTot).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      subtotal += taxable;
-      totalTax += tax;
+
+      $('.l-amt', tr).textContent = lineAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      
+      subtotal += lineAmt;
       totalQty += qty;
+
+      const discountedLine = lineAmt * (100 - discPct) / 100;
+      const lineTax = discountedLine * gstRate / 100;
+      totalLineTax += lineTax;
     });
 
-    const taxType = form.querySelector('input[name="tax_type"]:checked')?.value || 'tds';
-    const tdsRate = num($('#inv-tds-tax', form).value) || 0;
-    const tdsAmt = subtotal * tdsRate / 100;
-    const adj = num($('#inv-adj-val', form).value) || 0;
+    const discAmt = subtotal * discPct / 100;
+    const taxableSubtotal = Math.max(0, subtotal - discAmt);
+    const adj = num($('#inv-adj-val', form)?.value) || 0;
+    const tcsRate = num($('#inv-tcs-tax', form)?.value) || 0;
+    const tcsAmt = taxableSubtotal * tcsRate / 100;
 
-    $('#inv-tds-amt', form).textContent = `${taxType === 'tds' ? '-' : '+'} ${tdsAmt.toFixed(2)}`;
-    $('#inv-adj-display', form).textContent = adj.toFixed(2);
-
-    let grand = subtotal + totalTax;
-    if (taxType === 'tds') {
-      grand -= tdsAmt;
-    } else {
-      grand += tdsAmt;
-    }
-    grand = Math.max(0, grand + adj);
+    let grand = taxableSubtotal + totalLineTax + tcsAmt + adj;
+    grand = Math.max(0, grand);
 
     $('#inv-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#inv-discount-amt', form).textContent = discAmt.toFixed(2);
+    $('#inv-adj-display', form).textContent = adj.toFixed(2);
+    $('#inv-tcs-amt', form).textContent = tcsAmt.toFixed(2);
     $('#inv-grandtotal-val', form).textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#inv-bar-total-amount', form).textContent = inr(grand);
-    $('#inv-bar-total-qty', form).textContent = totalQty;
+    $('#inv-bar-total-qty', form).textContent = totalQty.toFixed(2);
+
+    return { subtotal, discAmt, totalLineTax, tcsAmt, adj, totalGrand: grand, totalQty };
   }
 
   function renderAttach() {
     const box = $('#inv-attach-badges', form);
+    if (!box) return;
     let h = '';
     if (rec && rec.attachments && rec.attachments.length) {
       h += rec.attachments.map(a => `
@@ -13590,23 +13707,28 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const cancelBtn = $('#btn-inv-cancel', target);
   if (cancelBtn) cancelBtn.addEventListener('click', closeForm);
 
-  $('#btn-inv-cust-lookup', form).addEventListener('click', () => {
+  $('#btn-inv-cust-lookup', form)?.addEventListener('click', () => {
     partyForm('customers', null, (newCust) => {
       if (newCust && newCust.id) {
         parties.push(newCust);
         const sel = $('#inv-customer', form);
         sel.insertAdjacentHTML('beforeend', `<option value="${newCust.id}" selected>${esc(newCust.name)}</option>`);
         sel.value = newCust.id;
-        if (newCust.state) $('#inv-place-of-supply', form).value = newCust.state;
+        if (newCust.payment_terms) {
+          const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+          if (termsMap[newCust.payment_terms]) {
+            $('#inv-terms', form).value = termsMap[newCust.payment_terms];
+            updateDueDate();
+          }
+        }
       }
     });
   });
 
-  $('#inv-customer', form).addEventListener('change', e => {
+  $('#inv-customer', form)?.addEventListener('change', e => {
     if (e.target.value === '__new_customer__') {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        if (newCust.state) $('#inv-place-of-supply', form).value = newCust.state;
         if (newCust.payment_terms) {
           const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
           if (termsMap[newCust.payment_terms]) {
@@ -13619,58 +13741,23 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     }
     const custId = $('#inv-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
-    if (cust) {
-      if (cust.state) $('#inv-place-of-supply', form).value = cust.state;
-      const gstinEl = $('#inv-customer-gstin', form);
-      const custTypeEl = $('#inv-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cust.gstin && cust.gstin.trim()) {
-          custTypeEl.value = 'b2b';
-        } else if (cust.customer_type === 'individual') {
-          custTypeEl.value = 'b2c';
-        }
-      }
-      if (cust.payment_terms) {
-        const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
-        if (termsMap[cust.payment_terms]) {
-          $('#inv-terms', form).value = termsMap[cust.payment_terms];
-          updateDueDate();
-        }
+    if (cust && cust.payment_terms) {
+      const termsMap = { 0: 'Due on Receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45', 60: 'Net 60' };
+      if (termsMap[cust.payment_terms]) {
+        $('#inv-terms', form).value = termsMap[cust.payment_terms];
+        updateDueDate();
       }
     }
   });
 
-  $('#inv-date', form).addEventListener('change', updateDueDate);
-  $('#inv-terms', form).addEventListener('change', updateDueDate);
+  $('#inv-date', form)?.addEventListener('change', updateDueDate);
+  $('#inv-terms', form)?.addEventListener('change', updateDueDate);
+  $('#inv-discount-pct', form)?.addEventListener('input', calcInvoice);
+  $('#inv-adj-val', form)?.addEventListener('input', calcInvoice);
+  $('#inv-tcs-tax', form)?.addEventListener('change', calcInvoice);
 
-  $('#btn-inv-sign', form)?.addEventListener('click', () => {
-    const curSigObj = {
-      signature_data: $('#inv-signature-data', form)?.value || '',
-      signed_by: $('#inv-signed-by', form)?.value || '',
-      signature_title: $('#inv-signature-title', form)?.value || '',
-      number: invNum
-    };
-    openSignatureModal(curSigObj, 'invoices', updated => {
-      if ($('#inv-signature-data', form)) $('#inv-signature-data', form).value = updated.signature_data || '';
-      if ($('#inv-signed-by', form)) $('#inv-signed-by', form).value = updated.signed_by || '';
-      if ($('#inv-signature-title', form)) $('#inv-signature-title', form).value = updated.signature_title || '';
-      const previewImg = $('#inv-sig-preview', form);
-      const noneSpan = $('#inv-sig-none', form);
-      const descEl = $('#inv-sig-desc', form);
-      const signBtn = $('#btn-inv-sign', form);
-      if (updated.signature_data) {
-        if (previewImg) { previewImg.src = updated.signature_data; previewImg.style.display = 'block'; }
-        if (noneSpan) noneSpan.style.display = 'none';
-        if (descEl) descEl.textContent = 'Custom digital signature attached.';
-        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Change Signature';
-      } else {
-        if (previewImg) previewImg.style.display = 'none';
-        if (noneSpan) noneSpan.style.display = 'inline';
-        if (descEl) descEl.textContent = 'No custom signature attached.';
-        if (signBtn) signBtn.innerHTML = '<i class="fa-solid fa-pen-nib"></i> Sign Invoice';
-      }
-    });
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.l-qty, .l-rate')) calcInvoice();
   });
 
   tbody.addEventListener('change', e => {
@@ -13695,25 +13782,49 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       }
       calcInvoice();
     }
+    if (e.target.matches('.l-gst')) calcInvoice();
   });
 
-  form.addEventListener('input', () => calcInvoice());
-  form.addEventListener('change', () => calcInvoice());
-
-  $('#btn-inv-add-row', form).addEventListener('click', () => {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }));
+  $('#btn-inv-add-row', form)?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ quantity: 1, rate: 0, gst_rate: 18 }));
     stockTracker.updateRow(tbody.lastElementChild, false);
     calcInvoice();
   });
 
-  $('#btn-inv-bulk-items', form).addEventListener('click', () => {
+  $('#btn-inv-bulk-items', form)?.addEventListener('click', () => {
     bulkItemPickerModal(items, (selectedItems) => {
       selectedItems.forEach(it => {
-        tbody.insertAdjacentHTML('beforeend', rowHtml(it));
+        tbody.insertAdjacentHTML('beforeend', rowHtml({
+          item: it.item || it.id,
+          description: it.description || it.name,
+          hsn_sac: it.hsn_sac || '',
+          quantity: it.quantity || 1,
+          rate: it.rate || it.selling_price || 0,
+          gst_rate: num(it.gst_rate) || 18
+        }));
         stockTracker.updateRow(tbody.lastElementChild, true);
       });
       calcInvoice();
     });
+  });
+
+  $('#btn-inv-scan', form)?.addEventListener('click', () => {
+    openBarcodeScannerModal(items, scannedItem => {
+      tbody.insertAdjacentHTML('beforeend', rowHtml({
+        item: scannedItem.id,
+        description: scannedItem.name,
+        hsn_sac: scannedItem.hsn_sac || '',
+        quantity: 1,
+        rate: scannedItem.selling_price || 0,
+        gst_rate: num(scannedItem.gst_rate) || 18
+      }));
+      stockTracker.updateRow(tbody.lastElementChild, true);
+      calcInvoice();
+    });
+  });
+
+  $('#btn-inv-bulk-actions', form)?.addEventListener('click', () => {
+    openItemBulkActionsModal(tbody, () => calcInvoice());
   });
 
   tbody.addEventListener('click', e => {
@@ -13729,8 +13840,8 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   });
 
   const fileInput = $('#inv-file-input', form);
-  $('#btn-inv-upload', form).addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => {
+  $('#btn-inv-upload', form)?.addEventListener('click', () => fileInput.click());
+  fileInput?.addEventListener('change', () => {
     Array.from(fileInput.files).forEach(f => {
       if (pendingFiles.length >= 10) {
         toast('Maximum 10 files can be attached.', 'err');
@@ -13746,7 +13857,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     fileInput.value = '';
   });
 
-  $('#inv-attach-badges', form).addEventListener('click', async e => {
+  $('#inv-attach-badges', form)?.addEventListener('click', async e => {
     const delBtn = e.target.closest('[data-del-att]');
     if (delBtn) {
       const attId = delBtn.dataset.delAtt;
@@ -13766,38 +13877,36 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     }
   });
 
-  const recBtn = $('#btn-inv-make-recurring', form);
+  const recBtn = $('#btn-inv-make-recurring', target);
   if (recBtn) {
     recBtn.addEventListener('click', () => {
       const custId = $('#inv-customer', form) ? $('#inv-customer', form).value : '';
-      const lines = $$('tr.ln', form).map(tr => ({
+      const lines = $$('.ln-invoice', form).map(tr => ({
         item: $('.l-item', tr) ? $('.l-item', tr).value : null,
         description: $('.l-desc', tr) ? $('.l-desc', tr).value : '',
         hsn_sac: $('.l-hsn', tr) ? $('.l-hsn', tr).value : '',
         quantity: num($('.l-qty', tr) ? $('.l-qty', tr).value : 1) || 1,
         rate: num($('.l-rate', tr) ? $('.l-rate', tr).value : 0) || 0,
-        discount_percent: num($('.l-disc', tr) ? $('.l-disc', tr).value : 0) || 0,
+        discount_percent: num($('#inv-discount-pct', form)?.value) || 0,
         gst_rate: num($('.l-gst', tr) ? $('.l-gst', tr).value : 18) || 18
       }));
-      const totText = $('#inv-tot-grand', form) ? $('#inv-tot-grand', form).textContent : '';
-      const tot = num(totText.replace(/[^0-9.]/g, '')) || 0;
+      const totals = calcInvoice();
       const custObj = parties.find(p => String(p.id) === String(custId));
-      recurringInvoiceModal(null, {
+      recurringInvoiceForm({
         profile_name: `Recurring - ${custObj ? custObj.name : 'Invoice'}`,
         customer: custId,
         customer_id: custId,
         frequency: 'monthly',
-        start_date: ($('#inv-date', form) && $('#inv-date', form).value) || APP.today,
-        next_date: ($('#inv-date', form) && $('#inv-date', form).value) || APP.today,
-        total: tot,
+        start_date: ($('#inv-date', form) && $('#inv-date', form).value) || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10)),
+        total: totals.totalGrand,
         lines: lines
-      });
+      }, $('#pg'));
     });
   }
 
   const saveInvoice = async (isDraft) => {
     const custId = $('#inv-customer', form).value;
-    if (!custId) {
+    if (!custId || custId === '__new_customer__') {
       toast('Please select a customer.', 'err');
       $('#inv-customer', form).focus();
       return;
@@ -13814,6 +13923,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       return;
     }
 
+    const discPct = num($('#inv-discount-pct', form)?.value) || 0;
     const lines = [];
     let lineErr = false;
     $$('.ln-invoice', tbody).forEach(tr => {
@@ -13834,7 +13944,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
-        discount_percent: num($('.l-disc', tr).value) || 0,
+        discount_percent: discPct,
         gst_rate: num($('.l-gst', tr).value) || 0
       });
     });
@@ -13844,7 +13954,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       return;
     }
 
-    if (!isDraft && !(APP.org && APP.org.allow_negative_stock)) {
+    if (!isDraft && !(window.APP && window.APP.org && window.APP.org.allow_negative_stock)) {
       const stockCheck = stockTracker.validate();
       if (!stockCheck.valid) {
         toast(stockCheck.error, 'err');
@@ -13852,29 +13962,33 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       }
     }
 
+    const totals = calcInvoice();
+
     const payload = {
       customer: custId,
       customer_id: custId,
       number: numVal,
-      location: $('#inv-location', form)?.value || 'HO Kottayam',
-      branch: $('#inv-branch', form)?.value || '',
-      transaction_series: $('#inv-series', form)?.value || 'Default Transaction Series',
+      location: (rec && rec.location) || 'HO Kottayam',
+      branch: (rec && rec.branch) || '',
+      transaction_series: (rec && rec.transaction_series) || 'Default Transaction Series',
       accounts_receivable: $('#inv-accounts-receivable', form)?.value || 'Accounts Receivable',
       order_number: $('#inv-order-number', form).value.trim(),
       date: dt,
       due_date: $('#inv-due-date', form).value || dt,
-      tax_pricing_type: $('#inv-tax-pricing', form)?.value || 'tax_exclusive',
-      customer_type: $('#inv-customer-type', form)?.value || 'b2b',
-      terms: $('#inv-terms', form).value,
-      salesperson: $('#doc-salesperson-input', form)?.value || '',
+      tax_pricing_type: 'tax_exclusive',
+      customer_type: 'b2b',
+      terms: $('#inv-terms-text', form).value.trim() || $('#inv-terms', form).value,
+      salesperson: form.querySelector('#inv-salesperson-container select.sp-select')?.value || '',
       subject: $('#inv-subject', form).value.trim(),
-      place_of_supply: $('#inv-place-of-supply', form).value || (APP.org ? APP.org.state : 'Kerala'),
       notes: $('#inv-notes', form).value.trim(),
       source_quote: srcQuote ? srcQuote.id : (srcSO ? srcSO.source_quote_id : (rec ? rec.source_quote_id : null)),
       source_sales_order: srcSO ? srcSO.id : (rec ? rec.source_sales_order_id : null),
-      signature_data: $('#inv-signature-data', form)?.value || '',
-      signed_by: $('#inv-signed-by', form)?.value || '',
-      signature_title: $('#inv-signature-title', form)?.value || '',
+      adjustment: totals.adj,
+      tcs_rate: num($('#inv-tcs-tax', form)?.value) || 0,
+      tcs_amount: totals.tcsAmt,
+      discount_percent: discPct,
+      subtotal: totals.subtotal,
+      total: totals.totalGrand,
       lines: lines,
       force: true
     };
@@ -13932,22 +14046,11 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-inv-save-draft', target).addEventListener('click', () => saveInvoice(true));
   $('#btn-inv-save-send', target).addEventListener('click', () => saveInvoice(false));
 
-  if (!id) {
-    bindDocumentNumberPreview(form, {
-      endpoint: 'next-invoice-number',
-      number: '#inv-number',
-      date: '#inv-date',
-      customerType: '#inv-customer-type',
-      branch: '#inv-branch',
-      location: '#inv-location',
-      party: '#inv-customer',
-      getGstin: () => parties.find(p => String(p.id) === String($('#inv-customer', form)?.value))?.gstin || ''
-    });
-  }
   renderAttach();
   calcInvoice();
 }
 window.invoiceForm = invoiceForm;
+
 
 async function retainerInvoiceForm(id, targetEl, onDone) {
   const target = targetEl || document.getElementById('pg') || document.body;

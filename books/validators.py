@@ -5,12 +5,10 @@ from django.utils.translation import gettext as _
 
 class StrongPasswordValidator:
     """
-    Validate that the password meets enterprise security requirements:
+    Validate that the password meets the minimum policy accepted by this application:
     - Minimum 8 characters.
-    - At least one uppercase letter (A-Z).
-    - At least one lowercase letter (a-z).
-    - At least one numeric digit (0-9).
-    - At least one special character (e.g. !@#$%^&*(),.?":{}|<>_-+=[]\/~).
+    - At least one letter.
+    - At least one numeric digit.
     """
 
     def validate(self, password, user=None):
@@ -24,31 +22,21 @@ class StrongPasswordValidator:
                 _("Password must be at least 8 characters long."),
                 code='password_too_short',
             )
-        if not re.search(r'[A-Z]', password):
+        if not re.search(r'[A-Za-z]', password):
             raise ValidationError(
-                _("Password must contain at least one uppercase letter (A-Z)."),
-                code='password_no_upper',
-            )
-        if not re.search(r'[a-z]', password):
-            raise ValidationError(
-                _("Password must contain at least one lowercase letter (a-z)."),
-                code='password_no_lower',
+                _("Password must contain at least one letter."),
+                code='password_no_letter',
             )
         if not re.search(r'[0-9]', password):
             raise ValidationError(
                 _("Password must contain at least one number (0-9)."),
                 code='password_no_digit',
             )
-        if not re.search(r'[!@#$%^&*(),.?":{}|<>\-_+=\[\]\/~`]', password):
-            raise ValidationError(
-                _("Password must contain at least one special character (e.g. !@#$%^&*)."),
-                code='password_no_special',
-            )
 
     def get_help_text(self):
         return _(
             "Your password must be at least 8 characters long and contain at least "
-            "one uppercase letter, one lowercase letter, one number, and one special character."
+            "one letter and one number."
         )
 
 

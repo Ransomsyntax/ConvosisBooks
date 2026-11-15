@@ -112,6 +112,34 @@ def get_financial_year(date_=None, org=None):
     end_yy = (start_year + 1) % 100
     return f"{start_yy:02d}-{end_yy:02d}"
 
+def normalize_document_prefix_output(prefix, fallback=''):
+    """Return the canonical token prefix used by the API (e.g. INV, RET, B2C)."""
+    raw = str(prefix or fallback or '').strip()
+    if not raw:
+        return ''
+    raw = raw.replace('\\', '/').replace(' ', '')
+    tokens = ('%FY%', '${FY}', '%ORG%', '${ORG}', '%YEAR%', '${YEAR}', '%BRANCH%', '${BRANCH}', '%LOCATION%', '${LOCATION}', '%FYS_YY%', '${FYS_YY}', '%FYE_YY%', '${FYE_YY}')
+    for token in tokens:
+        raw = raw.replace(token, '')
+    raw = re.sub(r'[^A-Za-z0-9/_-]', '', raw)
+    raw = raw.replace('-', '/').replace('_', '/')
+    segments = [seg for seg in raw.split('/') if seg]
+    if not segments:
+        return ''
+    candidate = segments[-1]
+    candidate = candidate.strip('-_')
+    return candidate or segments[-2] if len(segments) > 1 else ''
+
+
+def default_document_number_prefix(org, module_or_pfx):
+    cfg = get_document_module_config(module_or_pfx)
+    pfx = (cfg.get('pfx') or str(module_or_pfx or 'DOC').upper().strip())
+    org_code = (org.get_code() if org else 'ORG').upper().strip() or 'ORG'
+    if cfg.get('has_fy', True):
+        return f'{org_code}/{pfx}/%FY%/'
+    return f'{org_code}/{pfx}/'
+
+
 def get_document_module_config(module_or_pfx):
     """
     Map module name or prefix to canonical document numbering configuration:
@@ -172,20 +200,20 @@ def get_document_module_config(module_or_pfx):
         return {'pfx': clean_pfx, 'digits': 5, 'has_fy': True, 'model': None, 'field': 'number'}
 
 SUPPORTED_TRANSACTION_TYPES = [
-    {'key': 'invoices', 'label': 'Invoice', 'default_prefix': 'INV-', 'pfx': 'INV', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'sales_orders', 'label': 'Sales Order', 'default_prefix': 'SO-', 'pfx': 'SO', 'model_name': 'SalesOrder', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'quotes', 'label': 'Estimate / Quote', 'default_prefix': 'QT-', 'pfx': 'QTN', 'model_name': 'Quote', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'credit_notes', 'label': 'Credit Note', 'default_prefix': 'CN-', 'pfx': 'CN', 'model_name': 'CreditNote', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'payments_received', 'label': 'Customer Payment', 'default_prefix': 'PAY-', 'pfx': 'PR', 'model_name': 'PaymentReceived', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'retainer_invoices', 'label': 'Retainer Invoice', 'default_prefix': 'RET-', 'pfx': 'RET', 'model_name': 'RetainerInvoice', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'recurring_invoices', 'label': 'Recurring Invoice', 'default_prefix': 'RINV-', 'pfx': 'REC', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'purchase_orders', 'label': 'Purchase Order', 'default_prefix': 'PO-', 'pfx': 'PO', 'model_name': 'PurchaseOrder', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'bills', 'label': 'Bill', 'default_prefix': 'BILL-', 'pfx': 'BILL', 'model_name': 'Bill', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'payments_made', 'label': 'Vendor Payment', 'default_prefix': 'VP-', 'pfx': 'PM', 'model_name': 'PaymentMade', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'vendor_credits', 'label': 'Vendor Credit', 'default_prefix': 'VC-', 'pfx': 'DN', 'model_name': 'VendorCredit', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'delivery_challans', 'label': 'Delivery Challan', 'default_prefix': 'DC-', 'pfx': 'DC', 'model_name': 'DeliveryChallan', 'field': 'number', 'default_next': 1, 'padding': 6},
-    {'key': 'stock_adjustments', 'label': 'Inventory Adjustment', 'default_prefix': 'ADJ-', 'pfx': 'ADJ', 'model_name': 'StockMovement', 'field': 'reference', 'default_next': 1, 'padding': 6},
-    {'key': 'stock_transfers', 'label': 'Stock Transfer', 'default_prefix': 'ST-', 'pfx': 'ST', 'model_name': 'StockTransfer', 'field': 'number', 'default_next': 1, 'padding': 6},
+    {'key': 'invoices', 'label': 'Invoice', 'default_prefix': 'INV-', 'pfx': 'INV', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'sales_orders', 'label': 'Sales Order', 'default_prefix': 'SO-', 'pfx': 'SO', 'model_name': 'SalesOrder', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'quotes', 'label': 'Estimate / Quote', 'default_prefix': 'QT-', 'pfx': 'QTN', 'model_name': 'Quote', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'credit_notes', 'label': 'Credit Note', 'default_prefix': 'CN-', 'pfx': 'CN', 'model_name': 'CreditNote', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'payments_received', 'label': 'Customer Payment', 'default_prefix': 'PAY-', 'pfx': 'PR', 'model_name': 'PaymentReceived', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'retainer_invoices', 'label': 'Retainer Invoice', 'default_prefix': 'RET-', 'pfx': 'RET', 'model_name': 'RetainerInvoice', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'recurring_invoices', 'label': 'Recurring Invoice', 'default_prefix': 'RINV-', 'pfx': 'REC', 'model_name': 'Invoice', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'purchase_orders', 'label': 'Purchase Order', 'default_prefix': 'PO-', 'pfx': 'PO', 'model_name': 'PurchaseOrder', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'bills', 'label': 'Bill', 'default_prefix': 'BILL-', 'pfx': 'BILL', 'model_name': 'Bill', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'payments_made', 'label': 'Vendor Payment', 'default_prefix': 'VP-', 'pfx': 'PM', 'model_name': 'PaymentMade', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'vendor_credits', 'label': 'Vendor Credit', 'default_prefix': 'VC-', 'pfx': 'DN', 'model_name': 'VendorCredit', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'delivery_challans', 'label': 'Delivery Challan', 'default_prefix': 'DC-', 'pfx': 'DC', 'model_name': 'DeliveryChallan', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'stock_adjustments', 'label': 'Inventory Adjustment', 'default_prefix': 'ADJ-', 'pfx': 'ADJ', 'model_name': 'StockMovement', 'field': 'reference', 'default_next': 1, 'padding': 5},
+    {'key': 'stock_transfers', 'label': 'Stock Transfer', 'default_prefix': 'ST-', 'pfx': 'ST', 'model_name': 'StockTransfer', 'field': 'number', 'default_next': 1, 'padding': 5},
 ]
 
 
@@ -279,7 +307,7 @@ def ensure_default_transaction_series(org):
                 doc_series.active = default_group.is_active
                 doc_series.save(update_fields=['series_group', 'is_default', 'active', 'updated_at'])
         if not doc_series:
-            configured_pfx = item['default_prefix']
+            configured_pfx = default_document_number_prefix(org, item['pfx'])
             configured_next = item['default_next']
             configured_pad = item['padding']
             if pfx_code in org_ns and isinstance(org_ns[pfx_code], dict):
@@ -453,8 +481,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
         return fallback
     cfg = get_document_module_config(module_or_pfx)
     pfx = cfg.get('pfx') or (module_or_pfx or 'DOC').upper().strip()
-    if not pfx.endswith('-') and not pfx.endswith('/'):
-        pfx += '-'
+    prefix = default_document_number_prefix(org, pfx)
     digits = cfg.get('digits', 6)
     def_grp = TransactionSeries.objects.filter(organization=org, is_default=True).first()
     return DocumentNumberSeries.objects.create(
@@ -462,7 +489,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
         series_group=def_grp,
         name=f"Default {doc_type.replace('_', ' ').title()}",
         document_type=doc_type,
-        prefix=pfx,
+        prefix=prefix,
         next_number=1,
         padding=digits,
         active=True,
@@ -620,7 +647,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         return {
             'next_number': '',
             'formatted': '',
-            'prefix': series_obj.prefix,
+            'prefix': normalize_document_prefix_output(series_obj.prefix),
             'next_sequence': series_obj.next_number,
             'padding': series_obj.padding,
             'auto_generate': False,
@@ -671,7 +698,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             return {
                 'next_number': candidate,
                 'formatted': candidate,
-                'prefix': series_obj.prefix,
+                'prefix': normalize_document_prefix_output(series_obj.prefix),
                 'next_sequence': val,
                 'padding': series_obj.padding,
                 'auto_generate': True,

@@ -12581,7 +12581,7 @@ def settings_transaction_series_view(request, series_id=None):
                     'document_type': doc_key,
                     'module': t['pfx'],
                     'label': t['label'],
-                    'prefix': s_item.prefix,
+                    'prefix': services.normalize_document_prefix_output(s_item.prefix),
                     'next_number': s_item.next_number,
                     'padding': s_item.padding,
                     'formatted': prev.get('formatted', ''),

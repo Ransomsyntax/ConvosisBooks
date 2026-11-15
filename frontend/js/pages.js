@@ -1377,7 +1377,7 @@ window.getOverdueDays = getOverdueDays;
 const docStatusFilters = (posted) => [{ name: 'status', label: 'Status', opts: [['', 'All statuses'], ['draft', 'Draft'], ['unpaid', posted], ['partial', 'Partially Paid'], ['overdue', 'Overdue'], ['paid', 'Paid'], ['void', 'Void']] }];
 const LISTS = {
   customers: {
-    api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => partyForm('customers'), empty: 'No customers yet.',
+    api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('sales/customers/new', () => partyForm('customers')) : partyForm('customers'), empty: 'No customers yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
     actions: r => [['edit', 'Edit'], [r.active ? 'deactivate' : 'activate', r.active ? 'Deactivate' : 'Activate'], ['delete', 'Delete', 'dn']],
@@ -1396,14 +1396,14 @@ const LISTS = {
     },
   },
   vendors: {
-    api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => partyForm('vendors'), empty: 'No vendors yet.',
+    api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('purchases/vendors/new', () => partyForm('vendors')) : partyForm('vendors'), empty: 'No vendors yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Payable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
     actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
     onAction: (a, r) => a === 'view' ? partyDetail('vendors', r.id) : a === 'edit' ? partyForm('vendors', r.id) : a === 'delete' ? deleteRecord('vendors', r, 'Vendor') : null,
   },
   items: {
-    api: 'items', title: 'Items & Services', bc: 'Items', newLabel: 'New item', onNew: () => itemForm(), empty: 'No items yet.',
+    api: 'items', title: 'Items & Services', bc: 'Items', newLabel: 'New item', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('items/items/new', () => itemForm()) : itemForm(), empty: 'No items yet.',
     filters: [{ name: 'type', label: 'Type', opts: [['', 'All types'], ['goods', 'Goods'], ['service', 'Services']] }, { name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [
       {
@@ -1963,7 +1963,7 @@ const LISTS = {
     onAction: () => {},
   },
   expenses: {
-    api: 'expenses', title: 'Expenses', bc: 'Purchases', newLabel: 'Record expense', onNew: () => expenseForm(), ordering: '-date', empty: 'No expenses recorded yet.',
+    api: 'expenses', title: 'Expenses', bc: 'Purchases', newLabel: 'Record expense', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('purchases/expenses/new', () => expenseForm()) : expenseForm(), ordering: '-date', empty: 'No expenses recorded yet.',
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
       { h: 'Expense#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` },

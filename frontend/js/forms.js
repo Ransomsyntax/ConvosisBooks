@@ -157,6 +157,14 @@ const Modal = (() => {
         const i = stack.indexOf(m);
         if (i >= 0) stack.splice(i, 1);
         el.remove();
+        if (onScreen && location.hash.includes('/new')) {
+          const baseHash = location.hash.replace(/\/new.*$/, '');
+          if (location.hash !== baseHash) {
+            location.hash = baseHash;
+            if (onClose) onClose();
+            return;
+          }
+        }
         prevChildren.forEach(child => {
           child.style.display = child._origDisplay || '';
         });
@@ -2945,7 +2953,12 @@ async function partyForm(kind, id, onDone) {
       if (onDone) {
         onDone(saved || d);
       } else {
-        refresh();
+        const dest = isCust ? 'sales/customers' : 'purchases/vendors';
+        if (location.hash.includes('/new')) {
+          location.hash = '#/' + dest;
+        } else {
+          refresh();
+        }
       }
     }
   });
@@ -3966,7 +3979,11 @@ async function itemForm(id, onDone) {
       if (onDone) {
         onDone(saved || d);
       } else {
-        refresh();
+        if (location.hash.includes('/new')) {
+          location.hash = '#/items/items';
+        } else {
+          refresh();
+        }
       }
     },
   });

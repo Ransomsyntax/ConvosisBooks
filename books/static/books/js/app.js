@@ -37,8 +37,8 @@ const DEFAULT_ROUTES = {
   home: 'home/dashboard',
   items: 'items/items',
   inventory: 'inventory/inventory-summary',
-  sales: 'sales/quotes',
-  purchases: 'purchases/bills',
+  sales: 'sales/customers',
+  purchases: 'purchases/vendors',
   time: 'time/projects',
   banking: 'banking',
   filing: 'filing/gst-filing',
@@ -56,6 +56,7 @@ const ROUTES = {
 
   'items': r => listPage(r, LISTS.items),
   'items/items': r => listPage(r, LISTS.items),
+  'items/items/new': () => itemForm(),
   'items/items-services': r => listPage(r, LISTS.items),
   'items/item-categories': r => listPage(r, LISTS['item-categories']),
   'items/price-lists': r => listPage(r, LISTS['price-lists']),
@@ -63,35 +64,59 @@ const ROUTES = {
   'inventory': r => listPage(r, LISTS.inventory),
   'inventory/inventory-summary': r => listPage(r, LISTS.inventory),
   'inventory/stock-adjustments': r => listPage(r, LISTS.adjustments),
+  'inventory/stock-adjustments/new': () => adjustForm(),
   'inventory/stock-transfers': r => listPage(r, LISTS['stock-transfers']),
+  'inventory/stock-transfers/new': () => stockTransferModal(),
   'inventory/stock-movement': r => { location.hash = '#/reports/stock-movement'; },
   'inventory/warehouses': r => listPage(r, LISTS.warehouses),
 
-  'sales': r => docMasterDetail(r, 'quotes'),
-  'sales/quotes': r => docMasterDetail(r, 'quotes'),
+  'sales': r => listPage(r, LISTS.customers),
   'sales/customers': r => listPage(r, LISTS.customers),
+  'sales/customers/new': () => partyForm('customers'),
+  'sales/quotes': r => docMasterDetail(r, 'quotes'),
+  'sales/quotes/new': r => docMasterDetail(r, 'quotes', 'new'),
   'sales/sales-orders': r => docMasterDetail(r, 'sales-orders'),
+  'sales/sales-orders/new': r => docMasterDetail(r, 'sales-orders', 'new'),
   'sales/invoices': r => docMasterDetail(r, 'invoices'),
+  'sales/invoices/new': () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }),
   'sales/recurring-invoices': r => docMasterDetail(r, 'recurring-invoices'),
+  'sales/recurring-invoices/new': () => recurringInvoiceForm(null, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; route(); }),
   'sales/retainer-invoices': r => docMasterDetail(r, 'retainer-invoices'),
+  'sales/retainer-invoices/new': () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
+    if (savedDoc) docMasterDetail($('#pg'), 'retainer-invoices', savedDoc.id);
+    else { location.hash = '#/sales/retainer-invoices'; route(); }
+  }),
   'sales/delivery-challans': r => listPage(r, LISTS['delivery-challans']),
+  'sales/delivery-challans/new': () => challanModal(),
   'sales/payments-received': r => listPage(r, LISTS['payments-received']),
+  'sales/payments-received/new': () => paymentForm('payments-received'),
   'sales/credit-notes': r => listPage(r, LISTS['credit-notes']),
+  'sales/credit-notes/new': () => docForm('credit-notes'),
   'sales/e-way-bills': r => listPage(r, LISTS['e-way-bills']),
+  'sales/e-way-bills/new': () => ewayBillModal(),
 
-  'purchases': r => docMasterDetail(r, 'bills'),
+  'purchases': r => listPage(r, LISTS.vendors),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
+  'purchases/vendors/new': () => partyForm('vendors'),
   'purchases/expenses': r => listPage(r, LISTS.expenses),
+  'purchases/expenses/new': () => expenseForm(),
   'purchases/purchase-orders': r => docMasterDetail(r, 'purchase-orders'),
+  'purchases/purchase-orders/new': r => docMasterDetail(r, 'purchase-orders', 'new'),
   'purchases/bills': r => docMasterDetail(r, 'bills'),
+  'purchases/bills/new': r => docMasterDetail(r, 'bills', 'new'),
   'purchases/payments-made': r => listPage(r, LISTS['payments-made']),
+  'purchases/payments-made/new': () => paymentForm('payments-made'),
   'purchases/vendor-credits': r => listPage(r, LISTS['vendor-credits']),
+  'purchases/vendor-credits/new': () => docForm('vendor-credits'),
 
   'time': r => listPage(r, LISTS.projects),
   'time/projects': r => listPage(r, LISTS.projects),
+  'time/projects/new': () => projectModal(),
   'time/timesheets': r => listPage(r, LISTS.timesheets),
+  'time/timesheets/new': () => timelogModal(),
 
   'banking': r => renderBankingModule(r, 'dashboard'),
+  'banking/bank-accounts/new': () => bankAccountForm(),
   'banking/dashboard': r => renderBankingModule(r, 'dashboard'),
   'banking/banking-dashboard': r => renderBankingModule(r, 'dashboard'),
   'banking/bank-accounts': r => renderBankingModule(r, 'bank-accounts'),
@@ -120,7 +145,9 @@ const ROUTES = {
 
   'accountant': r => listPage(r, LISTS['manual-journals']),
   'accountant/manual-journals': r => listPage(r, LISTS['manual-journals']),
+  'accountant/manual-journals/new': () => journalForm(),
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
+  'accountant/chart-of-accounts/new': () => accountForm(),
   'accountant/transaction-locking': r => transactionLockingPage(r),
   'accountant/statutory-audit-logs': r => listPage(r, LISTS['audit-logs']),
   'accountant/tenant-admin': r => tenantAdminPage(r),
@@ -206,32 +233,60 @@ const PASTEL = {
 };
 let openG = pref.get('open', ['home']);
 
+function navigateOrRun(routePath, fallbackAction) {
+  const targetHash = '#/' + routePath.replace(/^#?\/?/, '');
+  if (location.hash === targetHash) {
+    if (fallbackAction) fallbackAction();
+    else route();
+  } else {
+    location.hash = targetHash;
+  }
+}
+
+function isNavSubActive(cur, target) {
+  if (!cur || !target) return false;
+  const c = cur.replace(/^\/+|\/+$/g, '').split('?')[0];
+  const t = target.replace(/^\/+|\/+$/g, '').split('?')[0];
+  if (c === t) return true;
+  if (c.startsWith(t + '/')) return true;
+  const aliases = {
+    'items/items-services': 'items/items',
+    'inventory/stock-movement': 'reports/stock-movement',
+  };
+  if (aliases[c] === t) return true;
+  const cBase = c.split('/')[0] + '/' + c.split('/')[1];
+  if (aliases[cBase] === t) return true;
+  return false;
+}
+window.navigateOrRun = navigateOrRun;
+window.isNavSubActive = isNavSubActive;
+
 const NAV_NEW_ACTIONS = {
-  'items/items': () => itemForm(),
+  'items/items': () => navigateOrRun('items/items/new', () => itemForm()),
   'items/item-categories': () => categoryModal(),
   'items/price-lists': () => priceListModal(),
-  'inventory/stock-adjustments': () => adjustForm(),
-  'inventory/stock-transfers': () => stockTransferModal(),
+  'inventory/stock-adjustments': () => navigateOrRun('inventory/stock-adjustments/new', () => adjustForm()),
+  'inventory/stock-transfers': () => navigateOrRun('inventory/stock-transfers/new', () => stockTransferModal()),
   'reports/stock-movement': () => stockMoveModal(),
   'reports/stock-transfer-report': () => stockMoveModal(),
   'inventory/warehouses': () => warehouseModal(),
-  'sales/customers': () => partyForm('customers'),
-  'sales/quotes': () => docMasterDetail($('#pg'), 'quotes', 'new'),
-  'sales/sales-orders': () => docMasterDetail($('#pg'), 'sales-orders', 'new'),
-  'sales/invoices': () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }),
-  'sales/recurring-invoices': () => recurringInvoiceForm(null, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; route(); }),
-  'sales/retainer-invoices': () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
+  'sales/customers': () => navigateOrRun('sales/customers/new', () => partyForm('customers')),
+  'sales/quotes': () => navigateOrRun('sales/quotes/new', () => docMasterDetail($('#pg'), 'quotes', 'new')),
+  'sales/sales-orders': () => navigateOrRun('sales/sales-orders/new', () => docMasterDetail($('#pg'), 'sales-orders', 'new')),
+  'sales/invoices': () => navigateOrRun('sales/invoices/new', () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); })),
+  'sales/recurring-invoices': () => navigateOrRun('sales/recurring-invoices/new', () => recurringInvoiceForm(null, $('#pg'), () => { location.hash = '#/sales/recurring-invoices'; route(); })),
+  'sales/retainer-invoices': () => navigateOrRun('sales/retainer-invoices/new', () => retainerInvoiceForm(null, $('#pg'), (savedDoc) => {
     if (savedDoc) docMasterDetail($('#pg'), 'retainer-invoices', savedDoc.id);
     else { location.hash = '#/sales/retainer-invoices'; route(); }
-  }),
+  })),
   'sales/delivery-challans': () => challanModal(),
   'sales/payments-received': () => paymentForm('payments-received'),
   'sales/credit-notes': () => docForm('credit-notes'),
   'sales/e-way-bills': () => ewayBillModal(),
-  'purchases/vendors': () => partyForm('vendors'),
-  'purchases/expenses': () => expenseForm(),
-  'purchases/purchase-orders': () => docMasterDetail($('#pg'), 'purchase-orders', 'new'),
-  'purchases/bills': () => { location.hash = '#/purchases/bills'; return docMasterDetail($('#pg'), 'bills', 'new'); },
+  'purchases/vendors': () => navigateOrRun('purchases/vendors/new', () => partyForm('vendors')),
+  'purchases/expenses': () => navigateOrRun('purchases/expenses/new', () => expenseForm()),
+  'purchases/purchase-orders': () => navigateOrRun('purchases/purchase-orders/new', () => docMasterDetail($('#pg'), 'purchase-orders', 'new')),
+  'purchases/bills': () => navigateOrRun('purchases/bills/new', () => docMasterDetail($('#pg'), 'bills', 'new')),
   'purchases/payments-made': () => paymentForm('payments-made'),
   'purchases/vendor-credits': () => docForm('vendor-credits'),
   'time/projects': () => projectModal(),
@@ -251,13 +306,15 @@ function getNavAddAction(k, c) {
 }
 
 function drawNav(cur) {
+  const normCur = (cur || (location.hash.slice(2) || 'home/dashboard')).replace(/^\/+|\/+$/g, '').split('?')[0];
   const items = NAV.map(([l, k, ch], i) => {
     const hasSub = ch && ch.length > 0;
-    const isAct = cur === k || cur.startsWith(k + '/');
+    const isAct = normCur === k || normCur.startsWith(k + '/');
     const isOpen = openG.includes(k);
     const reportingBadge = k === 'reports' ? '<span class="pastel-chip chip-sky" style="font-size:10px;margin-left:6px;font-weight:700;padding:1px 6px;">Reporting</span>' : '';
     return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${reportingBadge}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${ch.map((c, cIdx) => {
       const target = k + '/' + slug(c);
+      const subActive = isNavSubActive(normCur, target);
       const hasAdd = Boolean(getNavAddAction(k, c));
       let categoryHeader = '';
       if (k === 'reports') {
@@ -267,7 +324,7 @@ function drawNav(cur) {
           categoryHeader = `<div style="padding:8px 14px 2px;font-size:10px;font-weight:700;letter-spacing:0.05em;color:var(--mu);text-transform:uppercase;">Financial & Tax</div>`;
         }
       }
-      return `${categoryHeader}<a href="#/${target}" class="${cur === target ? 'on' : ''}" ${cur === target ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
+      return `${categoryHeader}<a href="#/${target}" class="${subActive ? 'on' : ''}" ${subActive ? 'aria-current="page"' : ''}><span class="nav-sub-label">${esc(c)}</span>${hasAdd ? `<span class="nav-add-btn" data-nav-add="${target}" title="New ${esc(c)}" aria-label="New ${esc(c)}">+</span>` : ''}</a>`;
     }).join('')}</div>` : ''}</div>`;
 
   }).join('');
@@ -299,8 +356,10 @@ function route() {
 
   const curGroup = h.split('/')[0];
   if (curGroup) {
-    openG = [curGroup];
-    pref.set('open', openG);
+    if (!openG.includes(curGroup)) {
+      openG = [curGroup];
+      pref.set('open', openG);
+    }
   }
 
   const pg = $('#pg'), root = document.createElement('div');
@@ -309,6 +368,28 @@ function route() {
   document.body.classList.remove('mo');
   closePops();
   let fn = ROUTES[h] || ROUTES[raw];
+  if (!fn) {
+    const rawParts = raw.split('/');
+    if (rawParts.length >= 3) {
+      const [m, sm, ...rest] = rawParts;
+      const subAction = rest.join('/');
+      const docKinds = ['quotes', 'sales-orders', 'invoices', 'recurring-invoices', 'retainer-invoices', 'bills', 'purchase-orders'];
+      if (docKinds.includes(sm)) {
+        fn = r => docMasterDetail(r, sm, subAction);
+      } else if (sm === 'customers') {
+        if (subAction === 'new') fn = () => partyForm('customers');
+        else if (subAction.startsWith('edit/')) fn = () => partyForm('customers', subAction.split('edit/')[1]);
+        else fn = () => partyDetail('customers', subAction);
+      } else if (sm === 'vendors') {
+        if (subAction === 'new') fn = () => partyForm('vendors');
+        else if (subAction.startsWith('edit/')) fn = () => partyForm('vendors', subAction.split('edit/')[1]);
+        else fn = () => partyDetail('vendors', subAction);
+      } else if (sm === 'items' && m === 'items') {
+        if (subAction === 'new') fn = () => itemForm();
+        else fn = () => itemForm(subAction);
+      }
+    }
+  }
   if (!fn && (h.startsWith('settings/roles/') || raw.startsWith('settings/roles/'))) {
     const roleId = (h.startsWith('settings/roles/') ? h : raw).split('settings/roles/')[1];
     fn = r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, roleId) : null;
@@ -414,20 +495,20 @@ document.addEventListener('keydown', e => {
   }
 });
 const QC = [
-  ['Customer', () => partyForm('customers')],
-  ['Vendor', () => partyForm('vendors')],
-  ['Invoice', () => { location.hash = '#/sales/invoices'; return docMasterDetail($('#pg'), 'invoices', 'new'); }],
-  ['Bill', () => { location.hash = '#/purchases/bills'; return docMasterDetail($('#pg'), 'bills', 'new'); }],
-  ['Sales Order', () => salesOrderForm()],
-  ['Expense', () => expenseForm()],
+  ['Customer', () => navigateOrRun('sales/customers/new', () => partyForm('customers'))],
+  ['Vendor', () => navigateOrRun('purchases/vendors/new', () => partyForm('vendors'))],
+  ['Invoice', () => navigateOrRun('sales/invoices/new', () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }))],
+  ['Bill', () => navigateOrRun('purchases/bills/new', () => docMasterDetail($('#pg'), 'bills', 'new'))],
+  ['Sales Order', () => navigateOrRun('sales/sales-orders/new', () => docMasterDetail($('#pg'), 'sales-orders', 'new'))],
+  ['Expense', () => navigateOrRun('purchases/expenses/new', () => expenseForm())],
   ['Journal Entry', () => journalForm()],
   ['Upload Document', () => documentUploadModal()],
   ['Bank Account', () => bankAccountForm()],
   ['Payment received', () => paymentForm('payments-received')],
   ['Payment made', () => paymentForm('payments-made')],
-  ['Item', () => itemForm()],
-  ['Stock adjustment', () => adjustForm()],
-  ['Stock transfer', () => stockTransferModal()]
+  ['Item', () => navigateOrRun('items/items/new', () => itemForm())],
+  ['Stock adjustment', () => navigateOrRun('inventory/stock-adjustments/new', () => adjustForm())],
+  ['Stock transfer', () => navigateOrRun('inventory/stock-transfers/new', () => stockTransferModal())]
 ];
 const qcmEl = $('#qcm');
 if (qcmEl) qcmEl.innerHTML = QC.map((q, i) => `<button class="mi" type="button" data-q="${i}">New ${esc(q[0].toLowerCase())}</button>`).join('');
@@ -624,22 +705,25 @@ document.addEventListener('click', async e => {
   }
 
   const togG = t.closest('[data-toggle-g]');
-  if (togG) {
-    const k = togG.dataset.toggleG;
-    openG = openG.includes(k) ? [] : [k];
-    pref.set('open', openG);
-    drawNav(location.hash.slice(2) || 'home/dashboard');
-    return;
-  }
   const g = t.closest('[data-g]');
-  if (g) {
-    const k = g.dataset.g;
-    openG = [k];
-    pref.set('open', openG);
-    document.body.classList.remove('col');
+  if (togG || g) {
+    const k = (togG && togG.dataset.toggleG) || (g && g.dataset.g);
     const navG = NAV.find(n => n[1] === k);
-    const firstSlug = navG && navG[2] && navG[2][0] ? slug(navG[2][0]) : '';
-    const dest = DEFAULT_ROUTES[k] || (k + '/' + firstSlug);
+    const hasSub = Boolean(navG && navG[2] && navG[2].length > 0);
+    if (hasSub) {
+      if (openG.includes(k)) {
+        openG = openG.filter(x => x !== k);
+      } else {
+        openG = [...openG, k];
+      }
+      pref.set('open', openG);
+      document.body.classList.remove('col');
+      const curNav = (location.hash.slice(2) || 'home/dashboard').replace(/\/$/, '').split('?')[0];
+      drawNav(curNav);
+      return;
+    }
+    document.body.classList.remove('col');
+    const dest = DEFAULT_ROUTES[k] || k;
     if (location.hash === '#/' + dest) {
       drawNav(dest);
       route();

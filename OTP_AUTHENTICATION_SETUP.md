@@ -22,9 +22,16 @@ Set these variables in your deployment environment or `.env` file:
 ### Brevo (Transactional Email Delivery)
 | Variable | Description | Default / Example |
 |---|---|---|
-| `BREVO_API_KEY` | Brevo API v3 key (`xkeysib-...`) | *Optional in Dev* |
-| `BREVO_SENDER_EMAIL` | Verified sender address in Brevo | `no-reply@convosis.com` |
+| `BREVO_API_KEY` | Brevo API v3 key (`xkeysib-...`); use this or configure SMTP | *Optional when SMTP is configured* |
+| `EMAIL_HOST` | Brevo SMTP server | `smtp-relay.brevo.com` |
+| `EMAIL_PORT` | SMTP port | `587` |
+| `EMAIL_USE_TLS` | Enable STARTTLS on port 587 | `true` |
+| `EMAIL_HOST_USER` | Brevo SMTP login | *Required for SMTP; keep secret* |
+| `EMAIL_HOST_PASSWORD` | Brevo SMTP key (not the API key) | *Required for SMTP; keep secret* |
+| `BREVO_SENDER_EMAIL` | Verified sender address in Brevo | *Required; verify it in Brevo first* |
 | `BREVO_SENDER_NAME` | Display name of the sender | `CONVOSIS Books` |
+
+Email dispatch fails explicitly when neither the Brevo API nor complete SMTP credentials are configured. It does not treat Django's in-memory development backend as successful delivery.
 
 ### MSG91 (SMS OTP Delivery)
 | Variable | Description | Default / Example |
@@ -86,4 +93,4 @@ Set these variables in your deployment environment or `.env` file:
 3. **Attempt Limiting**: Exceeding 5 incorrect attempts immediately locks and invalidates the verification record.
 4. **Single-Use**: Upon successful verification, records are marked `is_consumed=True`.
 5. **Cooldown & Rate-Limiting**: 60-second resend cooldown and 5 requests/hour throttle prevent SMS/email flooding.
-6. **Graceful Fallbacks**: If Brevo or MSG91 credentials are not present, transactions fall back gracefully to standard Django mail / mock logging without crashing.
+6. **Explicit Delivery Failures**: Email delivery errors are surfaced to the caller; an in-memory development backend is never reported as a delivered email.

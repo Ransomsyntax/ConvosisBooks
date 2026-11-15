@@ -231,8 +231,7 @@ def render_otp_email_html(otp: str, purpose: str, recipient_name: str = '') -> t
 
 def send_brevo_email(to_email: str, subject: str, html_content: str, text_content: str) -> bool:
     """
-    Deliver transactional email via Brevo SMTP / Django mail backend,
-    with fallback to Brevo REST API v3 if API key is provided.
+    Deliver transactional email through Brevo REST API or configured SMTP.
     Never silently suppress delivery failures.
     """
     # 1. Determine sender address
@@ -240,7 +239,7 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
     brevo_sender = getattr(settings, 'BREVO_SENDER_EMAIL', '').strip()
     sender_name = getattr(settings, 'BREVO_SENDER_NAME', 'CONVOSIS Books').strip()
 
-    from_email = default_from or brevo_sender
+    from_email = brevo_sender or default_from
     if not from_email or 'localhost' in from_email:
         from_email = f"{sender_name} <no-reply@convosis.com>"
     elif '<' not in from_email and '@' in from_email:
@@ -248,6 +247,12 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
 
     # 2. If Brevo REST API key is explicitly configured, attempt REST dispatch first
     api_key = getattr(settings, 'BREVO_API_KEY', '').strip()
+    smtp_configured = all((
+        getattr(settings, 'EMAIL_HOST', '').strip(),
+        getattr(settings, 'EMAIL_HOST_USER', '').strip(),
+        getattr(settings, 'EMAIL_HOST_PASSWORD', '').strip(),
+    )) and getattr(settings, 'EMAIL_BACKEND', '') == 'django.core.mail.backends.smtp.EmailBackend'
+    api_error = None
     if api_key:
         try:
             pure_sender = from_email
@@ -275,10 +280,21 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
                 if 200 <= resp.status < 300:
                     logger.info("Brevo REST API email dispatched successfully to %s", mask_identifier(to_email, 'email'))
                     return True
+                raise RuntimeError(f"Brevo API rejected the email with HTTP {resp.status}.")
         except Exception as api_err:
-            logger.warning("Brevo REST API delivery failed (%s), attempting configured SMTP backend...", api_err)
+            api_error = api_err
+            logger.warning("Brevo REST API delivery failed (%s).", api_err)
 
-    # 3. Deliver via Django mail backend (Brevo SMTP in production, locmem in testing)
+    if not smtp_configured:
+        if api_error:
+            raise RuntimeError(
+                "Brevo API delivery failed and SMTP fallback is not configured."
+            ) from api_error
+        raise RuntimeError(
+            "Email delivery is not configured. Set BREVO_API_KEY or complete SMTP credentials with the SMTP email backend."
+        )
+
+    # 3. Deliver via the configured SMTP backend.
     try:
         sent_count = send_mail(
             subject=subject,

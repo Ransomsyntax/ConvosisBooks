@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
 from django.utils import timezone
 
 from books import otp_service
@@ -37,6 +37,9 @@ class OTPAuthenticationTests(TestCase):
             is_email_verified=True,
             is_mobile_verified=True
         )
+        email_dispatch = patch("books.otp_service.send_brevo_email", return_value=True)
+        email_dispatch.start()
+        self.addCleanup(email_dispatch.stop)
 
     def test_signup_creates_inactive_account_and_dispatches_otp(self):
         """User registers with name, email, mobile, password; account remains inactive until OTP verification."""
@@ -461,3 +464,56 @@ class OTPAuthenticationTests(TestCase):
         self.assertFalse(User.objects.filter(email="smtp_fail@example.com").exists())
         # Ensure no pending OTP verification was left orphaned
         self.assertFalse(OTPVerification.objects.filter(target_value="smtp_fail@example.com").exists())
+
+
+@override_settings(
+    BREVO_API_KEY='',
+    EMAIL_HOST='',
+    EMAIL_HOST_USER='',
+    EMAIL_HOST_PASSWORD='',
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+)
+class OTPEmailDeliveryConfigurationTests(TestCase):
+    def test_configured_smtp_backend_dispatches_email(self):
+        with override_settings(
+            EMAIL_HOST='smtp-relay.brevo.com',
+            EMAIL_HOST_USER='smtp-login',
+            EMAIL_HOST_PASSWORD='smtp-key',
+            EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+        ):
+            with patch("books.otp_service.send_mail", return_value=1) as send_mail_mock:
+                sent = otp_service.send_brevo_email(
+                    "recipient@example.com",
+                    "Verification code",
+                    "<p>Code</p>",
+                    "Code",
+                )
+
+        self.assertTrue(sent)
+        send_mail_mock.assert_called_once()
+
+    def test_missing_email_credentials_do_not_report_success(self):
+        with patch("books.otp_service.send_mail") as send_mail_mock:
+            with self.assertRaisesRegex(RuntimeError, "Email delivery is not configured"):
+                otp_service.send_brevo_email(
+                    "recipient@example.com",
+                    "Verification code",
+                    "<p>Code</p>",
+                    "Code",
+                )
+
+        send_mail_mock.assert_not_called()
+
+    def test_failed_brevo_api_does_not_fall_back_to_locmem_success(self):
+        with override_settings(BREVO_API_KEY='test-api-key'):
+            with patch("books.otp_service.urllib.request.urlopen", side_effect=OSError("connection failed")):
+                with patch("books.otp_service.send_mail") as send_mail_mock:
+                    with self.assertRaisesRegex(RuntimeError, "SMTP fallback is not configured"):
+                        otp_service.send_brevo_email(
+                            "recipient@example.com",
+                            "Verification code",
+                            "<p>Code</p>",
+                            "Code",
+                        )
+
+        send_mail_mock.assert_not_called()

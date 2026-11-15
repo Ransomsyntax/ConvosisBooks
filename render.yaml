@@ -11,6 +11,20 @@ services:
         value: "0"
       - key: DJANGO_SECRET_KEY
         sync: false
+      - key: EMAIL_HOST
+        value: smtp-relay.brevo.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      - key: EMAIL_USE_SSL
+        value: "false"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
       - key: DJANGO_ALLOWED_HOSTS
         value: "convosisbooks.onrender.com,localhost,127.0.0.1"
       - key: DJANGO_CSRF_TRUSTED_ORIGINS

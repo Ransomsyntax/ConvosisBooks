@@ -9224,7 +9224,7 @@ def org_json(o):
         general_settings = {}
     return {
         'id': o.id,
-        'organization_id': getattr(o, 'organization_id', '') or f"ORG-{o.id:06d}",
+        'organization_id': getattr(o, 'organization_id', '') or f"118995452401{o.id:06d}",
         'name': o.name,
         'code': o.get_code(),
         'legal_name': getattr(o, 'legal_name', '') or o.name,
@@ -9279,8 +9279,8 @@ def me(request):
     return j({
         'user': {
             'id': u.pk,
-            'user_id': profile.user_id_code if profile and profile.user_id_code else f"USR-{u.pk:08d}",
-            'user_id_code': profile.user_id_code if profile and profile.user_id_code else f"USR-{u.pk:08d}",
+            'user_id': profile.user_id_code if profile and profile.user_id_code else f"148995452501{u.pk:06d}",
+            'user_id_code': profile.user_id_code if profile and profile.user_id_code else f"148995452501{u.pk:06d}",
             'username': u.get_username(),
             'name': u.get_full_name() or u.get_username(),
             'email': u.email,
@@ -10626,7 +10626,7 @@ def security_compliance_summary_view(request):
 
     data = {
         'tenant': {
-            'organization_id': f'TENANT-ORG-{org.pk:04d}',
+            'organization_id': org.organization_id or f'118995452401{org.pk:06d}',
             'name': org.name,
             'tier': 'Enterprise Multi-Tenant SaaS Financial Suite',
             'isolation_level': 'Database & Row-Level Tenant Isolation',
@@ -11366,7 +11366,7 @@ def _platform_user_metadata(user):
     organization = profile.organization if profile else None
     subscription = _platform_subscription_for(organization)
     return {
-        'user_id': profile.user_id_code if profile and profile.user_id_code else f'USR-{user.pk:08d}',
+        'user_id': profile.user_id_code if profile and profile.user_id_code else f'148995452501{user.pk:06d}',
         'email': user.email or '',
         'phone': profile.phone if profile else '',
         'subscription_status': subscription.status if subscription else '',
@@ -11517,7 +11517,7 @@ def serialize_user_entry(u, org):
     status = getattr(prof, 'status', 'active') if prof else ('active' if u.is_active else 'inactive')
     return {
         'id': u.pk,
-        'user_id': prof.user_id_code if prof and prof.user_id_code else f"USR-{u.pk:08d}",
+        'user_id': prof.user_id_code if prof and prof.user_id_code else f"148995452501{u.pk:06d}",
         'username': u.username,
         'name': u.get_full_name() or u.username,
         'email': u.email,
@@ -13280,7 +13280,7 @@ def sub_organizations_view(request):
         return j([
             {
                 'id': s.id,
-                'organization_id': s.organization_id or f"ORG-{s.id:06d}",
+                'organization_id': s.organization_id or f"118995452401{s.id:06d}",
                 'uuid': str(s.uuid),
                 'name': s.name,
                 'code': s.code,
@@ -13339,7 +13339,7 @@ def sub_organizations_view(request):
         )
         return j({
             'id': sub_org.id,
-            'organization_id': sub_org.organization_id or f"ORG-{sub_org.id:06d}",
+            'organization_id': sub_org.organization_id or f"118995452401{sub_org.id:06d}",
             'uuid': str(sub_org.uuid),
             'name': sub_org.name,
             'code': sub_org.code,

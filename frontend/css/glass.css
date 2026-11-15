@@ -1345,13 +1345,10 @@ tr:hover td {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--bd, rgba(0, 0, 0, 0.08));
-  line-height: 1.55;
-  word-break: break-word;
-}
-.user-card-ids div {
-  white-space: normal !important;
-  overflow: visible !important;
-  text-overflow: clip !important;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 #umm.pop::before {
@@ -4201,19 +4198,37 @@ th.l, td.l, table th.l, table td.l {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--bd, rgba(0, 0, 0, 0.06));
-  line-height: 1.55;
-  word-break: break-word;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.user-card-id-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  white-space: nowrap;
 }
 .user-card-id-lbl {
   color: var(--tx-muted, #64748b);
+  min-width: 102px;
+  flex-shrink: 0;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .user-card-id-val {
   font-weight: 600;
   color: var(--tx, #0f172a);
+  font-family: inherit;
+  word-break: break-all;
+  letter-spacing: 0.01em;
 }
-.user-card-id-sep {
-  color: var(--tx-muted, #94a3b8);
-  margin: 0 4px;
+[data-theme="dark"] .user-card-id-lbl {
+  color: #94a3b8;
+}
+[data-theme="dark"] .user-card-id-val {
+  color: #f1f5f9;
 }
 #btnSuperAdminNav {
   display: none;

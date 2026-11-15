@@ -13,7 +13,7 @@ QTY = {'max_digits': 14, 'decimal_places': 3}
 class Organization(models.Model):
     """Company profile (multi-tenant)."""
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
-    organization_id = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique Organization ID (e.g. ORG-000001)')
+    organization_id = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique Organization ID (e.g. 118995452401000001)')
     code = models.CharField(max_length=20, blank=True, default='', help_text='Organization short code for document numbering (e.g. ABC)')
     name = models.CharField(max_length=200, blank=True, default='')
     display_name = models.CharField(max_length=200, blank=True, default='')
@@ -104,42 +104,61 @@ class Sequence(models.Model):
     key = models.CharField(max_length=100, primary_key=True)
     value = models.PositiveIntegerField(default=0)
 
+ORG_ID_PREFIX = '118995452401'
+USER_ID_PREFIX = '148995452501'
+
 def generate_unique_organization_id():
-    """Generates an atomic, collision-free permanent Organization ID (e.g. ORG-000001)."""
+    """Generates an atomic, collision-free permanent Organization ID (e.g. 118995452401000001)."""
     from django.db import transaction
     with transaction.atomic():
         seq, _ = Sequence.objects.select_for_update().get_or_create(key='organization_id')
         if seq.value == 0:
-            existing = Organization.objects.filter(organization_id__startswith='ORG-').values_list('organization_id', flat=True)
+            existing = Organization.objects.filter(organization_id__startswith=ORG_ID_PREFIX).values_list('organization_id', flat=True)
             max_num = 0
             for oid in existing:
+                try:
+                    num_part = int(str(oid)[len(ORG_ID_PREFIX):])
+                    if num_part > max_num:
+                        max_num = num_part
+                except Exception:
+                    pass
+            old_existing = Organization.objects.filter(organization_id__startswith='ORG-').values_list('organization_id', flat=True)
+            for oid in old_existing:
                 try:
                     num_part = int(str(oid).replace('ORG-', ''))
                     if num_part > max_num:
                         max_num = num_part
                 except Exception:
                     pass
-            max_pk = Organization.objects.aggregate(models.Max('id'))['id__max'] or 0
+            max_pk = Organization.objects.filter(id__lt=100000000000).aggregate(models.Max('id'))['id__max'] or 0
             seq.value = max(max_num, max_pk)
         seq.value += 1
         seq.save(update_fields=['value'])
-        candidate = f"ORG-{seq.value:06d}"
+        candidate = f"{ORG_ID_PREFIX}{seq.value:06d}"
         while Organization.objects.filter(organization_id=candidate).exists():
             seq.value += 1
             seq.save(update_fields=['value'])
-            candidate = f"ORG-{seq.value:06d}"
+            candidate = f"{ORG_ID_PREFIX}{seq.value:06d}"
         return candidate
 
 def generate_unique_user_id():
-    """Generates an atomic, collision-free permanent User ID (e.g. USR-00000001)."""
+    """Generates an atomic, collision-free permanent User ID (e.g. 148995452501000001)."""
     from django.db import transaction
     from django.contrib.auth import get_user_model
     with transaction.atomic():
         seq, _ = Sequence.objects.select_for_update().get_or_create(key='user_id_code')
         if seq.value == 0:
-            existing = UserProfile.objects.filter(user_id_code__startswith='USR-').values_list('user_id_code', flat=True)
+            existing = UserProfile.objects.filter(user_id_code__startswith=USER_ID_PREFIX).values_list('user_id_code', flat=True)
             max_num = 0
             for uid in existing:
+                try:
+                    num_part = int(str(uid)[len(USER_ID_PREFIX):])
+                    if num_part > max_num:
+                        max_num = num_part
+                except Exception:
+                    pass
+            old_existing = UserProfile.objects.filter(user_id_code__startswith='USR-').values_list('user_id_code', flat=True)
+            for uid in old_existing:
                 try:
                     num_part = int(str(uid).replace('USR-', ''))
                     if num_part > max_num:
@@ -147,16 +166,16 @@ def generate_unique_user_id():
                 except Exception:
                     pass
             User = get_user_model()
-            max_user_pk = User.objects.aggregate(models.Max('id'))['id__max'] or 0
+            max_user_pk = User.objects.filter(id__lt=100000000000).aggregate(models.Max('id'))['id__max'] or 0
             max_prof_pk = UserProfile.objects.aggregate(models.Max('id'))['id__max'] or 0
             seq.value = max(max_num, max_user_pk, max_prof_pk)
         seq.value += 1
         seq.save(update_fields=['value'])
-        candidate = f"USR-{seq.value:08d}"
+        candidate = f"{USER_ID_PREFIX}{seq.value:06d}"
         while UserProfile.objects.filter(user_id_code=candidate).exists():
             seq.value += 1
             seq.save(update_fields=['value'])
-            candidate = f"USR-{seq.value:08d}"
+            candidate = f"{USER_ID_PREFIX}{seq.value:06d}"
         return candidate
 
 class Party(models.Model):
@@ -1551,7 +1570,7 @@ class UserProfile(models.Model):
     ]
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
-    user_id_code = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique User ID (e.g. USR-00000001)')
+    user_id_code = models.CharField(max_length=30, unique=True, null=True, blank=True, db_index=True, help_text='Permanent unique User ID (e.g. 148995452501000001)')
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(max_length=50, choices=ROLES, default=ADMIN)
     custom_role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name='assigned_profiles')

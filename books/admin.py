@@ -62,7 +62,7 @@ class CustomUserAdmin(RestrictedPlatformModelAdmin, DefaultUserAdmin):
     @admin.display(description='User ID')
     def get_user_id(self, obj):
         profile = getattr(obj, 'profile', None)
-        return profile.user_id_code if (profile and profile.user_id_code) else f"USR-{obj.pk:08d}"
+        return profile.user_id_code if (profile and profile.user_id_code) else f"148995452501{obj.pk:06d}"
 
     @admin.display(description='Phone')
     def get_user_phone(self, obj):

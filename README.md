@@ -18,3 +18,6 @@ The container stack uses PostgreSQL 17, Redis, Celery, Gunicorn, and Nginx:
 
 The existing Render deployment remains unchanged. The Docker Compose stack is
 the initial deployment path for the requested Nginx/PostgreSQL/Redis services.
+
+# Convobooks
+

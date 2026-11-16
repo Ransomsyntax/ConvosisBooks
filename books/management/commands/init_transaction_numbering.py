@@ -123,25 +123,19 @@ class Command(BaseCommand):
             # Clear default flag on other series for this org to prevent multi-default conflicts
             TransactionSeries.objects.filter(organization=org).exclude(pk=default_series.pk).update(is_default=False)
 
-            # 4 & 5. Initialize each of the 14 transaction types with configured prefix & separate counters
+            # Initialize every supported transaction type without overwriting existing settings.
             specs = [
-                ('invoices', 'INV', 'INV-', 1, 6),
-                ('sales_orders', 'SO', 'SO-', 1, 6),
-                ('quotes', 'QTN', 'QT-', 1, 6),
-                ('credit_notes', 'CN', 'CN-', 1, 6),
-                ('payments_received', 'PR', 'PAY-', 1, 6),
-                ('retainer_invoices', 'RET', 'RET-', 1, 6),
-                ('recurring_invoices', 'RINV', 'RINV-', 1, 6),
-                ('purchase_orders', 'PO', 'PO-', 1, 6),
-                ('bills', 'BILL', 'BILL-', 1, 6),
-                ('payments_made', 'PM', 'VP-', 1, 6),
-                ('vendor_credits', 'VC', 'VC-', 1, 6),
-                ('delivery_challans', 'DC', 'DC-', 1, 6),
-                ('stock_adjustments', 'ADJ', 'ADJ-', 1, 6),
-                ('stock_transfers', 'ST', 'ST-', 1, 6),
+                (
+                    item['key'],
+                    item['pfx'],
+                    services.default_document_number_prefix(org, item['pfx']),
+                    item['default_next'],
+                    item['padding'],
+                )
+                for item in services.SUPPORTED_TRANSACTION_TYPES
             ]
 
-            self.stdout.write("\nInitializing separate counters for all 14 transaction types:")
+            self.stdout.write(f"\nInitializing separate counters for all {len(specs)} transaction types:")
             configured_items = []
             for doc_key, alias, default_pfx, start_num, padding in specs:
                 item, created = DocumentNumberSeries.objects.get_or_create(
@@ -180,8 +174,9 @@ class Command(BaseCommand):
                         item.save(update_fields=updated_fields)
 
                 prev = services.preview_document_number(alias, org=org, series=default_series.name)
-                configured_items.append((doc_key, item.prefix, item.next_number, prev.get('formatted', '')))
-                self.stdout.write(f"  ✓ [{doc_key:20s}] Prefix: {item.prefix:10s} Next#: {item.next_number:<6d} Preview: {prev.get('formatted', '')}")
+                next_number = prev.get('next_sequence', item.next_number)
+                configured_items.append((doc_key, item.prefix, next_number, prev.get('formatted', '')))
+                self.stdout.write(f"  ✓ [{doc_key:20s}] Prefix: {item.prefix:10s} Next#: {next_number:<6d} Preview: {prev.get('formatted', '')}")
 
             # 7. Verify other organizations remain completely untouched
             other_orgs = Organization.objects.exclude(id=org.id)

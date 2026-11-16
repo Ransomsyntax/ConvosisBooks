@@ -2580,10 +2580,18 @@ async function renderDirectTaxesPage(container) {
 
 async function renderNumberSeriesPage(container, selectedSeriesId = null) {
   const url = selectedSeriesId ? `/settings/transaction-series/?series_id=${selectedSeriesId}` : '/settings/transaction-series/';
-  const data = await api(url).catch(() => ({ series_list: [], items: [], current_series: null }));
+  let data;
+  try {
+    data = await api(url);
+  } catch (error) {
+    toast(error.message || 'Failed to load transaction number series.', 'error');
+    container.innerHTML = '<div class="settings-card">Transaction number series could not be loaded.</div>';
+    return;
+  }
   const seriesList = data.series_list || [];
   const currentSeries = data.current_series || (seriesList[0] || null);
   const items = data.items || [];
+  const supportedTypes = data.supported_types || [];
 
   container.innerHTML = `
     <div class="settings-page-header">
@@ -2652,7 +2660,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${item.document_type}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}">
                     Configure
                   </button>
                 </td>
@@ -2673,7 +2681,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
 
   // Bind Add New Series
   container.querySelector('#btnAddNewSeries')?.addEventListener('click', () => {
-    openAddTransactionSeriesModal(container);
+    openAddTransactionSeriesModal(container, supportedTypes);
   });
 
   // Bind Set As Default
@@ -2724,15 +2732,23 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         label: btn.dataset.editItemLabel,
         prefix: btn.dataset.editItemPrefix,
         next_number: btn.dataset.editItemNext,
-        padding: btn.dataset.editItemPad
+        padding: btn.dataset.editItemPad,
+        sample_preview: btn.dataset.editItemPreview,
+        financial_year: btn.dataset.editItemFy,
+        current_year: btn.dataset.editItemYear,
+        org_code: btn.dataset.editItemOrg,
+        branch: btn.dataset.editItemBranch,
+        location: btn.dataset.editItemLocation,
+        separator: btn.dataset.editItemSeparator
       });
     });
   });
 }
 
 function openEditSeriesItemModal(container, currentSeries, item) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   const paddedNext = String(item.next_number || 1).padStart(Number(item.padding) || 1, '0');
   modal.innerHTML = `
     <div class="modal-box" style="max-width:440px;">
@@ -2751,7 +2767,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           <input type="text" id="seriesNextSeqInput" value="${esc(paddedNext)}" class="form-control" style="font-family:monospace;">
         </div>
         <div style="font-size:12px;color:#64748b;background:#f8fafc;padding:8px 12px;border-radius:4px;border:1px solid #e2e8f0;">
-          Sample Preview: <b id="seriesSamplePreview">${esc(item.prefix + paddedNext)}</b>
+          Sample Preview: <b id="seriesSamplePreview">${esc(item.sample_preview || '')}</b>
         </div>
       </div>
       <div class="modal-footer">
@@ -2767,7 +2783,40 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   const prevEl = modal.querySelector('#seriesSamplePreview');
 
   const updatePreview = () => {
-    prevEl.textContent = (prefixInp.value || '') + (nextInp.value || '1');
+    const raw = nextInp.value.trim();
+    if (!/^\d{1,12}$/.test(raw) || Number(raw) < 1) {
+      prevEl.textContent = 'Enter a positive sequence number';
+      return;
+    }
+    let prefix = prefixInp.value.trim();
+    const fy = item.financial_year || '';
+    const startYY = fy.split('-')[0] || '';
+    const endYY = fy.split('-')[1] || '';
+    const startYear = startYY ? String(2000 + Number(startYY)) : String(item.current_year || '');
+    const replacements = {
+      '%ORG%': item.org_code || '',
+      '${ORG}': item.org_code || '',
+      '%FY%': fy,
+      '${FY}': fy,
+      '%FYS_YY%': startYY,
+      '${FYS_YY}': startYY,
+      '%FYE_YY%': endYY,
+      '${FYE_YY}': endYY,
+      '%YEAR%': String(item.current_year || startYear),
+      '${YEAR}': String(item.current_year || startYear),
+      '%BRANCH%': item.branch || '',
+      '${BRANCH}': item.branch || '',
+      '%LOCATION%': item.location || '',
+      '${LOCATION}': item.location || ''
+    };
+    Object.entries(replacements).forEach(([token, value]) => {
+      prefix = prefix.split(token).join(value);
+    });
+    const separator = item.separator || '';
+    if (separator && prefix && !prefix.endsWith(separator) && !prefix.endsWith('-') && !prefix.endsWith('/')) {
+      prefix += separator;
+    }
+    prevEl.textContent = prefix + String(Number(raw)).padStart(raw.length, '0');
   };
   prefixInp.addEventListener('input', updatePreview);
   nextInp.addEventListener('input', updatePreview);
@@ -2777,7 +2826,17 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   modal.querySelector('#btnSaveSeriesItem').addEventListener('click', async () => {
     const prefix = prefixInp.value.trim();
     const rawNext = nextInp.value.trim();
-    const next_number = parseInt(rawNext, 10) || 1;
+    if (!prefix) {
+      toast('Prefix is required.', 'error');
+      prefixInp.focus();
+      return;
+    }
+    if (!/^\d{1,12}$/.test(rawNext) || Number(rawNext) < 1) {
+      toast('Next number must be a positive whole number of at most 12 digits.', 'error');
+      nextInp.focus();
+      return;
+    }
+    const next_number = Number(rawNext);
     const padding = rawNext.length > 1 ? rawNext.length : 1;
 
     try {
@@ -2801,9 +2860,10 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   });
 }
 
-function openAddTransactionSeriesModal(container) {
+function openAddTransactionSeriesModal(container, supportedTypes) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   modal.innerHTML = `
     <div class="modal-box" style="max-width:760px;max-height:90vh;overflow-y:auto;">
       <div class="modal-header">
@@ -2835,26 +2895,11 @@ function openAddTransactionSeriesModal(container) {
               </tr>
             </thead>
             <tbody id="newSeriesItemsTbody">
-              ${[
-                ['invoices','Invoice','INV-','000001'],
-                ['sales_orders','Sales Order','SO-','000001'],
-                ['quotes','Estimate / Quote','QT-','000001'],
-                ['credit_notes','Credit Note','CN-','000001'],
-                ['payments_received','Customer Payment','PAY-','000001'],
-                ['retainer_invoices','Retainer Invoice','RET-','000001'],
-                ['recurring_invoices','Recurring Invoice','RINV-','000001'],
-                ['purchase_orders','Purchase Order','PO-','000001'],
-                ['bills','Bill','BILL-','000001'],
-                ['payments_made','Vendor Payment','VP-','000001'],
-                ['vendor_credits','Vendor Credit','VC-','000001'],
-                ['delivery_challans','Delivery Challan','DC-','000001'],
-                ['stock_adjustments','Inventory Adjustment','ADJ-','000001'],
-                ['stock_transfers','Stock Transfer','ST-','000001']
-              ].map(([k, label, pfx, nxt]) => `
-                <tr data-type="${k}">
-                  <td><b>${label}</b></td>
-                  <td><input type="text" class="form-control s-pfx" value="${pfx}" style="padding:4px 8px;font-size:12px;"></td>
-                  <td><input type="text" class="form-control s-nxt" value="${nxt}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
+              ${supportedTypes.map(item => `
+                <tr data-type="${esc(item.document_type)}">
+                  <td><b>${esc(item.label)}</b></td>
+                  <td><input type="text" class="form-control s-pfx" value="${esc(item.prefix)}" style="padding:4px 8px;font-size:12px;"></td>
+                  <td><input type="text" class="form-control s-nxt" value="${esc(String(item.next_number).padStart(item.padding || 1, '0'))}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2902,10 +2947,16 @@ function openAddTransactionSeriesModal(container) {
       const type = row.dataset.type;
       const pfx = row.querySelector('.s-pfx').value.trim();
       const rawNxt = row.querySelector('.s-nxt').value.trim();
-      const nxt = parseInt(rawNxt, 10) || 1;
+      if (!pfx || !/^\d{1,12}$/.test(rawNxt) || Number(rawNxt) < 1) {
+        row.querySelector(!pfx ? '.s-pfx' : '.s-nxt').focus();
+        toast('Every transaction type needs a prefix and a positive sequence number.', 'error');
+        return;
+      }
+      const nxt = Number(rawNxt);
       const pad = rawNxt.length > 1 ? rawNxt.length : 1;
       items.push({ document_type: type, prefix: pfx, next_number: nxt, padding: pad });
     });
+    if (items.length !== supportedTypes.length) return;
 
     try {
       const res = await api('/settings/transaction-series/', {
@@ -2929,8 +2980,9 @@ function openAddTransactionSeriesModal(container) {
 }
 
 function openEditSeriesMetaModal(container, currentSeries) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   modal.innerHTML = `
     <div class="modal-box" style="max-width:480px;">
       <div class="modal-header">

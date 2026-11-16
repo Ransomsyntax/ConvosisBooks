@@ -8,6 +8,7 @@ from books.models import (
     Invoice, Quote, SalesOrder, Bill, PurchaseOrder, RetainerInvoice,
     CreditNote, VendorCredit, DeliveryChallan, StockTransfer, StockMovement,
     PaymentReceived, PaymentMade, Customer, Item, DocumentNumberAllocation,
+    DocumentNumberSeriesCounter, BankAccount, Account, Warehouse,
     RecurringInvoice
 )
 from books import services
@@ -99,7 +100,8 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
             'is_default': False,
             'is_active': True,
             'items': [
-                {'document_type': 'invoices', 'prefix': 'KER-INV-', 'next_number': '000001'}
+                {'document_type': 'invoices', 'prefix': 'KER-INV-', 'next_number': '000001'},
+                {'document_type': 'recurring_invoices', 'prefix': 'KER-REC-', 'next_number': '000001'}
             ]
         }), content_type='application/json')
         self.assertEqual(res.status_code, 201)
@@ -210,7 +212,7 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         )
         inv_from_rec = services.generate_invoice_from_recurring_profile(rec_prof)
         self.assertIsNotNone(inv_from_rec)
-        self.assertTrue(inv_from_rec.number.startswith('KL-INV-'))
+        self.assertTrue(inv_from_rec.number.startswith('KER-REC-'), inv_from_rec.number)
 
         # Case 10: Document Cloning
         base_inv = Invoice.objects.create(
@@ -316,6 +318,12 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         dns_item.next_number = 8888
         dns_item.padding = 6
         dns_item.save()
+        counter = DocumentNumberSeriesCounter.objects.get(
+            series=dns_item,
+            financial_year=services.get_financial_year(org=org),
+        )
+        counter.next_number = 8888
+        counter.save(update_fields=['next_number'])
 
         reloaded = DocumentNumberSeries.objects.get(pk=dns_item.pk)
         self.assertEqual(reloaded.prefix, 'KL-PERSIST-')
@@ -324,27 +332,204 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         prev_persisted = services.preview_document_number('INV', org=org, series=ts.name)
         self.assertEqual(prev_persisted['formatted'], 'KL-PERSIST-008888')
 
-        # Case 18: Full End-to-End Across All 14 Document Types
-        types_to_verify = [
-            ('INV', 'invoices'),
-            ('SO', 'sales_orders'),
-            ('QTN', 'quotes'),
-            ('CN', 'credit_notes'),
-            ('PR', 'payments_received'),
-            ('RET', 'retainer_invoices'),
-            ('RINV', 'recurring_invoices'),
-            ('PO', 'purchase_orders'),
-            ('BILL', 'bills'),
-            ('PM', 'payments_made'),
-            ('VC', 'vendor_credits'),
-            ('DC', 'delivery_challans'),
-            ('ADJ', 'stock_adjustments'),
-            ('ST', 'stock_transfers')
-        ]
-
-        for alias, doc_type in types_to_verify:
+        # Verify allocation and preview parity for every supported series.
+        for item in services.SUPPORTED_TRANSACTION_TYPES:
+            alias = item['pfx']
             p = services.preview_document_number(alias, org=org, series='Head Office')
             n = to_str(services.next_document_number(alias, org=org, series='Head Office'))
             self.assertTrue(bool(n), f"Failed allocation for {alias}")
-            self.assertTrue(bool(p['formatted']), f"Failed preview for {alias}")
+            self.assertEqual(n, p['formatted'], f"Preview did not match allocation for {alias}")
+
+    def test_settings_table_reflects_saved_prefix_preview_and_next_number(self):
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='Settings Table Verification',
+            is_active=True,
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='invoices',
+            prefix='AUDIT/%FY%/',
+            next_number=7,
+            padding=5,
+            active=True,
+        )
+
+        response = self.client.get(f'/api/settings/transaction-series/?series_id={group.pk}')
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        invoice = next(item for item in payload['items'] if item['document_type'] == 'invoices')
+        self.assertEqual(invoice['prefix'], 'AUDIT/%FY%/')
+        self.assertEqual(invoice['next_number'], 7)
+        self.assertEqual(
+            invoice['sample_preview'],
+            f"AUDIT/{services.get_financial_year(org=self.org)}/00007",
+        )
+        types = [item['document_type'] for item in payload['items']]
+        self.assertEqual(len(types), len(set(types)))
+        self.assertIn('customers', types)
+        self.assertIn('bank_transfers', types)
+        self.assertIn('accounts', types)
+        self.assertIn('warehouses', types)
+
+        invalid_prefix = self.client.put(
+            f'/api/settings/transaction-series/{group.pk}/',
+            data=json.dumps({'items': [{'document_type': 'invoices', 'prefix': ''}]}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_prefix.status_code, 400)
+        invalid_next = self.client.put(
+            f'/api/settings/transaction-series/{group.pk}/',
+            data=json.dumps({'items': [{'document_type': 'invoices', 'next_number': -1}]}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_next.status_code, 400)
+
+        update = self.client.put(
+            f'/api/settings/transaction-series/{group.pk}/',
+            data=json.dumps({
+                'items': [{
+                    'document_type': 'invoices',
+                    'prefix': 'UPDATED/%FY%/',
+                    'next_number': '000012',
+                    'padding': 6,
+                }]
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 200)
+        reloaded = self.client.get(f'/api/settings/transaction-series/?series_id={group.pk}').json()
+        invoice = next(item for item in reloaded['items'] if item['document_type'] == 'invoices')
+        self.assertEqual(invoice['prefix'], 'UPDATED/%FY%/')
+        self.assertEqual(invoice['next_number'], 12)
+        self.assertEqual(
+            invoice['sample_preview'],
+            f"UPDATED/{services.get_financial_year(org=self.org)}/000012",
+        )
+
+        generated = services.next_document_number('INV', org=self.org, series=group.name)
+        self.assertEqual(generated, invoice['sample_preview'])
+        following = self.client.get(f'/api/settings/transaction-series/?series_id={group.pk}').json()
+        invoice = next(item for item in following['items'] if item['document_type'] == 'invoices')
+        self.assertEqual(invoice['next_number'], 13)
+        self.assertEqual(
+            invoice['sample_preview'],
+            f"UPDATED/{services.get_financial_year(org=self.org)}/000013",
+        )
+
+    def test_financial_year_counter_resets_and_failed_transaction_rolls_back(self):
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='Financial Year Counter Verification',
+            is_active=True,
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='invoices',
+            prefix='FY/%FY%/',
+            next_number=1,
+            starting_number=1,
+            padding=5,
+            active=True,
+            reset_annually=True,
+        )
+        first = services.next_document_number('INV', org=self.org, date='2026-10-15', series=group.name)
+        next_year = services.next_document_number('INV', org=self.org, date='2027-05-15', series=group.name)
+        self.assertTrue(first.endswith('/00001'))
+        self.assertTrue(next_year.endswith('/00001'))
+
+        future_org = Organization.objects.create(
+            name='Rollback Numbering Org',
+            legal_name='Rollback Numbering Org',
+            state='Kerala',
+        )
+        services.ensure_default_transaction_series(future_org)
+        preview = services.preview_document_number('INV', org=future_org)
+        from django.db import transaction
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                services.next_document_number('INV', org=future_org)
+                raise RuntimeError('force transaction rollback')
+        self.assertEqual(
+            services.preview_document_number('INV', org=future_org)['formatted'],
+            preview['formatted'],
+        )
+
+    def test_bank_documents_use_their_configured_series(self):
+        source = BankAccount.objects.create(
+            organization=self.org,
+            name='Series Source Bank',
+            bank_name='Test Bank',
+            account_number='SERIES-SOURCE',
+            current_balance=Decimal('500.00'),
+        )
+        destination = BankAccount.objects.create(
+            organization=self.org,
+            name='Series Destination Bank',
+            bank_name='Test Bank',
+            account_number='SERIES-DESTINATION',
+            current_balance=Decimal('50.00'),
+        )
+        deposit_preview = services.preview_document_number('DEP', org=self.org)['formatted']
+        deposit = services.record_bank_deposit({
+            'bank_account': source.pk,
+            'amount': '25.00',
+            'date': '2026-11-15',
+        }, user=self.user)
+        self.assertEqual(deposit['number'], deposit_preview)
+
+        transfer_preview = services.preview_document_number('TXF', org=self.org)['formatted']
+        transfer = services.record_bank_transfer({
+            'from_account': source.pk,
+            'to_account': destination.pk,
+            'amount': '10.00',
+            'date': '2026-11-15',
+        }, user=self.user, org=self.org)
+        self.assertEqual(transfer['number'], transfer_preview)
+
+        reconciliation_preview = services.preview_document_number('RECON', org=self.org)['formatted']
+        reconciliation = services.complete_bank_reconciliation({
+            'bank_account_id': source.pk,
+            'statement_date': '2026-11-15',
+            'statement_ending_balance': '515.00',
+            'cleared_transaction_ids': [],
+        }, user=self.user)
+        self.assertEqual(reconciliation['number'], reconciliation_preview)
+
+    def test_account_and_warehouse_codes_use_their_configured_series(self):
+        transfer_number = services.next_document_number('ST', org=self.org)
+        movement_reference = services.next_document_number('TRF', org=self.org)
+        transfer_allocation = DocumentNumberAllocation.objects.get(number=transfer_number)
+        movement_allocation = DocumentNumberAllocation.objects.get(number=movement_reference)
+        self.assertNotEqual(transfer_number, movement_reference)
+        self.assertEqual(transfer_allocation.series_id, movement_allocation.series_id)
+
+        account_number = services.preview_document_number('ACC', org=self.org)['formatted']
+        self.assertEqual(
+            services.next_document_number('ACC', org=self.org),
+            account_number,
+        )
+        account = Account.objects.create(
+            organization=self.org,
+            code=account_number,
+            name='Numbered Test Account',
+            account_type=Account.EXPENSE,
+        )
+        self.assertEqual(account.code, account_number)
+
+        warehouse_number = services.preview_document_number('WH', org=self.org)['formatted']
+        self.assertEqual(
+            services.next_document_number('WH', org=self.org),
+            warehouse_number,
+        )
+        warehouse = Warehouse.objects.create(
+            organization=self.org,
+            name='Numbered Test Warehouse',
+            code=warehouse_number,
+        )
+        self.assertEqual(warehouse.code, warehouse_number)
 

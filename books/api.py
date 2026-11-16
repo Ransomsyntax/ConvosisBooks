@@ -2795,14 +2795,7 @@ class RetainerInvoiceResource(DocResource):
 class QuoteResource(DocResource):
     name = 'quotes'
     Model, Line, Party = Quote, QuoteLine, Customer
-    party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QT', 'sent'
-
-    @property
-    def prefix(self):
-        return Organization.get().quote_prefix or 'QT'
-
-    def get_prefix(self):
-        return Organization.get().quote_prefix or 'QT'
+    party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QTN', 'sent'
     search_fields = ('number', 'customer__name', 'reference_number', 'subject')
     csv_cols = [
         ('Quote#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'),
@@ -4385,8 +4378,12 @@ class AccountResource(Resource):
             rec['account_type'] = str(rec['account_type']).lower().strip()
         else:
             rec['account_type'] = 'expense'
-        if not rec.get('code'):
-            rec['code'] = next_number('ACC')
+
+    def create_import_record(self, data, user):
+        data = dict(data)
+        if not data.get('code'):
+            data['code'] = services.next_document_number('ACC', org=get_user_org(user))
+        return self.create(data, user)
 
     def base_qs(self):
         services.ensure_default_accounts()
@@ -8818,9 +8815,12 @@ class WarehouseResource(Resource):
     def prepare_import_record(self, rec):
         if not rec.get('name'):
             rec['name'] = rec.get('warehouse_name') or rec.get('title') or 'Warehouse'
-        if not rec.get('code'):
-            clean_name = re.sub(r'[^A-Z0-9]', '', str(rec.get('name', 'WH')).upper())[:4] or 'WH'
-            rec['code'] = f"{clean_name}-{next_number('WH')}"
+
+    def create_import_record(self, data, user):
+        data = dict(data)
+        if not data.get('code'):
+            data['code'] = services.next_document_number('WH', org=get_user_org(user))
+        return self.create(data, user)
 
     def base_qs(self):
         return Warehouse.objects.select_related('parent')
@@ -9851,109 +9851,63 @@ def lookup(request, name):
 
 @api_view
 def quote_sequence_view(request):
-    user_org = get_user_org(request.user)
-    org = user_org or Organization.get()
-    pfx = org.quote_prefix or 'QTN' if org else 'QTN'
-    if request.method == 'GET':
-        prev = services.preview_document_number(pfx, org=org)
-        return j(prev)
-    elif request.method == 'POST':
-        import json, re
-        try:
-            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
-        except Exception:
-            raise ApiError(400, 'Invalid JSON body.')
-        new_pfx = (body_data.get('prefix') or '').strip().upper()
-        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
-            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
-        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
-        try:
-            next_seq = int(next_seq)
-            if next_seq < 1:
-                raise ValueError()
-        except (TypeError, ValueError):
-            raise ApiError(400, 'Next sequence number must be a positive integer.')
-
-        if org:
-            org.quote_prefix = new_pfx
-            org.save(update_fields=['quote_prefix'])
-
-        fy = services.get_financial_year()
-        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
-        seq, _ = Sequence.objects.get_or_create(key=new_key)
-        seq.value = max(0, next_seq - 1)
-        seq.save(update_fields=['value'])
-
-        prev = services.preview_document_number(new_pfx, org=org)
-        return j(prev)
+    return _document_sequence_view(request, 'quotes', 'QTN', organization_prefix_field='quote_prefix')
 
 @api_view
 def invoice_sequence_view(request):
-    user_org = get_user_org(request.user)
-    org = user_org or Organization.get()
-    pfx = 'INV'
-    if request.method == 'GET':
-        prev = services.preview_document_number(pfx, org=org)
-        return j(prev)
-    elif request.method == 'POST':
-        import json, re
-        try:
-            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
-        except Exception:
-            raise ApiError(400, 'Invalid JSON body.')
-        new_pfx = (body_data.get('prefix') or 'INV').strip().upper()
-        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
-            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
-        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
-        try:
-            next_seq = int(next_seq)
-            if next_seq < 1:
-                raise ValueError()
-        except (TypeError, ValueError):
-            raise ApiError(400, 'Next sequence number must be a positive integer.')
-
-        fy = services.get_financial_year()
-        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
-        seq, _ = Sequence.objects.get_or_create(key=new_key)
-        seq.value = max(0, next_seq - 1)
-        seq.save(update_fields=['value'])
-
-        prev = services.preview_document_number(new_pfx, org=org)
-        return j(prev)
+    return _document_sequence_view(request, 'invoices', 'INV')
 
 @api_view
 def retainer_sequence_view(request):
-    user_org = get_user_org(request.user)
-    org = user_org or Organization.get()
-    pfx = 'RET'
+    return _document_sequence_view(request, 'retainer_invoices', 'RET')
+
+
+def _document_sequence_view(request, document_type, default_prefix, organization_prefix_field=None):
+    org = get_user_org(request.user) or Organization.get()
     if request.method == 'GET':
-        prev = services.preview_document_number(pfx, org=org)
-        return j(prev)
-    elif request.method == 'POST':
-        import json, re
-        try:
-            body_data = json.loads(request.body.decode('utf-8')) if request.body else {}
-        except Exception:
-            raise ApiError(400, 'Invalid JSON body.')
-        new_pfx = (body_data.get('prefix') or 'RET').strip().upper()
-        if not new_pfx or not re.match(r'^[A-Z0-9_\-]+$', new_pfx):
-            raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, and hyphens only.')
-        next_seq = body_data.get('next_sequence') or body_data.get('next_number') or 1
-        try:
-            next_seq = int(next_seq)
-            if next_seq < 1:
-                raise ValueError()
-        except (TypeError, ValueError):
-            raise ApiError(400, 'Next sequence number must be a positive integer.')
+        return j(services.preview_document_number(document_type, org=org))
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    check_permission(request, allowed_roles=[UserProfile.ADMIN])
 
-        fy = services.get_financial_year()
-        new_key = f"{org.pk}_{new_pfx}_{fy}" if org else f"{new_pfx}_{fy}"
-        seq, _ = Sequence.objects.get_or_create(key=new_key)
-        seq.value = max(0, next_seq - 1)
-        seq.save(update_fields=['value'])
+    try:
+        data = json.loads(request.body.decode('utf-8')) if request.body else {}
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Invalid JSON body.')
+    raw_prefix = data['prefix'] if 'prefix' in data else default_prefix
+    prefix = str(raw_prefix or '').strip().upper()
+    if not prefix or not re.fullmatch(r'[A-Z0-9_-]+', prefix):
+        raise ApiError(400, 'Invalid prefix. Use uppercase letters, numbers, underscores, and hyphens only.')
 
-        prev = services.preview_document_number(new_pfx, org=org)
-        return j(prev)
+    requested_next = data.get('next_sequence', data.get('next_number'))
+    try:
+        requested_next = int(requested_next) if requested_next is not None else None
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Next sequence number must be a positive integer.')
+    if requested_next is not None and requested_next < 1:
+        raise ApiError(400, 'Next sequence number must be a positive integer.')
+
+    with transaction.atomic():
+        Organization.objects.select_for_update().get(pk=org.pk)
+        services.ensure_default_transaction_series(org)
+        series = services._select_document_number_series(document_type, org=org)
+        series = DocumentNumberSeries.objects.select_for_update().get(pk=series.pk)
+        counter = services._series_counter_for_date(series, org, module_or_pfx=document_type)
+        counter = type(counter).objects.select_for_update().get(pk=counter.pk)
+        next_number = requested_next if requested_next is not None else counter.next_number
+        if next_number < counter.next_number:
+            raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
+
+        series.prefix = prefix
+        series.next_number = next_number
+        counter.next_number = next_number
+        counter.save(update_fields=['next_number', 'updated_at'])
+        series.save(update_fields=['prefix', 'next_number', 'updated_at'])
+        if organization_prefix_field:
+            setattr(org, organization_prefix_field, prefix)
+            org.save(update_fields=[organization_prefix_field])
+
+    return j(services.preview_document_number(document_type, org=org))
 
 def dashboard_view(request):
     start, end = parse_range(request)
@@ -12531,27 +12485,23 @@ def settings_number_series_view(request):
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_transaction_series(org)
     from .models import TransactionSeries, DocumentNumberSeries
-
-    modules = [
-        ('INV', 'Invoice'), ('CUST', 'Customer'), ('VEND', 'Vendor'),
-        ('SO', 'Sales Order'), ('QTN', 'Quotation'), ('PO', 'Purchase Order'),
-        ('BILL', 'Bill'), ('PR', 'Payment Received'), ('PM', 'Payment Made'),
-        ('CN', 'Credit Note'), ('DN', 'Debit Note'), ('JRN', 'Journal'),
-        ('DC', 'Delivery Challan'), ('ITEM', 'Items'), ('ST', 'Stock Transfer'),
-        ('EXP', 'Expense'), ('ADJ', 'Stock Adjustment')
-    ]
+    modules = [(item['pfx'], item['label']) for item in services.SUPPORTED_TRANSACTION_TYPES]
 
     if request.method == 'GET':
         res = []
         for mod_key, label in modules:
             prev = services.preview_document_number(mod_key, org=org)
+            series_item = DocumentNumberSeries.objects.filter(
+                organization=org, pk=prev.get('numbering_series_id')
+            ).first()
             res.append({
                 'module': mod_key,
                 'label': label,
-                'prefix': prev.get('prefix', mod_key),
+                'prefix': series_item.prefix if series_item else '',
                 'next_sequence': prev.get('next_sequence', 1),
                 'financial_year': prev.get('financial_year', ''),
-                'formatted': prev.get('formatted', '')
+                'formatted': prev.get('formatted', ''),
+                'padding': series_item.padding if series_item else 1,
             })
         return j({'series': res, 'org_code': org.get_code()})
 
@@ -12561,10 +12511,23 @@ def settings_number_series_view(request):
     if not cfg:
         raise ApiError(400, f'Invalid module key "{mod_key}".')
 
-    prefix = str(data.get('prefix', '')).strip() or cfg['pfx']
+    prefix = str(data.get('prefix', '')).strip()
+    if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
+        raise ApiError(400, 'Prefix must be 1-100 printable characters.')
     raw_next = str(data.get('next_sequence') or data.get('next_number') or 1).strip()
-    next_seq = int(raw_next) if raw_next.isdigit() else 1
-    pad_val = int(data.get('padding') or (len(raw_next) if raw_next.isdigit() and len(raw_next) > 1 else 6))
+    if not raw_next.isdigit() or int(raw_next) < 1:
+        raise ApiError(400, 'Next number must be a positive whole number.')
+    next_seq = int(raw_next)
+    padding_input = data.get('padding')
+    if padding_input is None:
+        pad_val = len(raw_next) if len(raw_next) > 1 else None
+    else:
+        try:
+            pad_val = int(padding_input)
+        except (ValueError, TypeError):
+            raise ApiError(400, 'Padding must be a whole number.')
+        if pad_val < 1 or pad_val > 12:
+            raise ApiError(400, 'Padding must be between 1 and 12.')
 
     doc_type = services._number_series_doc_type(mod_key)
     def_grp = TransactionSeries.objects.filter(organization=org, is_default=True).first()
@@ -12580,17 +12543,26 @@ def settings_number_series_view(request):
             organization=org, document_type=doc_type
         ).first()
 
-    if series_item:
+    if not series_item:
+        raise ApiError(404, f'Numbering configuration for {doc_type} was not found.')
+    with transaction.atomic():
+        Organization.objects.select_for_update().get(pk=org.pk)
+        series_item = DocumentNumberSeries.objects.select_for_update().get(pk=series_item.pk, organization=org)
+        counter = services._series_counter_for_date(series_item, org, module_or_pfx=mod_key)
+        if next_seq < counter.next_number:
+            raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
         series_item.prefix = prefix
-        series_item.next_number = max(1, next_seq)
-        series_item.padding = pad_val
+        series_item.next_number = next_seq
+        if pad_val is not None:
+            series_item.padding = pad_val
+        counter.next_number = next_seq
+        counter.save(update_fields=['next_number', 'updated_at'])
         series_item.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
 
-    # Also record in org.number_series for display persistence
-    ns = org.number_series or {}
-    ns[mod_key] = {'prefix': prefix, 'next_sequence': next_seq}
-    org.number_series = ns
-    org.save(update_fields=['number_series'])
+        ns = org.number_series or {}
+        ns[mod_key] = {'prefix': prefix, 'next_sequence': next_seq}
+        org.number_series = ns
+        org.save(update_fields=['number_series'])
 
     services.log_audit(request.user, 'update', 'DocumentNumberSeries', series_item.pk if series_item else 0, f"Updated numbering series for {mod_key}: {prefix}{next_seq}")
     prev = services.preview_document_number(mod_key, org=org)
@@ -12604,6 +12576,7 @@ def settings_transaction_series_view(request, series_id=None):
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_transaction_series(org)
     from .models import TransactionSeries, DocumentNumberSeries
+    supported_type_keys = {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}
 
     if request.method == 'GET':
         series_qs = TransactionSeries.objects.filter(organization=org).order_by('-is_default', 'name')
@@ -12663,11 +12636,17 @@ def settings_transaction_series_view(request, series_id=None):
                     'document_type': doc_key,
                     'module': t['pfx'],
                     'label': t['label'],
-                    'prefix': services.normalize_document_prefix_output(s_item.prefix),
-                    'next_number': s_item.next_number,
+                    'prefix': s_item.prefix,
+                    'next_number': prev.get('next_sequence', s_item.next_number),
                     'padding': s_item.padding,
                     'formatted': prev.get('formatted', ''),
                     'sample_preview': prev.get('formatted', ''),
+                    'financial_year': prev.get('financial_year', ''),
+                    'org_code': org.get_code(),
+                    'branch': current_series.branch,
+                    'location': current_series.location,
+                    'separator': s_item.separator,
+                    'current_year': timezone.localdate().year,
                 })
 
         return j({
@@ -12682,6 +12661,13 @@ def settings_transaction_series_view(request, series_id=None):
                 'is_active': current_series.is_active if current_series else True,
             } if current_series else None,
             'items': items,
+            'supported_types': [{
+                'document_type': item['key'],
+                'label': item['label'],
+                'prefix': services.default_document_number_prefix(org, item['pfx']),
+                'next_number': item['default_next'],
+                'padding': item['padding'],
+            } for item in services.SUPPORTED_TRANSACTION_TYPES],
         })
 
     if request.method == 'POST':
@@ -12698,6 +12684,7 @@ def settings_transaction_series_view(request, series_id=None):
         is_active = bool(data.get('is_active', True))
 
         with transaction.atomic():
+            Organization.objects.select_for_update().get(pk=org.pk)
             if is_default:
                 TransactionSeries.objects.filter(organization=org).update(is_default=False)
                 DocumentNumberSeries.objects.filter(organization=org).update(is_default=False)
@@ -12713,15 +12700,35 @@ def settings_transaction_series_view(request, series_id=None):
 
             # Process items
             items_input = data.get('items', [])
-            item_dict = {i.get('document_type'): i for i in items_input if isinstance(i, dict) and i.get('document_type')}
+            if not isinstance(items_input, list):
+                raise ApiError(400, 'Transaction series items must be a list.')
+            item_dict = {}
+            for item in items_input:
+                if not isinstance(item, dict) or not item.get('document_type'):
+                    raise ApiError(400, 'Each transaction series item must have a document type.')
+                item_type = str(item['document_type']).strip().lower()
+                if item_type not in supported_type_keys:
+                    raise ApiError(400, f'Unsupported transaction type "{item_type}".')
+                if item_type in item_dict:
+                    raise ApiError(400, f'Duplicate numbering configuration for "{item_type}".')
+                item_dict[item_type] = item
 
             for t in services.SUPPORTED_TRANSACTION_TYPES:
                 doc_key = t['key']
                 cfg = item_dict.get(doc_key, {})
                 prefix = str(cfg.get('prefix') if cfg.get('prefix') is not None else t['default_prefix']).strip()
                 raw_next = str(cfg.get('next_number', t['default_next'])).strip()
-                padding = int(cfg.get('padding') or (len(raw_next) if raw_next.isdigit() and len(raw_next) > 1 else t['padding']))
-                next_val = max(1, int(raw_next) if raw_next.isdigit() else 1)
+                if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
+                    raise ApiError(400, f'A valid prefix is required for {t["label"]}.')
+                if not raw_next.isdigit() or int(raw_next) < 1:
+                    raise ApiError(400, f'Next number for {t["label"]} must be a positive whole number.')
+                try:
+                    padding = int(cfg.get('padding') or (len(raw_next) if len(raw_next) > 1 else t['padding']))
+                except (TypeError, ValueError):
+                    raise ApiError(400, f'Padding for {t["label"]} must be a whole number.')
+                if padding < 1 or padding > 12:
+                    raise ApiError(400, f'Padding for {t["label"]} must be between 1 and 12.')
+                next_val = int(raw_next)
 
                 DocumentNumberSeries.objects.create(
                     organization=org,
@@ -12750,6 +12757,8 @@ def settings_transaction_series_view(request, series_id=None):
 
         data = body(request)
         with transaction.atomic():
+            Organization.objects.select_for_update().get(pk=org.pk)
+            grp = TransactionSeries.objects.select_for_update().get(pk=grp.pk, organization=org)
             if 'name' in data:
                 new_name = str(data['name']).strip()
                 if not new_name:
@@ -12777,10 +12786,18 @@ def settings_transaction_series_view(request, series_id=None):
 
             # Update DocumentNumberSeries items
             items_input = data.get('items', [])
+            if not isinstance(items_input, list):
+                raise ApiError(400, 'Transaction series items must be a list.')
+            updated_types = set()
             for item_data in items_input:
                 if not isinstance(item_data, dict):
-                    continue
+                    raise ApiError(400, 'Each transaction series item must be an object.')
                 doc_type = services._number_series_doc_type(item_data.get('document_type') or item_data.get('module'))
+                if doc_type not in supported_type_keys:
+                    raise ApiError(400, f'Unsupported transaction type "{doc_type}".')
+                if doc_type in updated_types:
+                    raise ApiError(400, f'Duplicate numbering configuration for "{doc_type}".')
+                updated_types.add(doc_type)
                 s_item = DocumentNumberSeries.objects.filter(
                     organization=org, series_group=grp, document_type=doc_type
                 ).first()
@@ -12788,23 +12805,40 @@ def settings_transaction_series_view(request, series_id=None):
                     s_item = DocumentNumberSeries.objects.filter(
                         organization=org, name=grp.name, document_type=doc_type
                     ).first()
-                if s_item:
-                    if 'prefix' in item_data and item_data['prefix'] is not None:
-                        s_item.prefix = str(item_data['prefix']).strip()
-                    if 'next_number' in item_data:
-                        raw_next = str(item_data['next_number']).strip()
-                        if raw_next.isdigit():
-                            s_item.next_number = max(1, int(raw_next))
-                            if 'padding' not in item_data and len(raw_next) > 1:
-                                s_item.padding = len(raw_next)
-                    if 'padding' in item_data:
-                        s_item.padding = max(1, int(item_data['padding']))
-                    s_item.name = grp.name
-                    s_item.branch = grp.branch
-                    s_item.location = grp.location
-                    s_item.active = grp.is_active
-                    s_item.is_default = grp.is_default
-                    s_item.save()
+                if not s_item:
+                    raise ApiError(404, f'Numbering configuration for {doc_type} was not found.')
+                if 'prefix' in item_data and item_data['prefix'] is not None:
+                    prefix = str(item_data['prefix']).strip()
+                    if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
+                        raise ApiError(400, 'Prefix must be 1-100 printable characters.')
+                    s_item.prefix = prefix
+                if 'next_number' in item_data:
+                    raw_next = str(item_data['next_number']).strip()
+                    if not raw_next.isdigit() or int(raw_next) < 1:
+                        raise ApiError(400, 'Next number must be a positive whole number.')
+                    requested_next = int(raw_next)
+                    counter = services._series_counter_for_date(s_item, org, module_or_pfx=doc_type)
+                    if requested_next < counter.next_number:
+                        raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
+                    counter.next_number = requested_next
+                    counter.save(update_fields=['next_number', 'updated_at'])
+                    s_item.next_number = requested_next
+                    if 'padding' not in item_data and len(raw_next) > 1:
+                        s_item.padding = len(raw_next)
+                if 'padding' in item_data:
+                    try:
+                        padding = int(item_data['padding'])
+                    except (TypeError, ValueError):
+                        raise ApiError(400, 'Padding must be a whole number.')
+                    if padding < 1 or padding > 12:
+                        raise ApiError(400, 'Padding must be between 1 and 12.')
+                    s_item.padding = padding
+                s_item.name = grp.name
+                s_item.branch = grp.branch
+                s_item.location = grp.location
+                s_item.active = grp.is_active
+                s_item.is_default = grp.is_default
+                s_item.save()
 
             services.log_audit(request.user, 'update', 'TransactionSeries', grp.pk, f"Updated transaction series {grp.name}", org=org)
             return j({'status': 'ok', 'id': grp.pk, 'message': f'Series "{grp.name}" updated successfully.'})
@@ -12818,6 +12852,8 @@ def settings_transaction_series_view(request, series_id=None):
         if grp.is_default:
             raise ApiError(400, 'Cannot deactivate the default transaction series. Please designate another series as default first.')
         with transaction.atomic():
+            Organization.objects.select_for_update().get(pk=org.pk)
+            grp = TransactionSeries.objects.select_for_update().get(pk=grp.pk, organization=org)
             grp.is_active = False
             grp.save(update_fields=['is_active', 'updated_at'])
             DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(active=False)
@@ -13068,6 +13104,9 @@ def doc_number_preferences_view(request):
     org = get_user_org(request.user) or Organization.get()
     from .models import DocumentNumberPreference, Sequence
 
+    if request.method != 'GET':
+        check_permission(request, allowed_roles=[UserProfile.ADMIN])
+
     canon_map = {
         'inv': 'invoices', 'invoices': 'invoices', 'invoice': 'invoices',
         'qtn': 'quotes', 'quotes': 'quotes', 'quote': 'quotes',
@@ -13105,7 +13144,7 @@ def doc_number_preferences_view(request):
             'location': location,
             'auto_generate': pref.auto_generate if pref else True,
             'prefix': dns.prefix if dns else (pref.prefix if (pref and pref.prefix) else default_pfx),
-            'next_number': dns.next_number if dns else (pref.next_number if pref else prev.get('next_sequence', 1)),
+            'next_number': prev.get('next_sequence', dns.next_number if dns else (pref.next_number if pref else 1)),
             'restart_yearly': pref.restart_yearly if pref else True,
             'preview_formatted': prev.get('formatted', '')
         })
@@ -13118,47 +13157,61 @@ def doc_number_preferences_view(request):
         location = str(d.get('location') or 'HO Kottayam').strip()
         auto_generate = bool(d.get('auto_generate', True))
         prefix = str(d.get('prefix') or '').strip()
+        if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
+            raise ApiError(400, 'Prefix must be 1-100 printable characters.')
         try:
-            next_number = max(1, int(d.get('next_number', 1)))
+            next_number = int(d.get('next_number', 1))
         except (ValueError, TypeError):
-            next_number = 1
+            raise ApiError(400, 'Next number must be a positive whole number.')
+        if next_number < 1:
+            raise ApiError(400, 'Next number must be a positive whole number.')
         restart_yearly = bool(d.get('restart_yearly', True))
 
-        pref, _ = DocumentNumberPreference.objects.update_or_create(
-            organization=org,
-            document_type=clean_doc,
-            transaction_series=series,
-            defaults={
-                'location': location,
-                'auto_generate': auto_generate,
-                'prefix': prefix,
-                'next_number': next_number,
-                'restart_yearly': restart_yearly
-            }
-        )
+        with transaction.atomic():
+            Organization.objects.select_for_update().get(pk=org.pk)
+            services.ensure_default_transaction_series(org)
+            doc_type = services._number_series_doc_type(clean_doc)
+            dns = services._select_document_number_series(doc_type, org=org, series=series, location=location)
+            if dns:
+                counter = services._series_counter_for_date(dns, org, module_or_pfx=doc_type)
+                if next_number < counter.next_number:
+                    if auto_generate:
+                        raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
+                    next_number = counter.next_number
+                dns.prefix = prefix
+                dns.next_number = next_number
+                dns.reset_annually = restart_yearly
+                raw_next_str = str(d.get('next_number', '')).strip()
+                if raw_next_str.startswith('0') and raw_next_str.isdigit():
+                    dns.padding = len(raw_next_str)
+                elif raw_next_str == '1':
+                    dns.padding = 1
+                counter.next_number = next_number
+                counter.save(update_fields=['next_number', 'updated_at'])
+                dns.save(update_fields=['prefix', 'next_number', 'padding', 'reset_annually', 'updated_at'])
 
-        services.ensure_default_transaction_series(org)
-        doc_type = services._number_series_doc_type(clean_doc)
-        dns = services._select_document_number_series(doc_type, org=org, series=series, location=location)
-        if dns:
-            dns.prefix = prefix
-            dns.next_number = max(1, next_number)
-            raw_next_str = str(d.get('next_number', '')).strip()
-            if raw_next_str.startswith('0') and raw_next_str.isdigit():
-                dns.padding = len(raw_next_str)
-            elif raw_next_str == '1':
-                dns.padding = 1
-            dns.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
+            pref, _ = DocumentNumberPreference.objects.update_or_create(
+                organization=org,
+                document_type=clean_doc,
+                transaction_series=series,
+                defaults={
+                    'location': location,
+                    'auto_generate': auto_generate,
+                    'prefix': prefix,
+                    'next_number': next_number,
+                    'restart_yearly': restart_yearly
+                }
+            )
 
-        cfg = services.get_document_module_config(clean_doc)
-        pfx = cfg['pfx'] if cfg else 'DOC'
-        fy = services.get_financial_year()
-        seq_key = f"{org.pk}_{pfx}_{fy}" if (cfg and cfg.get('has_fy')) else f"{org.pk}_{pfx}"
-        seq, _ = Sequence.objects.get_or_create(key=seq_key)
-        seq.value = max(0, next_number - 1)
-        seq.save(update_fields=['value'])
+            cfg = services.get_document_module_config(clean_doc)
+            pfx = cfg['pfx'] if cfg else 'DOC'
+            fy = services.get_financial_year(org=org)
+            seq_key = f"{org.pk}_{pfx}_{fy}" if (cfg and cfg.get('has_fy')) else f"{org.pk}_{pfx}"
+            seq, _ = Sequence.objects.get_or_create(key=seq_key)
+            seq.value = max(0, next_number - 1)
+            seq.save(update_fields=['value'])
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
+            prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
 
         services.log_audit(
             request.user, 'update', 'DocumentNumberPreference', pref.pk,

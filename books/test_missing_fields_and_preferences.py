@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from books.models import (
     Organization, UserProfile, Customer, Vendor, Item,
     Invoice, Quote, SalesOrder, RecurringInvoice, RetainerInvoice, Bill, PurchaseOrder,
-    Salesperson, DocumentNumberPreference
+    Salesperson, DocumentNumberPreference, TransactionSeries, DocumentNumberSeries
 )
 from books.services import next_document_number, preview_document_number, generate_invoice_from_recurring_profile
 import json
@@ -179,6 +179,44 @@ class MissingFieldsAndPreferencesTest(TestCase):
             preview_document_number('retainer_invoices', self.org, series=series)['formatted'],
             ''
         )
+
+    def test_manual_numbering_preference_is_scoped_to_its_series(self):
+        manual_group = TransactionSeries.objects.create(
+            organization=self.org, name='Manual Invoice Series'
+        )
+        automatic_group = TransactionSeries.objects.create(
+            organization=self.org, name='Automatic Invoice Series'
+        )
+        for group, prefix in (
+            (manual_group, 'MANUAL/'),
+            (automatic_group, 'AUTO/'),
+        ):
+            DocumentNumberSeries.objects.create(
+                organization=self.org,
+                series_group=group,
+                name=group.name,
+                document_type='invoices',
+                prefix=prefix,
+                separator='',
+                padding=5,
+            )
+        DocumentNumberPreference.objects.create(
+            organization=self.org,
+            document_type='invoices',
+            transaction_series=manual_group.name,
+            auto_generate=False,
+            prefix='MANUAL/',
+            next_number=1,
+        )
+
+        manual_preview = preview_document_number(
+            'invoices', self.org, series=manual_group.name
+        )
+        automatic_preview = preview_document_number(
+            'invoices', self.org, series=automatic_group.name
+        )
+        self.assertEqual(manual_preview['formatted'], '')
+        self.assertTrue(automatic_preview['formatted'].startswith('AUTO/'))
 
     def test_create_documents_with_all_missing_fields(self):
         # 1. Invoice

@@ -985,6 +985,12 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(res_set.status_code, 200)
         self.assertEqual(res_set.json()['prefix'], 'EST')
         self.assertTrue('EST' in res_set.json()['formatted'] and '00100' in res_set.json()['formatted'])
+        invalid_prefix = self.client.post(
+            '/api/quotes/sequence/',
+            data=json.dumps({'prefix': '', 'next_sequence': 100}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_prefix.status_code, 400)
 
         # 3. Next quote lookup returns configured sequence
         lookup_res = self.client.get('/api/lookup/next-quote-number/')

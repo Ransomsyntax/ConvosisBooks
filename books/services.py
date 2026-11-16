@@ -128,7 +128,7 @@ def normalize_document_prefix_output(prefix, fallback=''):
         return ''
     candidate = segments[-1]
     candidate = candidate.strip('-_')
-    return candidate or segments[-2] if len(segments) > 1 else ''
+    return candidate or (segments[-2] if len(segments) > 1 else '')
 
 
 def default_document_number_prefix(org, module_or_pfx):
@@ -150,10 +150,10 @@ def get_document_module_config(module_or_pfx):
     - field: field name storing the document number/code/sku
     """
     from .models import (
-        Customer, Vendor, Item, Invoice, Bill, Quote, SalesOrder,
+        Account, Customer, Vendor, Item, Invoice, Bill, Quote, SalesOrder,
         PurchaseOrder, PaymentReceived, PaymentMade, CreditNote,
         VendorCredit, Journal, DeliveryChallan, Expense, StockMovement,
-        RetainerInvoice
+        RetainerInvoice, BankDeposit, BankTransfer, BankReconciliation, Warehouse
     )
     raw = (module_or_pfx or '').upper().strip()
     
@@ -173,7 +173,7 @@ def get_document_module_config(module_or_pfx):
         return {'pfx': 'QTN', 'digits': 5, 'has_fy': True, 'model': Quote, 'field': 'number'}
     elif raw in ('PO', 'PURCHASE_ORDER', 'PURCHASE-ORDERS', 'PURCHASEORDER'):
         return {'pfx': 'PO', 'digits': 5, 'has_fy': True, 'model': PurchaseOrder, 'field': 'number'}
-    elif raw in ('BILL', 'BILLS'):
+    elif raw in ('BIL', 'BILL', 'BILLS'):
         return {'pfx': 'BILL', 'digits': 5, 'has_fy': True, 'model': Bill, 'field': 'number'}
     elif raw in ('PR', 'PAYMENT_RECEIVED', 'PAYMENTS-RECEIVED', 'RECEIPT'):
         return {'pfx': 'PR', 'digits': 5, 'has_fy': True, 'model': PaymentReceived, 'field': 'number'}
@@ -191,10 +191,22 @@ def get_document_module_config(module_or_pfx):
         return {'pfx': 'ITEM', 'digits': 6, 'has_fy': False, 'model': Item, 'field': 'sku'}
     elif raw in ('ST', 'STOCK_TRANSFER', 'TRANSFER', 'STOCK-TRANSFERS', 'STOCK_TRANSFERS'):
         return {'pfx': 'ST', 'digits': 5, 'has_fy': True, 'model': StockTransfer, 'field': 'number'}
+    elif raw in ('TRF', 'STOCK_MOVEMENT_TRANSFER'):
+        return {'pfx': 'ST', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
     elif raw in ('ADJ', 'STOCK_ADJUSTMENT', 'ADJUSTMENT'):
         return {'pfx': 'ADJ', 'digits': 5, 'has_fy': True, 'model': StockMovement, 'field': 'reference'}
     elif raw in ('EXP', 'EXPENSE', 'EXPENSES'):
         return {'pfx': 'EXP', 'digits': 5, 'has_fy': True, 'model': Expense, 'field': 'number'}
+    elif raw in ('DEP', 'BANK_DEPOSIT', 'BANK_DEPOSITS'):
+        return {'pfx': 'DEP', 'digits': 5, 'has_fy': True, 'model': BankDeposit, 'field': 'number'}
+    elif raw in ('TXF', 'BANK_TRANSFER', 'BANK_TRANSFERS'):
+        return {'pfx': 'TXF', 'digits': 5, 'has_fy': True, 'model': BankTransfer, 'field': 'number'}
+    elif raw in ('RECON', 'BANK_RECONCILIATION', 'BANK_RECONCILIATIONS'):
+        return {'pfx': 'RECON', 'digits': 5, 'has_fy': True, 'model': BankReconciliation, 'field': 'reconciliation_number'}
+    elif raw in ('ACC', 'ACCOUNT', 'ACCOUNTS'):
+        return {'pfx': 'ACC', 'digits': 5, 'has_fy': True, 'model': Account, 'field': 'code'}
+    elif raw in ('WH', 'WAREHOUSE', 'WAREHOUSES'):
+        return {'pfx': 'WH', 'digits': 5, 'has_fy': True, 'model': Warehouse, 'field': 'code'}
     else:
         clean_pfx = re.sub(r'[^A-Z0-9]', '', raw)[:10] or 'DOC'
         return {'pfx': clean_pfx, 'digits': 5, 'has_fy': True, 'model': None, 'field': 'number'}
@@ -214,6 +226,16 @@ SUPPORTED_TRANSACTION_TYPES = [
     {'key': 'delivery_challans', 'label': 'Delivery Challan', 'default_prefix': 'DC-', 'pfx': 'DC', 'model_name': 'DeliveryChallan', 'field': 'number', 'default_next': 1, 'padding': 5},
     {'key': 'stock_adjustments', 'label': 'Inventory Adjustment', 'default_prefix': 'ADJ-', 'pfx': 'ADJ', 'model_name': 'StockMovement', 'field': 'reference', 'default_next': 1, 'padding': 5},
     {'key': 'stock_transfers', 'label': 'Stock Transfer', 'default_prefix': 'ST-', 'pfx': 'ST', 'model_name': 'StockTransfer', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'customers', 'label': 'Customer', 'default_prefix': 'CUST-', 'pfx': 'CUST', 'model_name': 'Customer', 'field': 'code', 'default_next': 1, 'padding': 6},
+    {'key': 'vendors', 'label': 'Vendor', 'default_prefix': 'VEND-', 'pfx': 'VEND', 'model_name': 'Vendor', 'field': 'code', 'default_next': 1, 'padding': 6},
+    {'key': 'items', 'label': 'Item / SKU', 'default_prefix': 'ITEM-', 'pfx': 'ITEM', 'model_name': 'Item', 'field': 'sku', 'default_next': 1, 'padding': 6},
+    {'key': 'expenses', 'label': 'Expense', 'default_prefix': 'EXP-', 'pfx': 'EXP', 'model_name': 'Expense', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'manual_journals', 'label': 'Journal Entry', 'default_prefix': 'JRN-', 'pfx': 'JRN', 'model_name': 'Journal', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'bank_deposits', 'label': 'Bank Deposit', 'default_prefix': 'DEP-', 'pfx': 'DEP', 'model_name': 'BankDeposit', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'bank_transfers', 'label': 'Bank Transfer', 'default_prefix': 'TXF-', 'pfx': 'TXF', 'model_name': 'BankTransfer', 'field': 'number', 'default_next': 1, 'padding': 5},
+    {'key': 'bank_reconciliations', 'label': 'Bank Reconciliation', 'default_prefix': 'RECON-', 'pfx': 'RECON', 'model_name': 'BankReconciliation', 'field': 'reconciliation_number', 'default_next': 1, 'padding': 5},
+    {'key': 'accounts', 'label': 'Account Code', 'default_prefix': 'ACC-', 'pfx': 'ACC', 'model_name': 'Account', 'field': 'code', 'default_next': 1, 'padding': 5},
+    {'key': 'warehouses', 'label': 'Warehouse Code', 'default_prefix': 'WH-', 'pfx': 'WH', 'model_name': 'Warehouse', 'field': 'code', 'default_next': 1, 'padding': 5},
 ]
 
 
@@ -239,6 +261,12 @@ def _number_series_doc_type(module_or_pfx):
         'item': 'items', 'items': 'items', 'sku': 'items',
         'customer': 'customers', 'customers': 'customers', 'cust': 'customers',
         'vendor': 'vendors', 'vendors': 'vendors', 'vend': 'vendors',
+        'bank_deposit': 'bank_deposits', 'bank_deposits': 'bank_deposits', 'dep': 'bank_deposits',
+        'bank_transfer': 'bank_transfers', 'bank_transfers': 'bank_transfers', 'txf': 'bank_transfers',
+        'bank_reconciliation': 'bank_reconciliations', 'bank_reconciliations': 'bank_reconciliations', 'recon': 'bank_reconciliations',
+        'account': 'accounts', 'accounts': 'accounts', 'account_code': 'accounts', 'acc': 'accounts',
+        'warehouse': 'warehouses', 'warehouses': 'warehouses', 'wh': 'warehouses',
+        'trf': 'stock_transfers', 'bil': 'bills',
     }.get(raw)
     if canonical:
         return canonical
@@ -251,6 +279,8 @@ def _number_series_doc_type(module_or_pfx):
         'DC': 'delivery_challans', 'EXP': 'expenses', 'REC': 'recurring_invoices',
         'ST': 'stock_transfers', 'ADJ': 'stock_adjustments', 'JRN': 'manual_journals',
         'ITEM': 'items', 'CUST': 'customers', 'VEND': 'vendors',
+        'DEP': 'bank_deposits', 'TXF': 'bank_transfers', 'RECON': 'bank_reconciliations',
+        'ACC': 'accounts', 'WH': 'warehouses', 'TRF': 'stock_transfers', 'BIL': 'bills',
     }.get(pfx, str(module_or_pfx or '').strip().lower())
 
 
@@ -389,7 +419,7 @@ def _series_context_matches(series_obj, context):
 
 
 def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None):
-    from .models import Organization, DocumentNumberSeries, TransactionSeries
+    from .models import BusinessLocation, Organization, DocumentNumberSeries, TransactionSeries
     if isinstance(module_or_pfx, Organization):
         actual_org = module_or_pfx
         actual_module = org
@@ -441,22 +471,55 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
         except (ValueError, TypeError):
             pass
 
-    # 3. By branch or location
+    # 3. Match the complete requested context before falling back to defaults.
     clean_branch = (branch or '').strip()
     clean_loc = (location or '').strip()
     if clean_branch or clean_loc or business_location_id:
-        q_loc = Q()
-        if clean_branch:
-            q_loc |= Q(branch__iexact=clean_branch)
-        if clean_loc:
-            q_loc |= Q(location__iexact=clean_loc)
-        if business_location_id:
-            q_loc |= Q(business_location_id=business_location_id)
-        s_obj = DocumentNumberSeries.objects.filter(
+        matching = DocumentNumberSeries.objects.filter(
             organization=org, document_type=doc_type, active=True
-        ).filter(q_loc).first()
-        if s_obj:
-            return s_obj
+        )
+        clean_gstin = (gstin or '').strip().upper()
+        if business_location_id:
+            matching = matching.filter(business_location_id=business_location_id)
+            if doc_type == 'retainer_invoices':
+                business_location = BusinessLocation.objects.filter(
+                    organization=org, pk=business_location_id, active=True
+                ).first()
+                if not business_location:
+                    raise ApiError(400, 'Choose an active business location belonging to your organization.')
+                location_gstin = (business_location.gstin or '').strip().upper()
+                if gstin and str(gstin).strip().upper() != location_gstin:
+                    raise ApiError(400, 'The retainer GSTIN must match the selected business location.')
+                clean_gstin = location_gstin
+                matching = matching.filter(gstin__iexact=clean_gstin)
+        else:
+            matching = matching.filter(business_location__isnull=True)
+        if clean_branch or clean_loc:
+            context_query = Q()
+            if clean_branch:
+                context_query |= Q(branch__iexact=clean_branch)
+            if clean_loc:
+                context_query |= Q(location__iexact=clean_loc)
+            matching = matching.filter(context_query)
+        if customer_type:
+            matching = matching.filter(Q(customer_type__iexact=customer_type) | Q(customer_type=''))
+        if clean_gstin and not (doc_type == 'retainer_invoices' and business_location_id):
+            matching = matching.filter(Q(gstin__iexact=clean_gstin) | Q(gstin=''))
+        year = get_financial_year(date, org=org)
+        matching = matching.filter(Q(financial_year='') | Q(financial_year=year))
+        candidates = list(matching)
+        if candidates:
+            candidates.sort(key=lambda candidate: (
+                bool(candidate.business_location_id),
+                candidate.customer_type == customer_type and bool(customer_type),
+                candidate.gstin == clean_gstin and bool(clean_gstin),
+                candidate.branch.casefold() == clean_branch.casefold() and bool(clean_branch),
+                candidate.location.casefold() == clean_loc.casefold() and bool(clean_loc),
+                candidate.financial_year == year and bool(candidate.financial_year),
+            ), reverse=True)
+            return candidates[0]
+        if doc_type == 'retainer_invoices' and business_location_id:
+            raise ApiError(400, 'No active retainer numbering series matches the selected customer and business location.')
 
     # 4. Default series for this org
     def_grp = TransactionSeries.objects.filter(organization=org, is_default=True, is_active=True).first()
@@ -547,6 +610,36 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     return candidate
 
 
+def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
+    """Return the persisted counter for this series and date's configured reset period."""
+    from .models import DocumentNumberSeriesCounter
+
+    lookup = str(module_or_pfx or series_obj.document_type).strip().lower()
+    type_config = next((item for item in SUPPORTED_TRANSACTION_TYPES if item['key'] == lookup), None)
+    cfg = get_document_module_config(type_config['pfx'] if type_config else lookup)
+    year = get_financial_year(date, org=org)
+    counter_year = year if series_obj.reset_annually and cfg.get('has_fy', True) else '*'
+    counter = series_obj.counters.filter(financial_year=counter_year).first()
+    if counter:
+        return counter
+
+    # Keep the existing next number for the current period, but start a new
+    # fiscal-year counter from its configured starting value.
+    current_year = get_financial_year(org=org)
+    has_prior_counter = series_obj.counters.exists()
+    initial_next = (
+        series_obj.next_number
+        if counter_year == '*' or (year == current_year and not has_prior_counter)
+        else series_obj.starting_number
+    )
+    counter, _ = DocumentNumberSeriesCounter.objects.get_or_create(
+        series=series_obj,
+        financial_year=counter_year,
+        defaults={'next_number': max(series_obj.starting_number, initial_next)},
+    )
+    return counter
+
+
 def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
     """
     Generate an atomic, collision-free organization-wise document number.
@@ -554,13 +647,15 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
     Preserves leading zeros and padding.
     Guarantees uniqueness using select_for_update() row locks and DB collision verification.
     """
-    from .models import Organization, DocumentNumberSeries, DocumentNumberSeriesCounter, DocumentNumberAllocation
+    from .models import Organization, DocumentNumberSeries, DocumentNumberAllocation, DocumentNumberPreference
     if not org:
         org = Organization.get()
     ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
 
     with transaction.atomic():
+        # Serialize allocations across different series in the same organization too.
+        Organization.objects.select_for_update().get(pk=org.pk)
         series_obj = _select_document_number_series(
             module_or_pfx, org, date=date, customer_type=customer_type,
             branch=branch, location=location, gstin=gstin, series_id=series_id,
@@ -572,58 +667,60 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
         series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
         if not series_obj.active:
             raise ApiError(400, f'Transaction series "{series_obj.name}" is inactive.')
+        counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
+        counter = type(counter).objects.select_for_update().get(pk=counter.pk)
 
         cfg = get_document_module_config(module_or_pfx)
         model = cfg.get('model')
         field = cfg.get('field', 'number')
 
         while True:
-            val = series_obj.next_number
+            val = counter.next_number
             candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
             collision = False
             if model and field:
                 kwargs = {field: candidate}
                 qs = model.objects.filter(**kwargs)
-                if hasattr(model, 'organization') and org:
+                if hasattr(model, 'organization') and org and not model._meta.get_field(field).unique:
                     qs = qs.filter(organization=org)
                 if qs.exists():
+                    collision = True
+            if doc_type == 'stock_transfers':
+                from .models import StockMovement, StockTransfer
+                if StockMovement.objects.filter(organization=org, reference=candidate).exists():
+                    collision = True
+                if StockTransfer.objects.filter(organization=org, number=candidate).exists():
                     collision = True
 
             allocated = DocumentNumberAllocation.objects.filter(
                 organization=org, document_type=doc_type, number=candidate
             ).exists()
 
-            series_obj.next_number = val + 1
-            series_obj.save(update_fields=['next_number', 'updated_at'])
-
-            # Sync counter object if exists
-            latest_counter = series_obj.counters.order_by('-updated_at', '-pk').first()
-            if latest_counter:
-                latest_counter.next_number = val + 1
-                latest_counter.save(update_fields=['next_number', 'updated_at'])
-
-            from .models import DocumentNumberPreference
-            DocumentNumberPreference.objects.filter(
-                organization=org, document_type=doc_type
-            ).update(next_number=series_obj.next_number)
-
             if collision or allocated:
+                counter.next_number = val + 1
+                counter.save(update_fields=['next_number', 'updated_at'])
                 continue
 
-            try:
-                DocumentNumberAllocation.objects.create(
-                    organization=org,
-                    series=series_obj,
-                    document_type=doc_type,
-                    number=candidate,
-                    financial_year=get_financial_year(date, org=org),
-                    branch=branch or series_obj.branch,
-                    location=location or series_obj.location,
-                    gstin=gstin or getattr(org, 'gstin', ''),
-                    customer_type=customer_type or series_obj.customer_type,
-                )
-            except Exception:
-                pass
+            DocumentNumberAllocation.objects.create(
+                organization=org,
+                series=series_obj,
+                document_type=doc_type,
+                number=candidate,
+                financial_year=get_financial_year(date, org=org),
+                branch=branch or series_obj.branch,
+                location=location or series_obj.location,
+                gstin=gstin or getattr(org, 'gstin', ''),
+                customer_type=customer_type or series_obj.customer_type,
+            )
+            counter.next_number = val + 1
+            counter.save(update_fields=['next_number', 'updated_at'])
+            series_obj.next_number = val + 1
+            series_obj.save(update_fields=['next_number', 'updated_at'])
+            DocumentNumberPreference.objects.filter(
+                organization=org,
+                document_type=doc_type,
+                transaction_series=series_obj.name,
+            ).update(next_number=counter.next_number)
 
             return candidate
 
@@ -647,13 +744,20 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         return {'next_number': '', 'formatted': '', 'prefix': '', 'next_sequence': 1}
 
     from .models import DocumentNumberPreference
-    pref = DocumentNumberPreference.objects.filter(organization=org, document_type=doc_type).first()
+    pref = DocumentNumberPreference.objects.filter(
+        organization=org, document_type=doc_type, transaction_series=series_obj.name
+    ).first()
+    if not pref:
+        pref = DocumentNumberPreference.objects.filter(
+            organization=org, document_type=doc_type, transaction_series=''
+        ).first()
     if pref and not pref.auto_generate:
+        counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
         return {
             'next_number': '',
             'formatted': '',
             'prefix': normalize_document_prefix_output(series_obj.prefix),
-            'next_sequence': series_obj.next_number,
+            'next_sequence': counter.next_number,
             'padding': series_obj.padding,
             'auto_generate': False,
             'series_id': series_obj.series_group_id or series_obj.pk,
@@ -668,29 +772,19 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             'org_code': org.get_code(),
         }
 
-    if pref and pref.prefix and series_obj.prefix != pref.prefix:
-        series_obj.prefix = pref.prefix
-        if pref.next_number:
-            try:
-                series_obj.next_number = int(pref.next_number)
-                if len(str(pref.next_number)) > 1:
-                    series_obj.padding = len(str(pref.next_number))
-            except Exception:
-                pass
-        series_obj.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
-
     cfg = get_document_module_config(module_or_pfx)
     model = cfg.get('model')
     field = cfg.get('field', 'number')
 
-    val = series_obj.next_number
+    counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
+    val = counter.next_number
     while True:
         candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
         collision = False
         if model and field:
             kwargs = {field: candidate}
             qs = model.objects.filter(**kwargs)
-            if hasattr(model, 'organization') and org:
+            if hasattr(model, 'organization') and org and not model._meta.get_field(field).unique:
                 qs = qs.filter(organization=org)
             if qs.exists():
                 collision = True
@@ -738,9 +832,15 @@ def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, serie
     if m:
         seq_val = int(m.group(1))
         with transaction.atomic():
+            from .models import Organization
+            Organization.objects.select_for_update().get(pk=org.pk)
             series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
-            if seq_val >= series_obj.next_number:
-                series_obj.next_number = seq_val + 1
+            counter = _series_counter_for_date(series_obj, org, module_or_pfx=module_or_pfx)
+            counter = type(counter).objects.select_for_update().get(pk=counter.pk)
+            if seq_val >= counter.next_number:
+                counter.next_number = seq_val + 1
+                counter.save(update_fields=['next_number', 'updated_at'])
+                series_obj.next_number = counter.next_number
                 series_obj.save(update_fields=['next_number', 'updated_at'])
 
 
@@ -867,7 +967,7 @@ def transfer_stock(item_id, qty, from_warehouse_id, to_warehouse_id, on, adjuste
     if not from_wh or not to_wh:
         raise ApiError(400, 'Select valid source and destination warehouses.')
     if not reference:
-        reference = next_number('TRF')
+        reference = next_number('TRF', org=org, date=on)
 
     mv = StockMovement.objects.create(
         organization=org,
@@ -1998,7 +2098,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     is_tax_inclusive = (getattr(profile, 'tax_pricing_type', 'tax_exclusive') == 'tax_inclusive')
     comp, tot = compute(parsed_lines, intra, is_tax_inclusive=is_tax_inclusive)
     inv_num = next_document_number(
-        'INV', org=org, date=target_date,
+        'REC', org=org, date=target_date,
         customer_type=getattr(profile, 'customer_type', 'b2b') or 'b2b',
         branch=getattr(profile, 'branch', ''), location=getattr(profile, 'location', ''),
         gstin=getattr(org, 'gstin', ''), user=user
@@ -5229,8 +5329,9 @@ def record_bank_deposit(data, user=None):
     desc = data.get('description', '')
     location = data.get('location', acc.branch_name or 'HO Kottayam')
 
-    dep_num = next_number('DEP')
+    dep_num = next_document_number('DEP', org=acc.organization, date=dt)
     deposit = BankDeposit.objects.create(
+        organization=acc.organization,
         number=dep_num,
         bank_account=acc,
         date=dt,
@@ -5331,7 +5432,7 @@ def record_bank_transfer(data, user=None, org=None):
     to_acc.current_balance += amount
     to_acc.save(update_fields=['current_balance'])
 
-    xfer_num = next_number('TXF')
+    xfer_num = next_document_number('TXF', org=org, date=dt)
     transfer = BankTransfer.objects.create(
         organization=org,
         number=xfer_num,
@@ -5556,8 +5657,9 @@ def complete_bank_reconciliation(data, user=None):
         is_cleared=True, cleared_date=stmt_date, status='reconciled'
     )
 
-    rec_num = next_number('REC')
+    rec_num = next_document_number('RECON', org=acc.organization, date=stmt_date)
     rec = BankReconciliation.objects.create(
+        organization=acc.organization,
         bank_account=acc,
         reconciliation_number=rec_num,
         statement_date=stmt_date,

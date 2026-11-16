@@ -10869,28 +10869,71 @@ ${renderStockQuantityCell(l, items, whList)}
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              max-width: 100% !important;
+            }
+          }
+          .customer-select-outer {
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 440px;
+          }
+          .customer-select-outer-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ef4444;
+            display: block;
+            margin-bottom: 8px;
+            line-height: 1.2;
+          }
+          .customer-select-outer .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .customer-select-outer .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          [data-theme="dark"] .customer-select-outer .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer-label {
+            color: #f87171 !important;
           }
         </style>
+
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="q-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Search or type customer name...</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
 
         <div class="quote-three-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="quote-card">
             <h3 class="quote-card-heading">1. Customer Details</h3>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label required" for="q-customer">Customer Name*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="q-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
-                </button>
-                <div class="currency-badge">INR</div>
-              </div>
-            </div>
 
             <div class="quote-card-field">
               <label class="quote-card-label" for="q-customer-type">Customer Type</label>
@@ -11917,28 +11960,71 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              max-width: 100% !important;
+            }
+          }
+          .customer-select-outer {
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 440px;
+          }
+          .customer-select-outer-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ef4444;
+            display: block;
+            margin-bottom: 8px;
+            line-height: 1.2;
+          }
+          .customer-select-outer .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .customer-select-outer .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          [data-theme="dark"] .customer-select-outer .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer-label {
+            color: #f87171 !important;
           }
         </style>
+
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="so-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Search or type customer name...</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
 
         <div class="so-three-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="so-card">
             <h3 class="so-card-heading">1. Customer Details</h3>
-
-            <div class="so-card-field">
-              <label class="so-card-label required" for="so-customer">Customer Name*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
-                </button>
-                <div class="currency-badge">INR</div>
-              </div>
-            </div>
 
             <div class="so-card-field">
               <label class="so-card-label" for="so-customer-type">Customer Type</label>
@@ -14165,29 +14251,71 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              max-width: 100% !important;
+            }
+          }
+          .customer-select-outer {
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 440px;
+          }
+          .customer-select-outer-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ef4444;
+            display: block;
+            margin-bottom: 8px;
+            line-height: 1.2;
+          }
+          .customer-select-outer .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .customer-select-outer .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          [data-theme="dark"] .customer-select-outer .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer-label {
+            color: #f87171 !important;
           }
         </style>
+
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="inv-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="inv-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Search or type customer name...</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
 
         <div class="invoice-three-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="invoice-card">
             <h3 class="invoice-card-heading">1. Customer Details</h3>
-
-            <!-- Customer Name* -->
-            <div class="invoice-card-field">
-              <label class="invoice-card-label required" for="inv-customer">Customer Name*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="inv-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
-                </button>
-                <div class="currency-badge">INR</div>
-              </div>
-            </div>
 
             <!-- Order Number -->
             <div class="invoice-card-field">

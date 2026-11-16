@@ -322,3 +322,55 @@ class StandardizedModulesTestCase(TestCase):
         }, content_type='application/json')
         self.assertEqual(pay_resp.status_code, 201)
         self.assertEqual(PaymentMade.objects.filter(pk=pay_resp.json()['id']).count(), 1)
+
+    def test_tax_mode_selector_and_guide_alignment(self):
+        """Verify Tax Exclusive / Tax Inclusive dropdown and Guide button are aligned with Item Table heading across forms."""
+        from pathlib import Path
+        js_path = Path(__file__).resolve().parent / 'static' / 'books' / 'js' / 'forms.js'
+        content = js_path.read_text(encoding='utf-8')
+
+        # Invoices: Item Table heading + inv-tax-pricing dropdown + Guide button in one horizontal row
+        self.assertIn('id="inv-tax-pricing"', content)
+        self.assertIn('data-doc-kind="invoices"', content)
+        self.assertIn('id="btn-inv-scan"', content)
+        self.assertIn('id="btn-inv-bulk-actions"', content)
+
+        # Quotes: Item Table heading + q-tax-pricing dropdown + Guide button
+        self.assertIn('id="q-tax-pricing"', content)
+        self.assertIn('data-doc-kind="quotes"', content)
+        self.assertIn('id="btn-quote-scan"', content)
+        self.assertIn('id="btn-quote-bulk-actions"', content)
+
+        # Sales Orders: Item Table heading + so-tax-pricing dropdown + Guide button
+        self.assertIn('id="so-tax-pricing"', content)
+        self.assertIn('data-doc-kind="sales-orders"', content)
+        self.assertIn('id="btn-so-scan"', content)
+        self.assertIn('id="btn-so-bulk-actions"', content)
+
+        # Bills: Item Table heading + bill-tax-pricing dropdown + Guide button
+        self.assertIn('id="bill-tax-pricing"', content)
+        self.assertIn('data-doc-kind="bills"', content)
+        self.assertIn('id="btn-bill-scan"', content)
+        self.assertIn('id="btn-bill-bulk-actions"', content)
+
+        # Purchase Orders: Item Table heading + po-tax-pricing dropdown + Guide button
+        self.assertIn('id="po-tax-pricing"', content)
+        self.assertIn('data-doc-kind="purchase-orders"', content)
+        self.assertIn('id="btn-po-scan"', content)
+        self.assertIn('id="btn-po-bulk-actions"', content)
+
+        # Recurring Invoices: Item Table heading + rec-tax-pricing dropdown + Guide button
+        self.assertIn('id="rec-tax-pricing"', content)
+        self.assertIn('data-doc-kind="recurring-invoices"', content)
+        self.assertIn('id="btn-rec-scan"', content)
+        self.assertIn('id="btn-rec-bulk-actions"', content)
+
+        # Delivery Challans: Item Table heading + dc-tax-pricing dropdown + Guide button
+        self.assertIn('id="dc-tax-pricing"', content)
+        self.assertIn('data-doc-kind="delivery-challans"', content)
+        self.assertIn('id="dc-add-bulk"', content)
+
+        # CSS and styling checks
+        self.assertIn('.tax-pricing-select', content)
+        self.assertIn('.btn-tax-pricing-info', content)
+

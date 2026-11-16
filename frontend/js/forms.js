@@ -4659,14 +4659,14 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
             ].join('')}
           </div>
 
-          <div style="display:flex; align-items:center; justify-content:space-between; margin:24px 0 8px;">
-            <div style="display:flex; align-items:center; gap:12px;">
-              <span style="font-size:14px; font-weight:700; color:var(--tx);">Line items</span>
-              <select class="in" id="doc-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin:24px 0 8px; flex-wrap:wrap; gap:12px;">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <span style="font-size:15px; font-weight:700; color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select" id="doc-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
                 <option value="tax_exclusive" ${docTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
                 <option value="tax_inclusive" ${docTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
               </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="${kind}" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="${kind}" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
                 <i class="fa-solid fa-circle-info"></i> Guide
               </button>
             </div>
@@ -9316,8 +9316,17 @@ async function challanModal(id) {
 
     <!-- Item Table Master Card -->
     <div class="dc-card" style="margin-bottom:20px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 class="dc-card-heading" style="border:none;margin:0;padding:0;">Item Table</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <h3 class="dc-card-heading" style="border:none;margin:0;padding:0;font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</h3>
+          <select class="in tax-pricing-select" id="dc-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+            <option value="tax_exclusive">Tax Exclusive</option>
+            <option value="tax_inclusive">Tax Inclusive</option>
+          </select>
+          <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="delivery-challans" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+            <i class="fa-solid fa-circle-info"></i> Guide
+          </button>
+        </div>
         <div style="display:flex;gap:8px;">
           <button type="button" class="btn" id="dc-add-bulk" style="font-size:12px;">Bulk Actions</button>
         </div>
@@ -9462,7 +9471,9 @@ async function challanModal(id) {
 
       const tbody = $('#dc-lines', form);
       const recalc = () => {
+        const isTaxInclusive = ($('#dc-tax-pricing', form)?.value === 'tax_inclusive');
         let subtotal = 0;
+        let taxTotal = 0;
         $$('.dc-line', tbody).forEach(row => {
           const quantity = Number($('.dc-quantity', row).value) || 0;
           const rate = Number($('.dc-rate', row).value) || 0;
@@ -9471,22 +9482,27 @@ async function challanModal(id) {
           const taxRate = Number($('.dc-tax', row).value) || 0;
           const gross = quantity * rate;
           const discountAmount = discountType === 'percentage' ? gross * discount / 100 : discount;
-          const taxable = Math.max(0, gross - discountAmount);
-          const amount = taxable + taxable * taxRate / 100;
-          $('.dc-amount', row).textContent = money(amount);
+          const net = Math.max(0, gross - discountAmount);
+          let taxable = net;
+          let taxAmt = 0;
+          let lineTot = net;
+          if (isTaxInclusive && taxRate > 0) {
+            taxable = r2(net / (1 + taxRate / 100));
+            taxAmt = r2(net - taxable);
+            lineTot = net;
+          } else {
+            taxable = r2(net);
+            taxAmt = r2(taxable * taxRate / 100);
+            lineTot = r2(taxable + taxAmt);
+          }
+          $('.dc-amount', row).textContent = money(lineTot);
           subtotal += taxable;
+          taxTotal += taxAmt;
         });
-        const taxTotal = $$('.dc-line', tbody).reduce((sum, row) => {
-          const quantity = Number($('.dc-quantity', row).value) || 0;
-          const rate = Number($('.dc-rate', row).value) || 0;
-          const discount = Number($('.dc-discount', row).value) || 0;
-          const discountAmount = $('.dc-discount-type', row).value === 'percentage' ? quantity * rate * discount / 100 : discount;
-          const taxable = Math.max(0, quantity * rate - discountAmount);
-          return sum + taxable * (Number($('.dc-tax', row).value) || 0) / 100;
-        }, 0);
         $('#dc-subtotal', form).textContent = `${currency.value || 'INR'} ${money(subtotal)}`;
         $('#dc-total', form).textContent = `${currency.value || 'INR'} ${money(Math.max(0, subtotal + taxTotal + (Number(form.elements.adjustment.value) || 0)))}`;
       };
+      $('#dc-tax-pricing', form)?.addEventListener('change', recalc);
       const addRow = (line = {}) => {
         tbody.insertAdjacentHTML('beforeend', rowHtml(line));
         const row = tbody.lastElementChild;
@@ -10281,37 +10297,18 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           </div>
         </div>
 
-        <!-- Tax Mode Selector -->
-        <div class="tax-mode-container" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-            <span style="font-size:13px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-percent" style="color:#0284c7;font-size:12px;"></i>
-              Amounts are:
-            </span>
-            <div class="segmented-control" style="display:inline-flex;background:#f1f5f9;padding:3px;border-radius:8px;border:1px solid #cbd5e1;">
-              <button type="button" class="btn-tax-mode ${rTaxPricing !== 'tax_inclusive' ? 'active' : ''}" data-tax-mode="tax_exclusive" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;${rTaxPricing !== 'tax_inclusive' ? 'background:#ffffff;color:#0284c7;box-shadow:0 1px 3px rgba(0,0,0,0.1);' : 'background:transparent;color:#64748b;'}">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode ${rTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-tax-mode="tax_inclusive" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;${rTaxPricing === 'tax_inclusive' ? 'background:#ffffff;color:#0284c7;box-shadow:0 1px 3px rgba(0,0,0,0.1);' : 'background:transparent;color:#64748b;'}">
-                Tax Inclusive
-              </button>
-            </div>
-            <input type="hidden" id="rec-tax-pricing" name="tax_pricing_type" value="${rTaxPricing}">
-            <span id="rec-tax-mode-badge" style="font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:12px;${rTaxPricing === 'tax_inclusive' ? 'background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;' : 'background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;'}">
-              ${rTaxPricing === 'tax_inclusive' ? 'Tax Included in Item Rate' : 'Tax Added on Subtotal'}
-            </span>
-          </div>
-          <button type="button" class="btn ic" id="btn-rec-tax-guide" title="Tax Calculation Guide" style="border:none;background:transparent;color:#64748b;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 8px;">
-            <i class="fa-solid fa-circle-question" style="color:#0284c7;"></i>
-            <span>Tax Guide</span>
-          </button>
-        </div>
-
         <!-- Section 2: Item Table -->
         <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-weight:700;font-size:15px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select" id="rec-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${rTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${rTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="recurring-invoices" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-rec-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#0284c7;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:6px;">
@@ -10532,6 +10529,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   $('#btn-rec-tax-guide', form)?.addEventListener('click', () => {
     openTaxPricingGuideModal('recurring-invoices');
   });
+  $('#rec-tax-pricing', form)?.addEventListener('change', calcRecTotals);
 
   function calcRecTotals() {
     const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
@@ -12177,35 +12175,18 @@ ${renderStockQuantityCell(l, items, whList)}
           </div>
         </div>
 
-        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
-        <div class="invoice-tax-mode-container">
-          <div class="tax-mode-pill-box">
-            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
-            </span>
-            <div class="tax-mode-toggle">
-              <button type="button" class="btn-tax-mode ${qTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode ${qTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
-                Tax Inclusive
-              </button>
-            </div>
-            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Guide
-            </button>
-            <select class="in" id="q-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${qTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${qTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-          </div>
-        </div>
-
         <!-- Section 2: Item Table -->
         <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select" id="q-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${qTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${qTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-quote-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
@@ -13269,35 +13250,18 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
-        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
-        <div class="invoice-tax-mode-container">
-          <div class="tax-mode-pill-box">
-            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
-            </span>
-            <div class="tax-mode-toggle">
-              <button type="button" class="btn-tax-mode ${soTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode ${soTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
-                Tax Inclusive
-              </button>
-            </div>
-            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Guide
-            </button>
-            <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-          </div>
-        </div>
-
         <!-- Section 2: Item Table -->
         <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select" id="so-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-so-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
@@ -14128,34 +14092,17 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
-        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
-        <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:16px;">
-          <div style="display:inline-flex;align-items:center;gap:10px;background:#ffffff;border:1px solid #e2e8f0;padding:5px 12px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
-            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
-            </span>
-            <div style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px;">
-              <button type="button" class="btn-tax-mode btn-bill-tax-mode ${billTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${billTaxPricing === 'tax_exclusive' ? '#0284c7' : 'transparent'};color:${billTaxPricing === 'tax_exclusive' ? '#ffffff' : '#64748b'};">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode btn-bill-tax-mode ${billTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${billTaxPricing === 'tax_inclusive' ? '#0284c7' : 'transparent'};color:${billTaxPricing === 'tax_inclusive' ? '#ffffff' : '#64748b'};">
-                Tax Inclusive
-              </button>
-            </div>
-            <select class="in" id="bill-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${billTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${billTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="bills" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Guide
-            </button>
-          </div>
-        </div>
-
         <div style="margin-top:20px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select btn-bill-tax-mode" id="bill-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${billTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${billTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="bills" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-bill-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -14960,34 +14907,17 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
-        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
-        <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:16px;">
-          <div style="display:inline-flex;align-items:center;gap:10px;background:#ffffff;border:1px solid #e2e8f0;padding:5px 12px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
-            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
-            </span>
-            <div style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px;">
-              <button type="button" class="btn-tax-mode btn-po-tax-mode ${poTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${poTaxPricing === 'tax_exclusive' ? '#0284c7' : 'transparent'};color:${poTaxPricing === 'tax_exclusive' ? '#ffffff' : '#64748b'};">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode btn-po-tax-mode ${poTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${poTaxPricing === 'tax_inclusive' ? '#0284c7' : 'transparent'};color:${poTaxPricing === 'tax_inclusive' ? '#ffffff' : '#64748b'};">
-                Tax Inclusive
-              </button>
-            </div>
-            <select class="in" id="po-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${poTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${poTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="purchase-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-              <i class="fa-solid fa-circle-info"></i> Guide
-            </button>
-          </div>
-        </div>
-
         <div style="margin-top:20px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select btn-po-tax-mode" id="po-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${poTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${poTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="purchase-orders" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-po-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -15781,6 +15711,55 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             background: #334155 !important;
             color: #f1f5f9 !important;
           }
+          .tax-pricing-select {
+            height: 34px !important;
+            padding: 0 10px !important;
+            border-radius: 8px !important;
+            border: 1px solid #cbd5e1 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            cursor: pointer !important;
+            outline: none !important;
+            box-sizing: border-box !important;
+          }
+          .tax-pricing-select:focus {
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) !important;
+          }
+          .btn-tax-pricing-info {
+            height: 34px !important;
+            padding: 0 14px !important;
+            border-radius: 20px !important;
+            border: 1px solid #bfdbfe !important;
+            background: #eff6ff !important;
+            color: #2563eb !important;
+            font-size: 12.5px !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            box-sizing: border-box !important;
+            text-decoration: none !important;
+            transition: all 0.15s ease !important;
+          }
+          .btn-tax-pricing-info:hover {
+            background: #dbeafe !important;
+            border-color: #93c5fd !important;
+            color: #1d4ed8 !important;
+          }
+          [data-theme="dark"] .tax-pricing-select {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .btn-tax-pricing-info {
+            background: rgba(37, 99, 235, 0.15) !important;
+            border-color: #2563eb !important;
+            color: #60a5fa !important;
+          }
           @media (max-width: 1024px) {
             .invoice-three-cards-grid {
               grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -15935,32 +15914,18 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
         </div>
 
-        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
-        <div class="invoice-tax-mode-container">
-          <div class="tax-mode-pill-box">
-            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
-            </span>
-            <div class="tax-mode-toggle">
-              <button type="button" class="btn-tax-mode ${invTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
-                Tax Exclusive
-              </button>
-              <button type="button" class="btn-tax-mode ${invTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
-                Tax Inclusive
-              </button>
-            </div>
-            <select class="in" id="inv-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
-              <option value="tax_exclusive" ${invTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-              <option value="tax_inclusive" ${invTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-            </select>
-          </div>
-        </div>
-
         <!-- Section 2: Item Table -->
         <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:700;color:var(--tx,#0f172a);">Item Table</span>
+              <select class="in tax-pricing-select" id="inv-tax-pricing" name="tax_pricing_type" style="width:145px;height:34px;padding:0 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-size:13px;font-weight:500;cursor:pointer;" title="Tax Pricing Type">
+                <option value="tax_exclusive" ${invTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+                <option value="tax_inclusive" ${invTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+              </select>
+              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="invoices" style="height:34px;padding:0 14px;border-radius:20px;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+                <i class="fa-solid fa-circle-info"></i> Guide
+              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-inv-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
@@ -16191,24 +16156,27 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       const lineAmt = qty * rate;
       const gstRate = num($('.l-gst', tr).value) || 0;
 
-      $('.l-amt', tr).textContent = lineAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      
       totalQty += qty;
       grossTotal += lineAmt;
 
       const discountedLine = lineAmt * (100 - discPct) / 100;
+      let lineTaxable = 0;
+      let lineTax = 0;
+      let lineTot = 0;
 
       if (isTaxInclusive && gstRate > 0) {
-        const lineTaxable = r2(discountedLine / (1 + gstRate / 100));
-        const lineTax = r2(discountedLine - lineTaxable);
-        subtotal += lineTaxable;
-        totalLineTax += lineTax;
+        lineTaxable = r2(discountedLine / (1 + gstRate / 100));
+        lineTax = r2(discountedLine - lineTaxable);
+        lineTot = discountedLine;
       } else {
-        const lineTaxable = r2(discountedLine);
-        const lineTax = r2(lineTaxable * gstRate / 100);
-        subtotal += lineTaxable;
-        totalLineTax += lineTax;
+        lineTaxable = r2(discountedLine);
+        lineTax = r2(lineTaxable * gstRate / 100);
+        lineTot = r2(lineTaxable + lineTax);
       }
+      subtotal += lineTaxable;
+      totalLineTax += lineTax;
+
+      $('.l-amt', tr).textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
     const discAmt = r2(grossTotal * discPct / 100);

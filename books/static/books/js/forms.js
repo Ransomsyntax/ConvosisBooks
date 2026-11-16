@@ -8893,6 +8893,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   const rDiscountPct = (rLines[0] && num(rLines[0].discount_percent)) || 0;
   const rAdj = rec ? (num(rec.adjustment) || 0) : 0;
   const rTcs = rec ? (num(rec.tcs_rate) || 0) : 0;
+  const rTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const pendingFiles = [];
 
   const rowHtml = (l = {}) => `
@@ -8936,103 +8937,133 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
   `;
 
   target.innerHTML = `
-    <div class="recurring-invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+    <style>
+      .invoice-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 1024px) {
+        .invoice-cards-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .invoice-cards-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      [data-theme="dark"] .recurring-invoice-form-page {
+        background: #0b1329 !important;
+      }
+      [data-theme="dark"] .invoice-card {
+        background: #111c38 !important;
+        border-color: #1e293b !important;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.3) !important;
+      }
+      [data-theme="dark"] .invoice-card h3 {
+        color: #38bdf8 !important;
+      }
+      [data-theme="dark"] .invoice-card label {
+        color: #cbd5e1 !important;
+      }
+      [data-theme="dark"] .invoice-card label[style*="#ef4444"] {
+        color: #f87171 !important;
+      }
+      [data-theme="dark"] .invoice-card .in {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        border-color: #334155 !important;
+      }
+      [data-theme="dark"] .invoice-card .in:focus {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 2px rgba(56,189,248,0.2) !important;
+      }
+      [data-theme="dark"] .tax-mode-container {
+        background: #111c38 !important;
+        border-color: #1e293b !important;
+      }
+      [data-theme="dark"] .segmented-control {
+        background: #0f172a !important;
+        border-color: #334155 !important;
+      }
+      [data-theme="dark"] #rec-customer ~ div {
+        background: #1e293b !important;
+        border-color: #334155 !important;
+        color: #cbd5e1 !important;
+      }
+    </style>
+
+    <div class="recurring-invoice-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
       <!-- Header -->
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid var(--bd,#e2e8f0);background:#fff;position:sticky;top:0;z-index:20;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
         <div style="display:flex;align-items:center;gap:12px;">
-          <i class="fa-solid fa-rotate" style="font-size:22px;color:#2563eb;"></i>
-          <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Recurring Invoice' : 'New Recurring Invoice'}</h1>
+          <div style="width:36px;height:36px;border-radius:8px;background:#eff6ff;display:flex;align-items:center;justify-content:center;color:#0284c7;font-size:18px;">
+            <i class="fa-solid fa-rotate"></i>
+          </div>
+          <div>
+            <h1 style="font-size:18px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Recurring Invoice' : 'New Recurring Invoice'}</h1>
+            <div style="font-size:11.5px;color:#64748b;margin-top:1px;">Sales &rsaquo; Recurring Invoices</div>
+          </div>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" id="btn-rec-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+          <button type="button" class="btn ic" id="btn-rec-close-x" title="Close" style="border:1px solid var(--bd,#cbd5e1);background:#fff;color:#64748b;width:34px;height:34px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
 
-      <form id="recurring-form-element" style="padding:24px 28px;max-width:1120px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="recurring-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;display:flex;flex-direction:column;gap:24px;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <!-- Section 1: Customer & Profile Information -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;">
-            <i class="fa-regular fa-calendar-check" style="color:#3b82f6;"></i> Recurring Profile &amp; Customer Information
-          </div>
+        <!-- Master Three-Card Information Layout -->
+        <div class="invoice-cards-grid">
+          <!-- Card 1: 1. Customer Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
 
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:18px;">
-            <!-- Customer Name* -->
             <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
+              <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="rec-customer" name="customer" required style="flex:1;">
+                <select class="in" id="rec-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
                   <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
                   ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
                 </select>
-                <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
+                <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
                   <i class="fa-solid fa-magnifying-glass"></i>
                 </button>
-                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
+                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
               </div>
             </div>
 
-            <!-- Accounts Receivable -->
             <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+              <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Profile Name*</label>
+              <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Support Retainer" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
+            </div>
+
+            <div>
+              <label style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">Salesperson</label>
+              <div id="rec-salesperson-container"></div>
+            </div>
+          </div>
+
+          <!-- Card 2: 2. Account Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">2. Account Details</h3>
+
+            <div>
+              <label style="font-size:13px;font-weight:600;color:#334155;display:flex;align-items:center;gap:5px;margin-bottom:6px;">
                 Accounts Receivable
                 <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
               </label>
-              <select class="in" id="rec-accounts-receivable" name="accounts_receivable" style="width:100%;">
+              <select class="in" id="rec-accounts-receivable" name="accounts_receivable" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
                 <option value="Accounts Receivable" selected>Accounts Receivable</option>
               </select>
             </div>
 
-            <!-- Profile Name* -->
             <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Profile Name*</label>
-              <input class="in" id="rec-profile-name" name="profile_name" value="${esc(rProfileName)}" required placeholder="e.g. Monthly Support Retainer" style="width:100%;">
-            </div>
-
-            <!-- Order Number -->
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Order Number</label>
-              <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-001" style="width:100%;">
-            </div>
-          </div>
-
-          <!-- Schedule Row: Repeat Every, Starts On, Ends On -->
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:18px;margin-top:16px;">
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Repeat Every*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" type="number" id="rec-repeat-every" name="repeat_every" min="1" value="${rRepeatEvery}" style="width:65px;text-align:center;">
-                <select class="in" id="rec-frequency" name="frequency" style="flex:1;">
-                  <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Week(s)</option>
-                  <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Month(s)</option>
-                  <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Year(s)</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Starts On*</label>
-              <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:100%;">
-            </div>
-
-            <div>
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-                <label style="font-weight:600;font-size:12.5px;color:var(--tx);">Ends On</label>
-                <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;cursor:pointer;color:var(--tx);">
-                  <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''} style="cursor:pointer;"> Never Expires
-                </label>
-              </div>
-              <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:100%;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
-            </div>
-          </div>
-
-          <!-- Terms & Salesperson Sub-row -->
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:18px;margin-top:16px;">
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Payment Terms</label>
-              <select class="in" id="rec-payment-terms" name="payment_terms" style="width:100%;">
+              <label style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">Payment Terms</label>
+              <select class="in" id="rec-payment-terms" name="payment_terms" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
                 <option value="Due on Receipt" ${rPaymentTerms === 'Due on Receipt' || rPaymentTerms === '0' ? 'selected' : ''}>Due on Receipt</option>
                 <option value="Net 15" ${rPaymentTerms === 'Net 15' || rPaymentTerms === '15' ? 'selected' : ''}>Net 15</option>
                 <option value="Net 30" ${rPaymentTerms === 'Net 30' || rPaymentTerms === '30' ? 'selected' : ''}>Net 30</option>
@@ -9043,36 +9074,96 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
             </div>
 
             <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Salesperson</label>
-              <div id="rec-salesperson-container"></div>
+              <label style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">Order Number</label>
+              <input class="in" id="rec-order-number" name="order_number" value="${esc(rOrderNum)}" placeholder="e.g. REC-001" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
+            </div>
+          </div>
+
+          <!-- Card 3: 3. Recurring Schedule Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">3. Recurring Schedule Details</h3>
+
+            <div>
+              <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Repeat Every*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" type="number" id="rec-repeat-every" name="repeat_every" min="1" value="${rRepeatEvery}" style="width:70px;height:38px !important;text-align:center;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
+                <select class="in" id="rec-frequency" name="frequency" style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
+                  <option value="weekly" ${rFrequency === 'weekly' ? 'selected' : ''}>Week(s)</option>
+                  <option value="monthly" ${rFrequency === 'monthly' ? 'selected' : ''}>Month(s)</option>
+                  <option value="yearly" ${rFrequency === 'yearly' ? 'selected' : ''}>Year(s)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div>
+                <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Starts On*</label>
+                <input class="in" type="date" id="rec-start-date" name="start_date" value="${rStartDate}" required style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
+              </div>
+
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                  <label style="font-size:13px;font-weight:600;color:#334155;">Ends On</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:11.5px;font-weight:500;cursor:pointer;color:#64748b;">
+                    <input type="checkbox" id="rec-never-ends" ${rNeverEnds ? 'checked' : ''} style="cursor:pointer;"> Never
+                  </label>
+                </div>
+                <input class="in" type="date" id="rec-end-date" name="end_date" value="${rEndDate}" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;" ${rNeverEnds ? 'disabled style="opacity:0.5;"' : ''}>
+              </div>
             </div>
 
             <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+              <label style="font-size:13px;font-weight:600;color:#334155;display:flex;align-items:center;gap:5px;margin-bottom:6px;">
                 Subject <i class="fa-solid fa-circle-info" style="color:#94a3b8;font-size:12px;cursor:help;" title="Brief summary of transaction visible to customer"></i>
               </label>
-              <input class="in" id="rec-subject" name="subject" value="${esc(rSubject)}" placeholder="Let your customer know what this Recurring Invoice is for" style="width:100%;">
+              <input class="in" id="rec-subject" name="subject" value="${esc(rSubject)}" placeholder="Let your customer know what this Recurring Invoice is for" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
             </div>
           </div>
         </div>
 
+        <!-- Tax Mode Selector -->
+        <div class="tax-mode-container" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-percent" style="color:#0284c7;font-size:12px;"></i>
+              Amounts are:
+            </span>
+            <div class="segmented-control" style="display:inline-flex;background:#f1f5f9;padding:3px;border-radius:8px;border:1px solid #cbd5e1;">
+              <button type="button" class="btn-tax-mode ${rTaxPricing !== 'tax_inclusive' ? 'active' : ''}" data-tax-mode="tax_exclusive" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;${rTaxPricing !== 'tax_inclusive' ? 'background:#ffffff;color:#0284c7;box-shadow:0 1px 3px rgba(0,0,0,0.1);' : 'background:transparent;color:#64748b;'}">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode ${rTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-tax-mode="tax_inclusive" style="padding:6px 14px;font-size:12.5px;font-weight:600;border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;${rTaxPricing === 'tax_inclusive' ? 'background:#ffffff;color:#0284c7;box-shadow:0 1px 3px rgba(0,0,0,0.1);' : 'background:transparent;color:#64748b;'}">
+                Tax Inclusive
+              </button>
+            </div>
+            <input type="hidden" id="rec-tax-pricing" name="tax_pricing_type" value="${rTaxPricing}">
+            <span id="rec-tax-mode-badge" style="font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:12px;${rTaxPricing === 'tax_inclusive' ? 'background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;' : 'background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;'}">
+              ${rTaxPricing === 'tax_inclusive' ? 'Tax Included in Item Rate' : 'Tax Added on Subtotal'}
+            </span>
+          </div>
+          <button type="button" class="btn ic" id="btn-rec-tax-guide" title="Tax Calculation Guide" style="border:none;background:transparent;color:#64748b;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 8px;">
+            <i class="fa-solid fa-circle-question" style="color:#0284c7;"></i>
+            <span>Tax Guide</span>
+          </button>
+        </div>
+
         <!-- Section 2: Item Table -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+        <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#3b82f6;"></i> Item Table
+            <div style="font-weight:700;font-size:15px;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-rec-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
+              <button type="button" class="btn" id="btn-rec-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#0284c7;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:6px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-rec-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
+              <button type="button" class="btn" id="btn-rec-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#0284c7;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:6px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
           </div>
 
-          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+          <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>
@@ -9094,32 +9185,32 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
-            <button type="button" class="btn" id="btn-rec-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn" id="btn-rec-add-row" style="color:#0284c7;border-color:#bae6fd;background:#f0f9ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:6px;padding:6px 14px;">
               <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
             </button>
-            <button type="button" class="btn" id="btn-rec-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn" id="btn-rec-bulk-items" style="color:#0284c7;border-color:#bae6fd;background:#f0f9ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:6px;padding:6px 14px;">
               <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
             </button>
           </div>
         </div>
 
         <!-- Section 3: Calculations & Summary (Two Column Grid) -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:22px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
           <!-- Left: Notes & Terms -->
-          <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:18px;">
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:18px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
             <div>
               <label for="rec-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="rec-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rNotes)}</textarea>
+              <textarea class="in" id="rec-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;border-radius:8px;border:1px solid #e2e8f0;">${esc(rNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on generated recurring invoices</span>
             </div>
             <div>
               <label for="rec-terms-text" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="rec-terms-text" name="terms_conditions" rows="4" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(rTerms)}</textarea>
+              <textarea class="in" id="rec-terms-text" name="terms_conditions" rows="4" placeholder="Enter terms and conditions to be displayed on generated invoices" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;border-radius:8px;border:1px solid #e2e8f0;">${esc(rTerms)}</textarea>
             </div>
           </div>
 
           <!-- Right: Calculation Summary Card -->
-          <div class="form-card" style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:22px;">
+          <div class="invoice-card" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
             <!-- Sub Total -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
               <span style="font-weight:600;color:var(--tx);font-size:13.5px;">Sub Total</span>
@@ -9130,7 +9221,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
               <span style="font-weight:500;color:var(--tx);font-size:13px;">Discount</span>
               <div style="display:flex;align-items:center;gap:10px;">
-                <div style="display:flex;align-items:center;border:1px solid var(--bd);border-radius:4px;background:#fff;padding:0 6px;">
+                <div style="display:flex;align-items:center;border:1px solid var(--bd);border-radius:6px;background:#fff;padding:0 6px;">
                   <input type="number" step="0.01" min="0" max="100" id="rec-discount-pct" name="discount_percent" value="${rDiscountPct}" style="width:50px;border:none;outline:none;text-align:right;font-size:13px;padding:5px 2px;">
                   <span style="font-size:12px;color:#64748b;padding-left:4px;">%</span>
                 </div>
@@ -9145,7 +9236,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                 <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Add or subtract an adjustment amount to round or balance the total"></i>
               </div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <input type="number" step="0.01" class="in" id="rec-adj-val" name="adjustment" value="${rAdj}" style="width:90px;text-align:right;font-size:13px;">
+                <input type="number" step="0.01" class="in" id="rec-adj-val" name="adjustment" value="${rAdj}" style="width:90px;text-align:right;font-size:13px;border-radius:6px;">
                 <span id="rec-adj-display" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
               </div>
             </div>
@@ -9157,7 +9248,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                 <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Tax Collected at Source applicable under Income Tax Section 206C"></i>
               </div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <select class="in" id="rec-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;">
+                <select class="in" id="rec-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;border-radius:6px;">
                   <option value="0">Select a Tax</option>
                   <option value="0.075" ${rTcs === 0.075 ? 'selected' : ''}>TCS [0.075%]</option>
                   <option value="0.1" ${rTcs === 0.1 ? 'selected' : ''}>TCS [0.1%]</option>
@@ -9178,7 +9269,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         </div>
 
         <!-- Section 4: Attachments, Payment Gateway & Preferences -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;">
+        <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
           <!-- Attach File(s) -->
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div>
@@ -9186,7 +9277,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
               <div style="font-size:11.5px;color:#64748b;margin-top:2px;">You can upload a maximum of 10 files, 10MB each</div>
             </div>
             <input type="file" id="rec-file-input" multiple style="display:none;">
-            <button type="button" class="btn" id="btn-rec-upload" style="font-size:12px;background:#f8fafc;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:4px;">
+            <button type="button" class="btn" id="btn-rec-upload" style="font-size:12px;background:#f8fafc;border:1px solid #cbd5e1;display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 14px;border-radius:6px;">
               <i class="fa-solid fa-upload"></i> Upload File ▾
             </button>
           </div>
@@ -9199,20 +9290,20 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           <div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding-top:14px;border-top:1px solid #f1f5f9;font-size:13px;">
             <input type="checkbox" id="rec-create-as-draft" name="create_as_draft" ${rCreateDraft ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
             <label for="rec-create-as-draft" style="font-weight:600;font-size:13px;color:var(--tx);cursor:pointer;display:flex;align-items:center;gap:6px;">
-              Preferences : Create Invoices as Drafts <i class="fa-solid fa-gear" style="color:#2563eb;font-size:12px;"></i>
+              Preferences : Create Invoices as Drafts <i class="fa-solid fa-gear" style="color:#0284c7;font-size:12px;"></i>
             </label>
           </div>
         </div>
 
         <!-- Sticky Bottom Bar -->
-        <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--bd);margin-top:24px;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;z-index:20;box-shadow:0 -2px 10px rgba(0,0,0,0.05);">
+        <div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd,#e2e8f0);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;z-index:100;box-shadow:0 -2px 8px rgba(0,0,0,0.04);">
           <div style="display:flex;align-items:center;gap:10px;">
-            <button type="button" class="btn p" id="btn-rec-save" style="font-weight:600;cursor:pointer;">Save Profile</button>
-            <button type="button" class="btn" id="btn-rec-save-draft" style="background:#fff;font-weight:500;cursor:pointer;">Save as Draft</button>
-            <button type="button" class="btn" id="btn-rec-cancel" style="background:#fff;font-weight:500;cursor:pointer;">Cancel</button>
+            <button type="button" class="btn p" id="btn-rec-save" style="font-weight:600;cursor:pointer;padding:8px 18px;border-radius:6px;">Save Profile</button>
+            <button type="button" class="btn" id="btn-rec-save-draft" style="background:#fff;font-weight:500;cursor:pointer;padding:8px 18px;border-radius:6px;">Save as Draft</button>
+            <button type="button" class="btn" id="btn-rec-cancel" style="background:#fff;font-weight:500;cursor:pointer;padding:8px 16px;border-radius:6px;">Cancel</button>
           </div>
           <div style="display:flex;align-items:center;gap:20px;font-size:13px;font-weight:600;color:#0f172a;">
-            <span style="color:#64748b;font-weight:400;">PDF Template: <b style="color:#0f172a;">'Spreadsheet Template'</b> <a href="#/settings/pdf-templates" style="color:#2563eb;text-decoration:none;font-size:12px;">Change</a></span>
+            <span style="color:#64748b;font-weight:400;">PDF Template: <b style="color:#0f172a;">'Spreadsheet Template'</b> <a href="#/settings/pdf-templates" style="color:#0284c7;text-decoration:none;font-size:12px;">Change</a></span>
             <span>Total Quantity: <span id="rec-bar-total-qty">0.00</span></span>
             <span>Total Amount: <span id="rec-bar-total-amount">₹ 0.00</span></span>
           </div>
@@ -9247,7 +9338,43 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     });
   }
 
+  // Tax Mode Segmented Control
+  $$('.btn-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', e => {
+      const mode = e.currentTarget.dataset.taxMode;
+      const hiddenInput = $('#rec-tax-pricing', form);
+      if (hiddenInput) hiddenInput.value = mode;
+      $$('.btn-tax-mode', form).forEach(b => {
+        const isActive = (b.dataset.taxMode === mode);
+        b.classList.toggle('active', isActive);
+        b.style.background = isActive ? '#ffffff' : 'transparent';
+        b.style.color = isActive ? '#0284c7' : '#64748b';
+        b.style.boxShadow = isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none';
+      });
+      const badge = $('#rec-tax-mode-badge', form);
+      if (badge) {
+        if (mode === 'tax_inclusive') {
+          badge.textContent = 'Tax Included in Item Rate';
+          badge.style.background = '#ecfdf5';
+          badge.style.color = '#059669';
+          badge.style.border = '1px solid #a7f3d0';
+        } else {
+          badge.textContent = 'Tax Added on Subtotal';
+          badge.style.background = '#eff6ff';
+          badge.style.color = '#2563eb';
+          badge.style.border = '1px solid #bfdbfe';
+        }
+      }
+      calcRecTotals();
+    });
+  });
+
+  $('#btn-rec-tax-guide', form)?.addEventListener('click', () => {
+    openTaxPricingGuideModal('recurring-invoices');
+  });
+
   function calcRecTotals() {
+    const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalLineTax = 0;
     let totalQty = 0;
@@ -9256,18 +9383,30 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     $$('.ln-rec', tbody).forEach(tr => {
       const q = num($('.l-qty', tr).value) || 0;
       const r = num($('.l-rate', tr).value) || 0;
-      const lineAmt = q * r;
       const gst = num($('.l-gst', tr).value) || 0;
 
       totalQty += q;
-      subtotal += lineAmt;
+      const gross = q * r;
+      const net = gross * (100 - discPct) / 100;
+      let taxable = net;
+      let taxAmt = 0;
+      let lineTot = net;
 
-      const discountedLine = lineAmt * (100 - discPct) / 100;
-      const lineTax = discountedLine * gst / 100;
-      totalLineTax += lineTax;
+      if (isTaxInclusive && gst > 0) {
+        taxable = r2(net / (1 + gst / 100));
+        taxAmt = r2(net - taxable);
+        lineTot = net;
+      } else {
+        taxable = r2(net);
+        taxAmt = r2(taxable * (gst / 100));
+        lineTot = r2(taxable + taxAmt);
+      }
+
+      subtotal += taxable;
+      totalLineTax += taxAmt;
 
       const amtEl = $('.l-amt', tr);
-      if (amtEl) amtEl.textContent = lineAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
     const discAmt = subtotal * discPct / 100;
@@ -9532,9 +9671,21 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       const rVal = num($('.l-rate', tr).value) || 0;
       const gVal = num($('.l-gst', tr).value) || 0;
 
-      const lineAmt = qVal * rVal;
-      const discountedLine = lineAmt * (100 - discPct) / 100;
-      const lTot = r2(discountedLine * (1 + gVal / 100));
+      const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
+      const gross = qVal * rVal;
+      const net = gross * (100 - discPct) / 100;
+      let taxable = net;
+      let taxAmt = 0;
+      let lTot = net;
+      if (isTaxInclusive && gVal > 0) {
+        taxable = r2(net / (1 + gVal / 100));
+        taxAmt = r2(net - taxable);
+        lTot = net;
+      } else {
+        taxable = r2(net);
+        taxAmt = r2(taxable * (gVal / 100));
+        lTot = r2(taxable + taxAmt);
+      }
 
       lines.push({
         item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
@@ -9574,7 +9725,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       end_date: ed,
       never_ends: neverEnds,
       payment_terms: $('#rec-payment-terms', form)?.value || 'Due on Receipt',
-      tax_pricing_type: 'tax_exclusive',
+      tax_pricing_type: $('#rec-tax-pricing', form)?.value || (rec && rec.tax_pricing_type) || 'tax_exclusive',
       customer_type: 'b2b',
       salesperson: form.querySelector('#rec-salesperson-container select.sp-select')?.value || '',
       subject: ($('#rec-subject', form)?.value || '').trim(),
@@ -10563,7 +10714,7 @@ ${renderStockQuantityCell(l, items, whList)}
   `;
 
   target.innerHTML = `
-    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+    <div class="invoice-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
         <div style="display:flex;align-items:center;gap:12px;">
           <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
@@ -10575,120 +10726,299 @@ ${renderStockQuantityCell(l, items, whList)}
         </div>
       </div>
 
-      <form id="quote-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="quote-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="q-customer" name="customer" required style="flex:1;">
-                <option value="">Select or add a customer</option>
-                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
-          </div>
+        <!-- Section 1: Three-Card Information Layout -->
+        <style>
+          .quote-three-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .quote-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+          }
+          .quote-card-heading {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0284c7;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.01em;
+            line-height: 1.3;
+          }
+          .quote-card-field {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+          }
+          .quote-card-field:last-child {
+            margin-bottom: 0;
+          }
+          .quote-card-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 6px;
+            line-height: 1.2;
+          }
+          .quote-card-label.required {
+            color: #ef4444;
+          }
+          .quote-card .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .quote-card .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          .quote-card select.in {
+            cursor: pointer;
+          }
+          .quote-card .sp-select-trigger {
+            width: 100% !important;
+            height: 38px !important;
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            box-sizing: border-box !important;
+            padding: 0 12px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+          }
+          .quote-card .sp-select-trigger:hover {
+            border-color: #cbd5e1 !important;
+          }
+          .quote-card .currency-badge {
+            height: 38px;
+            padding: 0 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            user-select: none;
+            box-sizing: border-box;
+          }
+          [data-theme="dark"] .quote-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .quote-card-heading {
+            color: #38bdf8 !important;
+          }
+          [data-theme="dark"] .quote-card-label {
+            color: #f1f5f9 !important;
+          }
+          [data-theme="dark"] .quote-card-label.required {
+            color: #f87171 !important;
+          }
+          [data-theme="dark"] .quote-card .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .quote-card select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .quote-card .sp-select-trigger {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .quote-card .currency-badge {
+            background: #334155 !important;
+            border-color: #475569 !important;
+            color: #f8fafc !important;
+          }
+          @media (max-width: 1024px) {
+            .quote-three-cards-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+            }
+          }
+          @media (max-width: 768px) {
+            .quote-three-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
+          }
+        </style>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
-            <div>
-              <select class="in" id="q-location" name="location" style="width:260px;">
-                ${whList.map(w => `<option value="${esc(w.name)}" ${(qLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-              </select>
-              <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+        <div class="quote-three-cards-grid">
+          <!-- Card 1: 1. Customer Details -->
+          <div class="quote-card">
+            <h3 class="quote-card-heading">1. Customer Details</h3>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-customer">Customer Name*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="q-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
+                  <option value="">Select or add a customer</option>
+                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
+                </button>
+                <div class="currency-badge">INR</div>
               </div>
-              <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(qBranch)}" style="width:260px;margin-top:6px;">
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="q-customer-type" name="customer_type" style="width:260px;">
-                <option value="b2b" ${qCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                <option value="b2c" ${qCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-              </select>
-              <div id="q-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
-                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                <span id="q-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || 'Not provided'}</span>
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-customer-type">Customer Type</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="q-customer-type" name="customer_type" style="flex:1;min-width:0;padding:0 10px;">
+                  <option value="b2b" ${qCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                  <option value="b2c" ${qCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+                </select>
+                <div id="q-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:0 10px;height:38px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;">
+                  <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                  <span id="q-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || 'Not provided'}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="q-series" name="transaction_series" style="width:180px;">
-                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              </select>
-              <input class="in" id="q-number" name="number" value="${qNumber}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
+            <div class="quote-card-field">
+              <label class="quote-card-label">Salesperson</label>
+              <div id="q-salesperson-container" style="width:100%;"></div>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
-            <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:260px;">
+          <!-- Card 2: 2. Account Details -->
+          <div class="quote-card">
+            <h3 class="quote-card-heading">2. Account Details</h3>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-location">Location &amp; Branch</label>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <select class="in" id="q-location" name="location" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                  ${whList.map(w => `<option value="${esc(w.name)}" ${(qLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(qBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+                <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;">
+                  Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+                </div>
+              </div>
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-project">Associate Project(s)</label>
+              <select class="in" id="q-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
+                <option value="">There are no active projects for this customer.</option>
+              </select>
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-order-number">Order Number</label>
+              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Reference#</label>
-            <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" style="width:260px;">
-          </div>
+          <!-- Card 3: 3. Quote Details -->
+          <div class="quote-card">
+            <h3 class="quote-card-heading">3. Quote Details</h3>
 
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:#ef4444;">Quote Date*</label>
-            <input class="in" type="date" id="q-date" name="date" value="${qDate}" required style="width:260px;">
+            <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-number">Quote#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="q-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
 
-            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Expiry Date*</label>
-            <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:260px;">
-          </div>
+            <div class="quote-card-field">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label class="quote-card-label required" for="q-date">Quote Date*</label>
+                  <input class="in" type="date" id="q-date" name="date" value="${qDate}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+                <div>
+                  <label class="quote-card-label required" for="q-expiry">Expiry Date*</label>
+                  <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+              </div>
+            </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div id="q-salesperson-container"></div>
-          </div>
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-reference">Reference#</label>
+              <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="q-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this customer.</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:140px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="q-subject" name="subject" rows="2" placeholder="Let your customer know what this Quote is for" style="width:260px;font-size:12px;">${esc(qSubject)}</textarea>
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-subject">Subject</label>
+              <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
           </div>
         </div>
 
-        <div style="margin-top:32px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="q-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${qTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${qTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
+        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
+        <div class="invoice-tax-mode-container">
+          <div class="tax-mode-pill-box">
+            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
+            </span>
+            <div class="tax-mode-toggle">
+              <button type="button" class="btn-tax-mode ${qTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode ${qTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
+                Tax Inclusive
               </button>
             </div>
+            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="quotes" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <i class="fa-solid fa-circle-info"></i> Guide
+            </button>
+            <select class="in" id="q-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${qTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${qTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section 2: Item Table -->
+        <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-quote-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-quote-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-quote-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-quote-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
@@ -10995,6 +11325,21 @@ ${renderStockQuantityCell(l, items, whList)}
   });
 
   $('#q-tds-tax', form)?.addEventListener('change', calcQuote);
+  $$('.btn-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const mode = btn.dataset.mode;
+      const sel = $('#q-tax-pricing', form);
+      if (sel && sel.value !== mode) {
+        sel.value = mode;
+        $$('.btn-tax-mode', form).forEach(b => {
+          if (b.dataset.mode === mode) b.classList.add('active');
+          else b.classList.remove('active');
+        });
+        sel.dispatchEvent(new Event('change'));
+      }
+    });
+  });
   $('#q-tax-pricing', form)?.addEventListener('change', calcQuote);
   form.querySelectorAll('input[name="tax_type"]').forEach(r => r.addEventListener('change', calcQuote));
   $('#q-adj-val', form)?.addEventListener('input', calcQuote);
@@ -11417,7 +11762,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   `;
 
   target.innerHTML = `
-    <div class="so-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+    <div class="so-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
         <div style="display:flex;align-items:center;gap:12px;">
           <i class="fa-regular fa-file-lines" style="font-size:22px;color:#1e293b;"></i>
@@ -11429,122 +11774,300 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         </div>
       </div>
 
-      <form id="so-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="so-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="so-customer" name="customer" required style="flex:1;">
-                <option value="">Select or add a customer</option>
-                <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
-          </div>
+        <!-- Section 1: Three-Card Information Layout -->
+        <style>
+          .so-three-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .so-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+          }
+          .so-card-heading {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0284c7;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.01em;
+            line-height: 1.3;
+          }
+          .so-card-field {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+          }
+          .so-card-field:last-child {
+            margin-bottom: 0;
+          }
+          .so-card-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 6px;
+            line-height: 1.2;
+          }
+          .so-card-label.required {
+            color: #ef4444;
+          }
+          .so-card .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .so-card .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          .so-card select.in {
+            cursor: pointer;
+          }
+          .so-card .sp-select-trigger {
+            width: 100% !important;
+            height: 38px !important;
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            box-sizing: border-box !important;
+            padding: 0 12px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+          }
+          .so-card .sp-select-trigger:hover {
+            border-color: #cbd5e1 !important;
+          }
+          .so-card .currency-badge {
+            height: 38px;
+            padding: 0 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            user-select: none;
+            box-sizing: border-box;
+          }
+          [data-theme="dark"] .so-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .so-card-heading {
+            color: #38bdf8 !important;
+          }
+          [data-theme="dark"] .so-card-label {
+            color: #f1f5f9 !important;
+          }
+          [data-theme="dark"] .so-card-label.required {
+            color: #f87171 !important;
+          }
+          [data-theme="dark"] .so-card .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .so-card select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .so-card .sp-select-trigger {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .so-card .currency-badge {
+            background: #334155 !important;
+            border-color: #475569 !important;
+            color: #f8fafc !important;
+          }
+          @media (max-width: 1024px) {
+            .so-three-cards-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+            }
+          }
+          @media (max-width: 768px) {
+            .so-three-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
+          }
+        </style>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
-            <div>
-              <select class="in" id="so-location" name="location" style="width:260px;">
-                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(soLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-              </select>
-              <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+        <div class="so-three-cards-grid">
+          <!-- Card 1: 1. Customer Details -->
+          <div class="so-card">
+            <h3 class="so-card-heading">1. Customer Details</h3>
+
+            <div class="so-card-field">
+              <label class="so-card-label required" for="so-customer">Customer Name*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
+                  <option value="">Select or add a customer</option>
+                  <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
+                  ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
+                </button>
+                <div class="currency-badge">INR</div>
               </div>
-              <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(soBranch)}" style="width:260px;margin-top:6px;">
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Customer Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="so-customer-type" name="customer_type" style="width:260px;">
-                <option value="b2b" ${soCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                <option value="b2c" ${soCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-              </select>
-              <div id="so-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
-                <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                <span id="so-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || 'Not provided'}</span>
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-customer-type">Customer Type</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="so-customer-type" name="customer_type" style="flex:1;min-width:0;padding:0 10px;">
+                  <option value="b2b" ${soCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
+                  <option value="b2c" ${soCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
+                </select>
+                <div id="so-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:0 10px;height:38px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;">
+                  <span style="color:#64748b;font-weight:500;">GSTIN:</span>
+                  <span id="so-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || 'Not provided'}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="so-series" name="transaction_series" style="width:180px;">
-                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(soSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              </select>
-              <input class="in" id="so-number" name="number" value="${soNumber}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
+            <div class="so-card-field">
+              <label class="so-card-label">Salesperson</label>
+              <div id="so-salesperson-container" style="width:100%;"></div>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Order Number</label>
-            <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:260px;">
+          <!-- Card 2: 2. Account Details -->
+          <div class="so-card">
+            <h3 class="so-card-heading">2. Account Details</h3>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-location">Location &amp; Branch</label>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <select class="in" id="so-location" name="location" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                  ${warehouses.map(w => `<option value="${esc(w.name)}" ${(soLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(soBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+                <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;">
+                  Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+                </div>
+                <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
+              </div>
+            </div>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-project">Associate Project(s)</label>
+              <select class="in" id="so-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
+                <option value="">There are no active projects for this customer.</option>
+              </select>
+            </div>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-order-number">Order Number</label>
+              <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Reference# / PO#</label>
-            <input class="in" id="so-reference" name="reference_number" value="${esc(rec ? (rec.reference_number || '') : '')}" placeholder="e.g. PO-2026-001" style="width:260px;">
+          <!-- Card 3: 3. Sales Order Details -->
+          <div class="so-card">
+            <h3 class="so-card-heading">3. Sales Order Details</h3>
+
+            <div class="so-card-field">
+              <label class="so-card-label required" for="so-number">Sales Order#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="so-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(soSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="so-number" name="number" value="${esc(soNumber)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="so-card-field">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label class="so-card-label required" for="so-date">Order Date*</label>
+                  <input class="in" type="date" id="so-date" name="date" value="${soDate}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+                <div>
+                  <label class="so-card-label" for="so-ship-date">Shipment Date</label>
+                  <input class="in" type="date" id="so-ship-date" name="expected_shipment_date" value="${soShipDate}" style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+              </div>
+            </div>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-reference">Reference# / PO#</label>
+              <input class="in" id="so-reference" name="reference_number" value="${esc(rec ? (rec.reference_number || '') : '')}" placeholder="e.g. PO-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-subject">Subject</label>
+              <input class="in" id="so-subject" name="subject" value="${esc(soSubject)}" placeholder="Let your customer know what this Sales Order is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
           </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Sales Order Date*</label>
-            <input class="in" type="date" id="so-date" name="date" value="${soDate}" required style="width:260px;">
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Expected Shipment Date</label>
-            <input class="in" type="date" id="so-ship-date" name="expected_shipment_date" value="${soShipDate}" style="width:180px;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Salesperson</label>
-            <div id="so-salesperson-container"></div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="so-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this customer.</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="so-subject" name="subject" rows="2" placeholder="Let your customer know what this Sales Order is for" style="width:260px;font-size:12px;">${esc(soSubject)}</textarea>
-          </div>
-
-          <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
         </div>
 
-        <div style="margin-top:32px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
+        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
+        <div class="invoice-tax-mode-container">
+          <div class="tax-mode-pill-box">
+            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
+            </span>
+            <div class="tax-mode-toggle">
+              <button type="button" class="btn-tax-mode ${soTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode ${soTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
+                Tax Inclusive
               </button>
             </div>
+            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="sales-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-left:6px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <i class="fa-solid fa-circle-info"></i> Guide
+            </button>
+            <select class="in" id="so-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${soTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${soTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section 2: Item Table -->
+        <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
+            </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-so-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-so-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-so-bulk-actions" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <button type="button" class="btn" id="btn-so-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
@@ -11865,6 +12388,21 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     });
   });
 
+  $$('.btn-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const mode = btn.dataset.mode;
+      const sel = $('#so-tax-pricing', form);
+      if (sel && sel.value !== mode) {
+        sel.value = mode;
+        $$('.btn-tax-mode', form).forEach(b => {
+          if (b.dataset.mode === mode) b.classList.add('active');
+          else b.classList.remove('active');
+        });
+        sel.dispatchEvent(new Event('change'));
+      }
+    });
+  });
   $('#so-tax-pricing', form)?.addEventListener('change', calcSo);
 
   const saveSo = async (isDraft) => {
@@ -14489,11 +15027,66 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
   };
 
   target.innerHTML = `
-    <div class="invoice-form-page" style="background:#f8fafc;min-height:100%;display:flex;flex-direction:column;">
+    <style>
+      .invoice-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 1024px) {
+        .invoice-cards-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .invoice-cards-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      [data-theme="dark"] .invoice-form-page {
+        background: #0b1329 !important;
+      }
+      [data-theme="dark"] .invoice-card {
+        background: #111c38 !important;
+        border-color: #1e293b !important;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.3) !important;
+      }
+      [data-theme="dark"] .invoice-card h3 {
+        color: #38bdf8 !important;
+      }
+      [data-theme="dark"] .invoice-card label {
+        color: #cbd5e1 !important;
+      }
+      [data-theme="dark"] .invoice-card label[style*="#ef4444"] {
+        color: #f87171 !important;
+      }
+      [data-theme="dark"] .invoice-card .in {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        border-color: #334155 !important;
+      }
+      [data-theme="dark"] .invoice-card .in:focus {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 2px rgba(56,189,248,0.2) !important;
+      }
+      [data-theme="dark"] #ret-customer ~ div {
+        background: #1e293b !important;
+        border-color: #334155 !important;
+        color: #cbd5e1 !important;
+      }
+      [data-theme="dark"] #btn-ret-num-pref {
+        background: #1e293b !important;
+        border-color: #334155 !important;
+        color: #38bdf8 !important;
+      }
+    </style>
+
+    <div class="invoice-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
       <!-- Top Sticky Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid var(--bd,#e2e8f0);background:#fff;position:sticky;top:0;z-index:20;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
         <div style="display:flex;align-items:center;gap:12px;">
-          <div style="width:36px;height:36px;border-radius:8px;background:#eff6ff;display:flex;align-items:center;justify-content:center;color:#2563eb;font-size:18px;">
+          <div style="width:36px;height:36px;border-radius:8px;background:#eff6ff;display:flex;align-items:center;justify-content:center;color:#0284c7;font-size:18px;">
             <i class="fa-solid fa-file-invoice"></i>
           </div>
           <div>
@@ -14508,63 +15101,82 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         </div>
       </div>
 
-      <form id="retainer-form-element" style="padding:28px 32px 100px 32px;max-width:1120px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;" novalidate>
+      <form id="retainer-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <!-- Section 1 – Customer Details -->
-        <div style="background:#fff;border:1px solid var(--bd,#e2e8f0);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #f1f5f9;">
-            <i class="fa-solid fa-user-check" style="color:#2563eb;"></i>
-            <span>Customer Details</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:24px;">
+        <!-- Master Three-Card Information Layout -->
+        <div class="invoice-cards-grid">
+          <!-- Card 1: 1. Customer Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
+
             <div>
-              <label for="ret-customer" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">
-                Customer Name <span style="color:#ef4444;">*</span>
+              <label for="ret-customer" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">
+                Customer Name*
               </label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="ret-customer" name="customer" required style="flex:1;min-height:38px;font-size:13px;border-radius:6px;">
+                <select class="in" id="ret-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
                   <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent,#2563eb);font-weight:600;">+ Add New Customer…</option>
+                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
                   ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
                 </select>
-                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:38px;border-radius:6px;cursor:pointer;flex-shrink:0;">
+                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
                   <i class="fa-solid fa-magnifying-glass"></i>
                 </button>
-                <div style="font-size:12px;font-weight:700;padding:8px 12px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;color:#334155;flex-shrink:0;">INR</div>
+                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
               </div>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Select the customer receiving this retainer invoice.</span>
             </div>
 
             <div>
-              <label for="ret-project" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">
+              <label for="ret-project" style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">
                 Project Name
               </label>
-              <select class="in" id="ret-project" name="project_id" style="width:100%;min-height:38px;font-size:13px;border-radius:6px;" disabled>
-                <option value="">Select a customer first to view projects</option>
+              <select class="in" id="ret-project" name="project_id" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;" disabled>
+                <option value="">Select a customer to associate a project.</option>
               </select>
-              <span id="ret-project-hint" style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Associate this retainer deposit with an active customer project.</span>
+              <span id="ret-project-hint" style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Select a customer to associate a project.</span>
             </div>
           </div>
-        </div>
 
-        <!-- Section 2 – Invoice Information -->
-        <div style="background:#fff;border:1px solid var(--bd,#e2e8f0);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #f1f5f9;">
-            <i class="fa-solid fa-calendar-days" style="color:#2563eb;"></i>
-            <span>Invoice Information</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:24px;">
+          <!-- Card 2: 2. Account Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">2. Account Details</h3>
+
             <div>
-              <label for="ret-number" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">
-                Retainer Invoice Number <span style="color:#ef4444;">*</span>
+              <label for="ret-accounts-receivable" style="font-size:13px;font-weight:600;color:#334155;display:flex;align-items:center;gap:5px;margin-bottom:6px;">
+                Accounts Receivable
+                <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="Asset account tracking customer receivables"></i>
+              </label>
+              <select class="in" id="ret-accounts-receivable" name="accounts_receivable" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
+                <option value="Accounts Receivable" selected>Accounts Receivable</option>
+              </select>
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Account to record the advance liability or receivable adjustment.</span>
+            </div>
+
+            <div>
+              <label for="ret-reference" style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">
+                Reference Number
+              </label>
+              <input class="in" id="ret-reference" name="reference" placeholder="e.g. PO-8902 or Agreement #" value="${esc(retOrderNum)}" maxlength="60" style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
+              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Customer purchase order or contract reference.</span>
+            </div>
+          </div>
+
+          <!-- Card 3: 3. Retainer Invoice Details -->
+          <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
+            <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">3. Retainer Invoice Details</h3>
+
+            <div>
+              <label for="ret-number" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">
+                Retainer Invoice Number*
               </label>
               <div style="display:flex;align-items:center;gap:6px;">
-                <select class="in" id="ret-series" name="transaction_series" style="width:160px;min-width:130px;min-height:38px;font-size:12.5px;border-radius:6px;" title="Transaction Number Series">
+                <select class="in" id="ret-series" name="transaction_series" style="width:130px;min-width:110px;height:38px !important;font-size:12.5px;border-radius:8px !important;border:1px solid #e2e8f0 !important;" title="Transaction Number Series">
                   ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(retSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
                 </select>
-                <input class="in" id="ret-number" name="number" value="${retNum}" required style="flex:1;min-height:38px;font-size:13px;font-weight:600;border-radius:6px;">
-                <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Series" style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;width:38px;height:38px;color:#3b82f6;cursor:pointer;flex-shrink:0;">
+                <input class="in" id="ret-number" name="number" value="${retNum}" required style="flex:1;height:38px !important;font-size:13px;font-weight:600;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
+                <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Series" style="border:1px solid #e2e8f0;background:#ffffff;border-radius:8px;width:38px;height:38px;color:#0284c7;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
                   <i class="fa-solid fa-gear"></i>
                 </button>
               </div>
@@ -14572,28 +15184,20 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             </div>
 
             <div>
-              <label for="ret-date" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">
-                Retainer Invoice Date <span style="color:#ef4444;">*</span>
+              <label for="ret-date" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">
+                Retainer Invoice Date*
               </label>
-              <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:100%;min-height:38px;font-size:13px;border-radius:6px;box-sizing:border-box;">
+              <input class="in" type="date" id="ret-date" name="date" value="${retDate}" required style="width:100%;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;box-sizing:border-box;">
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Date of advance receipt / billing.</span>
-            </div>
-
-            <div>
-              <label for="ret-reference" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">
-                Reference Number
-              </label>
-              <input class="in" id="ret-reference" name="reference" placeholder="e.g. PO-8902 or Agreement #" value="${esc(retOrderNum)}" maxlength="60" style="width:100%;min-height:38px;font-size:13px;border-radius:6px;box-sizing:border-box;">
-              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Customer purchase order or contract reference.</span>
             </div>
           </div>
         </div>
 
         <!-- Section 3 – Retainer Invoice Details (Dynamic Line Items & Total) -->
-        <div style="background:#fff;border:1px solid var(--bd,#e2e8f0);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+        <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #f1f5f9;">
-            <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-receipt" style="color:#2563eb;"></i>
+            <div style="font-size:15px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;"></i>
               <span>Retainer Invoice Line Items</span>
             </div>
             <div id="ret-line-count" style="font-size:12px;color:#64748b;font-weight:500;">${retLines.length} line item${retLines.length === 1 ? '' : 's'}</div>
@@ -14615,11 +15219,11 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
           </div>
 
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-top:18px;flex-wrap:wrap;">
-            <button type="button" class="btn" id="btn-ret-add-row" style="color:#2563eb;border:1px solid #bfdbfe;background:#eff6ff;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:8px;cursor:pointer;padding:8px 16px;border-radius:6px;transition:all 0.15s;">
+            <button type="button" class="btn" id="btn-ret-add-row" style="color:#0284c7;border:1px solid #bae6fd;background:#f0f9ff;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:8px;cursor:pointer;padding:8px 16px;border-radius:8px;transition:all 0.15s;">
               <i class="fa-solid fa-circle-plus"></i> Add New Row
             </button>
 
-            <div style="background:#f8fafc;border:1px solid var(--bd,#e2e8f0);border-radius:8px;padding:16px 24px;min-width:260px;text-align:right;">
+            <div style="background:#f8fafc;border:1px solid var(--bd,#e2e8f0);border-radius:12px;padding:16px 24px;min-width:260px;text-align:right;">
               <div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Total ( ₹ )</div>
               <div id="ret-grandtotal-val" style="font-size:24px;font-weight:800;color:#0f172a;">₹ 0.00</div>
               <div style="font-size:11.5px;color:#64748b;margin-top:4px;">Sum of all valid line-item amounts</div>
@@ -14628,21 +15232,21 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         </div>
 
         <!-- Section 4 – Additional Information (Customer Notes & Terms) -->
-        <div style="background:#fff;border:1px solid var(--bd,#e2e8f0);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #f1f5f9;">
-            <i class="fa-solid fa-note-sticky" style="color:#2563eb;"></i>
+        <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
+          <div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #f1f5f9;">
+            <i class="fa-solid fa-note-sticky" style="color:#0284c7;"></i>
             <span>Additional Information</span>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:24px;">
             <div>
               <label for="ret-notes" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="ret-notes" name="notes" rows="4" placeholder="Enter any notes to be displayed in your transaction" style="width:100%;min-height:96px;box-sizing:border-box;resize:vertical;padding:10px 12px;font-size:13px;line-height:1.5;border-radius:6px;">${esc(retNotes)}</textarea>
+              <textarea class="in" id="ret-notes" name="notes" rows="4" placeholder="Enter any notes to be displayed in your transaction" style="width:100%;min-height:96px;box-sizing:border-box;resize:vertical;padding:10px 12px;font-size:13px;line-height:1.5;border-radius:8px;border:1px solid #e2e8f0;">${esc(retNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the customer copy of the retainer invoice.</span>
             </div>
 
             <div>
               <label for="ret-terms-text" style="font-size:12.5px;font-weight:600;color:#0f172a;display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="ret-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:96px;box-sizing:border-box;resize:vertical;padding:10px 12px;font-size:13px;line-height:1.5;border-radius:6px;">${esc(retTermsText)}</textarea>
+              <textarea class="in" id="ret-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:96px;box-sizing:border-box;resize:vertical;padding:10px 12px;font-size:13px;line-height:1.5;border-radius:8px;border:1px solid #e2e8f0;">${esc(retTermsText)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Default terms and conditions applicable to this transaction.</span>
             </div>
           </div>
@@ -14907,6 +15511,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       project_id: /^\d+$/.test($('#ret-project', form)?.value || '') ? $('#ret-project', form).value : null,
       project_name: $('#ret-project option:checked', form)?.dataset?.projectName || '',
       transaction_series: $('#ret-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
+      accounts_receivable: $('#ret-accounts-receivable', form)?.value || (rec && rec.accounts_receivable) || 'Accounts Receivable',
       notes: $('#ret-notes', form)?.value || '',
       terms_conditions: $('#ret-terms-text', form)?.value || '',
       lines: lines,

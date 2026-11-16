@@ -13399,7 +13399,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   `;
 
   target.innerHTML = `
-    <div class="invoice-form-page" style="background:#fff;min-height:100%;display:flex;flex-direction:column;">
+    <div class="invoice-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
       <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--bd);background:#fff;position:sticky;top:0;z-index:20;">
         <div style="display:flex;align-items:center;gap:12px;">
@@ -13412,74 +13412,210 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         </div>
       </div>
 
-      <form id="invoice-form-element" style="padding:24px 28px;max-width:1120px;width:100%;box-sizing:border-box;" novalidate>
+      <form id="invoice-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <!-- Section 1: Customer & Invoice Information -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:18px;display:flex;align-items:center;gap:8px;">
-            <i class="fa-regular fa-building" style="color:#3b82f6;"></i> Customer &amp; Invoice Information
-          </div>
+        <!-- Section 1: Three-Card Customer & Invoice Information (Target Design: Image 1) -->
+        <style>
+          .invoice-three-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .invoice-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+          }
+          .invoice-card-heading {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0284c7;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.01em;
+            line-height: 1.3;
+          }
+          .invoice-card-field {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+          }
+          .invoice-card-field:last-child {
+            margin-bottom: 0;
+          }
+          .invoice-card-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 6px;
+            line-height: 1.2;
+          }
+          .invoice-card-label.required {
+            color: #ef4444;
+          }
+          .invoice-card .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .invoice-card .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          .invoice-card select.in {
+            cursor: pointer;
+          }
+          .invoice-card .sp-select-trigger {
+            width: 100% !important;
+            height: 38px !important;
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            box-sizing: border-box !important;
+            padding: 0 12px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+          }
+          .invoice-card .sp-select-trigger:hover {
+            border-color: #cbd5e1 !important;
+          }
+          .invoice-card .currency-badge {
+            height: 38px;
+            padding: 0 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            user-select: none;
+            box-sizing: border-box;
+          }
+          [data-theme="dark"] .invoice-form-page {
+            background: #0f172a !important;
+          }
+          [data-theme="dark"] .invoice-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .invoice-card-heading {
+            color: #38bdf8 !important;
+          }
+          [data-theme="dark"] .invoice-card-label {
+            color: #f1f5f9 !important;
+          }
+          [data-theme="dark"] .invoice-card-label.required {
+            color: #f87171 !important;
+          }
+          [data-theme="dark"] .invoice-card .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .invoice-card select.in option {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .invoice-card .sp-select-trigger {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .invoice-card .currency-badge {
+            background: #334155 !important;
+            border-color: #475569 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] #btn-inv-num-pref {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #38bdf8 !important;
+          }
+          @media (max-width: 1024px) {
+            .invoice-three-cards-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+            }
+          }
+          @media (max-width: 768px) {
+            .invoice-three-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
+          }
+        </style>
 
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:18px;">
+        <div class="invoice-three-cards-grid">
+          <!-- Card 1: 1. Customer Details -->
+          <div class="invoice-card">
+            <h3 class="invoice-card-heading">1. Customer Details</h3>
+
             <!-- Customer Name* -->
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
+            <div class="invoice-card-field">
+              <label class="invoice-card-label required" for="inv-customer">Customer Name*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="inv-customer" name="customer" required style="flex:1;">
+                <select class="in" id="inv-customer" name="customer" required style="flex:1;min-width:0;padding:0 10px;">
                   <option value="">Select or add a customer</option>
                   <option value="__new_customer__" style="color:var(--accent);font-weight:600;">+ Add New Customer…</option>
                   ${parties.map(p => `<option value="${p.id}" ${String(invCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
                 </select>
-                <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
+                <button type="button" class="btn p" id="btn-inv-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                  <i class="fa-solid fa-magnifying-glass" style="font-size:13px;"></i>
                 </button>
-                <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-              </div>
-            </div>
-
-            <!-- Accounts Receivable -->
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
-                Accounts Receivable
-                <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The asset account that tracks money owed by customers"></i>
-              </label>
-              <select class="in" id="inv-accounts-receivable" name="accounts_receivable" style="width:100%;">
-                <option value="Accounts Receivable" selected>Accounts Receivable</option>
-              </select>
-            </div>
-
-            <!-- Invoice Number* -->
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Invoice#*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="inv-series" name="transaction_series" style="width:160px;min-width:130px;font-size:12.5px;" title="Transaction Number Series">
-                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(invSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required style="flex:1;">
-                <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                  <i class="fa-solid fa-gear"></i>
-                </button>
+                <div class="currency-badge">INR</div>
               </div>
             </div>
 
             <!-- Order Number -->
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Order Number</label>
-              <input class="in" id="inv-order-number" name="order_number" value="${esc(invOrderNum)}" placeholder="e.g. PO-8921" style="width:100%;">
+            <div class="invoice-card-field">
+              <label class="invoice-card-label" for="inv-order-number">Order Number</label>
+              <input class="in" id="inv-order-number" name="order_number" value="${esc(invOrderNum)}" placeholder="e.g. PO-8921" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <!-- Salesperson -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label">Salesperson</label>
+              <div id="inv-salesperson-container" style="width:100%;"></div>
             </div>
           </div>
 
-          <!-- Dates & Terms Sub-row -->
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:18px;margin-top:16px;">
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:#ef4444;display:block;margin-bottom:6px;">Invoice Date*</label>
-              <input class="in" type="date" id="inv-date" name="date" value="${invDate}" required style="width:100%;">
+          <!-- Card 2: 2. Account Details -->
+          <div class="invoice-card">
+            <h3 class="invoice-card-heading">2. Account Details</h3>
+
+            <!-- Accounts Receivable -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label" for="inv-accounts-receivable">Accounts Receivable</label>
+              <select class="in" id="inv-accounts-receivable" name="accounts_receivable" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                <option value="Accounts Receivable" selected>Accounts Receivable</option>
+              </select>
             </div>
 
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Payment Terms</label>
-              <select class="in" id="inv-terms" name="terms" style="width:100%;">
+            <!-- Payment Terms -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label" for="inv-terms">Payment Terms</label>
+              <select class="in" id="inv-terms" name="terms" style="width:100%;box-sizing:border-box;padding:0 10px;">
                 <option value="Due on Receipt" ${invTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
                 <option value="Net 15" ${invTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
                 <option value="Net 30" ${invTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
@@ -13489,44 +13625,62 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               </select>
             </div>
 
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Due Date</label>
-              <input class="in" type="date" id="inv-due-date" name="due_date" value="${invDueDate}" style="width:100%;">
+            <!-- Due Date -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label" for="inv-due-date">Due Date</label>
+              <input class="in" type="date" id="inv-due-date" name="due_date" value="${invDueDate}" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
-          <!-- Salesperson & Subject Sub-row -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px;">
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:block;margin-bottom:6px;">Salesperson</label>
-              <div id="inv-salesperson-container"></div>
+          <!-- Card 3: 3. Invoice Details -->
+          <div class="invoice-card">
+            <h3 class="invoice-card-heading">3. Invoice Details</h3>
+
+            <!-- Invoice#* -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label required" for="inv-number">Invoice#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="inv-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(invSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
             </div>
-            <div>
-              <label style="font-weight:600;font-size:12.5px;color:var(--tx);display:flex;align-items:center;gap:5px;margin-bottom:6px;">
-                Subject <i class="fa-solid fa-circle-info" style="color:#94a3b8;font-size:12px;cursor:help;" title="Brief summary of transaction visible to customer"></i>
-              </label>
-              <input class="in" id="inv-subject" name="subject" value="${esc(invSubject)}" placeholder="Let your customer know what this Invoice is for" style="width:100%;">
+
+            <!-- Invoice Date* -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label required" for="inv-date">Invoice Date*</label>
+              <input class="in" type="date" id="inv-date" name="date" value="${invDate}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <!-- Subject -->
+            <div class="invoice-card-field">
+              <label class="invoice-card-label" for="inv-subject">Subject</label>
+              <input class="in" id="inv-subject" name="subject" value="${esc(invSubject)}" placeholder="Let your customer know what this Invoice is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
         </div>
 
         <!-- Section 2: Item Table -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+        <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-weight:700;font-size:14px;color:#0f172a;display:flex;align-items:center;gap:8px;">
-              <i class="fa-solid fa-list-check" style="color:#3b82f6;"></i> Item Table
+              <i class="fa-solid fa-list-check" style="color:#0284c7;"></i> Item Table
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
-              <button type="button" class="btn" id="btn-inv-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
+              <button type="button" class="btn" id="btn-inv-scan" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-solid fa-barcode"></i> Scan Item
               </button>
-              <button type="button" class="btn" id="btn-inv-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:4px;">
+              <button type="button" class="btn" id="btn-inv-bulk-actions" style="background:#f8fafc;border:1px solid #cbd5e1;color:#2563eb;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 12px;border-radius:6px;">
                 <i class="fa-regular fa-circle-check"></i> Bulk Actions
               </button>
             </div>
           </div>
 
-          <div class="tw" style="border:1px solid var(--bd);border-radius:6px;overflow-x:auto;">
+          <div class="tw" style="border:1px solid var(--bd);border-radius:8px;overflow-x:auto;">
             <table class="lt" style="margin:0;width:100%;border-collapse:collapse;">
               <thead style="background:#f8fafc;border-bottom:1px solid var(--bd);">
                 <tr>
@@ -13548,10 +13702,10 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
           </div>
 
           <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
-            <button type="button" class="btn" id="btn-inv-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn" id="btn-inv-add-row" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:6px;padding:6px 14px;">
               <i class="fa-solid fa-circle-plus"></i> Add New Row ▾
             </button>
-            <button type="button" class="btn" id="btn-inv-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <button type="button" class="btn" id="btn-inv-bulk-items" style="color:#2563eb;border-color:#bfdbfe;background:#eff6ff;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:6px;padding:6px 14px;">
               <i class="fa-solid fa-circle-plus"></i> Add Items in Bulk
             </button>
           </div>
@@ -13560,20 +13714,20 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         <!-- Section 3: Calculations & Summary (Two Column Grid) -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:22px;">
           <!-- Left: Notes & Terms -->
-          <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:18px;">
+          <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:18px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
             <div>
               <label for="inv-notes" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Customer Notes</label>
-              <textarea class="in" id="inv-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(invNotes)}</textarea>
+              <textarea class="in" id="inv-notes" name="notes" rows="4" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;border-radius:8px;">${esc(invNotes)}</textarea>
               <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Will be displayed on the invoice</span>
             </div>
             <div>
               <label for="inv-terms-text" style="font-weight:600;font-size:13px;color:var(--tx);display:block;margin-bottom:6px;">Terms &amp; Conditions</label>
-              <textarea class="in" id="inv-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;">${esc(invTermsText)}</textarea>
+              <textarea class="in" id="inv-terms-text" name="terms_conditions" rows="4" placeholder="Enter the terms and conditions of your business to be displayed in your transaction" style="width:100%;min-height:92px;box-sizing:border-box;resize:vertical;padding:8px 10px;font-size:13px;line-height:1.5;border-radius:8px;">${esc(invTermsText)}</textarea>
             </div>
           </div>
 
           <!-- Right: Calculation Summary Card -->
-          <div class="form-card" style="background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:22px;">
+          <div class="form-card" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
             <!-- Sub Total -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--bd);">
               <span style="font-weight:600;color:var(--tx);font-size:13.5px;">Sub Total</span>
@@ -13599,7 +13753,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
                 <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Add or subtract an adjustment amount to round or balance the total"></i>
               </div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <input type="number" step="0.01" class="in" id="inv-adj-val" name="adjustment" value="${invAdj}" style="width:90px;text-align:right;font-size:13px;">
+                <input type="number" step="0.01" class="in" id="inv-adj-val" name="adjustment" value="${invAdj}" style="width:90px;text-align:right;font-size:13px;border-radius:6px;">
                 <span id="inv-adj-display" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
               </div>
             </div>
@@ -13611,7 +13765,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
                 <i class="fa-regular fa-circle-question" style="color:#94a3b8;cursor:help;font-size:12px;" title="Tax Collected at Source applicable under Income Tax Section 206C"></i>
               </div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <select class="in" id="inv-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;">
+                <select class="in" id="inv-tcs-tax" name="tcs_tax" style="width:130px;font-size:12.5px;border-radius:6px;">
                   <option value="0">Select a Tax</option>
                   <option value="0.075" ${invTcs === 0.075 ? 'selected' : ''}>TCS [0.075%]</option>
                   <option value="0.1" ${invTcs === 0.1 ? 'selected' : ''}>TCS [0.1%]</option>
@@ -13632,7 +13786,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         </div>
 
         <!-- Section 4: Attachments, Payment Gateway & Preferences -->
-        <div class="form-card" style="background:#fff;border:1px solid var(--bd);border-radius:8px;padding:22px;margin-bottom:22px;">
+        <div class="form-card" style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);">
           <!-- Attach File(s) -->
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div>

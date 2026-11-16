@@ -2328,11 +2328,12 @@ def ensure_default_accounts(org=None):
             defaults={'name': name, 'account_type': atype, 'sub_type': subtype, 'description': desc, 'is_system': True}
         )
 
+@transaction.atomic
 def post_journal_entry(date, entry_type, reference, notes, items, user=None, org=None):
     """
     Post a double-entry journal voucher.
     items: list of (account_code_or_obj, debit, credit, description)
-    Enforces debit == credit, transaction locking, and safe idempotency.
+    Enforces debit == credit, transaction locking, and safe database-backed idempotency.
     """
     if not org and user:
         try:
@@ -2385,18 +2386,25 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
 
     with transaction.atomic():
         num = next_document_number('JRN', org=org, date=date)
-        jrn = Journal.objects.create(
-            organization=org,
-            number=num,
-            date=date,
-            entry_type=entry_type,
-            reference=reference,
-            notes=notes,
-            created_by=user if getattr(user, 'pk', None) else None
-        )
-        for acc, deb, cred, desc in clean_items:
-            JournalItem.objects.create(journal=jrn, account=acc, debit=deb, credit=cred, description=desc)
-        return jrn
+        try:
+            jrn = Journal.objects.create(
+                organization=org,
+                number=num,
+                date=date,
+                entry_type=entry_type,
+                reference=reference,
+                notes=notes,
+                created_by=user if getattr(user, 'pk', None) else None
+            )
+            for acc, deb, cred, desc in clean_items:
+                JournalItem.objects.create(journal=jrn, account=acc, debit=deb, credit=cred, description=desc)
+            return jrn
+        except IntegrityError:
+            if reference and entry_type not in ('manual',):
+                existing_jrn = Journal.objects.filter(organization=org, entry_type=entry_type, reference=reference).first()
+                if existing_jrn:
+                    return existing_jrn
+            raise
 
 def post_invoice_journal(inv, user):
     """Debit AR, Credit Sales Revenue, Credit Output Taxes, balance Adjustment/TCS."""
@@ -4477,16 +4485,18 @@ def compute_txn_hash(dt, withdrawal, deposit, ref, desc):
     raw = f"{dt}|{Decimal(withdrawal):.2f}|{Decimal(deposit):.2f}|{ref.strip().upper()}|{desc.strip().lower()}"
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
+@transaction.atomic
 def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
     """
     Simulate/execute live Open Banking aggregator feed sync (Setu/ICICI/HDFC/Account Aggregator).
     Implements:
-    - Idempotent duplicate transaction detection via SHA-256 tuple hashing
+    - PostgreSQL row-level locking (select_for_update) to prevent lost updates and race conditions
+    - Database-backed unique constraint deduplication via (bank_account, transaction_hash)
     - Statement batch tracking
     - Real-time balance updating
     - Automatic bank rule categorization
     """
-    acc = BankAccount.objects.filter(pk=bank_account_id).first()
+    acc = BankAccount.objects.select_for_update().filter(pk=bank_account_id).first()
     if not acc:
         raise ApiError(404, 'Bank account not found.')
 
@@ -4515,6 +4525,7 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
     ]
 
     batch = BankStatementBatch.objects.create(
+        organization=acc.organization,
         bank_account=acc,
         batch_number=batch_num,
         filename=f"{feed.provider}_{acc.bank_name}_{today.strftime('%Y%m%d')}.json",
@@ -4539,22 +4550,30 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
             duplicates += 1
             continue
 
-        running_balance = running_balance - wd + dep
-        txn = BankTransaction.objects.create(
-            bank_account=acc,
-            date=dt,
-            description=desc,
-            reference=ref,
-            withdrawal=wd,
-            deposit=dep,
-            balance=running_balance,
-            status='unreconciled',
-            transaction_hash=thash,
-            batch=batch,
-            is_live_feed=True
-        )
-        apply_bank_rules_to_transaction(txn)
-        imported += 1
+        try:
+            with transaction.atomic():
+                running_balance = running_balance - wd + dep
+                txn = BankTransaction.objects.create(
+                    organization=acc.organization,
+                    bank_account=acc,
+                    date=dt,
+                    description=desc,
+                    reference=ref,
+                    withdrawal=wd,
+                    deposit=dep,
+                    balance=running_balance,
+                    status='unreconciled',
+                    transaction_hash=thash,
+                    batch=batch,
+                    is_live_feed=True
+                )
+                apply_bank_rules_to_transaction(txn)
+                imported += 1
+        except IntegrityError:
+            # Revert balance calculation for duplicate row blocked by DB unique constraint
+            running_balance = running_balance + wd - dep
+            duplicates += 1
+            continue
 
     acc.current_balance = running_balance
     acc.save(update_fields=['current_balance'])
@@ -5375,9 +5394,11 @@ def record_bank_transfer(data, user=None, org=None):
 
 @transaction.atomic
 def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0.00'), notes='', user=None):
-    txn = BankTransaction.objects.filter(pk=txn_id).first()
+    txn = BankTransaction.objects.select_for_update().filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    if txn.status == 'reconciled':
+        raise ApiError(409, 'Cannot match an already reconciled bank transaction.')
     check_transaction_lock(txn.date)
 
     entity_label = f"{entity_type.replace('_', ' ').title()} #{entity_id}"
@@ -5511,7 +5532,7 @@ def toggle_exclude_bank_transaction(txn_id, user=None):
 @transaction.atomic
 def complete_bank_reconciliation(data, user=None):
     acc_id = data.get('bank_account_id') or data.get('bank_account')
-    acc = BankAccount.objects.filter(pk=acc_id).first()
+    acc = BankAccount.objects.select_for_update().filter(pk=acc_id).first()
     if not acc:
         raise ApiError(404, 'Bank account not found.')
 
@@ -5521,13 +5542,19 @@ def complete_bank_reconciliation(data, user=None):
     cleared_ids = data.get('cleared_transaction_ids', [])
     notes = data.get('notes', '')
 
-    cleared_txns = BankTransaction.objects.filter(bank_account=acc, pk__in=cleared_ids)
+    cleared_txns = list(BankTransaction.objects.select_for_update().filter(bank_account=acc, pk__in=cleared_ids))
+    already_reconciled = [t.id for t in cleared_txns if t.status == 'reconciled']
+    if already_reconciled:
+        raise ApiError(409, f"One or more transactions ({already_reconciled}) have already been reconciled by another session.")
+
     cleared_dep = sum((t.deposit for t in cleared_txns), Decimal('0.00'))
     cleared_wd = sum((t.withdrawal for t in cleared_txns), Decimal('0.00'))
     cleared_bal = acc.opening_balance + cleared_dep - cleared_wd
     diff = ending_bal - cleared_bal
 
-    cleared_txns.update(is_cleared=True, cleared_date=stmt_date, status='reconciled')
+    BankTransaction.objects.filter(bank_account=acc, pk__in=cleared_ids).update(
+        is_cleared=True, cleared_date=stmt_date, status='reconciled'
+    )
 
     rec_num = next_number('REC')
     rec = BankReconciliation.objects.create(

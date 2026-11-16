@@ -559,7 +559,10 @@ class Journal(models.Model):
 
     class Meta:
         ordering = ['-date', '-id']
-        constraints = [models.UniqueConstraint(fields=['organization', 'number'], name='unique_org_journal_number')]
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'number'], name='unique_org_journal_number'),
+            models.UniqueConstraint(fields=['organization', 'entry_type', 'reference'], condition=~models.Q(reference='') & ~models.Q(entry_type='manual'), name='unique_org_auto_entry_reference'),
+        ]
 
     def __str__(self):
         return f'{self.number} ({self.date})'
@@ -715,6 +718,9 @@ class BankTransaction(models.Model):
 
     class Meta:
         ordering = ['-date', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['bank_account', 'transaction_hash'], condition=~models.Q(transaction_hash=''), name='unique_bank_account_txn_hash'),
+        ]
 
 class DocumentFolder(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='document_folders')
@@ -1406,9 +1412,17 @@ class BankStatementBatch(models.Model):
     duplicate_count = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=30, default='completed')
     reconciled_count = models.PositiveIntegerField(default=0)
+    statement_checksum = models.CharField(max_length=64, blank=True, default='', db_index=True)
 
     class Meta:
         ordering = ['-imported_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'bank_account', 'statement_checksum'],
+                condition=~models.Q(statement_checksum=''),
+                name='unique_org_bank_stmt_checksum'
+            ),
+        ]
 
     def __str__(self):
         return f'{self.batch_number} ({self.source}) - {self.imported_count} imported'
@@ -2197,6 +2211,137 @@ class DocumentNumberAllocation(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['organization', 'document_type', 'number'], name='uniq_doc_num_allocation'),
         ]
+
+
+class IdempotencyRecord(models.Model):
+    STATUS_CHOICES = [
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='idempotency_records')
+    operation_type = models.CharField(max_length=80, db_index=True)
+    idempotency_key = models.CharField(max_length=255, db_index=True)
+    request_hash = models.CharField(max_length=64, blank=True, default='')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='processing', db_index=True)
+    response_data = models.JSONField(default=dict, blank=True)
+    resource_type = models.CharField(max_length=80, blank=True, default='')
+    resource_id = models.CharField(max_length=100, blank=True, default='')
+    error_message = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'operation_type', 'idempotency_key'],
+                name='unique_org_op_idempotency_key'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['organization', 'operation_type', 'idempotency_key']),
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['expires_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.operation_type}:{self.idempotency_key} ({self.status})"
+
+
+class ProcessingJob(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('retry_scheduled', 'Retry Scheduled'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='processing_jobs')
+    operation_type = models.CharField(max_length=80, db_index=True)
+    resource_type = models.CharField(max_length=80, blank=True, default='')
+    resource_id = models.CharField(max_length=100, blank=True, default='')
+    idempotency_key = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending', db_index=True)
+    worker_id = models.CharField(max_length=100, blank=True, default='')
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=3)
+    available_at = models.DateTimeField(default=timezone.now, db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+    payload = models.JSONField(default=dict, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['available_at', 'created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'operation_type', 'idempotency_key'],
+                condition=~models.Q(idempotency_key=''),
+                name='unique_org_op_job_idempotency'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['status', 'available_at', 'lease_expires_at']),
+            models.Index(fields=['organization', 'operation_type', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Job {self.operation_type}:{self.id} ({self.status})"
+
+
+class PostingOutbox(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('manual_review', 'Manual Review'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='posting_outbox_entries')
+    posting_batch_id = models.CharField(max_length=100, blank=True, default='')
+    source_transaction_type = models.CharField(max_length=60, db_index=True)
+    source_transaction_id = models.CharField(max_length=100, db_index=True)
+    idempotency_key = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    payload_hash = models.CharField(max_length=64, blank=True, default='')
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending', db_index=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    external_reference = models.CharField(max_length=255, blank=True, default='')
+    last_error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'source_transaction_type', 'source_transaction_id'],
+                name='unique_org_source_txn_posting'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['status', 'next_retry_at']),
+            models.Index(fields=['organization', 'status']),
+        ]
+
+    def __str__(self):
+        return f"PostingOutbox {self.source_transaction_type}:{self.source_transaction_id} ({self.status})"
 
 
 from django.db.models.signals import pre_save, post_save

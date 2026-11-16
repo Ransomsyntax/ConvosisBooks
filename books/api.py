@@ -326,6 +326,11 @@ def api_view(fn):
         except ProtectedError:
             return j({'error': 'Conflict', 'message': 'This record is used by other transactions and cannot be deleted. Mark it inactive instead.', 'errors': {}}, 409)
         except Exception as e:
+            from .idempotency import IdempotencyConflictError, IdempotencyPayloadMismatchError
+            if isinstance(e, IdempotencyConflictError):
+                return j({'error': 'Conflict', 'message': str(e), 'errors': {}}, 409)
+            if isinstance(e, IdempotencyPayloadMismatchError):
+                return j({'error': 'Idempotency Payload Mismatch', 'message': str(e), 'errors': {}}, 409)
             if settings.DEBUG:
                 import traceback
                 traceback.print_exc()
@@ -646,35 +651,66 @@ class Resource:
                 elif isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
                     records = data
                 else:
-                    with transaction.atomic():
-                        obj = self.create_for_request(data, request.user, request)
-                        if hasattr(obj, 'organization') and not getattr(obj, 'organization_id', None):
-                            try:
-                                with transaction.atomic():
-                                    user_org = get_user_org(request.user)
-                                    if user_org:
-                                        obj.organization = user_org
-                                        obj.save(update_fields=['organization'])
-                            except Exception:
-                                pass
-                        # Global audit log for create
-                        if self.name != 'stock-transfers':
-                            try:
-                                user_org = get_user_org(request.user)
-                                ent_name = getattr(obj, 'number', getattr(obj, 'name', getattr(obj, 'code', f'#{obj.pk}')))
-                                safe_data = {k: str(v) for k, v in data.items() if k not in ('password', 'token', 'secret', 'file_data', 'image_data')} if isinstance(data, dict) else {}
-                                services.log_audit(
-                                    request.user, 'create', self.model.__name__ if self.model else self.name, obj.pk,
-                                    f"Created {self.model.__name__ if self.model else self.name} {ent_name}",
-                                    details={'resource': self.name, 'data': safe_data},
-                                    ip_address=get_client_ip(request),
-                                    org=user_org,
-                                    module=self.name,
-                                    new_values=safe_data
-                                )
-                            except Exception:
-                                pass
-                    return j(self.detail(self.get_object(obj.pk, request)), 201)
+                    user_org = get_user_org(request.user)
+                    idemp_key = (
+                        request.headers.get('Idempotency-Key') or
+                        request.headers.get('X-Idempotency-Key') or
+                        (data.get('idempotency_key') if isinstance(data, dict) else None)
+                    )
+
+                    acquired = True
+                    cached_resp = None
+                    idemp_claim = None
+                    if idemp_key:
+                        from .idempotency import IdempotencyManager
+                        acquired, cached_resp, idemp_claim = IdempotencyManager.acquire(
+                            organization=user_org,
+                            operation_type=f"api:{self.name}:create",
+                            idempotency_key=str(idemp_key).strip(),
+                            payload=data,
+                            resource_type=self.name
+                        )
+                        if not acquired:
+                            return j(cached_resp, 200)
+
+                    try:
+                        with transaction.atomic():
+                            obj = self.create_for_request(data, request.user, request)
+                            if hasattr(obj, 'organization') and not getattr(obj, 'organization_id', None):
+                                try:
+                                    with transaction.atomic():
+                                        if user_org:
+                                            obj.organization = user_org
+                                            obj.save(update_fields=['organization'])
+                                except Exception:
+                                    pass
+                            # Global audit log for create
+                            if self.name != 'stock-transfers':
+                                try:
+                                    ent_name = getattr(obj, 'number', getattr(obj, 'name', getattr(obj, 'code', f'#{obj.pk}')))
+                                    safe_data = {k: str(v) for k, v in data.items() if k not in ('password', 'token', 'secret', 'file_data', 'image_data')} if isinstance(data, dict) else {}
+                                    services.log_audit(
+                                        request.user, 'create', self.model.__name__ if self.model else self.name, obj.pk,
+                                        f"Created {self.model.__name__ if self.model else self.name} {ent_name}",
+                                        details={'resource': self.name, 'data': safe_data},
+                                        ip_address=get_client_ip(request),
+                                        org=user_org,
+                                        module=self.name,
+                                        new_values=safe_data
+                                    )
+                                except Exception:
+                                    pass
+
+                            res_detail = self.detail(self.get_object(obj.pk, request))
+                            if idemp_claim:
+                                from .idempotency import IdempotencyManager
+                                IdempotencyManager.complete(idemp_claim, res_detail, resource_id=obj.pk, resource_type=self.name)
+                            return j(res_detail, 201)
+                    except Exception as exc:
+                        if idemp_claim:
+                            from .idempotency import IdempotencyManager
+                            IdempotencyManager.fail(idemp_claim, str(exc))
+                        raise
 
             if records is not None:
                 if not records:
@@ -3170,6 +3206,8 @@ class PaymentResource(Resource):
             pay_num = services.next_document_number(self.prefix, org=user_org, date=out['date'], series=series_name, series_id=series_id)
 
         with transaction.atomic():
+            if bank_acc:
+                bank_acc = BankAccount.objects.select_for_update().get(pk=bank_acc.pk)
             pay = self.Model.objects.create(number=pay_num, created_by=user, bank_account=bank_acc, **{self.party_attr: party}, **extra, **out)
             self.allocate(pay, data.get('allocations'))
             if bank_acc:
@@ -3182,25 +3220,40 @@ class PaymentResource(Resource):
                     bank_acc.bank_balance -= pay.amount
                 bank_acc.save(update_fields=['current_balance', 'bank_balance'])
 
-                BankTransaction.objects.create(
-                    organization=user_org,
-                    bank_account=bank_acc,
-                    date=pay.date,
-                    description=f"{'Payment Received' if is_rec else 'Payment Made'} {pay.number} - {party.name if party else ''}",
-                    reference=pay.reference or pay.number,
-                    transaction_type='Payment Received' if is_rec else 'Payment Made',
-                    payee=party.name if party else '',
-                    withdrawal=Decimal('0.00') if is_rec else pay.amount,
-                    deposit=pay.amount if is_rec else Decimal('0.00'),
-                    balance=bank_acc.current_balance,
-                    status='categorized',
-                    matched_entity_type='payment_received' if is_rec else 'payment_made',
-                    matched_entity_id=pay.pk
-                )
+                try:
+                    with transaction.atomic():
+                        BankTransaction.objects.create(
+                            organization=user_org,
+                            bank_account=bank_acc,
+                            date=pay.date,
+                            description=f"{'Payment Received' if is_rec else 'Payment Made'} {pay.number} - {party.name if party else ''}",
+                            reference=pay.reference or pay.number,
+                            transaction_type='Payment Received' if is_rec else 'Payment Made',
+                            payee=party.name if party else '',
+                            withdrawal=Decimal('0.00') if is_rec else pay.amount,
+                            deposit=pay.amount if is_rec else Decimal('0.00'),
+                            balance=bank_acc.current_balance,
+                            status='categorized',
+                            matched_entity_type='payment_received' if is_rec else 'payment_made',
+                            matched_entity_id=pay.pk
+                        )
+                except IntegrityError:
+                    pass
+
             if isinstance(pay, PaymentReceived):
                 services.post_payment_received_journal(pay, user)
             else:
                 services.post_payment_made_journal(pay, user)
+
+            from .outbox import stage_posting_outbox
+            stage_posting_outbox(
+                organization=user_org,
+                source_transaction_type='payment_received' if isinstance(pay, PaymentReceived) else 'payment_made',
+                source_transaction_id=str(pay.pk),
+                payload={'number': pay.number, 'amount': str(pay.amount), 'date': pay.date.isoformat()},
+                idempotency_key=f"pay:{pay.pk}"
+            )
+
             services.log_audit(user, 'create', self.Model.__name__, pay.number, f"Recorded {self.Model.__name__} {pay.number} for ₹{pay.amount}")
         return pay
 
@@ -10304,63 +10357,92 @@ def banking_import_view(request):
         ]
         rows = feed_samples
 
-    batch = BankStatementBatch.objects.create(
+    stmt_raw = json.dumps(rows, sort_keys=True, default=str)
+    stmt_checksum = hashlib.sha256(f"{ba.pk}:{stmt_raw}".encode('utf-8')).hexdigest()
+
+    existing_batch = BankStatementBatch.objects.filter(
         bank_account=ba,
-        batch_number=next_number('STMT'),
-        filename=filename,
-        source='csv_import',
-        total_rows=len(rows),
-        status='completed'
-    )
+        statement_checksum=stmt_checksum
+    ).first()
+    if existing_batch and existing_batch.status == 'completed':
+        return j({
+            'status': 'ok',
+            'batch_id': existing_batch.pk,
+            'count': existing_batch.imported_count,
+            'imported': existing_batch.imported_count,
+            'duplicates_skipped': existing_batch.duplicate_count,
+            'current_balance': str(ba.current_balance),
+            'message': f"Statement was previously imported ({existing_batch.batch_number}). {existing_batch.imported_count} transactions retained."
+        })
 
-    created = []
-    duplicates = 0
-    bal = ba.current_balance
-
-    for r in rows:
-        dt = None
-        raw_dt = str(r.get('date') or '').strip()
-        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m/%d/%Y'):
-            try:
-                import datetime
-                dt = datetime.datetime.strptime(raw_dt, fmt).date()
-                break
-            except Exception:
-                pass
-        if not dt:
-            dt = today
-
-        dep = Decimal(str(r.get('deposit') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
-        wth = Decimal(str(r.get('withdrawal') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
-        ref = str(r.get('reference') or '')
-        desc = str(r.get('description') or 'Bank Transaction')
-
-        thash = services.compute_txn_hash(dt, wth, dep, ref, desc)
-        if BankTransaction.objects.filter(bank_account=ba, transaction_hash=thash).exists():
-            duplicates += 1
-            continue
-
-        bal = bal + dep - wth
-        txn = BankTransaction.objects.create(
+    with transaction.atomic():
+        ba = BankAccount.objects.select_for_update().get(pk=ba.pk)
+        bal = ba.current_balance
+        batch = BankStatementBatch.objects.create(
+            organization=ba.organization,
             bank_account=ba,
-            date=dt,
-            description=desc,
-            reference=ref,
-            deposit=dep,
-            withdrawal=wth,
-            balance=bal,
-            status='unreconciled',
-            transaction_hash=thash,
-            batch=batch
+            batch_number=next_number('STMT'),
+            filename=filename,
+            source='csv_import',
+            statement_checksum=stmt_checksum,
+            total_rows=len(rows),
+            status='completed'
         )
-        services.apply_bank_rules_to_transaction(txn)
-        created.append(txn.pk)
 
-    ba.current_balance = bal
-    ba.save(update_fields=['current_balance'])
-    batch.imported_count = len(created)
-    batch.duplicate_count = duplicates
-    batch.save(update_fields=['imported_count', 'duplicate_count'])
+        created = []
+        duplicates = 0
+
+        for r in rows:
+            dt = None
+            raw_dt = str(r.get('date') or '').strip()
+            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m/%d/%Y'):
+                try:
+                    import datetime
+                    dt = datetime.datetime.strptime(raw_dt, fmt).date()
+                    break
+                except Exception:
+                    pass
+            if not dt:
+                dt = today
+
+            dep = Decimal(str(r.get('deposit') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+            wth = Decimal(str(r.get('withdrawal') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+            ref = str(r.get('reference') or '')
+            desc = str(r.get('description') or 'Bank Transaction')
+
+            thash = services.compute_txn_hash(dt, wth, dep, ref, desc)
+            if BankTransaction.objects.filter(bank_account=ba, transaction_hash=thash).exists():
+                duplicates += 1
+                continue
+
+            try:
+                with transaction.atomic():
+                    bal = bal + dep - wth
+                    txn = BankTransaction.objects.create(
+                        organization=ba.organization,
+                        bank_account=ba,
+                        date=dt,
+                        description=desc,
+                        reference=ref,
+                        deposit=dep,
+                        withdrawal=wth,
+                        balance=bal,
+                        status='unreconciled',
+                        transaction_hash=thash,
+                        batch=batch
+                    )
+                    services.apply_bank_rules_to_transaction(txn)
+                    created.append(txn.pk)
+            except IntegrityError:
+                bal = bal - dep + wth
+                duplicates += 1
+                continue
+
+        ba.current_balance = bal
+        ba.save(update_fields=['current_balance'])
+        batch.imported_count = len(created)
+        batch.duplicate_count = duplicates
+        batch.save(update_fields=['imported_count', 'duplicate_count'])
 
     services.log_audit(request.user, 'import', 'BankAccount', ba.pk, f"Imported {len(created)} bank transactions for {ba.name}")
     return j({

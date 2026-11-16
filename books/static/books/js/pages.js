@@ -6170,31 +6170,38 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Add Bank Account</h3>
           <button type="button" class="btn" data-close-modal="bnkAddAccountModal" style="padding:2px 8px;font-size:12px;">✕</button>
         </div>
-        <form id="bnkAddAccountForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+        <form id="bnkAddAccountForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;" novalidate>
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">Account / Display Name</label>
-            <input type="text" id="bnkAccName" required placeholder="e.g. HDFC Operating Account" class="in" style="width:100%;"/>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account / Display Name <span style="color:#ef4444;font-weight:700;">*</span></label>
+            <input type="text" id="bnkAccName" placeholder="e.g. HDFC Operating Account" class="in" style="width:100%;"/>
+            <div id="bnkAccNameErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">Bank Name</label>
-            <input type="text" id="bnkAccBankName" required placeholder="e.g. HDFC Bank" class="in" style="width:100%;"/>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Bank Name <span style="color:#ef4444;font-weight:700;">*</span></label>
+            <input type="text" id="bnkAccBankName" placeholder="e.g. HDFC Bank" class="in" style="width:100%;"/>
+            <div id="bnkAccBankNameErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Number</label>
-            <input type="text" id="bnkAccNum" required placeholder="e.g. 50200012849102" class="in" style="width:100%;"/>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Number <span style="color:#ef4444;font-weight:700;">*</span></label>
+            <input type="text" id="bnkAccNum" placeholder="e.g. 50200012849102" class="in" style="width:100%;"/>
+            <div id="bnkAccNumErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Type</label>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Account Type <span style="color:#ef4444;font-weight:700;">*</span></label>
             <select id="bnkAccType" class="in" style="width:100%;">
-              <option value="Current Account">Current Account</option>
-              <option value="Savings Account">Savings Account</option>
-              <option value="Corporate Account">Corporate Account</option>
-              <option value="Virtual Account">Virtual / Payment Gateway Account</option>
+              <option value="" disabled selected>Select</option>
+              <option value="current">Current Account</option>
+              <option value="savings">Savings Account</option>
+              <option value="checking">Checking Account</option>
+              <option value="credit_card">Credit Card</option>
+              <option value="cash">Cash Account</option>
+              <option value="other">Other Bank Account</option>
             </select>
+            <div id="bnkAccTypeErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Opening Balance (₹)</label>
-            <input type="number" id="bnkAccBal" required placeholder="0.00" class="in" style="width:100%;font-family:monospace;"/>
+            <input type="number" id="bnkAccBal" placeholder="0.00" class="in" style="width:100%;font-family:monospace;"/>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
             <button type="button" class="btn" data-close-modal="bnkAddAccountModal">Cancel</button>
@@ -6342,9 +6349,13 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <span style="font-size:12px;color:var(--tx-muted);">Live Ledger Balance</span>
           <span style="font-size:18px;font-weight:700;font-family:monospace;color:var(--tx);">₹${acc.balance.toLocaleString('en-IN', {minimumFractionDigits:2})}</span>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button type="button" class="btn p" style="flex:1;font-size:12px;" onclick="window.location.hash='#/banking/uncategorized-transactions'">Reconcile Feeds</button>
-          <button type="button" class="btn" style="font-size:12px;" onclick="window.location.hash='#/banking/all-transactions'">Statements</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="btn p" style="flex:1;height:34px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;box-sizing:border-box;white-space:nowrap;" onclick="window.location.hash='#/banking/uncategorized-transactions'">
+            <i class="fa-solid fa-arrows-rotate" style="font-size:11px;"></i> Reconcile Feeds
+          </button>
+          <button type="button" class="btn" style="flex:1;height:34px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;box-sizing:border-box;white-space:nowrap;background:var(--surface,#fff);border:1px solid var(--bd,#e2e8f0);color:var(--tx,#0f172a);" onclick="window.location.hash='#/banking/all-transactions'">
+            <i class="fa-solid fa-receipt" style="font-size:11px;"></i> Statements
+          </button>
         </div>
       </div>
     `).join('');
@@ -6785,7 +6796,21 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
   function openModal(modalId) {
     const m = root.querySelector('#' + modalId);
-    if (m) m.style.display = 'flex';
+    if (m) {
+      m.style.display = 'flex';
+      if (modalId === 'bnkAddAccountModal') {
+        const form = root.querySelector('#bnkAddAccountForm');
+        if (form) {
+          form.reset();
+          const accTypeEl = root.querySelector('#bnkAccType');
+          if (accTypeEl) accTypeEl.value = '';
+          const errs = form.querySelectorAll('.field-error');
+          errs.forEach(e => { e.textContent = ''; e.style.display = 'none'; });
+          const inputs = form.querySelectorAll('.in');
+          inputs.forEach(i => { i.classList.remove('in-error'); i.style.borderColor = ''; });
+        }
+      }
+    }
   }
   function closeModal(modalId) {
     const m = root.querySelector('#' + modalId);
@@ -6957,12 +6982,121 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
   const addAccountForm = root.querySelector('#bnkAddAccountForm');
   if (addAccountForm) {
+    const accNameInp = root.querySelector('#bnkAccName');
+    const accNameErr = root.querySelector('#bnkAccNameErr');
+    const accBankInp = root.querySelector('#bnkAccBankName');
+    const accBankErr = root.querySelector('#bnkAccBankNameErr');
+    const accNumInp = root.querySelector('#bnkAccNum');
+    const accNumErr = root.querySelector('#bnkAccNumErr');
+    const accTypeInp = root.querySelector('#bnkAccType');
+    const accTypeErr = root.querySelector('#bnkAccTypeErr');
+
+    function setFieldError(inputEl, errEl, msg) {
+      if (!errEl || !inputEl) return;
+      if (msg) {
+        errEl.textContent = msg;
+        errEl.style.display = 'block';
+        inputEl.classList.add('in-error');
+        inputEl.style.borderColor = '#ef4444';
+      } else {
+        errEl.textContent = '';
+        errEl.style.display = 'none';
+        inputEl.classList.remove('in-error');
+        inputEl.style.borderColor = '';
+      }
+    }
+
+    const validateName = () => {
+      const v = (accNameInp.value || '').trim();
+      if (!v || !/^[a-zA-Z0-9\s.\-_&'/()]+$/.test(v) || !/[a-zA-Z0-9]/.test(v)) {
+        setFieldError(accNameInp, accNameErr, 'Please enter a valid account display name.');
+        return false;
+      }
+      setFieldError(accNameInp, accNameErr, '');
+      return true;
+    };
+
+    const validateBank = () => {
+      const v = (accBankInp.value || '').trim();
+      if (!v || !/^[a-zA-Z0-9\s.\-'&]+$/.test(v) || /^\d+$/.test(v) || !/[a-zA-Z]/.test(v)) {
+        setFieldError(accBankInp, accBankErr, 'Please enter a valid bank name.');
+        return false;
+      }
+      setFieldError(accBankInp, accBankErr, '');
+      return true;
+    };
+
+    const validateNum = () => {
+      const v = (accNumInp.value != null ? String(accNumInp.value) : '').trim();
+      if (!v || !/^\d+$/.test(v)) {
+        setFieldError(accNumInp, accNumErr, 'Account number must contain only numeric characters.');
+        return false;
+      }
+      setFieldError(accNumInp, accNumErr, '');
+      return true;
+    };
+
+    const validateType = () => {
+      const v = (accTypeInp.value || '').trim();
+      if (!v || v.toLowerCase() === 'select') {
+        setFieldError(accTypeInp, accTypeErr, 'Please select an account type.');
+        return false;
+      }
+      setFieldError(accTypeInp, accTypeErr, '');
+      return true;
+    };
+
+    accNameInp.addEventListener('blur', validateName);
+    accNameInp.addEventListener('input', () => {
+      const v = (accNameInp.value || '').trim();
+      if (v && /^[a-zA-Z0-9\s.\-_&'/()]+$/.test(v) && /[a-zA-Z0-9]/.test(v)) {
+        setFieldError(accNameInp, accNameErr, '');
+      }
+    });
+
+    accBankInp.addEventListener('blur', validateBank);
+    accBankInp.addEventListener('input', () => {
+      const v = (accBankInp.value || '').trim();
+      if (v && /^[a-zA-Z0-9\s.\-'&]+$/.test(v) && !/^\d+$/.test(v) && /[a-zA-Z]/.test(v)) {
+        setFieldError(accBankInp, accBankErr, '');
+      }
+    });
+
+    accNumInp.addEventListener('blur', validateNum);
+    accNumInp.addEventListener('input', () => {
+      const v = (accNumInp.value != null ? String(accNumInp.value) : '').trim();
+      if (v && /^\d+$/.test(v)) {
+        setFieldError(accNumInp, accNumErr, '');
+      }
+    });
+
+    accTypeInp.addEventListener('change', () => {
+      const v = (accTypeInp.value || '').trim();
+      if (v && v.toLowerCase() !== 'select') {
+        setFieldError(accTypeInp, accTypeErr, '');
+      }
+    });
+    accTypeInp.addEventListener('blur', validateType);
+
     addAccountForm.addEventListener('submit', async e => {
       e.preventDefault();
-      const name = root.querySelector('#bnkAccName').value;
-      const bank = root.querySelector('#bnkAccBankName').value;
-      const num = root.querySelector('#bnkAccNum').value;
-      const type = root.querySelector('#bnkAccType').value;
+      const validN = validateName();
+      const validB = validateBank();
+      const validNum = validateNum();
+      const validT = validateType();
+
+      if (!validN || !validB || !validNum || !validT) {
+        if (!validN) accNameInp.focus();
+        else if (!validB) accBankInp.focus();
+        else if (!validNum) accNumInp.focus();
+        else if (!validT) accTypeInp.focus();
+        return;
+      }
+
+      const name = accNameInp.value.trim();
+      const bank = accBankInp.value.trim();
+      const num = accNumInp.value.trim();
+      const type = accTypeInp.value.trim();
       const bal = parseFloat(root.querySelector('#bnkAccBal').value) || 0;
 
       try {
@@ -6981,6 +7115,16 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         toast('Bank account created successfully!', 'ok');
         renderBankingModule(root, currentTab);
       } catch(err) {
+        if (err && err.errors) {
+          if (err.errors.name) setFieldError(accNameInp, accNameErr, err.errors.name);
+          if (err.errors.bank_name) setFieldError(accBankInp, accBankErr, err.errors.bank_name);
+          if (err.errors.account_number) setFieldError(accNumInp, accNumErr, err.errors.account_number);
+          if (err.errors.account_type) setFieldError(accTypeInp, accTypeErr, err.errors.account_type);
+          if (err.errors.name) accNameInp.focus();
+          else if (err.errors.bank_name) accBankInp.focus();
+          else if (err.errors.account_number) accNumInp.focus();
+          else if (err.errors.account_type) accTypeInp.focus();
+        }
         toast(err.message || 'Error creating bank account', 'err');
       }
     });

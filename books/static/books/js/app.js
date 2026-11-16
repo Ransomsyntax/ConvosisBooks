@@ -232,6 +232,8 @@ const PASTEL = {
   pay: 'icon-rose'
 };
 let openG = pref.get('open', ['home']);
+if (!Array.isArray(openG)) openG = ['home'];
+else if (openG.length > 1) openG = [openG[0]];
 
 function navigateOrRun(routePath, fallbackAction) {
   const targetHash = '#/' + routePath.replace(/^#?\/?/, '');
@@ -712,9 +714,9 @@ document.addEventListener('click', async e => {
     const hasSub = Boolean(navG && navG[2] && navG[2].length > 0);
     if (hasSub) {
       if (openG.includes(k)) {
-        openG = openG.filter(x => x !== k);
+        openG = [];
       } else {
-        openG = [...openG, k];
+        openG = [k];
       }
       pref.set('open', openG);
       document.body.classList.remove('col');

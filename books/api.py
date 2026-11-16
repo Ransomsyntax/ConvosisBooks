@@ -4759,12 +4759,58 @@ class BankAccountResource(Resource):
 
     def clean(self, data):
         c = Cleaner(data)
+
+        # DEF_CB_082: Account / Display Name Validation
+        name_val = str(data.get('name') or '').strip()
+        if not name_val:
+            c.err('name', 'Please enter a valid account display name.')
+        elif not re.match(r"^[a-zA-Z0-9\s.\-_&'/()]+$", name_val) or not any(ch.isalnum() for ch in name_val):
+            c.err('name', 'Please enter a valid account display name.')
+        elif len(name_val) > 150:
+            c.err('name', 'Maximum 150 characters.')
+
+        # DEF_CB_083: Bank Name Validation
+        bank_val = str(data.get('bank_name') or '').strip()
+        if not bank_val:
+            c.err('bank_name', 'Please enter a valid bank name.')
+        elif not re.match(r"^[a-zA-Z0-9\s.\-'&]+$", bank_val) or bank_val.isdigit() or not any(ch.isalpha() for ch in bank_val):
+            c.err('bank_name', 'Please enter a valid bank name.')
+        elif len(bank_val) > 100:
+            c.err('bank_name', 'Maximum 100 characters.')
+
+        # DEF_CB_084: Account Number Validation (preserve leading zeros as string)
+        raw_acc = data.get('account_number')
+        acc_str = str(raw_acc if raw_acc is not None else '').strip()
+        if not acc_str or not acc_str.isdigit():
+            c.err('account_number', 'Account number must contain only numeric characters.')
+        elif len(acc_str) > 50:
+            c.err('account_number', 'Maximum 50 characters.')
+
+        # DEF_CB_087: Account Type Selection
+        raw_type = str(data.get('account_type') or '').strip().lower()
+        type_map = {
+            'current': 'current', 'current account': 'current',
+            'savings': 'savings', 'savings account': 'savings',
+            'checking': 'checking', 'checking account': 'checking',
+            'corporate': 'current', 'corporate account': 'current',
+            'virtual': 'other', 'virtual account': 'other',
+            'virtual / payment gateway account': 'other',
+            'cash': 'cash', 'cash account': 'cash',
+            'credit_card': 'credit_card', 'credit card': 'credit_card',
+            'other': 'other', 'other bank account': 'other'
+        }
+        if not raw_type or raw_type == 'select' or raw_type not in type_map:
+            c.err('account_type', 'Please select an account type.')
+            account_type_clean = 'current'
+        else:
+            account_type_clean = type_map[raw_type]
+
         out = {
-            'name': c.text('name', True, 150),
-            'bank_name': c.text('bank_name', True, 100),
-            'account_number': c.text('account_number', True, 50),
+            'name': name_val,
+            'bank_name': bank_val,
+            'account_number': acc_str,
             'ifsc': c.text('ifsc', max_len=20),
-            'account_type': c.text('account_type', default='current', max_len=20),
+            'account_type': account_type_clean,
             'currency': c.text('currency', default='INR', max_len=10),
             'opening_balance': c.number('opening_balance', default=Decimal('0.00')),
             'opening_balance_date': c.date('opening_balance_date'),

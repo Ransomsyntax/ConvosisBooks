@@ -7809,7 +7809,7 @@ async function expenseForm(id) {
 async function bankAccountForm(id, onDone) {
   const [o, accounts] = await Promise.all([
     id ? api(`bank-accounts/${id}/`) : Promise.resolve({
-      name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current',
+      name: '', bank_name: '', account_number: '', ifsc: '', account_type: '',
       currency: 'INR', branch_name: 'HO Kottayam', opening_balance: '0.00',
       opening_balance_date: APP.today, bank_balance: '0.00', gl_account_id: null,
       description: '', active: true, is_archived: false
@@ -7818,11 +7818,12 @@ async function bankAccountForm(id, onDone) {
   ]);
 
   const accTypeOpts = [
+    ['', 'Select'],
     ['current', 'Current Account'],
     ['savings', 'Savings Account'],
     ['checking', 'Checking Account'],
-    ['cash', 'Cash Account'],
     ['credit_card', 'Credit Card'],
+    ['cash', 'Cash Account'],
     ['other', 'Other Bank Account']
   ];
 
@@ -7831,12 +7832,12 @@ async function bankAccountForm(id, onDone) {
   formModal({
     title: id ? 'Edit Bank Account' : 'Add Bank Account',
     body: `<div class="zb-form-wrap">
-      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
+      ${fld({ name: 'name', label: 'Account / Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
       ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. Kotak Mahindra Bank' })}
       ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, ph: 'Enter account number' })}
       ${o.masked_account_number ? `<div class="sub" style="margin:-6px 0 10px 14px;font-size:11.5px;">Masked View: <b>${esc(o.masked_account_number)}</b></div>` : ''}
       ${fld({ name: 'ifsc', label: 'IFSC / Routing Code', value: o.ifsc, ph: 'e.g. KKBK0001234' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: accTypeOpts, value: o.account_type || 'current' })}
+      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', req: true, opts: accTypeOpts, value: o.account_type || '' })}
       ${fld({ name: 'currency', label: 'Account Currency', type: 'select', opts: [['INR', 'INR - Indian Rupee'], ['USD', 'USD - US Dollar'], ['EUR', 'EUR - Euro'], ['GBP', 'GBP - British Pound']], value: o.currency || 'INR' })}
       ${fld({ name: 'branch_name', label: 'Branch / Location', value: o.branch_name || 'HO Kottayam', ph: 'e.g. HO Kottayam' })}
       ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance || '0.00' })}
@@ -7855,7 +7856,85 @@ async function bankAccountForm(id, onDone) {
         </label>
       </div>
     </div>`,
-    onSubmit: async d => {
+    onReady: (form, m) => {
+      const validators = {
+        name: v => {
+          const s = (v || '').trim();
+          if (!s || !/^[a-zA-Z0-9\s.\-_&'/()]+$/.test(s) || !/[a-zA-Z0-9]/.test(s)) return 'Please enter a valid account display name.';
+          return null;
+        },
+        bank_name: v => {
+          const s = (v || '').trim();
+          if (!s || !/^[a-zA-Z0-9\s.\-'&]+$/.test(s) || /^\d+$/.test(s) || !/[a-zA-Z]/.test(s)) return 'Please enter a valid bank name.';
+          return null;
+        },
+        account_number: v => {
+          const s = (v != null ? String(v) : '').trim();
+          if (!s || !/^\d+$/.test(s)) return 'Account number must contain only numeric characters.';
+          return null;
+        },
+        account_type: v => {
+          const s = (v || '').trim();
+          if (!s || s.toLowerCase() === 'select') return 'Please select an account type.';
+          return null;
+        }
+      };
+
+      Object.entries(validators).forEach(([name, fn]) => {
+        const inp = form.querySelector(`[name="${name}"]`);
+        const errEl = form.querySelector(`[data-err="${name}"]`);
+        if (!inp || !errEl) return;
+        inp.addEventListener('blur', () => {
+          const err = fn(inp.value);
+          if (err) {
+            errEl.textContent = err;
+            inp.classList.add('in-error');
+          } else {
+            errEl.textContent = '';
+            inp.classList.remove('in-error');
+          }
+        });
+        inp.addEventListener('input', () => {
+          const err = fn(inp.value);
+          if (!err) {
+            errEl.textContent = '';
+            inp.classList.remove('in-error');
+          }
+        });
+        if (inp.tagName === 'SELECT') {
+          inp.addEventListener('change', () => {
+            const err = fn(inp.value);
+            if (!err) {
+              errEl.textContent = '';
+              inp.classList.remove('in-error');
+            }
+          });
+        }
+      });
+    },
+    onSubmit: async (d, act, form) => {
+      const errors = {};
+      const nameVal = (d.name || '').trim();
+      if (!nameVal || !/^[a-zA-Z0-9\s.\-_&'/()]+$/.test(nameVal) || !/[a-zA-Z0-9]/.test(nameVal)) {
+        errors.name = 'Please enter a valid account display name.';
+      }
+      const bankVal = (d.bank_name || '').trim();
+      if (!bankVal || !/^[a-zA-Z0-9\s.\-'&]+$/.test(bankVal) || /^\d+$/.test(bankVal) || !/[a-zA-Z]/.test(bankVal)) {
+        errors.bank_name = 'Please enter a valid bank name.';
+      }
+      const accNumVal = (d.account_number != null ? String(d.account_number) : '').trim();
+      if (!accNumVal || !/^\d+$/.test(accNumVal)) {
+        errors.account_number = 'Account number must contain only numeric characters.';
+      }
+      const typeVal = (d.account_type || '').trim();
+      if (!typeVal || typeVal.toLowerCase() === 'select') {
+        errors.account_type = 'Please select an account type.';
+      }
+
+      if (Object.keys(errors).length > 0) {
+        throw new ApiErr(400, errors, 'Please correct the highlighted fields.');
+      }
+
       d.opening_balance = num(d.opening_balance);
       d.bank_balance = num(d.bank_balance);
       d.gl_account = d.gl_account ? Number(d.gl_account) : null;
@@ -16717,6 +16796,44 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         border-color: #334155 !important;
         color: #38bdf8 !important;
       }
+      .ret-bottom-bar {
+        position: sticky !important;
+        bottom: 0 !important;
+        background: var(--surface, #ffffff) !important;
+        border-top: 1px solid var(--bd, #e2e8f0) !important;
+        margin-top: 24px !important;
+        padding: 14px 28px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        z-index: 50 !important;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
+      }
+      @media (max-width: 768px) {
+        .ret-bottom-bar {
+          flex-direction: column !important;
+          gap: 12px !important;
+          align-items: stretch !important;
+          padding: 12px 16px !important;
+        }
+        .ret-bottom-bar > div {
+          justify-content: space-between !important;
+          width: 100% !important;
+        }
+      }
+      [data-theme="dark"] .ret-bottom-bar {
+        background: #111c38 !important;
+        border-color: #1e293b !important;
+      }
+      [data-theme="dark"] .ret-bottom-bar #btn-ret-save-draft,
+      [data-theme="dark"] .ret-bottom-bar #btn-ret-cancel {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        border-color: #334155 !important;
+      }
+      [data-theme="dark"] .ret-bottom-bar #ret-bar-total-amount {
+        color: #f8fafc !important;
+      }
     </style>
 
     <div class="invoice-form-page" style="background:#f1f5f9;min-height:100%;display:flex;flex-direction:column;">
@@ -16738,7 +16855,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         </div>
       </div>
 
-      <form id="retainer-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;" novalidate>
+      <form id="retainer-form-element" style="padding:24px 28px 24px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;flex:1;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
         <!-- Master Three-Card Information Layout -->
@@ -16888,27 +17005,27 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             </div>
           </div>
         </div>
-      </form>
 
-      <!-- Sticky Bottom Action Bar -->
-      <div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd,#e2e8f0);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;z-index:100;box-shadow:0 -2px 8px rgba(0,0,0,0.04);">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:600;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;">Save as Draft</button>
-          <button type="button" class="btn p" id="btn-ret-save-send" style="display:inline-flex;align-items:center;gap:8px;padding:8px 20px;font-weight:600;font-size:13px;border-radius:6px;cursor:pointer;">
-            Save and Send <i class="fa-solid fa-paper-plane" style="font-size:11px;"></i>
-          </button>
-          <button type="button" class="btn" id="btn-ret-cancel" style="background:#fff;font-weight:500;font-size:13px;padding:8px 16px;border-radius:6px;cursor:pointer;">Cancel</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:20px;font-size:13px;">
-          <div style="display:flex;align-items:center;gap:6px;color:#475569;">
-            <span>PDF Template: <b>'${esc(retPdfTemplateName)}'</b></span>
-            <button type="button" class="btn" id="btn-ret-template-change" style="border:0;background:transparent;color:#2563eb;font-weight:600;padding:2px 4px;cursor:pointer;text-decoration:underline;">Change</button>
+        <!-- Sticky Bottom Action Bar -->
+        <div class="ret-bottom-bar">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:600;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;">Save as Draft</button>
+            <button type="button" class="btn p" id="btn-ret-save-send" style="display:inline-flex;align-items:center;gap:8px;padding:8px 20px;font-weight:600;font-size:13px;border-radius:6px;cursor:pointer;">
+              Save and Send <i class="fa-solid fa-paper-plane" style="font-size:11px;"></i>
+            </button>
+            <button type="button" class="btn" id="btn-ret-cancel" style="background:#fff;font-weight:500;font-size:13px;padding:8px 16px;border-radius:6px;cursor:pointer;">Cancel</button>
           </div>
-          <div style="font-weight:700;color:#0f172a;font-size:14px;padding-left:16px;border-left:1px solid var(--bd,#e2e8f0);">
-            <span>Total: <span id="ret-bar-total-amount">₹ 0.00</span></span>
+          <div style="display:flex;align-items:center;gap:20px;font-size:13px;">
+            <div style="display:flex;align-items:center;gap:6px;color:#475569;">
+              <span>PDF Template: <b>'${esc(retPdfTemplateName)}'</b></span>
+              <button type="button" class="btn" id="btn-ret-template-change" style="border:0;background:transparent;color:#2563eb;font-weight:600;padding:2px 4px;cursor:pointer;text-decoration:underline;">Change</button>
+            </div>
+            <div style="font-weight:700;color:#0f172a;font-size:14px;padding-left:16px;border-left:1px solid var(--bd,#e2e8f0);">
+              <span>Total: <span id="ret-bar-total-amount">₹ 0.00</span></span>
+            </div>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   `;
 

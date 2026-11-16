@@ -12711,6 +12711,7 @@ def settings_transaction_series_view(request, series_id=None):
                 'document_type': item['key'],
                 'label': item['label'],
                 'prefix': services.default_document_number_prefix(org, item['pfx']),
+                'base_prefix': services.default_document_number_prefix(org, item['pfx']),
                 'next_number': item['default_next'],
                 'padding': item['padding'],
             } for item in services.SUPPORTED_TRANSACTION_TYPES],
@@ -12728,6 +12729,8 @@ def settings_transaction_series_view(request, series_id=None):
         location = str(data.get('location') or '').strip()
         is_default = bool(data.get('is_default', False))
         is_active = bool(data.get('is_active', True))
+        if is_default and not is_active:
+            raise ApiError(400, 'An inactive series cannot be set as the default series.')
 
         with transaction.atomic():
             Organization.objects.select_for_update().get(pk=org.pk)
@@ -12818,6 +12821,9 @@ def settings_transaction_series_view(request, series_id=None):
                 grp.location = str(data['location']).strip()
             if 'is_default' in data:
                 is_def = bool(data['is_default'])
+                active_flag = bool(data['is_active']) if 'is_active' in data else grp.is_active
+                if is_def and not active_flag:
+                    raise ApiError(400, 'An inactive series cannot be set as the default series.')
                 grp.is_default = is_def
                 if is_def:
                     TransactionSeries.objects.filter(organization=org).exclude(pk=grp.pk).update(is_default=False)
@@ -12826,7 +12832,10 @@ def settings_transaction_series_view(request, series_id=None):
                 else:
                     DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(is_default=False)
             if 'is_active' in data:
-                grp.is_active = bool(data['is_active'])
+                new_active = bool(data['is_active'])
+                if not new_active and grp.is_default:
+                    raise ApiError(400, 'Cannot deactivate the default transaction series. Please designate another series as default first.')
+                grp.is_active = new_active
 
             grp.save()
 

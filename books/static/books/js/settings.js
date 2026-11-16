@@ -2823,7 +2823,9 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
   modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', () => modal.remove()));
 
-  modal.querySelector('#btnSaveSeriesItem').addEventListener('click', async () => {
+  const saveItemBtn = modal.querySelector('#btnSaveSeriesItem');
+  saveItemBtn.addEventListener('click', async () => {
+    if (saveItemBtn.disabled) return;
     const prefix = prefixInp.value.trim();
     const rawNext = nextInp.value.trim();
     if (!prefix) {
@@ -2839,6 +2841,8 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     const next_number = Number(rawNext);
     const padding = rawNext.length > 1 ? rawNext.length : 1;
 
+    saveItemBtn.disabled = true;
+    saveItemBtn.textContent = 'Saving...';
     try {
       await api(`/settings/transaction-series/${currentSeries.id}/`, {
         method: 'PUT',
@@ -2855,6 +2859,8 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       modal.remove();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
+      saveItemBtn.disabled = false;
+      saveItemBtn.textContent = 'Save';
       toast(err.message || 'Failed to update numbering series.', 'error');
     }
   });
@@ -2862,6 +2868,17 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
 function openAddTransactionSeriesModal(container, supportedTypes) {
   document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
+
+  // Deep clone supportedTypes to guarantee independent, immutable base prefixes
+  const typesList = (supportedTypes || []).map(item => ({
+    document_type: item.document_type,
+    label: item.label,
+    prefix: item.prefix || '',
+    base_prefix: item.base_prefix || item.prefix || '',
+    next_number: item.next_number || 1,
+    padding: item.padding || 5
+  }));
+
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop transaction-series-modal';
   modal.innerHTML = `
@@ -2895,10 +2912,10 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
               </tr>
             </thead>
             <tbody id="newSeriesItemsTbody">
-              ${supportedTypes.map(item => `
+              ${typesList.map(item => `
                 <tr data-type="${esc(item.document_type)}">
                   <td><b>${esc(item.label)}</b></td>
-                  <td><input type="text" class="form-control s-pfx" value="${esc(item.prefix)}" style="padding:4px 8px;font-size:12px;"></td>
+                  <td><input type="text" class="form-control s-pfx" data-base-prefix="${esc(item.base_prefix)}" value="${esc(item.base_prefix)}" style="padding:4px 8px;font-size:12px;"></td>
                   <td><input type="text" class="form-control s-nxt" value="${esc(String(item.next_number).padStart(item.padding || 1, '0'))}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
                 </tr>
               `).join('')}
@@ -2914,50 +2931,104 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
   `;
   document.body.appendChild(modal);
 
-  // Auto update prefixes if user types name
   const nameInput = modal.querySelector('#newSeriesName');
   const pfxInputs = modal.querySelectorAll('.s-pfx');
-  nameInput.addEventListener('blur', () => {
-    const val = nameInput.value.trim();
-    if (val && !val.toLowerCase().includes('default')) {
-      const pfxWord = val.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
-      pfxInputs.forEach(input => {
-        if (!input.dataset.userEdited && !input.value.startsWith(pfxWord)) {
-          input.value = `${pfxWord}-${input.value}`;
-        }
-      });
+
+  function deriveSeriesIdentifier(name) {
+    const raw = (name || '').trim();
+    if (!raw || raw.toLowerCase().includes('default')) return '';
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length === 1) {
+      return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
     }
+    const initials = words.map(w => w[0]).join('').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (initials.length >= 2 && initials.length <= 5) {
+      return initials;
+    }
+    return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+  }
+
+  // Pure function: generates prefix from immutable basePrefix and current series identifier
+  const applyPrefixUpdates = () => {
+    const seriesId = deriveSeriesIdentifier(nameInput.value);
+    pfxInputs.forEach(input => {
+      if (input.dataset.userEdited === '1') return;
+      const basePrefix = input.dataset.basePrefix || '';
+      input.value = seriesId ? `${seriesId}-${basePrefix}` : basePrefix;
+    });
+  };
+
+  let updateTimer = null;
+  nameInput.addEventListener('input', () => {
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(applyPrefixUpdates, 50);
   });
-  pfxInputs.forEach(inp => inp.addEventListener('input', () => { inp.dataset.userEdited = '1'; }));
+  nameInput.addEventListener('blur', () => {
+    if (updateTimer) clearTimeout(updateTimer);
+    applyPrefixUpdates();
+  });
 
-  modal.querySelectorAll('[data-close-series]').forEach(b => b.addEventListener('click', () => modal.remove()));
+  pfxInputs.forEach(inp => {
+    inp.addEventListener('input', () => {
+      inp.dataset.userEdited = '1';
+    });
+  });
 
-  modal.querySelector('#btnSaveNewSeries').addEventListener('click', async () => {
+  modal.querySelectorAll('[data-close-series]').forEach(b => {
+    b.addEventListener('click', () => {
+      modal.remove();
+    });
+  });
+
+  const saveBtn = modal.querySelector('#btnSaveNewSeries');
+  saveBtn.addEventListener('click', async () => {
+    if (saveBtn.disabled) return;
     const name = nameInput.value.trim();
     if (!name) {
       toast('Please enter a Series Name.', 'error');
+      nameInput.focus();
       return;
     }
     const branch = modal.querySelector('#newSeriesBranch').value.trim();
     const isDefault = modal.querySelector('#newSeriesDefault').checked;
     const isActive = modal.querySelector('#newSeriesActive').checked;
 
+    if (isDefault && !isActive) {
+      toast('An inactive series cannot be set as the default series.', 'error');
+      return;
+    }
+
     const items = [];
+    let hasError = false;
     modal.querySelectorAll('#newSeriesItemsTbody tr').forEach(row => {
+      if (hasError) return;
       const type = row.dataset.type;
-      const pfx = row.querySelector('.s-pfx').value.trim();
-      const rawNxt = row.querySelector('.s-nxt').value.trim();
-      if (!pfx || !/^\d{1,12}$/.test(rawNxt) || Number(rawNxt) < 1) {
-        row.querySelector(!pfx ? '.s-pfx' : '.s-nxt').focus();
-        toast('Every transaction type needs a prefix and a positive sequence number.', 'error');
+      const pfxInput = row.querySelector('.s-pfx');
+      const nxtInput = row.querySelector('.s-nxt');
+      const pfx = pfxInput.value.trim();
+      const rawNxt = nxtInput.value.trim();
+
+      if (!pfx) {
+        toast('Every transaction type needs a valid prefix.', 'error');
+        pfxInput.focus();
+        hasError = true;
+        return;
+      }
+      if (!/^\d{1,12}$/.test(rawNxt) || Number(rawNxt) < 1) {
+        toast('Next sequence number must be a positive whole number of at most 12 digits.', 'error');
+        nxtInput.focus();
+        hasError = true;
         return;
       }
       const nxt = Number(rawNxt);
       const pad = rawNxt.length > 1 ? rawNxt.length : 1;
       items.push({ document_type: type, prefix: pfx, next_number: nxt, padding: pad });
     });
-    if (items.length !== supportedTypes.length) return;
 
+    if (hasError || items.length !== typesList.length) return;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
     try {
       const res = await api('/settings/transaction-series/', {
         method: 'POST',
@@ -2974,6 +3045,8 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
       modal.remove();
       await renderNumberSeriesPage(container, res.id);
     } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Series';
       toast(err.message || 'Failed to create series.', 'error');
     }
   });
@@ -3009,16 +3082,26 @@ function openEditSeriesMetaModal(container, currentSeries) {
 
   modal.querySelectorAll('[data-close-meta]').forEach(b => b.addEventListener('click', () => modal.remove()));
 
-  modal.querySelector('#btnSaveSeriesMeta').addEventListener('click', async () => {
+  const saveMetaBtn = modal.querySelector('#btnSaveSeriesMeta');
+  saveMetaBtn.addEventListener('click', async () => {
+    if (saveMetaBtn.disabled) return;
     const name = modal.querySelector('#editMetaName').value.trim();
     if (!name) {
       toast('Series name is required.', 'error');
+      modal.querySelector('#editMetaName').focus();
       return;
     }
     const branch = modal.querySelector('#editMetaBranch').value.trim();
     const isDefault = modal.querySelector('#editMetaDefault').checked;
     const isActive = modal.querySelector('#editMetaActive').checked;
 
+    if (isDefault && !isActive) {
+      toast('An inactive series cannot be set as the default series.', 'error');
+      return;
+    }
+
+    saveMetaBtn.disabled = true;
+    saveMetaBtn.textContent = 'Saving...';
     try {
       await api(`/settings/transaction-series/${currentSeries.id}/`, {
         method: 'PUT',
@@ -3034,6 +3117,8 @@ function openEditSeriesMetaModal(container, currentSeries) {
       modal.remove();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
+      saveMetaBtn.disabled = false;
+      saveMetaBtn.textContent = 'Save';
       toast(err.message || 'Failed to update series.', 'error');
     }
   });

@@ -13354,6 +13354,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   const invAccountsReceivable = rec ? (rec.accounts_receivable || 'Accounts Receivable') : 'Accounts Receivable';
   const invLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : ((srcSO && srcSO.lines && srcSO.lines.length) ? srcSO.lines : [{ quantity: 1, rate: 0, gst_rate: 18 }]));
   const invDiscountPct = (invLines[0] && num(invLines[0].discount_percent)) || 0;
+  const invTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : (srcSO ? (srcSO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive'));
   const invAdj = rec ? (num(rec.adjustment) || 0) : 0;
   const invTcs = rec ? (num(rec.tcs_rate) || 0) : 0;
   const pendingFiles = [];
@@ -13552,6 +13553,69 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             border-color: #334155 !important;
             color: #38bdf8 !important;
           }
+          .invoice-tax-mode-container {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-bottom: 16px;
+            padding: 0 4px;
+          }
+          .tax-mode-pill-box {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            padding: 5px 12px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+          }
+          .tax-mode-toggle {
+            display: inline-flex;
+            background: #f1f5f9;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 2px;
+          }
+          .btn-tax-mode {
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            background: transparent;
+            color: #64748b;
+          }
+          .btn-tax-mode.active {
+            background: #0284c7;
+            color: #ffffff;
+            box-shadow: 0 1px 2px rgba(2, 132, 199, 0.25);
+          }
+          .btn-tax-mode:not(.active):hover {
+            color: #0f172a;
+            background: #e2e8f0;
+          }
+          [data-theme="dark"] .tax-mode-pill-box {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .tax-mode-toggle {
+            background: #0f172a !important;
+          }
+          [data-theme="dark"] .btn-tax-mode {
+            color: #94a3b8 !important;
+          }
+          [data-theme="dark"] .btn-tax-mode.active {
+            background: #0284c7 !important;
+            color: #ffffff !important;
+          }
+          [data-theme="dark"] .btn-tax-mode:not(.active):hover {
+            background: #334155 !important;
+            color: #f1f5f9 !important;
+          }
           @media (max-width: 1024px) {
             .invoice-three-cards-grid {
               grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -13661,6 +13725,27 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               <label class="invoice-card-label" for="inv-subject">Subject</label>
               <input class="in" id="inv-subject" name="subject" value="${esc(invSubject)}" placeholder="Let your customer know what this Invoice is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
+          </div>
+        </div>
+
+        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
+        <div class="invoice-tax-mode-container">
+          <div class="tax-mode-pill-box">
+            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
+            </span>
+            <div class="tax-mode-toggle">
+              <button type="button" class="btn-tax-mode ${invTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode ${invTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive">
+                Tax Inclusive
+              </button>
+            </div>
+            <select class="in" id="inv-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${invTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${invTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
           </div>
         </div>
 
@@ -13886,9 +13971,11 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   }
 
   function calcInvoice() {
+    const isTaxInclusive = ($('#inv-tax-pricing', form)?.value === 'tax_inclusive');
     let subtotal = 0;
     let totalLineTax = 0;
     let totalQty = 0;
+    let grossTotal = 0;
     const discPct = num($('#inv-discount-pct', form)?.value) || 0;
 
     $$('.ln-invoice', tbody).forEach(tr => {
@@ -13899,22 +13986,31 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
 
       $('.l-amt', tr).textContent = lineAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       
-      subtotal += lineAmt;
       totalQty += qty;
+      grossTotal += lineAmt;
 
       const discountedLine = lineAmt * (100 - discPct) / 100;
-      const lineTax = discountedLine * gstRate / 100;
-      totalLineTax += lineTax;
+
+      if (isTaxInclusive && gstRate > 0) {
+        const lineTaxable = r2(discountedLine / (1 + gstRate / 100));
+        const lineTax = r2(discountedLine - lineTaxable);
+        subtotal += lineTaxable;
+        totalLineTax += lineTax;
+      } else {
+        const lineTaxable = r2(discountedLine);
+        const lineTax = r2(lineTaxable * gstRate / 100);
+        subtotal += lineTaxable;
+        totalLineTax += lineTax;
+      }
     });
 
-    const discAmt = subtotal * discPct / 100;
-    const taxableSubtotal = Math.max(0, subtotal - discAmt);
+    const discAmt = r2(grossTotal * discPct / 100);
     const adj = num($('#inv-adj-val', form)?.value) || 0;
     const tcsRate = num($('#inv-tcs-tax', form)?.value) || 0;
-    const tcsAmt = taxableSubtotal * tcsRate / 100;
+    const tcsAmt = r2(subtotal * tcsRate / 100);
 
-    let grand = taxableSubtotal + totalLineTax + tcsAmt + adj;
-    grand = Math.max(0, grand);
+    let grand = subtotal + totalLineTax + tcsAmt + adj;
+    grand = Math.max(0, r2(grand));
 
     $('#inv-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#inv-discount-amt', form).textContent = discAmt.toFixed(2);
@@ -14010,6 +14106,26 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#inv-discount-pct', form)?.addEventListener('input', calcInvoice);
   $('#inv-adj-val', form)?.addEventListener('input', calcInvoice);
   $('#inv-tcs-tax', form)?.addEventListener('change', calcInvoice);
+
+  $$('.btn-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const mode = btn.dataset.mode;
+      const sel = $('#inv-tax-pricing', form);
+      if (sel && sel.value !== mode) {
+        sel.value = mode;
+        $$('.btn-tax-mode', form).forEach(b => {
+          if (b.dataset.mode === mode) {
+            b.classList.add('active');
+          } else {
+            b.classList.remove('active');
+          }
+        });
+        sel.dispatchEvent(new Event('change'));
+      }
+    });
+  });
+  $('#inv-tax-pricing', form)?.addEventListener('change', calcInvoice);
 
   tbody.addEventListener('input', e => {
     if (e.target.matches('.l-qty, .l-rate')) calcInvoice();
@@ -14152,6 +14268,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         customer: custId,
         customer_id: custId,
         frequency: 'monthly',
+        tax_pricing_type: $('#inv-tax-pricing', form)?.value || 'tax_exclusive',
         start_date: ($('#inv-date', form) && $('#inv-date', form).value) || (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10)),
         total: totals.totalGrand,
         lines: lines
@@ -14230,7 +14347,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       order_number: $('#inv-order-number', form).value.trim(),
       date: dt,
       due_date: $('#inv-due-date', form).value || dt,
-      tax_pricing_type: 'tax_exclusive',
+      tax_pricing_type: $('#inv-tax-pricing', form)?.value || (rec && rec.tax_pricing_type) || 'tax_exclusive',
       customer_type: 'b2b',
       terms: $('#inv-terms-text', form).value.trim() || $('#inv-terms', form).value,
       salesperson: form.querySelector('#inv-salesperson-container select.sp-select')?.value || '',

@@ -330,3 +330,56 @@ class TaxPricingB2BTestCase(TestCase):
         self.assertEqual(gen_inv.customer_type, 'b2b')
         self.assertEqual(gen_inv.total, Decimal('1180.00'))
 
+    def test_section_9_calculation_table(self):
+        """
+        Verify the exact 6 test cases from Section 9:
+        1. Exclusive | 1000 | 2 | 18% -> 2360
+        2. Inclusive | 1180 | 2 | 18% -> 2360
+        3. Exclusive |  500 | 1 |  5% ->  525
+        4. Inclusive |  525 | 1 |  5% ->  525
+        5. Exclusive | 1000 | 1 | 12% -> 1120
+        6. Inclusive | 1120 | 1 | 12% -> 1120
+        """
+        cases = [
+            ('tax_exclusive', Decimal('1000.00'), Decimal('2'), Decimal('18.00'), Decimal('2000.00'), Decimal('360.00'), Decimal('2360.00')),
+            ('tax_inclusive', Decimal('1180.00'), Decimal('2'), Decimal('18.00'), Decimal('2000.00'), Decimal('360.00'), Decimal('2360.00')),
+            ('tax_exclusive', Decimal('500.00'),  Decimal('1'), Decimal('5.00'),  Decimal('500.00'),  Decimal('25.00'),  Decimal('525.00')),
+            ('tax_inclusive', Decimal('525.00'),  Decimal('1'), Decimal('5.00'),  Decimal('500.00'),  Decimal('25.00'),  Decimal('525.00')),
+            ('tax_exclusive', Decimal('1000.00'), Decimal('1'), Decimal('12.00'), Decimal('1000.00'), Decimal('120.00'), Decimal('1120.00')),
+            ('tax_inclusive', Decimal('1120.00'), Decimal('1'), Decimal('12.00'), Decimal('1000.00'), Decimal('120.00'), Decimal('1120.00')),
+        ]
+        for mode, rate, qty, gst, exp_sub, exp_tax, exp_tot in cases:
+            lines = [{'quantity': qty, 'rate': rate, 'discount_percent': Decimal('0'), 'gst_rate': gst}]
+            is_incl = (mode == 'tax_inclusive')
+            calc_lines, tot = calc.compute(lines, intra=True, is_tax_inclusive=is_incl)
+            self.assertEqual(tot['subtotal'], exp_sub, f"Subtotal mismatch for {mode} {rate}")
+            self.assertEqual(tot['cgst'] + tot['sgst'], exp_tax, f"Tax mismatch for {mode} {rate}")
+            self.assertEqual(tot['total'], exp_tot, f"Total mismatch for {mode} {rate}")
+
+            inv_payload = {
+                'customer': self.b2b_customer.id,
+                'customer_type': 'b2b',
+                'tax_pricing_type': mode,
+                'date': timezone.localdate().isoformat(),
+                'due_date': timezone.localdate().isoformat(),
+                'place_of_supply': 'Kerala',
+                'lines': [
+                    {
+                        'item': self.item.id,
+                        'description': f'Test {mode} item',
+                        'quantity': float(qty),
+                        'rate': float(rate),
+                        'discount_percent': 0,
+                        'gst_rate': float(gst)
+                    }
+                ],
+                'force': True
+            }
+            res = self.client.post('/api/invoices/', inv_payload, content_type='application/json')
+            self.assertEqual(res.status_code, 201, f"Failed creating invoice for {mode}: {res.content}")
+            data = res.json()
+            self.assertEqual(Decimal(str(data['subtotal'])), exp_sub)
+            self.assertEqual(Decimal(str(data['total'])), exp_tot)
+            self.assertEqual(Decimal(str(data['cgst'])) + Decimal(str(data['sgst'])), exp_tax)
+
+

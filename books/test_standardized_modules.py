@@ -137,3 +137,70 @@ class StandardizedModulesTestCase(TestCase):
         self.assertEqual(data.get('subject'), 'Project Quotation for Mobile App')
         self.assertEqual(data.get('reference_number'), 'REF-Q-001')
         self.assertEqual(Quote.objects.filter(pk=data['id']).count(), 1)
+
+    def test_quote_and_so_customer_data_integration(self):
+        """Test customer type and place of supply fetched from Customer master for Quotes and Sales Orders."""
+        b2b_cust = Customer.objects.create(
+            name='Acme Corp B2B', organization=self.org,
+            customer_type='business', gstin='32AAACB1234F1Z1', state='Tamil Nadu'
+        )
+        today = timezone.localdate()
+
+        # Quote inheriting customer details
+        q_payload = {
+            'customer': b2b_cust.id,
+            'date': today.isoformat(),
+            'expiry_date': (today + timedelta(days=15)).isoformat(),
+            'customer_type': 'b2b',
+            'place_of_supply': b2b_cust.state,
+            'lines': [{'item': self.item.id, 'quantity': 1, 'rate': 1000.00, 'gst_rate': 18}]
+        }
+        q_resp = self.client.post('/api/quotes/', q_payload, content_type='application/json')
+        self.assertEqual(q_resp.status_code, 201)
+        q_data = q_resp.json()
+        self.assertEqual(q_data.get('customer_type'), 'b2b')
+        self.assertEqual(q_data.get('place_of_supply'), 'Tamil Nadu')
+
+        # Sales Order inheriting customer details
+        so_payload = {
+            'customer': b2b_cust.id,
+            'date': today.isoformat(),
+            'customer_type': 'b2b',
+            'place_of_supply': b2b_cust.state,
+            'lines': [{'item': self.item.id, 'quantity': 1, 'rate': 1000.00, 'gst_rate': 18}]
+        }
+        so_resp = self.client.post('/api/sales-orders/', so_payload, content_type='application/json')
+        self.assertEqual(so_resp.status_code, 201)
+        so_data = so_resp.json()
+        self.assertEqual(so_data.get('customer_type'), 'b2b')
+        self.assertEqual(so_data.get('place_of_supply'), 'Tamil Nadu')
+
+    def test_js_forms_standardized_three_card_layouts(self):
+        """Verify Delivery Challan and Payments Received implement the Three-Card layout and Customer Name outside."""
+        from pathlib import Path
+        js_path = Path(__file__).resolve().parent / 'static' / 'books' / 'js' / 'forms.js'
+        content = js_path.read_text(encoding='utf-8')
+
+        # Delivery Challan: customer name outside & three card layout
+        self.assertIn('.dc-three-cards-grid', content)
+        self.assertIn('for="dc-customer">Customer Name*</label>', content)
+        self.assertIn('1. Customer Details</h3>', content)
+        self.assertIn('2. Account &amp; Movement Details</h3>', content)
+        self.assertIn('3. Delivery Challan Details</h3>', content)
+
+        # Payment Received: customer name outside & three card layout
+        self.assertIn('.pay-three-cards-grid', content)
+        self.assertIn('for="pay-customer">Customer Name*</label>', content)
+        self.assertIn('1. Customer Details</h3>', content)
+        self.assertIn('2. Account Details</h3>', content)
+        self.assertIn('3. Payment Details</h3>', content)
+
+        # Quotes: customer type and location removed from visible user inputs
+        self.assertIn('id="q-customer-type" name="customer_type"', content)
+        self.assertIn('type="hidden" id="q-customer-type"', content)
+        self.assertIn('type="hidden" id="q-location"', content)
+
+        # Sales Orders: customer type and location removed from visible user inputs
+        self.assertIn('id="so-customer-type" name="customer_type"', content)
+        self.assertIn('type="hidden" id="so-customer-type"', content)
+        self.assertIn('type="hidden" id="so-location"', content)

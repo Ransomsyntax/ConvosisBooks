@@ -5456,9 +5456,9 @@ window.recordInvoicePaymentModal = (inv, onDone) => recordDocumentPaymentModal(i
 
 async function paymentReceivedForm(pre = {}) {
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
-  let customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview;
+  let customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview, txSeriesList;
   try {
-    [customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview] = await Promise.all([
+    [customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview, txSeriesList] = await Promise.all([
       api('lookup/customers/'),
       api('lookup/bank-accounts/'),
       api('lookup/business-locations/'),
@@ -5466,14 +5466,17 @@ async function paymentReceivedForm(pre = {}) {
       api('custom-fields/?module=payments_received&page_size=100'),
       payId ? api(`payments-received/${payId}/`) : Promise.resolve(null),
       payId ? Promise.resolve(null) : api('lookup/next-payment-received-number/'),
+      api('lookup/transaction-series/').catch(() => [])
     ]);
   } catch (error) {
     toast(`Could not load payment form data: ${error.message}`, 'err');
     return;
   }
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const data = existing || (typeof pre === 'object' ? pre : {});
+  const paySeries = (data && data.transaction_series) || (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   let customers = Array.isArray(customersResponse) ? customersResponse : (customersResponse.results || []);
   const customFields = Array.isArray(customResponse) ? customResponse : (customResponse.results || []);
-  const data = existing || (typeof pre === 'object' ? pre : {});
   const customerId = data.customer_id || data.customer || data.party_id || data.party || '';
   const customer = customers.find(item => String(item.id) === String(customerId));
   const bankOpts = [
@@ -5541,70 +5544,273 @@ async function paymentReceivedForm(pre = {}) {
       { label: 'Save as Paid', value: 'paid', primary: true },
     ],
     body: `
-      <div class="zb-form-wrap">
-        <div class="zb-form-row fg c2">
-          <label class="zb-form-label">Payment Type</label>
-          <div class="zb-form-ctrl">
+      <style>
+        .pay-three-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+        @media (max-width: 1024px) {
+          .pay-three-cards-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+          }
+        }
+        .pay-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 20px;
+          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          box-sizing: border-box;
+        }
+        [data-theme="dark"] .pay-card {
+          background: #1e293b;
+          border-color: #334155;
+        }
+        .pay-card-heading {
+          font-size: 14px;
+          font-weight: 700;
+          color: #0284c7;
+          margin: 0 0 4px 0;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #f1f5f9;
+          letter-spacing: -0.01em;
+        }
+        [data-theme="dark"] .pay-card-heading {
+          color: #38bdf8;
+          border-bottom-color: #334155;
+        }
+        .pay-card-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .pay-card-label {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: #334155;
+          margin: 0;
+          line-height: 1.2;
+        }
+        [data-theme="dark"] .pay-card-label {
+          color: #cbd5e1;
+        }
+        .pay-card-label.required::after {
+          content: ' *';
+          color: #ef4444;
+        }
+        .customer-select-outer {
+          margin-bottom: 20px;
+          width: 100%;
+          max-width: 440px;
+        }
+        .customer-select-outer-label {
+          font-size: 13px;
+          font-weight: 600;
+          color: #ef4444;
+          display: block;
+          margin-bottom: 8px;
+          line-height: 1.2;
+        }
+        .customer-select-outer .in {
+          border-radius: 8px !important;
+          border: 1px solid #e2e8f0 !important;
+          height: 38px !important;
+          font-size: 13px !important;
+          color: #0f172a !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+        }
+        [data-theme="dark"] .customer-select-outer .in {
+          background: #0f172a !important;
+          border-color: #334155 !important;
+          color: #f8fafc !important;
+        }
+        [data-theme="dark"] .customer-select-outer-label {
+          color: #f87171 !important;
+        }
+      </style>
+
+      <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+      <div class="customer-select-outer">
+        <label class="customer-select-outer-label" for="pay-customer">Customer Name*</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <select class="in" id="pay-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+            <option value="">Select Customer…</option>
+            <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+            ${customers.map(item => `<option value="${item.id}" ${String(customerId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+          <button type="button" class="btn p" id="btn-pay-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+            <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="pay-three-cards-grid">
+        <!-- Card 1: 1. Customer Details -->
+        <div class="pay-card">
+          <h3 class="pay-card-heading">1. Customer Details</h3>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label">Payment Type</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              ${paymentTypes.map(([value, label]) => `<label class="btn" style="display:flex;align-items:center;gap:7px;cursor:pointer;"><input type="radio" name="payment_type" value="${value}" ${String(data.payment_type || 'invoice_payment') === value ? 'checked' : ''}> ${label}</label>`).join('')}
+              ${paymentTypes.map(([val, lbl]) => `<label class="btn" style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;padding:6px 12px;"><input type="radio" name="payment_type" value="${val}" ${String(data.payment_type || 'invoice_payment') === val ? 'checked' : ''}> ${lbl}</label>`).join('')}
             </div>
           </div>
-        </div>
-        ${fld({ name: 'customer', label: 'Customer Name', type: 'select', req: true, opts: [['', 'Select Customer…'], ...customers.map(item => [item.id, item.name])], value: customerId })}
-        ${fld({ name: 'number', label: 'Payment Number', value: number, attrs: 'readonly aria-readonly="true"' })}
-        ${fld({ name: 'date', label: 'Payment Date', type: 'date', req: true, value: data.date || APP.today })}
-        <div class="zb-form-row fg">
-          <label class="zb-form-label">Currency</label>
-          <div class="zb-form-ctrl"><input class="in" id="payment-currency" readonly value="${esc(currency)}"></div>
-        </div>
-        ${fld({ name: 'reference', label: 'Reference Number', value: data.reference || '' })}
-        ${fld({ name: 'mode', label: 'Payment Mode', type: 'select', req: true, opts: [['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']], value: data.mode || 'bank_transfer' })}
-        ${fld({ name: 'bank_account_id', label: 'Deposit To', type: 'select', req: true, opts: bankOpts, value: data.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : '') })}
-        ${fld({ name: 'amount', label: 'Amount Received', type: 'number', req: true, value: data.amount || '', attrs: 'min="0.01" step="0.01"' })}
-        ${fld({ name: 'bank_charges', label: 'Bank Charges', type: 'number', value: data.bank_charges || '0.00', attrs: 'min="0" step="0.01"' })}
-        ${fld({ name: 'branch', label: 'Branch', value: data.branch || '' })}
-        ${fld({ name: 'business_location_id', label: 'Business Location', type: 'select', opts: [['', 'Select Business Location…'], ...locations.map(item => [item.id, item.name])], value: data.business_location_id || '' })}
-        <div class="zb-form-row fg">
-          <label class="zb-form-label">Customer Type</label>
-          <div class="zb-form-ctrl"><input class="in" id="payment-customer-type" readonly value="${customer && customer.customer_type === 'individual' ? 'B2C' : customer ? 'B2B' : ''}"></div>
-        </div>
-        <div class="zb-form-row fg">
-          <label class="zb-form-label">GSTIN</label>
-          <div class="zb-form-ctrl"><input class="in" id="payment-customer-gstin" readonly value="${esc(customer && customer.gstin || '')}"></div>
-        </div>
-        <div class="zb-form-row fg">
-          <label class="zb-form-label">PAN</label>
-          <div class="zb-form-ctrl" style="display:flex;gap:8px;">
-            <input class="in" id="payment-customer-pan" readonly value="${esc(customer && customer.pan || '')}">
-            <button type="button" class="btn" id="payment-edit-pan" ${customerId ? '' : 'disabled'}>Add / Update PAN</button>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label">Customer Summary</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-height:38px;">
+              <span class="badge" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">
+                <input class="in" id="payment-currency" readonly value="${esc(currency)}" style="border:none;background:transparent;width:40px;padding:0;font-weight:600;color:inherit;height:auto !important;box-shadow:none;">
+              </span>
+              <span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">
+                <input class="in" id="payment-customer-type" readonly value="${customer && customer.customer_type === 'individual' ? 'B2C' : customer ? 'B2B' : ''}" style="border:none;background:transparent;width:40px;padding:0;font-weight:600;color:inherit;height:auto !important;box-shadow:none;">
+              </span>
+              <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:#64748b;">
+                <span>GSTIN:</span>
+                <input class="in" id="payment-customer-gstin" readonly value="${esc(customer && customer.gstin || '')}" style="border:none;background:transparent;padding:0;font-weight:600;color:var(--tx);width:130px;height:auto !important;box-shadow:none;">
+              </div>
+            </div>
           </div>
-        </div>
-        ${fld({ name: 'place_of_supply', label: 'Place of Supply', type: 'select', req: true, opts: [['', 'Select State…'], ...stateOptions], value: toState(data.place_of_supply || (customer && (customer.place_of_supply || customer.state))) })}
-        <div id="payment-advance-fields" style="display:none;">
-          ${fld({ name: 'tax_name', label: 'Tax', type: 'select', opts: taxOpts, value: data.tax_name || '' })}
-        </div>
-        <div class="zb-form-row fg c2" id="payment-tds-row">
-          <label class="zb-form-label">Income TDS</label>
-          <div class="zb-form-ctrl"><label class="ck"><input type="checkbox" name="income_tds" ${data.income_tds ? 'checked' : ''}> Yes, deduct TDS at the invoice’s originating quote rate</label><div class="er" data-err="income_tds" role="alert"></div></div>
-        </div>
-        <div class="zb-form-row fg c2">
-          <label class="zb-form-label">Thank You Email</label>
-          <div class="zb-form-ctrl">
-            <label class="ck"><input type="checkbox" name="thank_you_enabled" ${data.thank_you_enabled ? 'checked' : ''}> Send a thank-you email after saving as paid</label>
-            <div id="payment-email-fields" style="display:none;margin-top:8px;">
-              <div id="payment-email-recipients" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label" for="payment-customer-pan">Customer PAN</label>
+            <div style="display:flex;gap:8px;">
+              <input class="in" id="payment-customer-pan" readonly value="${esc(customer && customer.pan || '')}" style="flex:1;min-width:0;padding:0 12px;">
+              <button type="button" class="btn" id="payment-edit-pan" ${customerId ? '' : 'disabled'} style="white-space:nowrap;font-size:12px;">Add / Update PAN</button>
+            </div>
+          </div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label" for="pay-notes">Notes</label>
+            <textarea class="in" id="pay-notes" name="notes" rows="2" placeholder="Payment notes">${esc(data.notes || '')}</textarea>
+          </div>
+
+          <div class="pay-card-field">
+            <label class="ck" style="font-size:12.5px;font-weight:500;"><input type="checkbox" name="thank_you_enabled" ${data.thank_you_enabled ? 'checked' : ''}> Send a thank-you email after saving as paid</label>
+            <div id="payment-email-fields" style="display:none;margin-top:6px;">
+              <div id="payment-email-recipients" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px;"></div>
               <div class="er" data-err="thank_you_recipients" role="alert"></div>
               <textarea class="in" name="thank_you_note" rows="2" maxlength="2000" placeholder="Optional thank-you note">${esc(data.thank_you_note || '')}</textarea>
             </div>
           </div>
         </div>
-        ${fld({ name: 'notes', label: 'Notes', type: 'textarea', value: data.notes || '', col: 'c2' })}
+
+        <!-- Card 2: 2. Account Details -->
+        <div class="pay-card">
+          <h3 class="pay-card-heading">2. Account Details</h3>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label required" for="pay-bank-account">Deposit To</label>
+            <select class="in" id="pay-bank-account" name="bank_account_id" required style="width:100%;box-sizing:border-box;padding:0 10px;">
+              ${opts(bankOpts, data.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : ''))}
+            </select>
+          </div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label required" for="pay-mode">Payment Mode</label>
+            <select class="in" id="pay-mode" name="mode" required style="width:100%;box-sizing:border-box;padding:0 10px;">
+              <option value="bank_transfer" ${(data.mode || 'bank_transfer') === 'bank_transfer' ? 'selected' : ''}>Bank transfer</option>
+              <option value="upi" ${data.mode === 'upi' ? 'selected' : ''}>UPI</option>
+              <option value="cash" ${data.mode === 'cash' ? 'selected' : ''}>Cash</option>
+              <option value="cheque" ${data.mode === 'cheque' ? 'selected' : ''}>Cheque</option>
+              <option value="card" ${data.mode === 'card' ? 'selected' : ''}>Card</option>
+              <option value="other" ${data.mode === 'other' ? 'selected' : ''}>Other</option>
+            </select>
+          </div>
+
+          <div class="pay-card-field">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div>
+                <label class="pay-card-label" for="pay-bank-charges">Bank Charges</label>
+                <input class="in" id="pay-bank-charges" name="bank_charges" type="number" min="0" step="0.01" value="${data.bank_charges || '0.00'}" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              </div>
+              <div>
+                <label class="pay-card-label required" for="pay-pos">Place of Supply</label>
+                <select class="in" id="pay-pos" name="place_of_supply" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                  ${opts([['', 'Select State…'], ...stateOptions], toState(data.place_of_supply || (customer && (customer.place_of_supply || customer.state))))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="pay-card-field">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <div>
+                <label class="pay-card-label" for="pay-business-location">Business Location</label>
+                <select class="in" id="pay-business-location" name="business_location_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
+                  <option value="">Select Location…</option>
+                  ${locations.map(item => `<option value="${item.id}" ${String(data.business_location_id || '') === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+                </select>
+              </div>
+              <div>
+                <label class="pay-card-label" for="pay-branch">Branch</label>
+                <input class="in" id="pay-branch" name="branch" value="${esc(data.branch || '')}" placeholder="Branch name" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              </div>
+            </div>
+          </div>
+
+          <div class="pay-card-field" id="payment-tds-row">
+            <label class="pay-card-label">Income TDS</label>
+            <label class="ck" style="font-size:12.5px;"><input type="checkbox" name="income_tds" ${data.income_tds ? 'checked' : ''}> Deduct TDS at originating quote rate</label>
+            <div class="er" data-err="income_tds" role="alert"></div>
+          </div>
+
+          <div id="payment-advance-fields" style="display:none;" class="pay-card-field">
+            <label class="pay-card-label" for="pay-tax">Tax</label>
+            <select class="in" id="pay-tax" name="tax_name" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              ${opts(taxOpts, data.tax_name || '')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Card 3: 3. Payment Details -->
+        <div class="pay-card">
+          <h3 class="pay-card-heading">3. Payment Details</h3>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label required" for="pay-number">Payment#*</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select class="in" id="pay-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(paySeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              </select>
+              <input class="in" id="pay-number" name="number" value="${esc(number)}" readonly aria-readonly="true" style="flex:1.2;min-width:0;padding:0 12px;background:#f8fafc;">
+              <button type="button" class="btn ic" id="btn-pay-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label required" for="pay-date">Payment Date*</label>
+            <input class="in" type="date" id="pay-date" name="date" required value="${data.date || APP.today}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label" for="pay-reference">Reference Number</label>
+            <input class="in" id="pay-reference" name="reference" value="${esc(data.reference || '')}" placeholder="e.g. TXN-987123" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="pay-card-field">
+            <label class="pay-card-label required" for="pay-amount">Amount Received*</label>
+            <input class="in" id="pay-amount" name="amount" type="number" required min="0.01" step="0.01" value="${data.amount || ''}" placeholder="0.00" style="width:100%;box-sizing:border-box;padding:0 12px;font-weight:700;font-size:15px;color:#0284c7;">
+          </div>
+        </div>
       </div>
-      <section id="payment-invoice-section" style="margin-top:16px;">
-        <h3 style="margin:0 0 8px;font-size:14px;">Apply to Invoices</h3>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-          <label class="sub">Invoice date from <input class="in" type="date" id="payment-date-from" style="width:auto;"></label>
-          <label class="sub">to <input class="in" type="date" id="payment-date-to" style="width:auto;"></label>
+
+      <section id="payment-invoice-section" class="pay-card" style="margin-top:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <h3 class="pay-card-heading" style="border:none;margin:0;padding:0;">Apply to Invoices</h3>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <label class="sub" style="font-size:12px;display:flex;align-items:center;gap:6px;">Invoice date from <input class="in" type="date" id="payment-date-from" style="width:auto;height:32px;padding:0 8px;font-size:12px;"></label>
+            <label class="sub" style="font-size:12px;display:flex;align-items:center;gap:6px;">to <input class="in" type="date" id="payment-date-to" style="width:auto;height:32px;padding:0 8px;font-size:12px;"></label>
+          </div>
         </div>
         <div id="payment-invoices"><div class="sub">Select a customer to load outstanding invoices.</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
@@ -5613,14 +5819,17 @@ async function paymentReceivedForm(pre = {}) {
         </div>
         <div class="er" data-err="allocations" role="alert"></div>
       </section>
-      ${customFieldHtml ? `<section style="margin-top:16px;"><h3 style="font-size:14px;">Additional Fields</h3><div class="zb-form-wrap">${customFieldHtml}</div></section>` : ''}
-      <section style="margin-top:16px;">
-        <h3 style="font-size:14px;">Attachments</h3>
+
+      ${customFieldHtml ? `<section class="pay-card" style="margin-top:20px;"><h3 class="pay-card-heading">Additional Fields</h3><div class="zb-form-wrap">${customFieldHtml}</div></section>` : ''}
+
+      <section class="pay-card" style="margin-top:20px;">
+        <h3 class="pay-card-heading">Attachments</h3>
         <input type="file" id="payment-files" multiple>
         <div class="er" data-err="attachments" role="alert"></div>
         <div id="payment-file-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"></div>
       </section>
-      <div class="cs" style="margin-top:14px;">
+
+      <div class="cs" style="margin-top:20px;">
         <div><span>Applied</span><b id="payment-applied">₹0.00</b></div>
         <div><span>Income TDS</span><b id="payment-tds-amount">₹0.00</b></div>
         <div><span>Tax</span><b id="payment-tax-amount">₹0.00</b></div>
@@ -5907,6 +6116,47 @@ async function paymentReceivedForm(pre = {}) {
         event.target.value = '';
         renderFiles();
       });
+      $('#btn-pay-cust-lookup', form)?.addEventListener('click', () => {
+        partyForm('customers', null, async added => {
+          const fresh = await api('lookup/customers/');
+          const freshCustomers = Array.isArray(fresh) ? fresh : (fresh.results || []);
+          customers.splice(0, customers.length, ...freshCustomers);
+          customerSelect.innerHTML = '<option value="">Select Customer…</option>' +
+            freshCustomers.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('') +
+            '<option value="__new_customer__">+ Add New Customer…</option>';
+          const newCustomer = freshCustomers.find(item => String(item.id) === String(added.id));
+          if (newCustomer) {
+            customerSelect.value = newCustomer.id;
+            customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        });
+      });
+      $('#btn-pay-num-pref', form)?.addEventListener('click', () => {
+        openDocNumberPreferencesModal({
+          kind: 'payments-received',
+          series: $('#pay-series', form)?.value || 'Default Transaction Series',
+          location: form.elements.business_location_id?.value || 'HO Kottayam',
+          branch: form.elements.branch?.value || '',
+          onSave: (pfx, next) => {
+            if (next) form.elements.number.value = next;
+          }
+        });
+      });
+      $('#pay-series', form)?.addEventListener('change', async () => {
+        if (payId) return;
+        try {
+          const q = new URLSearchParams({
+            series: $('#pay-series', form)?.value || '',
+            date: form.elements.date?.value || APP.today,
+            location: form.elements.business_location_id?.value || '',
+            branch: form.elements.branch?.value || ''
+          });
+          const p = await api(`lookup/next-payment-received-number/?${q}`);
+          if (p && (p.formatted || p.next_number || p.number)) {
+            form.elements.number.value = p.formatted || p.next_number || p.number;
+          }
+        } catch (e) {}
+      });
       renderFiles();
       toggleEmail();
       toggleType();
@@ -5917,6 +6167,7 @@ async function paymentReceivedForm(pre = {}) {
       }
     },
     onSubmit: async (d, action, form) => {
+      d.transaction_series = $('#pay-series', form)?.value || '';
       const paymentType = form.querySelector('input[name="payment_type"]:checked').value;
       d.payment_type = paymentType;
       d.status = action;
@@ -8174,13 +8425,16 @@ async function stockMoveModal() {
 }
 
 async function challanModal(id) {
-  const [custs, items, warehouses, locations, rec] = await Promise.all([
+  const [custs, items, warehouses, locations, rec, txSeriesList] = await Promise.all([
     api('lookup/customers/'),
     api('lookup/items/'),
     api('lookup/warehouses/'),
     api('lookup/business-locations/'),
-    id ? api(`delivery-challans/${id}/`) : Promise.resolve(null)
+    id ? api(`delivery-challans/${id}/`) : Promise.resolve(null),
+    api('lookup/transaction-series/').catch(() => [])
   ]);
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const dcSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
   const o = rec || {
     customer_id: '', date: APP.today, challan_type: 'delivering_goods',
     vehicle_number: '', notes: '', terms: '', branch: '', location: '',
@@ -8206,55 +8460,278 @@ async function challanModal(id) {
       <td class="dc-amount" style="text-align:right;font-weight:600">0.00</td>
       <td><button type="button" class="btn dc-remove-row" aria-label="Remove row" title="Remove row">×</button></td>
     </tr>`;
-  const section = title => `<h3 style="margin:18px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--bd);font-size:14px">${title}</h3>`;
+
   const body = `
-    ${section('Basic Information')}
-    <div class="g">
-      ${fld({ name: 'customer', label: 'Customer Name', type: 'select', req: true, opts: [['', 'Select or add a customer…'], ...custs.map(customer => [customer.id, customer.name])], value: o.customer_id || '', col: 's6' })}
-      ${fld({ name: 'currency_display', label: 'Currency', value: o.currency || APP.org?.base_currency || 'INR', attrs: 'readonly', col: 's3' })}
-      <div class="zb-form-row fg s3"><label class="zb-form-label">Delivery Challan Number</label><div class="zb-form-ctrl"><input class="in" id="dc-number-preview" readonly placeholder="Generated from Transaction Serial Numbers"><div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px">Assigned automatically when saved</div></div></div>
-      ${fld({ name: 'reference_number', label: 'Reference Number', value: o.reference_number || '', col: 's4' })}
-      ${fld({ name: 'date', label: 'Delivery Challan Date', type: 'date', req: true, value: o.date || APP.today, col: 's4' })}
-      ${fld({ name: 'challan_type', label: 'Challan Type', type: 'select', req: true, opts: [['relocating_goods', 'Relocating Goods'], ['delivering_goods', 'Delivering Goods']], value: ['relocating_goods', 'delivering_goods'].includes(o.challan_type) ? o.challan_type : 'delivering_goods', col: 's4' })}
-    </div>
-    ${section('Additional Transaction Information')}
-    <div class="g">
-      ${fld({ name: 'customer_type', label: 'Customer Type', value: o.customer_type || '', attrs: 'readonly', col: 's3' })}
-      ${fld({ name: 'gstin', label: 'GSTIN', value: o.gstin || '', attrs: 'readonly', col: 's3' })}
-      ${fld({ name: 'business_location_id', label: 'Business Location', type: 'select', opts: [['', 'Select location…'], ...locations.map(location => [location.id, location.name])], value: o.business_location_id || '', col: 's3' })}
-      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', col: 's3' })}
-      <div class="fg s6 dc-source-wrap">${fld({ name: 'source_warehouse_id', label: 'Source Warehouse', type: 'select', req: o.challan_type === 'relocating_goods', opts: warehouseOptions, value: o.source_warehouse_id || '', col: 's12' })}</div>
-      <div class="fg s6 dc-destination-wrap">${fld({ name: 'destination_warehouse_id', label: 'Destination Warehouse', type: 'select', req: o.challan_type === 'relocating_goods', opts: warehouseOptions, value: o.destination_warehouse_id || '', col: 's12' })}</div>
-    </div>
-    ${section('Item Details')}
-    <div class="tw" style="overflow-x:auto">
-      <table style="min-width:880px">
-        <thead><tr><th>Item Details</th><th>Quantity</th><th>Rate</th><th>Discount</th><th>Tax</th><th style="text-align:right">Amount</th><th></th></tr></thead>
-        <tbody id="dc-lines"></tbody>
-      </table>
-    </div>
-    <div class="er" data-err="lines" role="alert"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button type="button" class="btn" id="dc-add-row">＋ Add New Row</button>
-      <button type="button" class="btn" id="dc-add-bulk">＋ Add Items in Bulk</button>
-    </div>
-    <div class="g" style="margin-top:16px">
-      ${fld({ name: 'notes', label: 'Customer Notes', type: 'textarea', rows: 3, value: o.notes || '', col: 's6' })}
-      <div class="s6" style="background:var(--surface-subtle,#f8fafc);padding:14px;border-radius:8px">
-        <div style="display:flex;justify-content:space-between"><b>Subtotal</b><span id="dc-subtotal">0.00</span></div>
-        ${fld({ name: 'adjustment', label: 'Adjustment', type: 'number', value: o.adjustment || 0, col: 's6' })}
-        <div style="display:flex;justify-content:space-between;border-top:1px solid var(--bd);padding-top:10px;margin-top:8px;font-size:16px"><b>Total Amount</b><b id="dc-total">0.00</b></div>
+    <style>
+      .dc-three-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 1024px) {
+        .dc-three-cards-grid {
+          grid-template-columns: 1fr;
+          gap: 16px;
+        }
+      }
+      .dc-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        box-sizing: border-box;
+      }
+      [data-theme="dark"] .dc-card {
+        background: #1e293b;
+        border-color: #334155;
+      }
+      .dc-card-heading {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0284c7;
+        margin: 0 0 4px 0;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f1f5f9;
+        letter-spacing: -0.01em;
+      }
+      [data-theme="dark"] .dc-card-heading {
+        color: #38bdf8;
+        border-bottom-color: #334155;
+      }
+      .dc-card-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .dc-card-label {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: #334155;
+        margin: 0;
+        line-height: 1.2;
+      }
+      [data-theme="dark"] .dc-card-label {
+        color: #cbd5e1;
+      }
+      .dc-card-label.required::after {
+        content: ' *';
+        color: #ef4444;
+      }
+      .customer-select-outer {
+        margin-bottom: 20px;
+        width: 100%;
+        max-width: 440px;
+      }
+      .customer-select-outer-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ef4444;
+        display: block;
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .customer-select-outer .in {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        color: #0f172a !important;
+        background: #ffffff !important;
+        box-shadow: none !important;
+      }
+      [data-theme="dark"] .customer-select-outer .in {
+        background: #0f172a !important;
+        border-color: #334155 !important;
+        color: #f8fafc !important;
+      }
+      [data-theme="dark"] .customer-select-outer-label {
+        color: #f87171 !important;
+      }
+    </style>
+
+    <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+    <div class="customer-select-outer">
+      <label class="customer-select-outer-label" for="dc-customer">Customer Name*</label>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <select class="in" id="dc-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+          <option value="">Search or select a customer…</option>
+          <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+          ${custs.map(customer => `<option value="${customer.id}" ${String(o.customer_id || '') === String(customer.id) ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
+        </select>
+        <button type="button" class="btn p" id="btn-dc-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+          <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+        </button>
       </div>
-      ${fld({ name: 'terms', label: 'Terms & Conditions', type: 'textarea', rows: 3, value: o.terms || '', col: 's6' })}
-      <div class="fg s6"><label class="zb-form-label" for="dc-attach">Attach Files</label><div class="zb-form-ctrl">
-        <input class="in" id="dc-attach" type="file" multiple>
-        <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:4px">Maximum 5 files, 10 MB each</div>
-        <div id="dc-attachments" style="margin-top:8px"></div>
-      </div></div>
+    </div>
+
+    <div class="dc-three-cards-grid">
+      <!-- Card 1: 1. Customer Details -->
+      <div class="dc-card">
+        <h3 class="dc-card-heading">1. Customer Details</h3>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label" for="dc-reference">Reference Number</label>
+          <input class="in" id="dc-reference" name="reference_number" value="${esc(o.reference_number || '')}" placeholder="e.g. REF-DC-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+        </div>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label">Customer Summary</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-height:38px;">
+            <span class="badge" id="dc-cust-type-badge" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">${o.customer_type || 'B2B'}</span>
+            <span class="badge" id="dc-currency-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">${esc(o.currency || APP.org?.base_currency || 'INR')}</span>
+            <span id="dc-gstin-text" style="font-size:12px;color:#64748b;font-weight:500;">GSTIN: ${esc(o.gstin || 'None')}</span>
+          </div>
+          <input type="hidden" name="customer_type" id="dc-customer-type" value="${esc(o.customer_type || '')}">
+          <input type="hidden" name="gstin" id="dc-gstin" value="${esc(o.gstin || '')}">
+          <input type="hidden" name="currency_display" id="dc-currency" value="${esc(o.currency || APP.org?.base_currency || 'INR')}">
+        </div>
+      </div>
+
+      <!-- Card 2: 2. Account & Movement Details -->
+      <div class="dc-card">
+        <h3 class="dc-card-heading">2. Account &amp; Movement Details</h3>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label required" for="dc-type">Challan Type</label>
+          <select class="in" id="dc-type" name="challan_type" required style="width:100%;box-sizing:border-box;padding:0 10px;">
+            <option value="delivering_goods" ${o.challan_type === 'delivering_goods' ? 'selected' : ''}>Delivering Goods</option>
+            <option value="relocating_goods" ${o.challan_type === 'relocating_goods' ? 'selected' : ''}>Relocating Goods</option>
+            <option value="supply_on_approval" ${o.challan_type === 'supply_on_approval' ? 'selected' : ''}>Supply on Approval</option>
+            <option value="job_work" ${o.challan_type === 'job_work' ? 'selected' : ''}>Job Work</option>
+            <option value="other" ${o.challan_type === 'other' ? 'selected' : ''}>Other</option>
+          </select>
+        </div>
+
+        <div class="dc-card-field">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <label class="dc-card-label" for="dc-business-location">Business Location</label>
+              <select class="in" id="dc-business-location" name="business_location_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
+                <option value="">Select location…</option>
+                ${locations.map(location => `<option value="${location.id}" ${String(o.business_location_id || '') === String(location.id) ? 'selected' : ''}>${esc(location.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="dc-card-label" for="dc-branch">Branch</label>
+              <input class="in" id="dc-branch" name="branch" value="${esc(o.branch || '')}" placeholder="Branch name" style="width:100%;box-sizing:border-box;padding:0 8px;">
+            </div>
+          </div>
+        </div>
+
+        <div class="dc-card-field dc-source-wrap">
+          <label class="dc-card-label" for="dc-source-wh">Source Warehouse</label>
+          <select class="in" id="dc-source-wh" name="source_warehouse_id" style="width:100%;box-sizing:border-box;padding:0 10px;">
+            ${opts(warehouseOptions, o.source_warehouse_id || '')}
+          </select>
+        </div>
+        <div class="dc-card-field dc-destination-wrap">
+          <label class="dc-card-label" for="dc-dest-wh">Destination Warehouse</label>
+          <select class="in" id="dc-dest-wh" name="destination_warehouse_id" style="width:100%;box-sizing:border-box;padding:0 10px;">
+            ${opts(warehouseOptions, o.destination_warehouse_id || '')}
+          </select>
+        </div>
+      </div>
+
+      <!-- Card 3: 3. Delivery Challan Details -->
+      <div class="dc-card">
+        <h3 class="dc-card-heading">3. Delivery Challan Details</h3>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label required" for="dc-number-preview">Delivery Challan#*</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <select class="in" id="dc-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
+              ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(dcSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+            </select>
+            <input class="in" id="dc-number-preview" name="number" value="${esc(o.number || '')}" placeholder="Generating…" required style="flex:1.2;min-width:0;padding:0 12px;">
+            <button type="button" class="btn ic" id="btn-dc-num-pref" title="Configure Delivery Challan Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+              <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label required" for="dc-date">Delivery Challan Date*</label>
+          <input class="in" type="date" id="dc-date" name="date" value="${o.date || APP.today}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+        </div>
+
+        <div class="dc-card-field">
+          <label class="dc-card-label" for="dc-vehicle">Vehicle Number</label>
+          <input class="in" id="dc-vehicle" name="vehicle_number" value="${esc(o.vehicle_number || '')}" placeholder="e.g. KL-05-AB-1234" style="width:100%;box-sizing:border-box;padding:0 12px;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Table Master Card -->
+    <div class="dc-card" style="margin-bottom:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 class="dc-card-heading" style="border:none;margin:0;padding:0;">Item Table</h3>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn" id="dc-add-bulk" style="font-size:12px;">Bulk Actions</button>
+        </div>
+      </div>
+      <div class="tw" style="overflow-x:auto;">
+        <table style="min-width:880px;width:100%;">
+          <thead>
+            <tr>
+              <th>Item Details</th>
+              <th>Quantity</th>
+              <th>Rate</th>
+              <th>Discount</th>
+              <th>Tax</th>
+              <th style="text-align:right">Amount</th>
+              <th style="width:40px;"></th>
+            </tr>
+          </thead>
+          <tbody id="dc-lines"></tbody>
+        </table>
+      </div>
+      <div class="er" data-err="lines" role="alert"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button type="button" class="btn" id="dc-add-row">＋ Add New Row</button>
+      </div>
+    </div>
+
+    <!-- Notes, Terms & Summary Section -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;">
+      <div class="dc-card">
+        <div class="dc-card-field">
+          <label class="dc-card-label" for="dc-notes">Customer Notes</label>
+          <textarea class="in" id="dc-notes" name="notes" rows="3" placeholder="Notes for customer">${esc(o.notes || '')}</textarea>
+        </div>
+        <div class="dc-card-field">
+          <label class="dc-card-label" for="dc-terms">Terms &amp; Conditions</label>
+          <textarea class="in" id="dc-terms" name="terms" rows="3" placeholder="Terms and conditions">${esc(o.terms || '')}</textarea>
+        </div>
+        <div class="dc-card-field">
+          <label class="dc-card-label" for="dc-attach">Attach Files</label>
+          <input class="in" id="dc-attach" type="file" multiple>
+          <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:4px">Maximum 5 files, 10 MB each</div>
+          <div id="dc-attachments" style="margin-top:8px"></div>
+        </div>
+      </div>
+      <div class="dc-card" style="justify-content:space-between;">
+        <h3 class="dc-card-heading">Summary</h3>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;"><span>Subtotal</span><span id="dc-subtotal" style="font-weight:600;">0.00</span></div>
+          <div class="dc-card-field">
+            <label class="dc-card-label" for="dc-adjustment">Adjustment</label>
+            <input class="in" id="dc-adjustment" name="adjustment" type="number" step="0.01" value="${o.adjustment || 0}" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div style="display:flex;justify-content:space-between;border-top:1px solid #e2e8f0;padding-top:12px;font-size:16px;">
+            <b>Total Amount</b><b id="dc-total" style="color:#0284c7;">0.00</b>
+          </div>
+        </div>
+      </div>
     </div>`;
   formModal({
     title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
     body,
+    wide: true,
     submit: 'Save as Draft',
     onReady: (form, m) => {
       modal = m;
@@ -8264,10 +8741,18 @@ async function challanModal(id) {
       const currency = form.elements.currency_display;
       const updateCustomer = () => {
         const customer = custs.find(value => String(value.id) === customerSelect.value);
-        customerType.value = customer ? (customer.gstin || customer.customer_type === 'business' ? 'B2B' : 'B2C') : '';
+        const cType = customer ? (customer.gstin || customer.customer_type === 'business' ? 'B2B' : 'B2C') : 'B2B';
         const selectedLocation = locations.find(value => String(value.id) === form.elements.business_location_id.value);
-        gstin.value = selectedLocation && selectedLocation.gstin ? selectedLocation.gstin : customer ? customer.gstin || '' : '';
-        currency.value = customer ? customer.currency || APP.org?.base_currency || 'INR' : APP.org?.base_currency || 'INR';
+        const cGstin = selectedLocation && selectedLocation.gstin ? selectedLocation.gstin : customer ? customer.gstin || '' : '';
+        const cCurrency = customer ? customer.currency || APP.org?.base_currency || 'INR' : APP.org?.base_currency || 'INR';
+
+        if (customerType) customerType.value = cType;
+        if (gstin) gstin.value = cGstin;
+        if (currency) currency.value = cCurrency;
+
+        if ($('#dc-cust-type-badge', form)) $('#dc-cust-type-badge', form).textContent = cType;
+        if ($('#dc-currency-badge', form)) $('#dc-currency-badge', form).textContent = cCurrency;
+        if ($('#dc-gstin-text', form)) $('#dc-gstin-text', form).textContent = 'GSTIN: ' + (cGstin || 'None');
         updateNumberPreview();
       };
       let previewRequest = 0;
@@ -8278,13 +8763,16 @@ async function challanModal(id) {
           customer_id: customerSelect.value || '',
           branch: form.elements.branch.value || '',
           location: form.elements.business_location_id.value || '',
-          business_location_id: form.elements.business_location_id.value || ''
+          business_location_id: form.elements.business_location_id.value || '',
+          series: $('#dc-series', form)?.value || 'Default Transaction Series'
         });
         try {
           const preview = await api(`lookup/next-delivery-challan-number/?${query}`);
           if (seq === previewRequest) $('#dc-number-preview', form).value = preview.formatted || preview.next_number || '';
         } catch (error) {
-          if (seq === previewRequest) $('#dc-number-preview', form).value = 'Generated automatically when saved';
+          if (seq === previewRequest && !$('#dc-number-preview', form).value) {
+            $('#dc-number-preview', form).value = 'DC-000001';
+          }
           console.error('Delivery challan number preview failed:', error);
         }
       };
@@ -8298,10 +8786,31 @@ async function challanModal(id) {
           customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
         })
       });
+      $('#btn-dc-cust-lookup', form)?.addEventListener('click', () => {
+        partyForm('customers', null, newCustomer => {
+          if (!newCustomer || !newCustomer.id) return;
+          custs.push(newCustomer);
+          customerSelect.add(new Option(newCustomer.name, newCustomer.id));
+          customerSelect.value = String(newCustomer.id);
+          customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      $('#btn-dc-num-pref', form)?.addEventListener('click', () => {
+        openDocNumberPreferencesModal({
+          kind: 'delivery-challans',
+          series: $('#dc-series', form)?.value || 'Default Transaction Series',
+          location: form.elements.business_location_id?.value || 'HO Kottayam',
+          branch: form.elements.branch?.value || '',
+          onSave: (pfx, next) => {
+            if (next) $('#dc-number-preview', form).value = next;
+          }
+        });
+      });
       customerSelect.addEventListener('change', updateCustomer);
       form.elements.date.addEventListener('change', updateNumberPreview);
       form.elements.branch.addEventListener('input', updateNumberPreview);
       form.elements.business_location_id.addEventListener('change', updateNumberPreview);
+      $('#dc-series', form)?.addEventListener('change', updateNumberPreview);
 
       const tbody = $('#dc-lines', form);
       const recalc = () => {
@@ -8459,10 +8968,13 @@ async function challanModal(id) {
         throw new ApiErr(400, { lines: 'Select an item and enter a quantity greater than zero and a valid rate for each row.' }, 'Correct the item details.');
       }
       const payload = {
+        number: d.number,
+        transaction_series: d.transaction_series,
         customer: Number(d.customer),
         date: d.date,
         challan_type: d.challan_type,
         reference_number: d.reference_number,
+        vehicle_number: d.vehicle_number || '',
         business_location_id: d.business_location_id ? Number(d.business_location_id) : '',
         branch: d.branch,
         location: locations.find(location => String(location.id) === d.business_location_id)?.name || '',
@@ -10646,6 +11158,7 @@ async function quoteForm(id, targetEl, onDone) {
   const qLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const qBranch = rec ? (rec.branch || '') : '';
   const qOrderNum = rec ? (rec.order_number || '') : (rec ? (rec.reference_number || '') : '');
+  const qPos = rec ? (rec.place_of_supply || (APP.org && APP.org.state) || 'Kerala') : ((APP.org && APP.org.state) || 'Kerala');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
   const qRef = rec ? (rec.reference_number || '') : '';
@@ -10931,22 +11444,19 @@ ${renderStockQuantityCell(l, items, whList)}
         </div>
 
         <div class="quote-three-cards-grid">
+          <!-- Hidden Inputs for Auto-populated Customer Type and Location from Customer Master -->
+          <input type="hidden" id="q-customer-type" name="customer_type" value="${qCustType}">
+          <input type="hidden" id="q-location" name="location" value="${esc(qLocation)}">
+          <input type="hidden" id="q-pos" name="place_of_supply" value="${esc(qPos)}">
+          <span id="q-customer-gstin" style="display:none;">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || ''}</span>
+
           <!-- Card 1: 1. Customer Details -->
           <div class="quote-card">
             <h3 class="quote-card-heading">1. Customer Details</h3>
 
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-customer-type">Customer Type</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="q-customer-type" name="customer_type" style="flex:1;min-width:0;padding:0 10px;">
-                  <option value="b2b" ${qCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                  <option value="b2c" ${qCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-                </select>
-                <div id="q-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:0 10px;height:38px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;">
-                  <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                  <span id="q-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || 'Not provided'}</span>
-                </div>
-              </div>
+              <label class="quote-card-label" for="q-order-number">Order Number</label>
+              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
             <div class="quote-card-field">
@@ -10960,14 +11470,11 @@ ${renderStockQuantityCell(l, items, whList)}
             <h3 class="quote-card-heading">2. Account Details</h3>
 
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-location">Location &amp; Branch</label>
+              <label class="quote-card-label" for="q-branch">Branch &amp; Supply</label>
               <div style="display:flex;flex-direction:column;gap:6px;">
-                <select class="in" id="q-location" name="location" style="width:100%;box-sizing:border-box;padding:0 10px;">
-                  ${whList.map(w => `<option value="${esc(w.name)}" ${(qLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(qBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+                <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Branch / Location" value="${esc(qBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
                 <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;">
-                  Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+                  Source of Supply: ${esc(qPos)}
                 </div>
               </div>
             </div>
@@ -10977,11 +11484,6 @@ ${renderStockQuantityCell(l, items, whList)}
               <select class="in" id="q-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
                 <option value="">There are no active projects for this customer.</option>
               </select>
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-order-number">Order Number</label>
-              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
@@ -11387,6 +11889,25 @@ ${renderStockQuantityCell(l, items, whList)}
   form.querySelectorAll('input[name="tax_type"]').forEach(r => r.addEventListener('change', calcQuote));
   $('#q-adj-val', form)?.addEventListener('input', calcQuote);
 
+  function applyQuoteCustomerDetails(cust) {
+    if (!cust) return;
+    const custType = (cust.customer_type === 'individual' || cust.customer_type === 'b2c') ? 'b2c' : 'b2b';
+    const custLoc = cust.billing_city || cust.city || cust.state || 'HO Kottayam';
+    const custPos = cust.state || cust.place_of_supply || (APP.org && APP.org.state) || 'Kerala';
+    if ($('#q-customer-type', form)) {
+      $('#q-customer-type', form).value = custType;
+      $('#q-customer-type', form).dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if ($('#q-location', form)) {
+      $('#q-location', form).value = custLoc;
+      $('#q-location', form).dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if ($('#q-pos', form)) $('#q-pos', form).value = custPos;
+    if ($('#q-source-of-supply', form)) $('#q-source-of-supply', form).textContent = 'Source of Supply: ' + custPos;
+    const gstinEl = $('#q-customer-gstin', form);
+    if (gstinEl) gstinEl.textContent = cust.gstin || '';
+  }
+
   $('#btn-quote-cust-lookup', form)?.addEventListener('click', () => {
     handleQuickCreateSelect($('#q-customer', form), newCust => {
       parties.push(newCust);
@@ -11396,6 +11917,7 @@ ${renderStockQuantityCell(l, items, whList)}
       opt.selected = true;
       $('#q-customer', form).appendChild(opt);
       $('#q-customer', form).value = newCust.id;
+      applyQuoteCustomerDetails(newCust);
       updateProjectFilter();
     });
   });
@@ -11410,6 +11932,7 @@ ${renderStockQuantityCell(l, items, whList)}
         opt.selected = true;
         e.target.appendChild(opt);
         e.target.value = newCust.id;
+        applyQuoteCustomerDetails(newCust);
         updateProjectFilter();
       });
       return;
@@ -11417,16 +11940,7 @@ ${renderStockQuantityCell(l, items, whList)}
     const cId = $('#q-customer', form).value;
     const cObj = parties.find(p => String(p.id) === String(cId));
     if (cObj) {
-      const gstinEl = $('#q-customer-gstin', form);
-      const custTypeEl = $('#q-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cObj.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cObj.gstin && cObj.gstin.trim()) {
-          custTypeEl.value = 'b2b';
-        } else if (cObj.customer_type === 'individual') {
-          custTypeEl.value = 'b2c';
-        }
-      }
+      applyQuoteCustomerDetails(cObj);
     }
     updateProjectFilter();
   });
@@ -12022,22 +12536,19 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         </div>
 
         <div class="so-three-cards-grid">
+          <!-- Hidden Inputs for Auto-populated Customer Type and Location from Customer Master -->
+          <input type="hidden" id="so-customer-type" name="customer_type" value="${soCustType}">
+          <input type="hidden" id="so-location" name="location" value="${esc(soLocation)}">
+          <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
+          <span id="so-customer-gstin" style="display:none;">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || ''}</span>
+
           <!-- Card 1: 1. Customer Details -->
           <div class="so-card">
             <h3 class="so-card-heading">1. Customer Details</h3>
 
             <div class="so-card-field">
-              <label class="so-card-label" for="so-customer-type">Customer Type</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="so-customer-type" name="customer_type" style="flex:1;min-width:0;padding:0 10px;">
-                  <option value="b2b" ${soCustType === 'b2b' ? 'selected' : ''}>B2B - Business to Business</option>
-                  <option value="b2c" ${soCustType === 'b2c' ? 'selected' : ''}>B2C - Business to Consumer</option>
-                </select>
-                <div id="so-customer-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:0 10px;height:38px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0;">
-                  <span style="color:#64748b;font-weight:500;">GSTIN:</span>
-                  <span id="so-customer-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || 'Not provided'}</span>
-                </div>
-              </div>
+              <label class="so-card-label" for="so-order-number">Order Number</label>
+              <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
             <div class="so-card-field">
@@ -12051,16 +12562,12 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <h3 class="so-card-heading">2. Account Details</h3>
 
             <div class="so-card-field">
-              <label class="so-card-label" for="so-location">Location &amp; Branch</label>
+              <label class="so-card-label" for="so-branch">Branch &amp; Supply</label>
               <div style="display:flex;flex-direction:column;gap:6px;">
-                <select class="in" id="so-location" name="location" style="width:100%;box-sizing:border-box;padding:0 10px;">
-                  ${warehouses.map(w => `<option value="${esc(w.name)}" ${(soLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(soBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+                <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Branch / Location" value="${esc(soBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
                 <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;">
                   Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
                 </div>
-                <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
               </div>
             </div>
 
@@ -12069,11 +12576,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               <select class="in" id="so-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
                 <option value="">There are no active projects for this customer.</option>
               </select>
-            </div>
-
-            <div class="so-card-field">
-              <label class="so-card-label" for="so-order-number">Order Number</label>
-              <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
@@ -12350,6 +12852,26 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     else history.back();
   });
 
+  function applySoCustomerDetails(cust) {
+    if (!cust) return;
+    const custType = (cust.customer_type === 'individual' || cust.customer_type === 'b2c') ? 'b2c' : 'b2b';
+    const custLoc = cust.billing_city || cust.city || cust.state || 'HO Kottayam';
+    const custPos = cust.state || cust.place_of_supply || (APP.org && APP.org.state) || 'Kerala';
+    if ($('#so-customer-type', form)) {
+      $('#so-customer-type', form).value = custType;
+      $('#so-customer-type', form).dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if ($('#so-location', form)) {
+      $('#so-location', form).value = custLoc;
+      $('#so-location', form).dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if ($('#so-pos', form)) $('#so-pos', form).value = custPos;
+    if ($('#so-source-of-supply', form)) $('#so-source-of-supply', form).textContent = 'Source of Supply: ' + custPos;
+    const gstinEl = $('#so-customer-gstin', form);
+    if (gstinEl) gstinEl.textContent = cust.gstin || '';
+    calcSo();
+  }
+
   $('#btn-so-cust-lookup', form)?.addEventListener('click', () => {
     handleQuickCreateSelect($('#so-customer', form), newCust => {
       parties.push(newCust);
@@ -12359,8 +12881,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       opt.selected = true;
       $('#so-customer', form).appendChild(opt);
       $('#so-customer', form).value = newCust.id;
-      if (newCust.state) $('#so-pos', form).value = newCust.state;
-      calcSo();
+      applySoCustomerDetails(newCust);
     });
   });
 
@@ -12368,23 +12889,20 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     if (e.target.value === '__new_customer__') {
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
-        if (newCust.state) $('#so-pos', form).value = newCust.state;
-        calcSo();
+        const opt = document.createElement('option');
+        opt.value = newCust.id;
+        opt.textContent = newCust.name;
+        opt.selected = true;
+        e.target.appendChild(opt);
+        e.target.value = newCust.id;
+        applySoCustomerDetails(newCust);
       });
       return;
     }
     const custId = $('#so-customer', form).value;
     const cust = parties.find(p => String(p.id) === String(custId));
     if (cust) {
-      if (cust.state) $('#so-pos', form).value = cust.state;
-      const gstinEl = $('#so-customer-gstin', form);
-      const custTypeEl = $('#so-customer-type', form);
-      if (gstinEl) gstinEl.textContent = cust.gstin || 'Not provided';
-      if (custTypeEl) {
-        if (cust.gstin && cust.gstin.trim()) custTypeEl.value = 'b2b';
-        else if (cust.customer_type === 'individual') custTypeEl.value = 'b2c';
-      }
-      calcSo();
+      applySoCustomerDetails(cust);
     }
   });
 

@@ -204,3 +204,121 @@ class StandardizedModulesTestCase(TestCase):
         self.assertIn('id="so-customer-type" name="customer_type"', content)
         self.assertIn('type="hidden" id="so-customer-type"', content)
         self.assertIn('type="hidden" id="so-location"', content)
+
+    def test_js_forms_purchase_modules_three_card_layouts(self):
+        """Verify Expenses, Purchase Orders, Bills, and Payments Made implement the Three-Card layout and Vendor Name outside."""
+        from pathlib import Path
+        js_path = Path(__file__).resolve().parent / 'static' / 'books' / 'js' / 'forms.js'
+        content = js_path.read_text(encoding='utf-8')
+
+        # 1. Purchases -> Expenses
+        self.assertIn('.exp-three-cards-grid', content)
+        self.assertIn('for="exp-vendor">Vendor / Payee</label>', content)
+        self.assertIn('1. Vendor Details</h3>', content)
+        self.assertIn('2. Account Details</h3>', content)
+        self.assertIn('3. Expense Details</h3>', content)
+        self.assertIn('id="btn-exp-vendor-lookup"', content)
+        self.assertIn('id="btn-exp-num-pref"', content)
+        self.assertIn('id="exp-sum-total"', content)
+
+        # 2. Purchases -> Purchase Orders
+        self.assertIn('.po-three-cards-grid', content)
+        self.assertIn('for="po-vendor">Vendor Name*</label>', content)
+        self.assertIn('1. Vendor Details</h3>', content)
+        self.assertIn('2. Account Details</h3>', content)
+        self.assertIn('3. Purchase Order Details</h3>', content)
+        self.assertIn('id="btn-po-vendor-lookup"', content)
+        self.assertIn('id="btn-po-num-pref"', content)
+        self.assertIn('btn-po-tax-mode', content)
+
+        # 3. Purchases -> Bills
+        self.assertIn('.bill-three-cards-grid', content)
+        self.assertIn('for="bill-vendor">Vendor Name*</label>', content)
+        self.assertIn('1. Vendor Details</h3>', content)
+        self.assertIn('2. Account Details</h3>', content)
+        self.assertIn('3. Bill Details</h3>', content)
+        self.assertIn('id="btn-bill-vendor-lookup"', content)
+        self.assertIn('id="btn-bill-num-pref"', content)
+        self.assertIn('btn-bill-tax-mode', content)
+
+        # 4. Purchases -> Payments Made
+        self.assertIn('.paym-three-cards-grid', content)
+        self.assertIn('for="pay-vendor">Vendor Name*</label>', content)
+        self.assertIn('1. Vendor Details</h3>', content)
+        self.assertIn('2. Account Details</h3>', content)
+        self.assertIn('3. Payment Details</h3>', content)
+        self.assertIn('id="btn-pay-vendor-lookup"', content)
+        self.assertIn('id="btn-paym-num-pref"', content)
+        self.assertIn('id="alloc"', content)
+
+    def test_purchase_modules_backend_operations(self):
+        """Verify Expense, Purchase Order, Bill, and Payment Made backend workflow operations."""
+        from books.models import Vendor, Account, Expense, PurchaseOrder, Bill, BankAccount, PaymentMade
+        today = timezone.localdate()
+        vendor = Vendor.objects.create(name='Test Tech Supplies', organization=self.org, state='Kerala', gstin='32AAAAA0000A1Z5')
+        exp_acc = Account.objects.filter(organization=self.org, account_type='expense').first()
+        if not exp_acc:
+            exp_acc = Account.objects.create(name='Office Supplies', code='5001', account_type='expense', organization=self.org)
+
+        # Test Expense creation (with optional vendor)
+        exp_resp = self.client.post('/api/expenses/', {
+            'date': today.isoformat(),
+            'expense_account': exp_acc.id,
+            'vendor': vendor.id,
+            'amount': 1500.00,
+            'gst_rate': 18,
+            'paid_through': 'Bank Account',
+            'reference': 'RCPT-101',
+            'notes': 'Quarterly supplies'
+        }, content_type='application/json')
+        self.assertEqual(exp_resp.status_code, 201)
+        self.assertEqual(exp_resp.json()['vendor_id'], vendor.id)
+
+        # Test Direct Expense creation (no vendor)
+        direct_resp = self.client.post('/api/expenses/', {
+            'date': today.isoformat(),
+            'expense_account': exp_acc.id,
+            'vendor': '',
+            'amount': 250.00,
+            'gst_rate': 0,
+            'paid_through': 'Petty Cash',
+            'reference': 'CASH-001',
+            'notes': 'Tea and refreshments'
+        }, content_type='application/json')
+        self.assertEqual(direct_resp.status_code, 201)
+        self.assertIsNone(direct_resp.json()['vendor_id'])
+
+        # Test Purchase Order creation
+        po_resp = self.client.post('/api/purchase-orders/', {
+            'vendor': vendor.id,
+            'date': today.isoformat(),
+            'delivery_date': (today + timedelta(days=7)).isoformat(),
+            'tax_pricing_type': 'tax_exclusive',
+            'lines': [{'item': self.item.id, 'quantity': 5, 'rate': 800.00, 'gst_rate': 18}]
+        }, content_type='application/json')
+        self.assertEqual(po_resp.status_code, 201)
+
+        # Test Bill creation
+        bill_resp = self.client.post('/api/bills/', {
+            'vendor': vendor.id,
+            'date': today.isoformat(),
+            'due_date': (today + timedelta(days=30)).isoformat(),
+            'tax_pricing_type': 'tax_exclusive',
+            'lines': [{'item': self.item.id, 'quantity': 2, 'rate': 800.00, 'gst_rate': 18}]
+        }, content_type='application/json')
+        self.assertEqual(bill_resp.status_code, 201)
+        bill_id = bill_resp.json()['id']
+
+        # Test Payment Made creation
+        bank_acc = BankAccount.objects.create(name='Kotak Primary', bank_name='Kotak Mahindra', account_number='1234567890', organization=self.org)
+        pay_resp = self.client.post('/api/payments-made/', {
+            'vendor': vendor.id,
+            'date': today.isoformat(),
+            'amount': 1888.00,
+            'mode': 'bank_transfer',
+            'bank_account_id': bank_acc.id,
+            'reference': 'UTR-987654321',
+            'allocations': [{'bill': bill_id, 'amount': 1888.00}]
+        }, content_type='application/json')
+        self.assertEqual(pay_resp.status_code, 201)
+        self.assertEqual(PaymentMade.objects.filter(pk=pay_resp.json()['id']).count(), 1)

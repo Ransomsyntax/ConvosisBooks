@@ -3994,8 +3994,8 @@ async function itemForm(id, onDone) {
    ========================================================================= */
 
 async function openDocNumberPreferencesModal({ kind, series = 'Default Transaction Series', location = 'HO Kottayam', currentNumber = '', onSave }) {
-  const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : 'invoices')))));
-  const docLabel = kind === 'quotes' ? 'Quote' : (kind === 'sales-orders' ? 'Sales Order' : (kind === 'bills' ? 'Bill' : (kind === 'purchase-orders' ? 'Purchase Order' : (kind === 'retainer-invoices' ? 'Retainer Invoice' : (kind === 'recurring-invoices' ? 'Recurring Invoice' : 'Invoice')))));
+  const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : (kind === 'delivery-challans' ? 'delivery_challans' : (kind === 'expenses' ? 'expenses' : (kind === 'payments-made' ? 'payments_made' : (kind === 'payments-received' ? 'payments_received' : 'invoices')))))))));
+  const docLabel = kind === 'quotes' ? 'Quote' : (kind === 'sales-orders' ? 'Sales Order' : (kind === 'bills' ? 'Bill' : (kind === 'purchase-orders' ? 'Purchase Order' : (kind === 'retainer-invoices' ? 'Retainer Invoice' : (kind === 'recurring-invoices' ? 'Recurring Invoice' : (kind === 'delivery-challans' ? 'Delivery Challan' : (kind === 'expenses' ? 'Expense' : (kind === 'payments-made' ? 'Payment Made' : (kind === 'payments-received' ? 'Payment Received' : 'Invoice')))))))));
 
   let pref = { auto_generate: true, prefix: 'INV/', next_number: 1, restart_yearly: true, preview_formatted: '' };
   try {
@@ -4003,7 +4003,7 @@ async function openDocNumberPreferencesModal({ kind, series = 'Default Transacti
     if (res) pref = res;
   } catch (e) {}
 
-  const defaultPfx = canonDoc === 'invoices' ? 'INV/' : (canonDoc === 'quotes' ? 'QTN/' : (canonDoc === 'sales_orders' ? 'SO/' : (canonDoc === 'bills' ? 'BILL/' : (canonDoc === 'purchase_orders' ? 'PO/' : (canonDoc === 'retainer_invoices' ? 'RET/' : 'REC/')))));
+  const defaultPfx = canonDoc === 'invoices' ? 'INV/' : (canonDoc === 'quotes' ? 'QTN/' : (canonDoc === 'sales_orders' ? 'SO/' : (canonDoc === 'bills' ? 'BILL/' : (canonDoc === 'purchase_orders' ? 'PO/' : (canonDoc === 'retainer_invoices' ? 'RET/' : (canonDoc === 'recurring_invoices' ? 'REC/' : (canonDoc === 'expenses' ? 'EXP/' : (canonDoc === 'payments_made' ? 'PM/' : (canonDoc === 'payments_received' ? 'PR/' : (canonDoc === 'delivery_challans' ? 'DC/' : 'INV/'))))))))));
   const prefixVal = pref.prefix || defaultPfx;
   const nextNumVal = pref.next_number || 1;
   const isAuto = pref.auto_generate !== false;
@@ -6210,6 +6210,7 @@ async function paymentReceivedForm(pre = {}) {
 
 async function paymentForm(kind, pre = {}) {
   if (kind === 'payments-received') return paymentReceivedForm(pre);
+  if (kind === 'payments-made') return paymentMadeForm(pre);
   const rec = kind === 'payments-received', pk = rec ? 'customer' : 'vendor', docKey = rec ? 'invoice' : 'bill', docs = rec ? 'invoices' : 'bills';
   const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
   const [parties, bankAccounts, existing] = await Promise.all([
@@ -6301,6 +6302,358 @@ async function paymentForm(kind, pre = {}) {
     },
   });
 }
+
+async function paymentMadeForm(pre = {}) {
+  const payId = typeof pre === 'number' || typeof pre === 'string' ? pre : (pre && pre.id ? pre.id : null);
+  const [parties, bankAccounts, txSeriesList, numberPreview, existing] = await Promise.all([
+    api('lookup/vendors/').catch(() => []),
+    api('lookup/bank-accounts/').catch(() => []),
+    api('lookup/transaction-series/').catch(() => []),
+    payId ? Promise.resolve(null) : api('lookup/next-payment-made-number/').catch(() => ({ next_number: 'PM-000001' })),
+    payId ? api(`payments-made/${payId}/`).catch(() => null) : Promise.resolve(null)
+  ]);
+
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const dataObj = existing || (typeof pre === 'object' ? pre : {});
+  const vendorId = dataObj.vendor_id || dataObj.vendor || dataObj.party_id || dataObj.party || '';
+  const initialVendor = parties.find(p => String(p.id) === String(vendorId)) || null;
+  const paySeries = dataObj.transaction_series || (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
+  const payNum = dataObj.number || (numberPreview && (numberPreview.next_number || numberPreview.number)) || 'PM-000001';
+
+  const bankOpts = [
+    ['', 'Select Bank Account…'],
+    ...bankAccounts.map(b => [b.id, b.display_name || `${b.name} (${b.bank_name})`]),
+    ['__add_new__', '+ Add New Bank Account…']
+  ];
+
+  formModal({
+    title: payId ? `Edit Payment Made ${dataObj.number || ''}` : 'Record Payment Made',
+    wide: true,
+    body: `
+      <style>
+        .paym-three-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+        @media (max-width: 1024px) {
+          .paym-three-cards-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+          }
+        }
+        .paym-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 20px;
+          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          box-sizing: border-box;
+        }
+        [data-theme="dark"] .paym-card {
+          background: #1e293b;
+          border-color: #334155;
+        }
+        .paym-card-heading {
+          font-size: 14px;
+          font-weight: 700;
+          color: #0284c7;
+          margin: 0 0 4px 0;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #f1f5f9;
+          letter-spacing: -0.01em;
+        }
+        [data-theme="dark"] .paym-card-heading {
+          color: #38bdf8;
+          border-bottom-color: #334155;
+        }
+        .paym-card-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .paym-card-label {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: #334155;
+          margin: 0;
+          line-height: 1.2;
+        }
+        [data-theme="dark"] .paym-card-label {
+          color: #cbd5e1;
+        }
+        .paym-card-label.required::after {
+          content: ' *';
+          color: #ef4444;
+        }
+        .paym-card .in {
+          border-radius: 8px !important;
+          border: 1px solid #e2e8f0 !important;
+          height: 38px !important;
+          font-size: 13px !important;
+          color: #0f172a !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+        }
+        .paym-card textarea.in {
+          height: auto !important;
+          min-height: 54px;
+          padding: 8px 10px !important;
+        }
+        [data-theme="dark"] .paym-card .in {
+          background: #0f172a !important;
+          border-color: #334155 !important;
+          color: #f8fafc !important;
+        }
+        .customer-select-outer {
+          margin-bottom: 20px;
+          width: 100%;
+          max-width: 440px;
+        }
+        .customer-select-outer-label {
+          font-size: 13px;
+          font-weight: 600;
+          color: #ef4444;
+          display: block;
+          margin-bottom: 8px;
+          line-height: 1.2;
+        }
+        .customer-select-outer .in {
+          border-radius: 8px !important;
+          border: 1px solid #e2e8f0 !important;
+          height: 38px !important;
+          font-size: 13px !important;
+          color: #0f172a !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+        }
+        [data-theme="dark"] .customer-select-outer .in {
+          background: #0f172a !important;
+          border-color: #334155 !important;
+          color: #f8fafc !important;
+        }
+        [data-theme="dark"] .customer-select-outer-label {
+          color: #f87171 !important;
+        }
+      </style>
+
+      <!-- Vendor Name Field (Placed outside and above Three-Card Information Layout) -->
+      <div class="customer-select-outer">
+        <label class="customer-select-outer-label" for="pay-vendor">Vendor Name*</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <select class="in" id="pay-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+            <option value="">Select Vendor…</option>
+            <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+            ${parties.map(item => `<option value="${item.id}" ${String(vendorId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+          <button type="button" class="btn p" id="btn-pay-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+            <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="paym-three-cards-grid">
+        <!-- Card 1: 1. Vendor Details -->
+        <div class="paym-card">
+          <h3 class="paym-card-heading">1. Vendor Details</h3>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label">Vendor Summary</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-height:38px;">
+              <span class="badge" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:600;">
+                <input class="in" id="paym-currency" readonly value="INR" style="border:none;background:transparent;width:40px;padding:0;font-weight:600;color:inherit;height:auto !important;box-shadow:none;">
+              </span>
+              <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:#64748b;">
+                <span>GSTIN:</span>
+                <input class="in" id="paym-vendor-gstin" readonly value="${esc(initialVendor?.gstin || '')}" style="border:none;background:transparent;padding:0;font-weight:600;color:var(--tx);width:130px;height:auto !important;box-shadow:none;">
+              </div>
+            </div>
+          </div>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label" for="paym-notes">Notes</label>
+            <textarea class="in" id="paym-notes" name="notes" rows="2" placeholder="Internal notes…">${esc(dataObj.notes || '')}</textarea>
+          </div>
+        </div>
+
+        <!-- Card 2: 2. Account Details -->
+        <div class="paym-card">
+          <h3 class="paym-card-heading">2. Account Details</h3>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label required" for="paym-bank-account">Paid from Bank Account</label>
+            <select class="in" id="paym-bank-account" name="bank_account_id" required>
+              ${bankOpts.map(([v, l]) => `<option value="${v}" ${String(dataObj.bank_account_id || (bankAccounts.length ? bankAccounts[0].id : '')) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label required" for="paym-mode">Payment Mode</label>
+            <select class="in" id="paym-mode" name="mode">
+              ${[['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['card', 'Card'], ['other', 'Other']].map(([val, lbl]) => `<option value="${val}" ${(dataObj.mode || 'bank_transfer') === val ? 'selected' : ''}>${lbl}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Card 3: 3. Payment Details -->
+        <div class="paym-card">
+          <h3 class="paym-card-heading">3. Payment Details</h3>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label required" for="paym-number">Payment#</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select class="in" id="paym-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Series">
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(paySeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              </select>
+              <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+              <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label required" for="paym-date">Payment Date</label>
+            <input class="in" type="date" id="paym-date" name="date" value="${dataObj.date || APP.today}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label" for="paym-reference">Reference Number</label>
+            <input class="in" id="paym-reference" name="reference" value="${esc(dataObj.reference || '')}" placeholder="e.g. UTR / Cheque #" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="paym-card-field">
+            <label class="paym-card-label required" for="paym-amount">Amount Paid (₹)</label>
+            <input class="in" type="number" id="paym-amount" name="amount" value="${dataObj.amount || ''}" min="0.01" step="0.01" required placeholder="0.00" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:20px 0 8px;font-size:14px;font-weight:700;color:var(--tx,#1e293b);">Apply to Bills</h3>
+      <div id="alloc"><div class="sub">Select a vendor to see outstanding bills.</div></div>
+      <div class="er" data-err="allocations" role="alert"></div>
+      <div class="cs" style="margin-top:10px"><div><span>Applied</span><b id="ap">₹0.00</b></div><div><span>Unapplied (kept as credit on payment)</span><b id="un">₹0.00</b></div></div>
+    `,
+    onReady: (form, m) => {
+      let list = [];
+      const sum = () => $$('.al-in', form).reduce((a, i) => a + num(i.value), 0);
+      const totals = () => { const a = sum(); $('#ap', form).textContent = inr(a); $('#un', form).textContent = inr(num(form.elements.amount.value) - a); };
+      const load = async () => {
+        const pid = form.elements.vendor.value, box = $('#alloc', form);
+        const selVen = parties.find(p => String(p.id) === String(pid));
+        const gstinEl = $('#paym-vendor-gstin', form);
+        if (gstinEl) gstinEl.value = (selVen && selVen.gstin) ? selVen.gstin : '';
+        if (!pid) { box.innerHTML = `<div class="sub">Select a vendor to see outstanding bills.</div>`; list = []; totals(); return; }
+        box.innerHTML = spinner;
+        try {
+          const p = await api('bills/?' + qs({ open: 1, vendor: pid, page_size: 100, ordering: 'due_date' }));
+          list = p.results;
+          box.innerHTML = list.length ? `<div class="tw"><table><thead><tr><th>Number</th><th>Due</th><th class="r">Balance due</th><th class="r" style="width:150px">Apply (₹)</th></tr></thead><tbody>${list.map(d => `<tr><td>${esc(d.number)}</td><td>${fd(d.due_date)}</td><td class="r">${inr(d.balance)}</td><td><input class="in al-in r" type="number" min="0" step="0.01" max="${esc(d.balance)}" data-id="${d.id}" aria-label="Apply to ${esc(d.number)}"></td></tr>`).join('')}</tbody></table></div><button type="button" class="btn" data-auto style="margin-top:8px">Auto-apply (oldest due first)</button>` : `<div class="sub">No outstanding bills for this vendor. The full amount will remain unapplied.</div>`;
+          if (pre && pre.doc) { const i = $(`.al-in[data-id="${pre.doc}"]`, form); if (i) { const d = list.find(x => String(x.id) === String(pre.doc)); i.value = d.balance; if (!form.elements.amount.value) form.elements.amount.value = d.balance; } pre.doc = null; }
+          if (existing && existing.allocations) {
+            for (const alloc of existing.allocations) {
+              const inp = $(`.al-in[data-id="${alloc.doc_id || alloc.bill_id || alloc.bill}"]`, form);
+              if (inp) inp.value = alloc.amount;
+            }
+          }
+          totals();
+        } catch (e) { box.innerHTML = errBox(e.message); }
+      };
+
+      $('#btn-pay-vendor-lookup', form)?.addEventListener('click', () => {
+        partyForm('vendors', null, newVen => {
+          if (newVen && newVen.id) {
+            parties.push(newVen);
+            const sel = form.elements.vendor;
+            sel.insertAdjacentHTML('beforeend', `<option value="${newVen.id}" selected>${esc(newVen.name)}</option>`);
+            sel.value = newVen.id;
+            load();
+          }
+        });
+      });
+
+      form.elements.vendor.addEventListener('change', e => {
+        if (e.target.value === '__new_vendor__') {
+          partyForm('vendors', null, newVen => {
+            if (newVen && newVen.id) {
+              parties.push(newVen);
+              const sel = form.elements.vendor;
+              sel.insertAdjacentHTML('beforeend', `<option value="${newVen.id}" selected>${esc(newVen.name)}</option>`);
+              sel.value = newVen.id;
+            } else {
+              form.elements.vendor.value = '';
+            }
+            load();
+          });
+          return;
+        }
+        load();
+      });
+
+      $('#paym-series', form)?.addEventListener('change', async (e) => {
+        try {
+          const res = await api('lookup/next-payment-made-number/?' + qs({ series: e.target.value }));
+          if (res && res.next_number) {
+            $('#paym-number', form).value = res.next_number;
+          }
+        } catch (err) {}
+      });
+
+      $('#btn-paym-num-pref', form)?.addEventListener('click', () => {
+        openDocNumberPreferencesModal({
+          kind: 'payments-made',
+          series: $('#paym-series', form)?.value || 'Default Transaction Series',
+          location: 'HO Kottayam',
+          onSave: (pfx, next) => {
+            if (next) $('#paym-number', form).value = next;
+          }
+        });
+      });
+
+      form.addEventListener('input', totals);
+      const bankEl = form.elements.bank_account_id;
+      if (bankEl) {
+        bankEl.addEventListener('change', () => {
+          if (bankEl.value === '__add_new__') {
+            bankAccountForm(null, async newAcc => {
+              const fresh = await api('lookup/bank-accounts/').catch(() => []);
+              bankEl.innerHTML = '<option value="">Select Bank Account…</option>' +
+                fresh.map(b => `<option value="${b.id}" ${newAcc && newAcc.id === b.id ? 'selected' : ''}>${esc(b.display_name || b.name)}</option>`).join('') +
+                '<option value="__add_new__" style="color:#2563eb;font-weight:600;">+ Add New Bank Account…</option>';
+            });
+          }
+        });
+      }
+      form.addEventListener('click', e => {
+        if (!e.target.closest('[data-auto]')) return;
+        let left = num(form.elements.amount.value);
+        $$('.al-in', form).forEach(i => { const d = list.find(x => String(x.id) === i.dataset.id); const a = Math.min(left, num(d.balance)); i.value = a > 0 ? r2(a) : ''; left = r2(left - a); });
+        m.markDirty(); totals();
+      });
+      if (vendorId) load(); else totals();
+    },
+    onSubmit: async (d, a, form) => {
+      d.allocations = $$('.al-in', form).filter(i => num(i.value) > 0).map(i => ({ bill: Number(i.dataset.id), amount: i.value }));
+      const applied = d.allocations.reduce((s, x) => s + num(x.amount), 0);
+      if (applied > num(d.amount) + 0.001) throw new ApiErr(400, { message: 'Please correct the allocations.', errors: { allocations: 'Applied amount exceeds the payment amount.' } });
+      if (d.bank_account_id === '__add_new__') {
+        throw new ApiErr(400, { message: 'Please select a valid bank account.', errors: { bank_account_id: 'Please select a valid bank account.' } });
+      }
+      if (d.bank_account_id) {
+        const selBa = bankAccounts.find(b => String(b.id) === String(d.bank_account_id));
+        d.account = selBa ? selBa.name : 'Bank Account';
+        d.bank_account_id = Number(d.bank_account_id);
+      }
+      const p = await api(payId ? `payments-made/${payId}/` : `payments-made/`, { method: payId ? 'PUT' : 'POST', body: d });
+      toast(payId ? `Payment ${p.number} updated` : `Payment ${p.number} recorded`); refresh();
+    },
+  });
+}
+window.paymentMadeForm = paymentMadeForm;
 
 async function adjustForm(preItem, targetEl, onDone) {
   const [items, warehouses, accounts, projects, nextAdj] = await Promise.all([
@@ -7111,49 +7464,344 @@ async function journalForm(id) {
 async function expenseForm(id) {
   const referencePattern = /^[A-Za-z0-9 #\/().:_-]{0,80}$/;
   const referenceError = 'Use letters, numbers, spaces, and # / - _ . ( ) or : only.';
-  const [vendors, accounts] = await Promise.all([api('lookup/vendors/'), api('lookup/accounts/')]);
+  const [vendors, accounts, projects, txSeriesList, nextNum, existing] = await Promise.all([
+    api('lookup/vendors/').catch(() => []),
+    api('lookup/accounts/').catch(() => []),
+    api('lookup/projects/').catch(() => []),
+    api('lookup/transaction-series/').catch(() => []),
+    id ? Promise.resolve(null) : api('lookup/next-expense-number/').catch(() => ({ next_number: 'EXP-000001' })),
+    id ? api(`expenses/${id}/`).catch(() => null) : Promise.resolve(null)
+  ]);
   const expAccounts = accounts.filter(a => a.type === 'expense');
-  const o = id ? await api(`expenses/${id}/`) : {
+  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const o = existing || {
     date: APP.today, expense_account: expAccounts[0]?.id || '', vendor: '',
     amount: '', gst_rate: '18', paid_through: 'Bank Account', reference: '', notes: '',
-    branch: '', location: 'HO Kottayam'
+    branch: '', location: 'HO Kottayam', project_id: '', billable_to_customer: false
   };
+  const expSeries = o.transaction_series || (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
+  const expNum = o.number || (nextNum && (nextNum.next_number || nextNum.number)) || 'EXP-000001';
 
   formModal({
-    title: id ? 'Edit Expense' : 'Record Operating Expense',
-    body: `<div class="zb-form-wrap">
-      ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: o.date })}
-      ${fld({ name: 'branch', label: 'Branch', value: o.branch || '', ph: 'Optional branch' })}
-      ${fld({ name: 'location', label: 'Location', value: o.location || 'HO Kottayam' })}
-      ${fld({ name: 'expense_account', label: 'Expense Account', type: 'select', opts: expAccounts.map(a => [a.id, `${a.code} - ${a.name}`]), value: o.expense_account || o.expense_account_id, req: true })}
-      ${fld({ name: 'vendor', label: 'Vendor / Paid To', type: 'select', opts: [['', 'Direct Expense (No Vendor)'], ...vendors.map(v => [v.id, v.name])], value: o.vendor || o.vendor_id })}
-      ${fld({ name: 'amount', label: 'Taxable Amount (₹)', req: true, type: 'number', value: o.amount, ph: '0.00' })}
-      ${fld({ name: 'gst_rate', label: 'GST Rate', type: 'select', opts: GST_SLABS.map(s => [s, s + '%']), value: o.gst_rate })}
-      ${fld({ name: 'paid_through', label: 'Paid Through', type: 'select', opts: [['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash'], ['Credit Card', 'Credit Card']], value: o.paid_through })}
-      ${fld({ name: 'reference', label: 'Reference / Bill #', value: o.reference, ph: 'e.g. Receipt #401', attrs: 'maxlength="80" autocomplete="off"' })}
-      ${fld({ name: 'notes', label: 'Notes / Purpose', type: 'textarea', value: o.notes, rows: 2 })}
-    </div>`,
+    title: id ? 'Edit Expense' : 'New Expense',
+    wide: true,
+    body: `
+      <style>
+        .exp-three-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+        @media (max-width: 1024px) {
+          .exp-three-cards-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+          }
+        }
+        .exp-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 20px;
+          box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          box-sizing: border-box;
+        }
+        [data-theme="dark"] .exp-card {
+          background: #1e293b;
+          border-color: #334155;
+        }
+        .exp-card-heading {
+          font-size: 14px;
+          font-weight: 700;
+          color: #0284c7;
+          margin: 0 0 4px 0;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #f1f5f9;
+          letter-spacing: -0.01em;
+        }
+        [data-theme="dark"] .exp-card-heading {
+          color: #38bdf8;
+          border-bottom-color: #334155;
+        }
+        .exp-card-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .exp-card-label {
+          font-size: 12.5px;
+          font-weight: 600;
+          color: #334155;
+          margin: 0;
+          line-height: 1.2;
+        }
+        [data-theme="dark"] .exp-card-label {
+          color: #cbd5e1;
+        }
+        .exp-card-label.required::after {
+          content: ' *';
+          color: #ef4444;
+        }
+        .exp-card .in {
+          border-radius: 8px !important;
+          border: 1px solid #e2e8f0 !important;
+          height: 38px !important;
+          font-size: 13px !important;
+          color: #0f172a !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+        }
+        [data-theme="dark"] .exp-card .in {
+          background: #0f172a !important;
+          border-color: #334155 !important;
+          color: #f8fafc !important;
+        }
+        .customer-select-outer {
+          margin-bottom: 20px;
+          width: 100%;
+          max-width: 440px;
+        }
+        .customer-select-outer-label {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--tx, #1e293b);
+          display: block;
+          margin-bottom: 8px;
+          line-height: 1.2;
+        }
+        .customer-select-outer .in {
+          border-radius: 8px !important;
+          border: 1px solid #e2e8f0 !important;
+          height: 38px !important;
+          font-size: 13px !important;
+          color: #0f172a !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+        }
+        [data-theme="dark"] .customer-select-outer .in {
+          background: #0f172a !important;
+          border-color: #334155 !important;
+          color: #f8fafc !important;
+        }
+      </style>
+
+      <!-- Vendor / Payee Selection (Placed outside and above Three-Card Information Layout) -->
+      <div class="customer-select-outer">
+        <label class="customer-select-outer-label" for="exp-vendor">Vendor / Payee</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <select class="in" id="exp-vendor" name="vendor" style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+            <option value="">Direct Expense (No Vendor)</option>
+            <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+            ${vendors.map(v => `<option value="${v.id}" ${String(o.vendor || o.vendor_id) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+          </select>
+          <button type="button" class="btn p" id="btn-exp-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+            <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="exp-three-cards-grid">
+        <!-- Card 1: 1. Vendor Details -->
+        <div class="exp-card">
+          <h3 class="exp-card-heading">1. Vendor Details</h3>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" for="exp-reference">Reference / Bill #</label>
+            <input class="in" id="exp-reference" name="reference" value="${esc(o.reference || '')}" placeholder="e.g. Receipt #401" maxlength="80" autocomplete="off" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            <div class="er" data-err="reference" role="alert" style="font-size:11.5px;color:#ef4444;margin-top:2px;"></div>
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" for="exp-project">Associate Project</label>
+            <select class="in" id="exp-project" name="project_id" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              <option value="">Select Project…</option>
+              ${projects.map(p => `<option value="${p.id}" ${String(o.project_id || o.project) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:6px;">
+              <input type="checkbox" id="exp-billable" name="billable_to_customer" ${o.billable_to_customer ? 'checked' : ''} style="cursor:pointer;">
+              <span style="font-size:12.5px;font-weight:600;">Billable to Customer</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Card 2: 2. Account Details -->
+        <div class="exp-card">
+          <h3 class="exp-card-heading">2. Account Details</h3>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label required" for="exp-account">Expense Account</label>
+            <select class="in" id="exp-account" name="expense_account" required style="width:100%;box-sizing:border-box;padding:0 10px;">
+              ${expAccounts.map(a => `<option value="${a.id}" ${String(o.expense_account || o.expense_account_id) === String(a.id) ? 'selected' : ''}>${esc(a.code)} - ${esc(a.name)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label required" for="exp-paid-through">Paid Through</label>
+            <select class="in" id="exp-paid-through" name="paid_through" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              ${[['Bank Account', 'Bank Account'], ['Petty Cash', 'Petty Cash'], ['Credit Card', 'Credit Card']].map(([v, l]) => `<option value="${v}" ${(o.paid_through || 'Bank Account') === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" for="exp-location">Location</label>
+            <input class="in" id="exp-location" name="location" value="${esc(o.location || 'HO Kottayam')}" placeholder="e.g. HO Kottayam" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" for="exp-branch">Branch</label>
+            <input class="in" id="exp-branch" name="branch" value="${esc(o.branch || '')}" placeholder="Optional branch" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+        </div>
+
+        <!-- Card 3: 3. Expense Details -->
+        <div class="exp-card">
+          <h3 class="exp-card-heading">3. Expense Details</h3>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label required" for="exp-number">Expense#</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select class="in" id="exp-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Series">
+                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(expSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              </select>
+              <input class="in" id="exp-number" name="number" value="${esc(expNum)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+              <button type="button" class="btn ic" id="btn-exp-num-pref" title="Configure Expense Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label required" for="exp-date">Expense Date</label>
+            <input class="in" type="date" id="exp-date" name="date" value="${o.date || APP.today}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label required" for="exp-amount">Taxable Amount (₹)</label>
+            <input class="in" type="number" id="exp-amount" name="amount" value="${o.amount || ''}" step="0.01" min="0.01" required placeholder="0.00" style="width:100%;box-sizing:border-box;padding:0 12px;">
+          </div>
+
+          <div class="exp-card-field">
+            <label class="exp-card-label" for="exp-gst-rate">GST Rate</label>
+            <select class="in" id="exp-gst-rate" name="gst_rate" style="width:100%;box-sizing:border-box;padding:0 10px;">
+              ${GST_SLABS.map(s => `<option value="${s}" ${String(o.gst_rate) === String(s) ? 'selected' : ''}>${s}%</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <label class="exp-card-label" for="exp-notes" style="margin-bottom:6px;display:block;">Notes / Purpose</label>
+        <textarea class="in" id="exp-notes" name="notes" rows="3" placeholder="Notes or business purpose for this expense…" style="width:100%;min-height:70px;box-sizing:border-box;padding:8px 12px;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;">${esc(o.notes || '')}</textarea>
+      </div>
+
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;display:flex;justify-content:flex-end;margin-bottom:10px;">
+        <div style="width:280px;display:flex;flex-direction:column;gap:8px;font-size:13px;">
+          <div style="display:flex;justify-content:space-between;color:#64748b;">
+            <span>Taxable Amount:</span>
+            <b id="exp-sum-taxable" style="color:#0f172a;">₹0.00</b>
+          </div>
+          <div style="display:flex;justify-content:space-between;color:#64748b;">
+            <span>GST Tax Amount:</span>
+            <b id="exp-sum-tax" style="color:#0f172a;">₹0.00</b>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;color:#0284c7;border-top:1px solid #e2e8f0;padding-top:8px;">
+            <span>Total Expense:</span>
+            <span id="exp-sum-total">₹0.00</span>
+          </div>
+        </div>
+      </div>
+    `,
     onSubmit: async d => {
       if (!referencePattern.test(d.reference || '')) {
         throw new ApiErr(400, { reference: referenceError }, 'Please correct the highlighted fields.');
       }
       d.amount = num(d.amount);
       d.gst_rate = num(d.gst_rate);
+      d.billable_to_customer = Boolean(d.billable_to_customer);
+      if (d.project_id) d.project_id = Number(d.project_id);
       if (id) await api(`expenses/${id}/`, { method: 'PUT', body: d });
       else await api('expenses/', { method: 'POST', body: d });
       toast(id ? 'Expense updated' : 'Expense recorded and journal posted');
       refresh();
     },
     onReady: form => {
-      const input = $('[name="reference"]', form);
-      if (!input) return;
-      input.addEventListener('input', () => {
-        const error = form.querySelector('[data-err="reference"]');
-        const invalid = !referencePattern.test(input.value);
-        input.classList.toggle('in-error', invalid);
-        input.setAttribute('aria-invalid', invalid ? 'true' : 'false');
-        if (error) error.textContent = invalid ? referenceError : '';
+      const calcSummary = () => {
+        const taxable = num($('#exp-amount', form)?.value) || 0;
+        const rate = num($('#exp-gst-rate', form)?.value) || 0;
+        const tax = (taxable * rate) / 100;
+        const total = taxable + tax;
+        if ($('#exp-sum-taxable', form)) $('#exp-sum-taxable', form).textContent = inr(taxable);
+        if ($('#exp-sum-tax', form)) $('#exp-sum-tax', form).textContent = inr(tax);
+        if ($('#exp-sum-total', form)) $('#exp-sum-total', form).textContent = inr(total);
+      };
+
+      $('#exp-amount', form)?.addEventListener('input', calcSummary);
+      $('#exp-gst-rate', form)?.addEventListener('change', calcSummary);
+      calcSummary();
+
+      $('#btn-exp-vendor-lookup', form)?.addEventListener('click', () => {
+        partyForm('vendors', null, newVen => {
+          if (newVen && newVen.id) {
+            vendors.push(newVen);
+            const sel = $('#exp-vendor', form);
+            sel.insertAdjacentHTML('beforeend', `<option value="${newVen.id}" selected>${esc(newVen.name)}</option>`);
+            sel.value = newVen.id;
+          }
+        });
       });
+
+      $('#exp-vendor', form)?.addEventListener('change', e => {
+        if (e.target.value === '__new_vendor__') {
+          partyForm('vendors', null, newVen => {
+            if (newVen && newVen.id) {
+              vendors.push(newVen);
+              const sel = $('#exp-vendor', form);
+              sel.insertAdjacentHTML('beforeend', `<option value="${newVen.id}" selected>${esc(newVen.name)}</option>`);
+              sel.value = newVen.id;
+            } else {
+              $('#exp-vendor', form).value = '';
+            }
+          });
+        }
+      });
+
+      $('#exp-series', form)?.addEventListener('change', async (e) => {
+        try {
+          const res = await api('lookup/next-expense-number/?' + qs({ series: e.target.value }));
+          if (res && res.next_number) {
+            $('#exp-number', form).value = res.next_number;
+          }
+        } catch (err) {}
+      });
+
+      $('#btn-exp-num-pref', form)?.addEventListener('click', () => {
+        openDocNumberPreferencesModal({
+          kind: 'expenses',
+          series: $('#exp-series', form)?.value || 'Default Transaction Series',
+          location: $('#exp-location', form)?.value || 'HO Kottayam',
+          onSave: (pfx, next) => {
+            if (next) $('#exp-number', form).value = next;
+          }
+        });
+      });
+
+      const input = $('[name="reference"]', form);
+      if (input) {
+        input.addEventListener('input', () => {
+          const error = form.querySelector('[data-err="reference"]');
+          const invalid = !referencePattern.test(input.value);
+          input.classList.toggle('in-error', invalid);
+          input.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+          if (error) error.textContent = invalid ? referenceError : '';
+        });
+      }
     }
   });
 }
@@ -13243,122 +13891,271 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       <form id="bill-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="bill-vendor" name="vendor" required style="flex:1;">
-                <option value="">Select or add a vendor</option>
-                <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(billVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
-          </div>
+        <style>
+          .bill-three-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .bill-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+          }
+          .bill-card-heading {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0284c7;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.01em;
+            line-height: 1.3;
+          }
+          .bill-card-field {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+          }
+          .bill-card-field:last-child {
+            margin-bottom: 0;
+          }
+          .bill-card-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 6px;
+            line-height: 1.2;
+          }
+          .bill-card-label.required {
+            color: #ef4444;
+          }
+          .bill-card .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .bill-card .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          .bill-card select.in {
+            cursor: pointer;
+          }
+          [data-theme="dark"] .bill-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .bill-card-heading {
+            color: #38bdf8 !important;
+          }
+          [data-theme="dark"] .bill-card-label {
+            color: #f1f5f9 !important;
+          }
+          [data-theme="dark"] .bill-card-label.required {
+            color: #f87171 !important;
+          }
+          [data-theme="dark"] .bill-card .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          @media (max-width: 1024px) {
+            .bill-three-cards-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+            }
+          }
+          @media (max-width: 768px) {
+            .bill-three-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
+          }
+          .customer-select-outer {
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 440px;
+          }
+          .customer-select-outer-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ef4444;
+            display: block;
+            margin-bottom: 8px;
+            line-height: 1.2;
+          }
+          .customer-select-outer .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+          }
+          [data-theme="dark"] .customer-select-outer .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer-label {
+            color: #f87171 !important;
+          }
+        </style>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
-            <div>
-              <select class="in" id="bill-location" name="location" style="width:260px;">
-                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(billLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-              </select>
-              <div id="bill-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Destination of Supply: ${esc(billPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-              </div>
-              <input class="in" id="bill-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(billBranch)}" style="width:260px;margin-top:6px;">
-            </div>
+        <!-- Vendor Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="bill-vendor">Vendor Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="bill-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a vendor</option>
+              <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(billVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
+        </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Supplier Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="bill-customer-type" name="customer_type" style="width:260px;">
+        <div class="bill-three-cards-grid">
+          <!-- Card 1: 1. Vendor Details -->
+          <div class="bill-card">
+            <h3 class="bill-card-heading">1. Vendor Details</h3>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-order-number">Order Number / PO#</label>
+              <input class="in" id="bill-order-number" name="order_number" value="${esc(billOrderNum)}" placeholder="e.g. PO-000001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-customer-type">Supplier Type</label>
+              <select class="in" id="bill-customer-type" name="customer_type" style="width:100%;box-sizing:border-box;padding:0 10px;">
                 <option value="registered" ${billCustType === 'registered' ? 'selected' : ''}>Registered Business</option>
                 <option value="unregistered" ${billCustType === 'unregistered' ? 'selected' : ''}>Unregistered Supplier</option>
               </select>
-              <div id="bill-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+              <div id="bill-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:6px 10px;border-radius:6px;border:1px solid #e2e8f0;margin-top:8px;">
                 <span style="color:#64748b;font-weight:500;">GSTIN:</span>
                 <span id="bill-vendor-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(billVendor))?.gstin) || 'Not provided'}</span>
               </div>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="bill-series" name="transaction_series" style="width:180px;">
-                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(billSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          <!-- Card 2: 2. Account Details -->
+          <div class="bill-card">
+            <h3 class="bill-card-heading">2. Account Details</h3>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-accounts-payable">Accounts Payable</label>
+              <select class="in" id="bill-accounts-payable" name="accounts_payable" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                <option value="Accounts Payable" selected>Accounts Payable</option>
               </select>
-              <input class="in" id="bill-number" name="number" value="${billNum}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-bill-num-pref" title="Configure Bill Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-terms">Payment Terms</label>
+              <select class="in" id="bill-terms" name="terms" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                <option value="Due on Receipt" ${billTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
+                <option value="Net 15" ${billTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
+                <option value="Net 30" ${billTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
+                <option value="Net 45" ${billTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
+                <option value="Net 60" ${billTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
+              </select>
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-due-date">Due Date</label>
+              <input class="in" type="date" id="bill-due-date" name="due_date" value="${billDueDate}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-branch">Branch</label>
+              <input class="in" id="bill-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(billBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-project">Associate Project(s)</label>
+              <select class="in" id="bill-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
+                <option value="">There are no active projects for this vendor.</option>
+              </select>
+            </div>
+
+            <input type="hidden" id="bill-location" name="location" value="${esc(billLocation)}">
+            <input type="hidden" id="bill-pos" name="place_of_supply" value="${esc(billPos)}">
+          </div>
+
+          <!-- Card 3: 3. Bill Details -->
+          <div class="bill-card">
+            <h3 class="bill-card-heading">3. Bill Details</h3>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label required" for="bill-number">Bill#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="bill-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(billSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="bill-number" name="number" value="${billNum}" required style="flex:1.2;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-bill-num-pref" title="Configure Bill Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label required" for="bill-date">Bill Date*</label>
+              <input class="in" type="date" id="bill-date" name="date" value="${billDate}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="bill-card-field">
+              <label class="bill-card-label" for="bill-subject">Subject</label>
+              <textarea class="in" id="bill-subject" name="subject" rows="2" placeholder="Summary or description of this bill" style="width:100%;box-sizing:border-box;padding:8px 12px;font-size:12px;min-height:54px;">${esc(billSubject)}</textarea>
             </div>
           </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Order Number / PO#</label>
-            <input class="in" id="bill-order-number" name="order_number" value="${esc(billOrderNum)}" placeholder="e.g. PO-000001" style="width:260px;">
-          </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Bill Date*</label>
-            <input class="in" type="date" id="bill-date" name="date" value="${billDate}" required style="width:260px;">
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Terms</label>
-            <select class="in" id="bill-terms" name="terms" style="width:180px;">
-              <option value="Due on Receipt" ${billTerms === 'Due on Receipt' ? 'selected' : ''}>Due on Receipt</option>
-              <option value="Net 15" ${billTerms === 'Net 15' ? 'selected' : ''}>Net 15</option>
-              <option value="Net 30" ${billTerms === 'Net 30' ? 'selected' : ''}>Net 30</option>
-              <option value="Net 45" ${billTerms === 'Net 45' ? 'selected' : ''}>Net 45</option>
-              <option value="Net 60" ${billTerms === 'Net 60' ? 'selected' : ''}>Net 60</option>
-            </select>
-
-            <label style="font-weight:500;font-size:13px;color:var(--tx);margin-left:20px;">Due Date</label>
-            <input class="in" type="date" id="bill-due-date" name="due_date" value="${billDueDate}" style="width:160px;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;">
-              Accounts Payable
-              <i class="fa-solid fa-circle-question" style="color:#94a3b8;font-size:12px;cursor:help;" title="The liability account that tracks money owed to vendors"></i>
-            </label>
-            <select class="in" id="bill-accounts-payable" name="accounts_payable" style="width:260px;">
-              <option value="Accounts Payable" selected>Accounts Payable</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="bill-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this vendor.</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="bill-subject" name="subject" rows="2" placeholder="Summary or description of this bill" style="width:260px;font-size:12px;">${esc(billSubject)}</textarea>
-          </div>
-
-          <input type="hidden" id="bill-pos" name="place_of_supply" value="${esc(billPos)}">
         </div>
 
-        <div style="margin-top:32px;">
+        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
+        <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:16px;">
+          <div style="display:inline-flex;align-items:center;gap:10px;background:#ffffff;border:1px solid #e2e8f0;padding:5px 12px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
+            </span>
+            <div style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px;">
+              <button type="button" class="btn-tax-mode btn-bill-tax-mode ${billTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${billTaxPricing === 'tax_exclusive' ? '#0284c7' : 'transparent'};color:${billTaxPricing === 'tax_exclusive' ? '#ffffff' : '#64748b'};">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode btn-bill-tax-mode ${billTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${billTaxPricing === 'tax_inclusive' ? '#0284c7' : 'transparent'};color:${billTaxPricing === 'tax_inclusive' ? '#ffffff' : '#64748b'};">
+                Tax Inclusive
+              </button>
+            </div>
+            <select class="in" id="bill-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${billTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${billTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
+            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="bills" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <i class="fa-solid fa-circle-info"></i> Guide
+            </button>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="bill-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${billTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${billTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="bills" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
-              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-bill-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -13470,6 +14267,33 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       onSave: (pfx, next) => {
         if (next) $('#bill-number', form).value = next;
       }
+    });
+  });
+
+  $('#bill-series', form)?.addEventListener('change', async (e) => {
+    try {
+      const res = await api('lookup/next-bill-number/?' + qs({ series: e.target.value }));
+      if (res && res.next_number) {
+        $('#bill-number', form).value = res.next_number;
+      }
+    } catch (err) {}
+  });
+
+  $$('.btn-bill-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      $$('.btn-bill-tax-mode', form).forEach(b => {
+        b.classList.remove('active');
+        b.style.background = 'transparent';
+        b.style.color = '#64748b';
+      });
+      btn.classList.add('active');
+      btn.style.background = '#0284c7';
+      btn.style.color = '#ffffff';
+      if ($('#bill-tax-pricing', form)) {
+        $('#bill-tax-pricing', form).value = mode;
+      }
+      calcBill();
     });
   });
 
@@ -13908,103 +14732,262 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <form id="po-form-element" style="padding:28px;max-width:1100px;width:100%;box-sizing:border-box;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Vendor Name*</label>
-            <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:480px;">
-              <select class="in" id="po-vendor" name="vendor" required style="flex:1;">
-                <option value="">Select or add a vendor</option>
-                <option value="__new_vendor__" style="color:var(--accent);font-weight:600;">+ Add New Vendor…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(poVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="padding:0 12px;height:34px;border-radius:4px;cursor:pointer;">
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </button>
-              <div style="font-size:12px;font-weight:600;padding:6px 10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;color:#334155;">INR</div>
-            </div>
-          </div>
+        <style>
+          .po-three-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .po-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+          }
+          .po-card-heading {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0284c7;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.01em;
+            line-height: 1.3;
+          }
+          .po-card-field {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+          }
+          .po-card-field:last-child {
+            margin-bottom: 0;
+          }
+          .po-card-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 6px;
+            line-height: 1.2;
+          }
+          .po-card-label.required {
+            color: #ef4444;
+          }
+          .po-card .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+          .po-card .in:focus {
+            border-color: #0284c7 !important;
+            box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+            outline: none !important;
+          }
+          .po-card select.in {
+            cursor: pointer;
+          }
+          [data-theme="dark"] .po-card {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+          }
+          [data-theme="dark"] .po-card-heading {
+            color: #38bdf8 !important;
+          }
+          [data-theme="dark"] .po-card-label {
+            color: #f1f5f9 !important;
+          }
+          [data-theme="dark"] .po-card-label.required {
+            color: #f87171 !important;
+          }
+          [data-theme="dark"] .po-card .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          @media (max-width: 1024px) {
+            .po-three-cards-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 16px;
+            }
+          }
+          @media (max-width: 768px) {
+            .po-three-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
+          }
+          .customer-select-outer {
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 440px;
+          }
+          .customer-select-outer-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #ef4444;
+            display: block;
+            margin-bottom: 8px;
+            line-height: 1.2;
+          }
+          .customer-select-outer .in {
+            border-radius: 8px !important;
+            border: 1px solid #e2e8f0 !important;
+            height: 38px !important;
+            font-size: 13px !important;
+            color: #0f172a !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+          }
+          [data-theme="dark"] .customer-select-outer .in {
+            background: #0f172a !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+          }
+          [data-theme="dark"] .customer-select-outer-label {
+            color: #f87171 !important;
+          }
+        </style>
 
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);padding-top:6px;">Location</label>
-            <div>
-              <select class="in" id="po-location" name="location" style="width:260px;">
-                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(poLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-              </select>
-              <div id="po-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:3px;">
-                Destination of Supply: ${esc(poPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-              </div>
-              <input class="in" id="po-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(poBranch)}" style="width:260px;margin-top:6px;">
-            </div>
+        <!-- Vendor Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="po-vendor">Vendor Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="po-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a vendor</option>
+              <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(poVendor) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
+        </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Supplier Type</label>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-              <select class="in" id="po-customer-type" name="customer_type" style="width:260px;">
+        <div class="po-three-cards-grid">
+          <!-- Card 1: 1. Vendor Details -->
+          <div class="po-card">
+            <h3 class="po-card-heading">1. Vendor Details</h3>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-reference">Reference#</label>
+              <input class="in" id="po-reference" name="order_number" value="${esc(poOrderNum)}" placeholder="e.g. REF-PO-01" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-customer-type">Supplier Type</label>
+              <select class="in" id="po-customer-type" name="customer_type" style="width:100%;box-sizing:border-box;padding:0 10px;">
                 <option value="registered" ${poCustType === 'registered' ? 'selected' : ''}>Registered Business</option>
                 <option value="unregistered" ${poCustType === 'unregistered' ? 'selected' : ''}>Unregistered Supplier</option>
               </select>
-              <div id="po-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:4px 10px;border-radius:4px;border:1px solid var(--bd);">
+              <div id="po-vendor-gstin-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;background:#f8fafc;padding:6px 10px;border-radius:6px;border:1px solid #e2e8f0;margin-top:8px;">
                 <span style="color:#64748b;font-weight:500;">GSTIN:</span>
                 <span id="po-vendor-gstin" style="font-weight:600;color:var(--tx);">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(poVendor))?.gstin) || 'Not provided'}</span>
               </div>
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <select class="in" id="po-series" name="transaction_series" style="width:180px;">
-                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(poSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          <!-- Card 2: 2. Account Details -->
+          <div class="po-card">
+            <h3 class="po-card-heading">2. Account Details</h3>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-location">Location</label>
+              <select class="in" id="po-location" name="location" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                ${warehouses.map(w => `<option value="${esc(w.name)}" ${(poLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
               </select>
-              <input class="in" id="po-number" name="number" value="${poNumber}" required style="width:180px;">
-              <button type="button" class="btn ic" id="btn-po-num-pref" title="Configure Purchase Order Preferences" style="border:1px solid var(--bd);border-radius:4px;padding:6px 10px;color:#3b82f6;cursor:pointer;">
-                <i class="fa-solid fa-gear"></i>
-              </button>
+              <div id="po-destination-of-supply" style="font-size:11.5px;color:#64748b;margin-top:4px;">
+                Destination of Supply: ${esc(poPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
+              </div>
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-branch">Branch</label>
+              <input class="in" id="po-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(poBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-project">Associate Project(s)</label>
+              <select class="in" id="po-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
+                <option value="">There are no active projects for this vendor.</option>
+              </select>
+            </div>
+
+            <input type="hidden" id="po-pos" name="place_of_supply" value="${esc(poPos)}">
+          </div>
+
+          <!-- Card 3: 3. Purchase Order Details -->
+          <div class="po-card">
+            <h3 class="po-card-heading">3. Purchase Order Details</h3>
+
+            <div class="po-card-field">
+              <label class="po-card-label required" for="po-number">Purchase Order#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <select class="in" id="po-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(poSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+                <input class="in" id="po-number" name="number" value="${poNumber}" required style="flex:1.2;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-po-num-pref" title="Configure Purchase Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label required" for="po-date">Purchase Order Date*</label>
+              <input class="in" type="date" id="po-date" name="date" value="${poDate}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label required" for="po-delivery-date">Expected Delivery Date*</label>
+              <input class="in" type="date" id="po-delivery-date" name="delivery_date" value="${poDeliveryDate}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="po-card-field">
+              <label class="po-card-label" for="po-subject">Subject</label>
+              <textarea class="in" id="po-subject" name="subject" rows="2" placeholder="Let your vendor know what this Purchase Order is for" style="width:100%;box-sizing:border-box;padding:8px 12px;font-size:12px;min-height:54px;">${esc(poSubject)}</textarea>
             </div>
           </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Reference#</label>
-            <input class="in" id="po-reference" name="order_number" value="${esc(poOrderNum)}" placeholder="e.g. REF-PO-01" style="width:260px;">
-          </div>
-
-          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Purchase Order Date*</label>
-            <input class="in" type="date" id="po-date" name="date" value="${poDate}" required style="width:260px;">
-
-            <label style="font-weight:500;font-size:13px;color:#ef4444;margin-left:20px;">Expected Delivery Date*</label>
-            <input class="in" type="date" id="po-delivery-date" name="delivery_date" value="${poDeliveryDate}" required style="width:260px;">
-          </div>
-
-          <div style="display:flex;align-items:center;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);">Associate Project(s)</label>
-            <select class="in" id="po-project" name="project_name" style="width:260px;" disabled>
-              <option value="">There are no active projects for this vendor.</option>
-            </select>
-          </div>
-
-          <div style="display:flex;align-items:flex-start;gap:16px;">
-            <label style="width:160px;font-weight:500;font-size:13px;color:var(--tx);display:flex;align-items:center;gap:4px;padding-top:6px;">
-              Subject <i class="fa-solid fa-circle-info" style="color:var(--tx-muted);font-size:12px;"></i>
-            </label>
-            <textarea class="in" id="po-subject" name="subject" rows="2" placeholder="Let your vendor know what this Purchase Order is for" style="width:260px;font-size:12px;">${esc(poSubject)}</textarea>
-          </div>
-
-          <input type="hidden" id="po-pos" name="place_of_supply" value="${esc(poPos)}">
         </div>
 
-        <div style="margin-top:32px;">
+        <!-- Pricing & Tax Calculation Mode (Tax Exclusive / Tax Inclusive) -->
+        <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:16px;">
+          <div style="display:inline-flex;align-items:center;gap:10px;background:#ffffff;border:1px solid #e2e8f0;padding:5px 12px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+            <span style="font-size:13px;font-weight:600;color:#475569;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-receipt" style="color:#0284c7;font-size:12px;"></i> Amounts are:
+            </span>
+            <div style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:3px;gap:2px;">
+              <button type="button" class="btn-tax-mode btn-po-tax-mode ${poTaxPricing === 'tax_exclusive' ? 'active' : ''}" data-mode="tax_exclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${poTaxPricing === 'tax_exclusive' ? '#0284c7' : 'transparent'};color:${poTaxPricing === 'tax_exclusive' ? '#ffffff' : '#64748b'};">
+                Tax Exclusive
+              </button>
+              <button type="button" class="btn-tax-mode btn-po-tax-mode ${poTaxPricing === 'tax_inclusive' ? 'active' : ''}" data-mode="tax_inclusive" style="border:none;border-radius:6px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:${poTaxPricing === 'tax_inclusive' ? '#0284c7' : 'transparent'};color:${poTaxPricing === 'tax_inclusive' ? '#ffffff' : '#64748b'};">
+                Tax Inclusive
+              </button>
+            </div>
+            <select class="in" id="po-tax-pricing" name="tax_pricing_type" style="display:none;" title="Tax Pricing Type">
+              <option value="tax_exclusive" ${poTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
+              <option value="tax_inclusive" ${poTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
+            </select>
+            <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="purchase-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
+              <i class="fa-solid fa-circle-info"></i> Guide
+            </button>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:12px;">
               <span style="font-size:15px;font-weight:700;color:var(--tx);">Item Table</span>
-              <select class="in" id="po-tax-pricing" name="tax_pricing_type" style="width:145px;height:30px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #93c5fd;background:#f0fdf4;color:#1e293b;" title="Tax Pricing Type">
-                <option value="tax_exclusive" ${poTaxPricing === 'tax_exclusive' ? 'selected' : ''}>Tax Exclusive</option>
-                <option value="tax_inclusive" ${poTaxPricing === 'tax_inclusive' ? 'selected' : ''}>Tax Inclusive</option>
-              </select>
-              <button type="button" class="btn btn-tax-pricing-info" data-doc-kind="purchase-orders" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:14px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;" title="Learn about Tax Exclusive, Tax Inclusive, B2B & B2C GST billing">
-                <i class="fa-solid fa-circle-info"></i> Guide
-              </button>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <button type="button" class="btn" id="btn-po-scan" style="background:none;border:none;color:#2563eb;font-weight:500;font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -14204,17 +15187,57 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
     else history.back();
   });
 
-  $('#btn-po-vendor-lookup', form)?.addEventListener('click', () => {
-    handleQuickCreateSelect($('#po-vendor', form), newVen => {
-      parties.push(newVen);
-      const opt = document.createElement('option');
-      opt.value = newVen.id;
-      opt.textContent = newVen.name;
-      opt.selected = true;
-      $('#po-vendor', form).appendChild(opt);
-      $('#po-vendor', form).value = newVen.id;
-      if (newVen.state) $('#po-pos', form).value = newVen.state;
+  $('#btn-po-num-pref', form)?.addEventListener('click', () => {
+    openDocNumberPreferencesModal({
+      kind: 'purchase-orders',
+      series: $('#po-series', form)?.value || 'Default Transaction Series',
+      location: $('#po-location', form)?.value || 'HO Kottayam',
+      branch: $('#po-branch', form)?.value || '',
+      onSave: (pfx, next) => {
+        if (next) $('#po-number', form).value = next;
+      }
+    });
+  });
+
+  $('#po-series', form)?.addEventListener('change', async (e) => {
+    try {
+      const res = await api('lookup/next-po-number/?' + qs({ series: e.target.value }));
+      if (res && res.next_number) {
+        $('#po-number', form).value = res.next_number;
+      }
+    } catch (err) {}
+  });
+
+  $$('.btn-po-tax-mode', form).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      $$('.btn-po-tax-mode', form).forEach(b => {
+        b.classList.remove('active');
+        b.style.background = 'transparent';
+        b.style.color = '#64748b';
+      });
+      btn.classList.add('active');
+      btn.style.background = '#0284c7';
+      btn.style.color = '#ffffff';
+      if ($('#po-tax-pricing', form)) {
+        $('#po-tax-pricing', form).value = mode;
+      }
       calcPo();
+    });
+  });
+
+  $('#btn-po-vendor-lookup', form)?.addEventListener('click', () => {
+    partyForm('vendors', null, newVen => {
+      if (newVen && newVen.id) {
+        parties.push(newVen);
+        const sel = $('#po-vendor', form);
+        sel.insertAdjacentHTML('beforeend', `<option value="${newVen.id}" selected>${esc(newVen.name)}</option>`);
+        sel.value = newVen.id;
+        if (newVen.state) $('#po-pos', form).value = newVen.state;
+        const gstinEl = $('#po-vendor-gstin', form);
+        if (gstinEl) gstinEl.textContent = newVen.gstin || 'Not provided';
+        calcPo();
+      }
     });
   });
 

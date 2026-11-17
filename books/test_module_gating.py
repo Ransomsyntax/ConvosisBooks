@@ -304,6 +304,16 @@ class ModuleGatingTestCase(TestCase):
             active=True,
             hidden=True,
         )
+        required = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='required_reference',
+            label='Required Reference',
+            field_type='text',
+            required=True,
+            active=True,
+            hidden=False,
+        )
 
         resp = self.client.get('/api/custom-fields/?module=payments_received')
         self.assertEqual(resp.status_code, 200)
@@ -319,7 +329,7 @@ class ModuleGatingTestCase(TestCase):
         self.profile.personal_field_preferences = {
             'custom_fields': {
                 'payments_received': {
-                    'hidden_fields': [visible.name],
+                    'hidden_fields': [visible.name, required.name],
                 }
             }
         }
@@ -329,6 +339,67 @@ class ModuleGatingTestCase(TestCase):
         self.assertEqual(resp_user.status_code, 200)
         user_names = {item['name'] for item in resp_user.json()['results']}
         self.assertNotIn(visible.name, user_names)
+        self.assertIn(required.name, user_names)
+
+    def test_custom_field_permissions_and_personal_preferences_api(self):
+        editable = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='accountant_visible',
+            label='Accountant Visible',
+            role_permissions={
+                'admin': {'view': True, 'edit': True},
+                'accountant': {'view': True, 'edit': False},
+            },
+        )
+        restricted = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='admin_only',
+            label='Admin Only',
+            role_permissions={'admin': {'view': True, 'edit': True}},
+        )
+
+        self.profile.role = UserProfile.ACCOUNTANT
+        self.profile.save(update_fields=['role'])
+        listing = self.client.get('/api/custom-fields/?module=payments_received')
+        self.assertEqual(listing.status_code, 200)
+        names = {item['name'] for item in listing.json()['results']}
+        self.assertIn(editable.name, names)
+        self.assertNotIn(restricted.name, names)
+
+        update = self.client.patch(
+            f'/api/custom-fields/{editable.pk}/',
+            data=json.dumps({'label': 'Changed'}),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 403)
+        create = self.client.post(
+            '/api/custom-fields/',
+            data=json.dumps({'module': 'payments_received', 'label': 'Not Allowed'}),
+            content_type='application/json',
+        )
+        self.assertEqual(create.status_code, 403)
+        configuration = self.client.get('/api/custom-fields/?module=payments_received&include_hidden=true')
+        self.assertEqual(configuration.status_code, 403)
+
+        preferences = {
+            'list_columns': ['customer', 'amount'],
+            'column_order': ['amount', 'customer'],
+            'personal_filters': {'status': ['draft']},
+            'optional_display_fields': ['accountant_visible'],
+        }
+        saved = self.client.put(
+            '/api/settings/me/field-preferences/',
+            data=json.dumps({'field_preferences': preferences}),
+            content_type='application/json',
+        )
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(saved.json()['field_preferences'], preferences)
+        loaded = self.client.get('/api/settings/me/field-preferences/')
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.json()['field_preferences'], preferences)
+        self.assertNotIn('list_columns', self.org.general_settings)
 
     def test_sales_orders_and_challans_gating(self):
         # Disable Sales Orders and Delivery Challans

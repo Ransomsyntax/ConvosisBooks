@@ -293,7 +293,7 @@ class InvoicePaymentIntegrationTests(TestCase):
         self.assertEqual(dup_resp.status_code, 400)
 
     def test_customer_advance_draft_payment_and_partial_application(self):
-        CustomField.objects.create(
+        custom_field = CustomField.objects.create(
             organization=self.org,
             module='payments_received',
             name='advance_reviewed',
@@ -329,6 +329,13 @@ class InvoicePaymentIntegrationTests(TestCase):
         detail_response = self.client.get(f'/api/payments-received/{draft.id}/')
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.json()['attachments'][0]['filename'], 'advance-proof.txt')
+
+        hide_response = self.client.patch(
+            f'/api/custom-fields/{custom_field.pk}/',
+            data=json.dumps({'hidden': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(hide_response.status_code, 200, hide_response.content)
         self.bank_account.refresh_from_db()
         self.assertEqual(self.bank_account.current_balance, Decimal('50000.00'))
         self.assertFalse(BankTransaction.objects.filter(matched_entity_id=draft.id).exists())
@@ -341,6 +348,13 @@ class InvoicePaymentIntegrationTests(TestCase):
         self.assertEqual(update_response.status_code, 200, update_response.content)
         draft.refresh_from_db()
         self.assertEqual(draft.notes, 'Reviewed advance')
+        self.assertIs(draft.custom_fields_data['advance_reviewed'], True)
+        show_response = self.client.patch(
+            f'/api/custom-fields/{custom_field.pk}/',
+            data=json.dumps({'hidden': False}),
+            content_type='application/json',
+        )
+        self.assertEqual(show_response.status_code, 200, show_response.content)
         paid_response = self.client.put(
             f'/api/payments-received/{draft.id}/',
             data=json.dumps({'status': 'paid'}),

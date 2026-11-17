@@ -19,6 +19,7 @@ urlpatterns = [
     path('auth/change-contact/', api.api_change_contact_view),
     path('me/', api.me),
     path('settings/me/', api.me),
+    path('settings/me/field-preferences/', api.personal_field_preferences),
     path('organization/', api.organization),
     path('attachments/', api.attachments_view),
     path('attachments/<int:pk>/', api.attachments_view),

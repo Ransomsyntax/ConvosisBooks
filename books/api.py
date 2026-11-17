@@ -3377,17 +3377,26 @@ class PaymentReceivedResource(PaymentResource):
             organization=org, module='payments_received', active=True
         ).order_by('label', 'id'))
 
-    def _clean_custom_fields(self, org, values, previous=None):
+    def _clean_custom_fields(self, org, values, previous=None, user=None):
         if values is None:
             values = previous or {}
         if not isinstance(values, dict):
             raise ApiError(400, 'Custom field values must be an object.', {
                 'custom_fields_data': 'Invalid custom field values.'
             })
-        fields = {}
+        previous = previous if isinstance(previous, dict) else {}
+        fields = dict(previous)
         errors = {}
         for field in self._custom_fields(org):
-            value = values.get(field.name, values.get(field.label, ''))
+            value = values.get(field.name, values.get(field.label, previous.get(field.name, previous.get(field.label, ''))))
+            if field.hidden or not field.form_visible or field.read_only or not _custom_field_role_allows(field, user, 'edit'):
+                if field.name in previous or field.label in previous:
+                    fields[field.name] = previous.get(field.name, previous.get(field.label))
+                    continue
+                default_value = field.default_value
+                if isinstance(default_value, dict) and 'value' in default_value:
+                    default_value = default_value['value']
+                value = default_value if default_value not in ({}, None) else ''
             if field.field_type == 'checkbox':
                 if isinstance(value, bool):
                     checked = value
@@ -3504,7 +3513,7 @@ class PaymentReceivedResource(PaymentResource):
                 c.err('tax_name', 'Select a GST tax for the customer advance.')
 
         custom_fields = self._clean_custom_fields(
-            org, payload.get('custom_fields_data'), existing.custom_fields_data if existing else None
+            org, payload.get('custom_fields_data'), existing.custom_fields_data if existing else None, user=user
         )
         thank_you_enabled = c.boolean('thank_you_enabled', default=False)
         thank_you_note = c.text('thank_you_note', max_len=2000)
@@ -4730,6 +4739,40 @@ def _get_user_hidden_custom_field_names(user, module=None):
     return hidden_names
 
 
+def _custom_field_role_allows(field, user, action):
+    role = get_user_role(user)
+    if role == UserProfile.ADMIN or getattr(user, 'is_superuser', False):
+        return True
+    permissions = field.role_permissions if isinstance(field.role_permissions, dict) else {}
+    if not permissions:
+        return True
+    role_permissions = permissions.get(role)
+    if isinstance(role_permissions, bool):
+        return role_permissions
+    if isinstance(role_permissions, dict):
+        return bool(role_permissions.get(action, role_permissions.get('view', False) if action == 'view' else False))
+    return False
+
+
+def _can_manage_custom_fields(user, action):
+    if get_user_role(user) == UserProfile.ADMIN or getattr(user, 'is_superuser', False):
+        return True
+    profile = getattr(user, 'profile', None)
+    custom_role = getattr(profile, 'custom_role', None) if profile else None
+    permissions = custom_role.permissions if custom_role and isinstance(custom_role.permissions, dict) else {}
+    settings_permissions = permissions.get('settings', {})
+    if not isinstance(settings_permissions, dict):
+        return False
+    field_permissions = settings_permissions.get('custom_fields', {})
+    if not isinstance(field_permissions, dict):
+        return bool(field_permissions)
+    if field_permissions.get('full'):
+        return True
+    if action == 'hide_show':
+        return bool(field_permissions.get('hide_show') or field_permissions.get('edit'))
+    return bool(field_permissions.get(action))
+
+
 def _coerce_custom_field_visibility_names(value):
     if value is None:
         return set()
@@ -4769,12 +4812,58 @@ class CustomFieldResource(Resource):
         include_hidden = request.GET.get('include_hidden', request.GET.get('includeHidden'))
         include_hidden = include_hidden is not None and str(include_hidden).lower() in ('1', 'true', 'yes', 'on')
         if not include_hidden:
-            qs = qs.filter(active=True, hidden=False)
+            qs = qs.filter(hidden=False)
+            if active is None:
+                qs = qs.filter(active=True)
             if mod and request.user.is_authenticated:
                 hidden_names = _get_user_hidden_custom_field_names(request.user, mod)
                 if hidden_names:
-                    qs = qs.exclude(name__in=list(hidden_names))
+                    protected_names = set(_PROTECTED_CUSTOM_FIELD_NAMES)
+                    hidden_names = {
+                        field.name for field in qs.filter(name__in=hidden_names, required=False)
+                        if field.name.strip().lower().replace(' ', '_') not in protected_names
+                    }
+                    if hidden_names:
+                        qs = qs.exclude(name__in=list(hidden_names))
+        if request.user.is_authenticated:
+            allowed_ids = [
+                field.pk for field in qs
+                if _custom_field_role_allows(field, request.user, 'view')
+            ]
+            qs = qs.filter(pk__in=allowed_ids)
         return qs
+
+    def handle_collection(self, request):
+        if request.method == 'POST':
+            self._require_management_permission(request.user, 'create')
+            data = body(request)
+            hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=False)
+            if 'visible' in data and 'hidden' not in data and 'is_hidden' not in data:
+                hidden = not _coerce_custom_field_bool(data, 'visible', default=not hidden)
+            if hidden:
+                self._require_management_permission(request.user, 'hide_show')
+        elif request.method == 'DELETE':
+            self._require_management_permission(request.user, 'delete')
+        elif request.method == 'GET':
+            include_hidden = request.GET.get('include_hidden', request.GET.get('includeHidden'))
+            if include_hidden is not None and str(include_hidden).lower() in ('1', 'true', 'yes', 'on'):
+                self._require_management_permission(request.user, 'view')
+        return super().handle_collection(request)
+
+    def handle_item(self, request, pk):
+        if request.method in ('PUT', 'PATCH'):
+            data = body(request)
+            visibility_keys = {'hidden', 'is_hidden', 'visible'}
+            action = 'hide_show' if visibility_keys.intersection(data) else 'edit'
+            self._require_management_permission(request.user, action)
+        elif request.method == 'DELETE':
+            self._require_management_permission(request.user, 'delete')
+        return super().handle_item(request, pk)
+
+    @staticmethod
+    def _require_management_permission(user, action):
+        if not _can_manage_custom_fields(user, action):
+            raise ApiError(403, 'Permission denied: You cannot manage organization custom fields.')
 
     def row(self, o):
         return {
@@ -4824,6 +4913,8 @@ class CustomFieldResource(Resource):
         req = _coerce_custom_field_bool(data, 'required', 'mandatory', default=False)
         act = _coerce_custom_field_bool(data, 'active', 'status', default=True)
         hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=False)
+        if 'visible' in data and 'hidden' not in data and 'is_hidden' not in data:
+            hidden = not _coerce_custom_field_bool(data, 'visible', default=not hidden)
         read_only = _coerce_custom_field_bool(data, 'readOnly', 'read_only', default=False)
         display_order = c.integer('display_order', default=0) if 'display_order' in data else c.integer('displayOrder', default=0) if 'displayOrder' in data else 0
         searchable = _coerce_custom_field_bool(data, 'searchable', default=False)
@@ -4881,8 +4972,11 @@ class CustomFieldResource(Resource):
             obj.required = req_val
         if 'active' in data or 'status' in data:
             obj.active = _coerce_custom_field_bool(data, 'active', 'status', default=obj.active)
-        if 'hidden' in data or 'is_hidden' in data:
-            obj.hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=obj.hidden)
+        if 'hidden' in data or 'is_hidden' in data or 'visible' in data:
+            if 'visible' in data and 'hidden' not in data and 'is_hidden' not in data:
+                obj.hidden = not _coerce_custom_field_bool(data, 'visible', default=not obj.hidden)
+            else:
+                obj.hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=obj.hidden)
         if 'readOnly' in data or 'read_only' in data:
             obj.read_only = _coerce_custom_field_bool(data, 'readOnly', 'read_only', default=obj.read_only)
         if 'displayOrder' in data or 'display_order' in data:
@@ -9670,6 +9764,38 @@ def me(request):
             'payments': ((PaymentReceived.objects.filter(organization=user_org).count() + PaymentMade.objects.filter(organization=user_org).count()) if user_org else 0)
         }
     })
+
+@api_view
+def personal_field_preferences(request):
+    profile = getattr(request.user, 'profile', None)
+    if not profile:
+        profile, _ = UserProfile.objects.get_or_create(
+            user=request.user,
+            defaults={'role': get_user_role(request.user)}
+        )
+
+    if request.method == 'GET':
+        return j({'field_preferences': profile.personal_field_preferences or {}})
+    if request.method not in ('PUT', 'PATCH'):
+        raise ApiError(405, 'Method not allowed.')
+
+    data = body(request)
+    preferences = data.get('field_preferences', data.get('personal_field_preferences'))
+    if not isinstance(preferences, dict):
+        raise ApiError(400, 'Field preferences must be an object.', {
+            'field_preferences': 'Expected an object.'
+        })
+    try:
+        encoded = json.dumps(preferences, ensure_ascii=False)
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Field preferences must contain JSON-compatible values.')
+    if len(encoded.encode('utf-8')) > 32768:
+        raise ApiError(400, 'Field preferences cannot exceed 32 KB.')
+
+    profile.personal_field_preferences = preferences
+    profile.save(update_fields=['field_preferences', 'personal_preferences'])
+    return j({'field_preferences': profile.personal_field_preferences})
+
 
 @api_view
 def organization(request):

@@ -3258,21 +3258,21 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
     <div class="split-view-container">
       <div class="master-col">
         <div class="master-col-hd">
-          <div style="display:flex;align-items:center;min-width:0;flex:1;">
+          <div class="master-filter-wrap">
             <select class="master-filter-sel" id="master-filter-sel" aria-label="Filter status">
               ${meta.statusFilters.map(f => `<option value="${f.val}">${f.label}</option>`).join('')}
             </select>
           </div>
           <div class="master-hd-actions">
-            <button class="btn" id="master-import-btn" type="button" title="Import ${esc(meta.title)}"><i class="fa-solid fa-file-import"></i> Import</button>
+            <button class="btn" id="master-import-btn" type="button" title="Import ${esc(meta.title)}"><i class="fa-solid fa-file-import"></i><span class="btn-text"> Import</span></button>
             <div class="export-dropdown-wrap">
-              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${esc(meta.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button>
+              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${esc(meta.title)}"><i class="fa-solid fa-file-export"></i><span class="btn-text"> Export</span> ▾</button>
               <div class="pop right export-menu-pop" id="master-export-pop" style="display:none;position:absolute;">
                 <button type="button" class="btn" id="master-export-csv-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button>
                 <button type="button" class="btn" id="master-export-json-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button>
               </div>
             </div>
-            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i> Table</button>
+            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i><span class="btn-text"> Table</span></button>
             <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> New</button>
           </div>
         </div>

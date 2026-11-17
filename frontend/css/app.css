@@ -459,9 +459,9 @@ body.modal-open {
   position: relative;
 }
 .master-col {
-  width: 400px;
-  min-width: 370px;
-  max-width: 460px;
+  width: 420px;
+  min-width: 380px;
+  max-width: 480px;
   border-right: 1px solid var(--bd-glass);
   background: var(--surface-glass);
   backdrop-filter: blur(20px);
@@ -489,6 +489,13 @@ body.modal-open {
   gap: 6px;
   color: var(--tx);
 }
+.master-filter-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+}
 .master-filter-sel {
   font-weight: 700;
   font-size: 13.5px;
@@ -500,8 +507,12 @@ body.modal-open {
   cursor: pointer;
   outline: none;
   transition: all 0.15s ease;
-  max-width: 135px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   text-overflow: ellipsis;
+  overflow: hidden;
   white-space: nowrap;
 }
 .master-filter-sel:hover,
@@ -514,6 +525,17 @@ body.modal-open {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+@media (max-width: 1366px) {
+  .master-hd-actions #master-import-btn .btn-text,
+  .master-hd-actions #master-export-toggle-btn .btn-text {
+    display: none;
+  }
+}
+@media (max-width: 1100px) {
+  .master-hd-actions #master-view-mode-btn .btn-text {
+    display: none;
+  }
 }
 .master-hd-actions .btn {
   height: 28px !important;

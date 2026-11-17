@@ -4632,9 +4632,23 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
       <div class="doc-canvas-scroll" style="padding:16px 20px 60px; display:flex; flex-direction:column; align-items:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02)); box-sizing:border-box;">
         <form id="on-screen-doc-form" class="doc-form-card" style="width:100%; max-width:940px; height:auto; min-height:auto; box-sizing:border-box;" novalidate>
           <div class="fe" data-err="_" role="alert"></div>
+          <!-- Party (Customer / Vendor) Name Field (Placed outside and above document form fields) -->
+          <div class="customer-select-outer" style="margin-bottom:24px;width:50%;min-width:320px;max-width:100%;box-sizing:border-box;">
+            <label class="customer-select-outer-label" for="doc-party-select" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:8px;line-height:1.2;">${inv ? 'Customer Name*' : 'Vendor Name*'}</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <select class="in" id="doc-party-select" name="${pk}" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;border-radius:8px !important;border:1px solid #e2e8f0 !important;background:#ffffff !important;font-size:13px !important;color:#0f172a !important;">
+                <option value="">${inv ? 'Select or add a customer' : 'Select or add a vendor'}</option>
+                <option value="${inv ? '__new_customer__' : '__new_vendor__'}" style="color:var(--accent,#0284c7);font-weight:600;">${inv ? '+ Add New Customer…' : '+ Add New Vendor…'}</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(partyId) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-doc-party-lookup" title="${inv ? 'Search / Add Customer' : 'Search / Add Vendor'}" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+              </button>
+            </div>
+          </div>
+
           <div class="zb-form-wrap">
             ${[
-              fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], [inv ? '__new_customer__' : '__new_vendor__', inv ? '+ Add New Customer…' : '+ Add New Vendor…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
               fld({
                 name: 'customer_type',
                 label: inv ? 'Customer Type' : 'Supplier Type',
@@ -4855,6 +4869,20 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         setDue();
       }
       calc();
+    });
+
+    $('#btn-doc-party-lookup', form)?.addEventListener('click', () => {
+      partyForm(inv ? 'customers' : 'vendors', null, newParty => {
+        if (newParty && newParty.id) {
+          parties.push(newParty);
+          const sel = form.elements[pk];
+          if (sel) {
+            sel.insertAdjacentHTML('beforeend', `<option value="${newParty.id}" selected>${esc(newParty.name)}</option>`);
+            sel.value = newParty.id;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
+      });
     });
 
     form.addEventListener('click', e => {
@@ -5605,9 +5633,17 @@ async function paymentReceivedForm(pre = {}) {
           color: #ef4444;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -6410,9 +6446,17 @@ async function paymentMadeForm(pre = {}) {
           color: #f8fafc !important;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -7561,9 +7605,17 @@ async function expenseForm(id) {
           color: #f8fafc !important;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -7591,7 +7643,7 @@ async function expenseForm(id) {
 
       <!-- Vendor / Payee Selection (Placed outside and above Three-Card Information Layout) -->
       <div class="customer-select-outer">
-        <label class="customer-select-outer-label" for="exp-vendor">Vendor / Payee</label>
+        <label class="customer-select-outer-label" for="exp-vendor">Vendor Name</label>
         <div style="display:flex;align-items:center;gap:10px;">
           <select class="in" id="exp-vendor" name="vendor" style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
             <option value="">Direct Expense (No Vendor)</option>
@@ -7809,7 +7861,7 @@ async function expenseForm(id) {
 async function bankAccountForm(id, onDone) {
   const [o, accounts] = await Promise.all([
     id ? api(`bank-accounts/${id}/`) : Promise.resolve({
-      name: '', bank_name: '', account_number: '', ifsc: '', account_type: 'current',
+      name: '', bank_name: '', account_number: '', ifsc: '', account_type: '',
       currency: 'INR', branch_name: 'HO Kottayam', opening_balance: '0.00',
       opening_balance_date: APP.today, bank_balance: '0.00', gl_account_id: null,
       description: '', active: true, is_archived: false
@@ -7818,11 +7870,12 @@ async function bankAccountForm(id, onDone) {
   ]);
 
   const accTypeOpts = [
+    ['', 'Select'],
     ['current', 'Current Account'],
     ['savings', 'Savings Account'],
     ['checking', 'Checking Account'],
-    ['cash', 'Cash Account'],
     ['credit_card', 'Credit Card'],
+    ['cash', 'Cash Account'],
     ['other', 'Other Bank Account']
   ];
 
@@ -7831,12 +7884,12 @@ async function bankAccountForm(id, onDone) {
   formModal({
     title: id ? 'Edit Bank Account' : 'Add Bank Account',
     body: `<div class="zb-form-wrap">
-      ${fld({ name: 'name', label: 'Account Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
+      ${fld({ name: 'name', label: 'Account / Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
       ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. Kotak Mahindra Bank' })}
       ${fld({ name: 'account_number', label: 'Account Number', req: true, value: o.account_number, ph: 'Enter account number' })}
       ${o.masked_account_number ? `<div class="sub" style="margin:-6px 0 10px 14px;font-size:11.5px;">Masked View: <b>${esc(o.masked_account_number)}</b></div>` : ''}
       ${fld({ name: 'ifsc', label: 'IFSC / Routing Code', value: o.ifsc, ph: 'e.g. KKBK0001234' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: accTypeOpts, value: o.account_type || 'current' })}
+      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', req: true, opts: accTypeOpts, value: o.account_type || '' })}
       ${fld({ name: 'currency', label: 'Account Currency', type: 'select', opts: [['INR', 'INR - Indian Rupee'], ['USD', 'USD - US Dollar'], ['EUR', 'EUR - Euro'], ['GBP', 'GBP - British Pound']], value: o.currency || 'INR' })}
       ${fld({ name: 'branch_name', label: 'Branch / Location', value: o.branch_name || 'HO Kottayam', ph: 'e.g. HO Kottayam' })}
       ${fld({ name: 'opening_balance', label: 'Opening Balance (₹)', type: 'number', value: o.opening_balance || '0.00' })}
@@ -7855,7 +7908,85 @@ async function bankAccountForm(id, onDone) {
         </label>
       </div>
     </div>`,
-    onSubmit: async d => {
+    onReady: (form, m) => {
+      const validators = {
+        name: v => {
+          const s = (v || '').trim();
+          if (!s || !/^[a-zA-Z0-9\s.\-_&'/()]+$/.test(s) || !/[a-zA-Z0-9]/.test(s)) return 'Please enter a valid account display name.';
+          return null;
+        },
+        bank_name: v => {
+          const s = (v || '').trim();
+          if (!s || !/^[a-zA-Z0-9\s.\-'&]+$/.test(s) || /^\d+$/.test(s) || !/[a-zA-Z]/.test(s)) return 'Please enter a valid bank name.';
+          return null;
+        },
+        account_number: v => {
+          const s = (v != null ? String(v) : '').trim();
+          if (!s || !/^\d+$/.test(s)) return 'Account number must contain only numeric characters.';
+          return null;
+        },
+        account_type: v => {
+          const s = (v || '').trim();
+          if (!s || s.toLowerCase() === 'select') return 'Please select an account type.';
+          return null;
+        }
+      };
+
+      Object.entries(validators).forEach(([name, fn]) => {
+        const inp = form.querySelector(`[name="${name}"]`);
+        const errEl = form.querySelector(`[data-err="${name}"]`);
+        if (!inp || !errEl) return;
+        inp.addEventListener('blur', () => {
+          const err = fn(inp.value);
+          if (err) {
+            errEl.textContent = err;
+            inp.classList.add('in-error');
+          } else {
+            errEl.textContent = '';
+            inp.classList.remove('in-error');
+          }
+        });
+        inp.addEventListener('input', () => {
+          const err = fn(inp.value);
+          if (!err) {
+            errEl.textContent = '';
+            inp.classList.remove('in-error');
+          }
+        });
+        if (inp.tagName === 'SELECT') {
+          inp.addEventListener('change', () => {
+            const err = fn(inp.value);
+            if (!err) {
+              errEl.textContent = '';
+              inp.classList.remove('in-error');
+            }
+          });
+        }
+      });
+    },
+    onSubmit: async (d, act, form) => {
+      const errors = {};
+      const nameVal = (d.name || '').trim();
+      if (!nameVal || !/^[a-zA-Z0-9\s.\-_&'/()]+$/.test(nameVal) || !/[a-zA-Z0-9]/.test(nameVal)) {
+        errors.name = 'Please enter a valid account display name.';
+      }
+      const bankVal = (d.bank_name || '').trim();
+      if (!bankVal || !/^[a-zA-Z0-9\s.\-'&]+$/.test(bankVal) || /^\d+$/.test(bankVal) || !/[a-zA-Z]/.test(bankVal)) {
+        errors.bank_name = 'Please enter a valid bank name.';
+      }
+      const accNumVal = (d.account_number != null ? String(d.account_number) : '').trim();
+      if (!accNumVal || !/^\d+$/.test(accNumVal)) {
+        errors.account_number = 'Account number must contain only numeric characters.';
+      }
+      const typeVal = (d.account_type || '').trim();
+      if (!typeVal || typeVal.toLowerCase() === 'select') {
+        errors.account_type = 'Please select an account type.';
+      }
+
+      if (Object.keys(errors).length > 0) {
+        throw new ApiErr(400, errors, 'Please correct the highlighted fields.');
+      }
+
       d.opening_balance = num(d.opening_balance);
       d.bank_balance = num(d.bank_balance);
       d.gl_account = d.gl_account ? Number(d.gl_account) : null;
@@ -9171,9 +9302,17 @@ async function challanModal(id) {
         color: #ef4444;
       }
       .customer-select-outer {
-        margin-bottom: 20px;
-        width: 100%;
-        max-width: 440px;
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
       .customer-select-outer-label {
         font-size: 13px;
@@ -10164,10 +10303,43 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         background: #0f172a !important;
         border-color: #334155 !important;
       }
-      [data-theme="dark"] #rec-customer ~ div {
-        background: #1e293b !important;
+      .customer-select-outer {
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .customer-select-outer-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ef4444;
+        display: block;
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .customer-select-outer .in {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        color: #0f172a !important;
+        background: #ffffff !important;
+        box-shadow: none !important;
+      }
+      [data-theme="dark"] .customer-select-outer .in {
+        background: #0f172a !important;
         border-color: #334155 !important;
-        color: #cbd5e1 !important;
+        color: #f8fafc !important;
+      }
+      [data-theme="dark"] .customer-select-outer-label {
+        color: #f87171 !important;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
     </style>
 
@@ -10191,26 +10363,26 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       <form id="recurring-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;display:flex;flex-direction:column;gap:24px;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="rec-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="rec-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a customer</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
+
         <!-- Master Three-Card Information Layout -->
         <div class="invoice-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
             <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
-
-            <div>
-              <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="rec-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
-              </div>
-            </div>
 
             <div>
               <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Profile Name*</label>
@@ -12029,13 +12201,16 @@ ${renderStockQuantityCell(l, items, whList)}
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -12101,13 +12276,18 @@ ${renderStockQuantityCell(l, items, whList)}
             <h3 class="quote-card-heading">1. Customer Details</h3>
 
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-order-number">Order Number</label>
-              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+              <label class="quote-card-label" for="q-reference">Reference#</label>
+              <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
             <div class="quote-card-field">
               <label class="quote-card-label">Salesperson</label>
               <div id="q-salesperson-container" style="width:100%;"></div>
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-subject">Subject</label>
+              <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
@@ -12161,16 +12341,6 @@ ${renderStockQuantityCell(l, items, whList)}
                   <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
                 </div>
               </div>
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-reference">Reference#</label>
-              <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-subject">Subject</label>
-              <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
         </div>
@@ -13104,13 +13274,16 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -13948,11 +14121,17 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              width: 100% !important;
+              max-width: 100% !important;
+            }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -13993,7 +14172,6 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
             <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
               <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
             </button>
-            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
         </div>
 
@@ -14772,11 +14950,17 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              width: 100% !important;
+              max-width: 100% !important;
+            }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -14817,7 +15001,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
               <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
             </button>
-            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
         </div>
 
@@ -15772,13 +15955,16 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -16707,15 +16893,86 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         border-color: #38bdf8 !important;
         box-shadow: 0 0 0 2px rgba(56,189,248,0.2) !important;
       }
-      [data-theme="dark"] #ret-customer ~ div {
-        background: #1e293b !important;
+      .customer-select-outer {
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .customer-select-outer-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ef4444;
+        display: block;
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .customer-select-outer .in {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        color: #0f172a !important;
+        background: #ffffff !important;
+        box-shadow: none !important;
+      }
+      [data-theme="dark"] .customer-select-outer .in {
+        background: #0f172a !important;
         border-color: #334155 !important;
-        color: #cbd5e1 !important;
+        color: #f8fafc !important;
+      }
+      [data-theme="dark"] .customer-select-outer-label {
+        color: #f87171 !important;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
       [data-theme="dark"] #btn-ret-num-pref {
         background: #1e293b !important;
         border-color: #334155 !important;
         color: #38bdf8 !important;
+      }
+      .ret-bottom-bar {
+        position: sticky !important;
+        bottom: 0 !important;
+        background: var(--surface, #ffffff) !important;
+        border-top: 1px solid var(--bd, #e2e8f0) !important;
+        margin-top: 24px !important;
+        padding: 14px 28px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        z-index: 50 !important;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
+      }
+      @media (max-width: 768px) {
+        .ret-bottom-bar {
+          flex-direction: column !important;
+          gap: 12px !important;
+          align-items: stretch !important;
+          padding: 12px 16px !important;
+        }
+        .ret-bottom-bar > div {
+          justify-content: space-between !important;
+          width: 100% !important;
+        }
+      }
+      [data-theme="dark"] .ret-bottom-bar {
+        background: #111c38 !important;
+        border-color: #1e293b !important;
+      }
+      [data-theme="dark"] .ret-bottom-bar #btn-ret-save-draft,
+      [data-theme="dark"] .ret-bottom-bar #btn-ret-cancel {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        border-color: #334155 !important;
+      }
+      [data-theme="dark"] .ret-bottom-bar #ret-bar-total-amount {
+        color: #f8fafc !important;
       }
     </style>
 
@@ -16738,32 +16995,29 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         </div>
       </div>
 
-      <form id="retainer-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;" novalidate>
+      <form id="retainer-form-element" style="padding:24px 28px 24px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;flex:1;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
+
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="ret-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="ret-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a customer</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
 
         <!-- Master Three-Card Information Layout -->
         <div class="invoice-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
             <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
-
-            <div>
-              <label for="ret-customer" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">
-                Customer Name*
-              </label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="ret-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
-              </div>
-              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Select the customer receiving this retainer invoice.</span>
-            </div>
 
             <div>
               <label for="ret-project" style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">
@@ -16888,27 +17142,27 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             </div>
           </div>
         </div>
-      </form>
 
-      <!-- Sticky Bottom Action Bar -->
-      <div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--bd,#e2e8f0);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;z-index:100;box-shadow:0 -2px 8px rgba(0,0,0,0.04);">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:600;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;">Save as Draft</button>
-          <button type="button" class="btn p" id="btn-ret-save-send" style="display:inline-flex;align-items:center;gap:8px;padding:8px 20px;font-weight:600;font-size:13px;border-radius:6px;cursor:pointer;">
-            Save and Send <i class="fa-solid fa-paper-plane" style="font-size:11px;"></i>
-          </button>
-          <button type="button" class="btn" id="btn-ret-cancel" style="background:#fff;font-weight:500;font-size:13px;padding:8px 16px;border-radius:6px;cursor:pointer;">Cancel</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:20px;font-size:13px;">
-          <div style="display:flex;align-items:center;gap:6px;color:#475569;">
-            <span>PDF Template: <b>'${esc(retPdfTemplateName)}'</b></span>
-            <button type="button" class="btn" id="btn-ret-template-change" style="border:0;background:transparent;color:#2563eb;font-weight:600;padding:2px 4px;cursor:pointer;text-decoration:underline;">Change</button>
+        <!-- Sticky Bottom Action Bar -->
+        <div class="ret-bottom-bar">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button type="button" class="btn" id="btn-ret-save-draft" style="background:#fff;font-weight:600;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;">Save as Draft</button>
+            <button type="button" class="btn p" id="btn-ret-save-send" style="display:inline-flex;align-items:center;gap:8px;padding:8px 20px;font-weight:600;font-size:13px;border-radius:6px;cursor:pointer;">
+              Save and Send <i class="fa-solid fa-paper-plane" style="font-size:11px;"></i>
+            </button>
+            <button type="button" class="btn" id="btn-ret-cancel" style="background:#fff;font-weight:500;font-size:13px;padding:8px 16px;border-radius:6px;cursor:pointer;">Cancel</button>
           </div>
-          <div style="font-weight:700;color:#0f172a;font-size:14px;padding-left:16px;border-left:1px solid var(--bd,#e2e8f0);">
-            <span>Total: <span id="ret-bar-total-amount">₹ 0.00</span></span>
+          <div style="display:flex;align-items:center;gap:20px;font-size:13px;">
+            <div style="display:flex;align-items:center;gap:6px;color:#475569;">
+              <span>PDF Template: <b>'${esc(retPdfTemplateName)}'</b></span>
+              <button type="button" class="btn" id="btn-ret-template-change" style="border:0;background:transparent;color:#2563eb;font-weight:600;padding:2px 4px;cursor:pointer;text-decoration:underline;">Change</button>
+            </div>
+            <div style="font-weight:700;color:#0f172a;font-size:14px;padding-left:16px;border-left:1px solid var(--bd,#e2e8f0);">
+              <span>Total: <span id="ret-bar-total-amount">₹ 0.00</span></span>
+            </div>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   `;
 

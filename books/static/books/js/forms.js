@@ -10303,10 +10303,43 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         background: #0f172a !important;
         border-color: #334155 !important;
       }
-      [data-theme="dark"] #rec-customer ~ div {
-        background: #1e293b !important;
+      .customer-select-outer {
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .customer-select-outer-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ef4444;
+        display: block;
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .customer-select-outer .in {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        color: #0f172a !important;
+        background: #ffffff !important;
+        box-shadow: none !important;
+      }
+      [data-theme="dark"] .customer-select-outer .in {
+        background: #0f172a !important;
         border-color: #334155 !important;
-        color: #cbd5e1 !important;
+        color: #f8fafc !important;
+      }
+      [data-theme="dark"] .customer-select-outer-label {
+        color: #f87171 !important;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
     </style>
 
@@ -10330,26 +10363,26 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       <form id="recurring-form-element" style="padding:24px 28px 100px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;display:flex;flex-direction:column;gap:24px;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="rec-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="rec-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a customer</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
+
         <!-- Master Three-Card Information Layout -->
         <div class="invoice-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
             <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
-
-            <div>
-              <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Customer Name*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="rec-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(rCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-rec-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
-              </div>
-            </div>
 
             <div>
               <label style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">Profile Name*</label>
@@ -12243,13 +12276,18 @@ ${renderStockQuantityCell(l, items, whList)}
             <h3 class="quote-card-heading">1. Customer Details</h3>
 
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-order-number">Order Number</label>
-              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+              <label class="quote-card-label" for="q-reference">Reference#</label>
+              <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
             <div class="quote-card-field">
               <label class="quote-card-label">Salesperson</label>
               <div id="q-salesperson-container" style="width:100%;"></div>
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-subject">Subject</label>
+              <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
@@ -12303,16 +12341,6 @@ ${renderStockQuantityCell(l, items, whList)}
                   <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
                 </div>
               </div>
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-reference">Reference#</label>
-              <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-subject">Subject</label>
-              <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
         </div>
@@ -16865,10 +16893,43 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         border-color: #38bdf8 !important;
         box-shadow: 0 0 0 2px rgba(56,189,248,0.2) !important;
       }
-      [data-theme="dark"] #ret-customer ~ div {
-        background: #1e293b !important;
+      .customer-select-outer {
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .customer-select-outer-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ef4444;
+        display: block;
+        margin-bottom: 8px;
+        line-height: 1.2;
+      }
+      .customer-select-outer .in {
+        border-radius: 8px !important;
+        border: 1px solid #e2e8f0 !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        color: #0f172a !important;
+        background: #ffffff !important;
+        box-shadow: none !important;
+      }
+      [data-theme="dark"] .customer-select-outer .in {
+        background: #0f172a !important;
         border-color: #334155 !important;
-        color: #cbd5e1 !important;
+        color: #f8fafc !important;
+      }
+      [data-theme="dark"] .customer-select-outer-label {
+        color: #f87171 !important;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
       [data-theme="dark"] #btn-ret-num-pref {
         background: #1e293b !important;
@@ -16937,29 +16998,26 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       <form id="retainer-form-element" style="padding:24px 28px 24px 28px;max-width:1240px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;flex:1;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
+        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="ret-customer">Customer Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="ret-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select or add a customer</option>
+              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+              ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
+
         <!-- Master Three-Card Information Layout -->
         <div class="invoice-cards-grid">
           <!-- Card 1: 1. Customer Details -->
           <div class="invoice-card" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(15,23,42,0.03);display:flex;flex-direction:column;gap:18px;">
             <h3 style="font-size:15px;font-weight:700;color:#0284c7;margin:0 0 2px 0;">1. Customer Details</h3>
-
-            <div>
-              <label for="ret-customer" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:6px;">
-                Customer Name*
-              </label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="ret-customer" name="customer" required style="flex:1;height:38px !important;font-size:13px;border-radius:8px !important;border:1px solid #e2e8f0 !important;">
-                  <option value="">Select or add a customer</option>
-                  <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-                  ${parties.map(p => `<option value="${p.id}" ${String(retCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-                </select>
-                <button type="button" class="btn p" id="btn-ret-cust-lookup" title="Search / Add Customer" style="padding:0 14px;height:38px;border-radius:8px;cursor:pointer;flex-shrink:0;background:#0284c7;color:#fff;border:none;">
-                  <i class="fa-solid fa-magnifying-glass"></i>
-                </button>
-                <div style="font-size:12px;font-weight:700;padding:0 14px;height:38px;line-height:38px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#334155;flex-shrink:0;">INR</div>
-              </div>
-              <span style="font-size:11.5px;color:#64748b;display:block;margin-top:4px;">Select the customer receiving this retainer invoice.</span>
-            </div>
 
             <div>
               <label for="ret-project" style="font-size:13px;font-weight:600;color:#334155;display:block;margin-bottom:6px;">

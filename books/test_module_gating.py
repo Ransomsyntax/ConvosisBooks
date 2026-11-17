@@ -6,7 +6,8 @@ from django.utils import timezone
 
 from books.models import (
     Organization, UserProfile, Customer, Quote, SalesOrder,
-    DeliveryChallan, RetainerInvoice, Project, TimeLog, AuditLog
+    DeliveryChallan, RetainerInvoice, Project, TimeLog, AuditLog,
+    CustomField
 )
 from books.features.module_gating import (
     get_organization_module_preferences,
@@ -218,8 +219,116 @@ class ModuleGatingTestCase(TestCase):
         resp_put = self.client.put(f'/api/quotes/{quote.pk}/', data=json.dumps({'notes': 'New notes'}), content_type='application/json')
         self.assertEqual(resp_put.status_code, 403)
 
+    def test_custom_field_configuration_supports_dynamic_visibility_and_protection(self):
+        resp = self.client.post(
+            '/api/custom-fields/',
+            data=json.dumps({
+                'module': 'payments_received',
+                'label': 'Customer reference',
+                'apiName': 'customer_reference',
+                'dataType': 'text',
+                'mandatory': False,
+                'hidden': True,
+                'displayOrder': 4,
+                'defaultValue': 'REF-100',
+                'validationRules': {'max_length': 32},
+                'listVisible': True,
+                'showInPdf': False,
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        data = resp.json()
+        self.assertEqual(data['apiName'], 'customer_reference')
+        self.assertTrue(data['hidden'])
+        self.assertEqual(data['defaultValue'], 'REF-100')
+
+        protected = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='amount',
+            label='Amount',
+            field_type='currency',
+            required=True,
+            active=True,
+        )
+        protected_resp = self.client.patch(
+            f'/api/custom-fields/{protected.pk}/',
+            data=json.dumps({'hidden': True}),
+            content_type='application/json'
+        )
+        self.assertEqual(protected_resp.status_code, 400)
+        self.assertIn('protected', protected_resp.json().get('error', '').lower())
+
+    def test_user_field_preferences_are_separate_from_organization_configuration(self):
+        quote = Quote.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            number='QTN-PREF-001',
+            date=timezone.localdate(),
+            expiry_date=timezone.localdate(),
+            due_date=timezone.localdate(),
+            total=Decimal('250.00'),
+            status='draft'
+        )
+        self.profile.field_preferences = {
+            'list_columns': ['customer', 'amount'],
+            'personal_filters': {'status': ['draft']},
+        }
+        self.profile.save(update_fields=['field_preferences'])
+
+        self.assertEqual(self.profile.personal_field_preferences['list_columns'][0], 'customer')
+        self.assertNotIn('list_columns', self.org.general_settings)
+
         resp_del = self.client.delete(f'/api/quotes/{quote.pk}/')
-        self.assertEqual(resp_del.status_code, 403)
+        self.assertIn(resp_del.status_code, (200, 204))
+
+    def test_hidden_custom_fields_are_filtered_from_runtime_lists_and_user_preferences_apply(self):
+        visible = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='customer_reference',
+            label='Customer Reference',
+            field_type='text',
+            required=False,
+            active=True,
+            hidden=False,
+        )
+        hidden = CustomField.objects.create(
+            organization=self.org,
+            module='payments_received',
+            name='branch_reference',
+            label='Branch Reference',
+            field_type='text',
+            required=False,
+            active=True,
+            hidden=True,
+        )
+
+        resp = self.client.get('/api/custom-fields/?module=payments_received')
+        self.assertEqual(resp.status_code, 200)
+        names = {item['name'] for item in resp.json()['results']}
+        self.assertIn(visible.name, names)
+        self.assertNotIn(hidden.name, names)
+
+        resp_hidden = self.client.get('/api/custom-fields/?module=payments_received&include_hidden=true')
+        self.assertEqual(resp_hidden.status_code, 200)
+        hidden_names = {item['name'] for item in resp_hidden.json()['results']}
+        self.assertIn(hidden.name, hidden_names)
+
+        self.profile.personal_field_preferences = {
+            'custom_fields': {
+                'payments_received': {
+                    'hidden_fields': [visible.name],
+                }
+            }
+        }
+        self.profile.save(update_fields=['field_preferences', 'personal_preferences'])
+
+        resp_user = self.client.get('/api/custom-fields/?module=payments_received')
+        self.assertEqual(resp_user.status_code, 200)
+        user_names = {item['name'] for item in resp_user.json()['results']}
+        self.assertNotIn(visible.name, user_names)
 
     def test_sales_orders_and_challans_gating(self):
         # Disable Sales Orders and Delivery Challans

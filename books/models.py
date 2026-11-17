@@ -623,16 +623,85 @@ class AuditLog(models.Model):
 
 class CustomField(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='custom_fields')
-    module = models.CharField(max_length=40) 
+    module = models.CharField(max_length=40)
     name = models.CharField(max_length=60)
     label = models.CharField(max_length=100)
-    field_type = models.CharField(max_length=20, default='text') 
+    field_type = models.CharField(max_length=20, default='text')
     options = models.TextField(blank=True, help_text='Comma separated choices for select')
     required = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
+    hidden = models.BooleanField(default=False, db_index=True)
+    display_order = models.PositiveIntegerField(default=0, db_index=True)
+    default_value = models.JSONField(default=dict, blank=True)
+    validation_rules = models.JSONField(default=dict, blank=True)
+    read_only = models.BooleanField(default=False)
+    searchable = models.BooleanField(default=False)
+    filterable = models.BooleanField(default=False)
+    list_visible = models.BooleanField(default=True)
+    form_visible = models.BooleanField(default=True)
+    pdf_visible = models.BooleanField(default=False)
+    role_permissions = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+    @property
+    def is_hidden(self):
+        return self.hidden
+
+    @is_hidden.setter
+    def is_hidden(self, value):
+        self.hidden = bool(value)
+
+    @property
+    def visible(self):
+        return not self.hidden
+
+    @visible.setter
+    def visible(self, value):
+        self.hidden = not bool(value)
+
+    @property
+    def display_label(self):
+        return self.label
+
+    @display_label.setter
+    def display_label(self, value):
+        self.label = value
+
+    @property
+    def api_name(self):
+        return self.name
+
+    @api_name.setter
+    def api_name(self, value):
+        self.name = value
+
+    @property
+    def data_type(self):
+        return self.field_type
+
+    @data_type.setter
+    def data_type(self, value):
+        self.field_type = value
+
+    @property
+    def mandatory(self):
+        return self.required
+
+    @mandatory.setter
+    def mandatory(self, value):
+        self.required = bool(value)
+
+    @property
+    def show_in_pdf(self):
+        return self.pdf_visible
+
+    @show_in_pdf.setter
+    def show_in_pdf(self, value):
+        self.pdf_visible = bool(value)
 
     class Meta:
-        ordering = ['module', 'label']
+        ordering = ['module', 'display_order', 'label']
 
 class WorkflowRule(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='workflow_rules')
@@ -1595,11 +1664,24 @@ class UserProfile(models.Model):
     mfa_enabled = models.BooleanField(default=True)
     mfa_secret = models.CharField(max_length=64, blank=True, default='')
     backup_codes = models.JSONField(default=list, blank=True)
+    field_preferences = models.JSONField(default=dict, blank=True)
+    personal_preferences = models.JSONField(default=dict, blank=True)
     last_active_ip = models.CharField(max_length=50, blank=True)
     is_locked = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
     is_mobile_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def personal_field_preferences(self):
+        if self.field_preferences:
+            return self.field_preferences
+        return self.personal_preferences or {}
+
+    @personal_field_preferences.setter
+    def personal_field_preferences(self, value):
+        self.field_preferences = value or {}
+        self.personal_preferences = value or {}
 
     class Meta:
         constraints = [

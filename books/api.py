@@ -4644,35 +4644,220 @@ class AuditLogResource(Resource):
     def update(self, obj, data, user):
         raise ApiError(405, 'Audit log records are immutable and cannot be modified.')
 
+_PROTECTED_CUSTOM_FIELD_NAMES = {
+    'amount', 'balance', 'bank_account', 'credit', 'customer', 'date', 'debit', 'document_number',
+    'document', 'gstin', 'invoice_number', 'item', 'number', 'reference', 'status', 'tax', 'tax_amount',
+    'total', 'vendor', 'warehouse'
+}
+
+
+def _coerce_custom_field_bool(data, *keys, default=False):
+    for key in keys:
+        if key in data:
+            value = data[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in ('1', 'true', 'yes', 'on')
+            return bool(value)
+    return default
+
+
+def _coerce_custom_field_json(data, *keys, default=None):
+    for key in keys:
+        if key in data:
+            value = data[key]
+            if value is None:
+                return default if default is not None else {}
+            if isinstance(value, (dict, list, str, int, float, bool)):
+                return value
+            return default if default is not None else {}
+    return default if default is not None else {}
+
+
+def validate_custom_field_settings(name, label, required, hidden, read_only=False):
+    normalized_name = (name or '').strip().lower().replace(' ', '_')
+    normalized_label = (label or '').strip().lower().replace(' ', '_')
+    protected = {item.strip().lower().replace(' ', '_') for item in _PROTECTED_CUSTOM_FIELD_NAMES}
+    protected_names = {"customer", "amount", "balance", "bank_account", "credit", "date", "debit",
+                       "document_number", "document", "gstin", "invoice_number", "item", "number",
+                       "reference", "status", "tax", "tax_amount", "total", "vendor", "warehouse"}
+    if normalized_name in protected_names or normalized_label in protected_names:
+        if hidden or (not required and not read_only):
+            raise ApiError(400, 'This field is protected and cannot be hidden or made optional.', {
+                'field': 'This field is protected and cannot be hidden or made optional.'
+            })
+
+
+def _get_user_hidden_custom_field_names(user, module=None):
+    if not user:
+        return set()
+    profile = getattr(user, 'profile', None)
+    if not profile:
+        return set()
+    prefs = getattr(profile, 'personal_field_preferences', {}) or {}
+    if not isinstance(prefs, dict):
+        return set()
+
+    candidates = []
+    for key in ('custom_fields', 'customFields', 'field_preferences', 'fieldPreferences'):
+        value = prefs.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+
+    if not candidates:
+        if 'hidden_fields' in prefs or 'hiddenFields' in prefs:
+            candidates.append(prefs)
+
+    hidden_names = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        module_value = candidate.get(module) if module else None
+        if module_value is None:
+            module_value = candidate.get('all')
+        if isinstance(module_value, dict):
+            for key in ('hidden_fields', 'hiddenFields', 'hidden'):
+                raw = module_value.get(key)
+                if raw is not None:
+                    hidden_names.update(_coerce_custom_field_visibility_names(raw))
+        if isinstance(module_value, (list, tuple, set)):
+            hidden_names.update(_coerce_custom_field_visibility_names(module_value))
+        for key in ('hidden_fields', 'hiddenFields', 'hidden'):
+            raw = candidate.get(key)
+            if raw is not None:
+                hidden_names.update(_coerce_custom_field_visibility_names(raw))
+    return hidden_names
+
+
+def _coerce_custom_field_visibility_names(value):
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {item.strip() for item in value.split(',') if item.strip()}
+    if isinstance(value, (list, tuple, set)):
+        names = set()
+        for item in value:
+            if isinstance(item, str):
+                names.add(item.strip())
+            elif item is not None:
+                names.add(str(item).strip())
+        return {name for name in names if name}
+    if isinstance(value, dict):
+        names = set()
+        for key in ('names', 'fields', 'field_names', 'fieldNames'):
+            if key in value:
+                names.update(_coerce_custom_field_visibility_names(value[key]))
+        return names
+    return {str(value).strip()} if str(value).strip() else set()
+
+
 class CustomFieldResource(Resource):
     name = 'custom-fields'
     model = CustomField
     search_fields = ('module', 'label', 'name')
-    default_ordering = ('module', 'label')
+    default_ordering = ('module', 'display_order', 'label')
 
     def filter_qs(self, qs, request):
         mod = request.GET.get('module')
         if mod:
             qs = qs.filter(module=mod)
+        active = request.GET.get('active')
+        if active is not None:
+            qs = qs.filter(active=active.lower() in ('1', 'true', 'yes'))
+
+        include_hidden = request.GET.get('include_hidden', request.GET.get('includeHidden'))
+        include_hidden = include_hidden is not None and str(include_hidden).lower() in ('1', 'true', 'yes', 'on')
+        if not include_hidden:
+            qs = qs.filter(active=True, hidden=False)
+            if mod and request.user.is_authenticated:
+                hidden_names = _get_user_hidden_custom_field_names(request.user, mod)
+                if hidden_names:
+                    qs = qs.exclude(name__in=list(hidden_names))
         return qs
 
     def row(self, o):
         return {
-            'id': o.pk, 'module': o.module, 'name': o.name, 'label': o.label,
-            'field_type': o.field_type, 'options': o.options, 'required': o.required,
-            'active': o.active
+            'id': o.pk,
+            'module': o.module,
+            'name': o.name,
+            'label': o.label,
+            'apiName': o.name,
+            'field_type': o.field_type,
+            'dataType': o.field_type,
+            'options': o.options,
+            'required': o.required,
+            'mandatory': o.required,
+            'active': o.active,
+            'status': o.active,
+            'hidden': o.hidden,
+            'is_hidden': o.hidden,
+            'visible': not o.hidden,
+            'display_order': o.display_order,
+            'displayOrder': o.display_order,
+            'displayLabel': o.label,
+            'default_value': o.default_value or {},
+            'defaultValue': o.default_value or {},
+            'validation_rules': o.validation_rules or {},
+            'validationRules': o.validation_rules or {},
+            'read_only': o.read_only,
+            'readOnly': o.read_only,
+            'searchable': o.searchable,
+            'filterable': o.filterable,
+            'list_visible': o.list_visible,
+            'listVisible': o.list_visible,
+            'form_visible': o.form_visible,
+            'formVisible': o.form_visible,
+            'pdf_visible': o.pdf_visible,
+            'showInPdf': o.pdf_visible,
+            'role_permissions': o.role_permissions or {},
+            'rolePermissions': o.role_permissions or {},
         }
 
     def create(self, data, user):
         c = Cleaner(data)
         mod = c.text('module', required=True, max_len=40)
         lbl = c.text('label', required=True, max_len=100)
-        nm = c.text('name', max_len=60) or slug(lbl).replace('-', '_')
-        ftype = c.text('field_type', default='text', max_len=20)
+        nm = c.text('name', max_len=60) or c.text('apiName', max_len=60) or slug(lbl).replace('-', '_')
+        ftype = c.text('field_type', default='text', max_len=20) or c.text('dataType', max_len=20) or 'text'
         opts_val = c.text('options', max_len=1000)
-        req = c.boolean('required', default=False)
+        req = _coerce_custom_field_bool(data, 'required', 'mandatory', default=False)
+        act = _coerce_custom_field_bool(data, 'active', 'status', default=True)
+        hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=False)
+        read_only = _coerce_custom_field_bool(data, 'readOnly', 'read_only', default=False)
+        display_order = c.integer('display_order', default=0) if 'display_order' in data else c.integer('displayOrder', default=0) if 'displayOrder' in data else 0
+        searchable = _coerce_custom_field_bool(data, 'searchable', default=False)
+        filterable = _coerce_custom_field_bool(data, 'filterable', default=False)
+        list_visible = _coerce_custom_field_bool(data, 'listVisible', 'list_visible', default=True)
+        form_visible = _coerce_custom_field_bool(data, 'formVisible', 'form_visible', default=True)
+        pdf_visible = _coerce_custom_field_bool(data, 'showInPdf', 'pdf_visible', default=False)
+        default_val = _coerce_custom_field_json(data, 'defaultValue', 'default_value', default={})
+        validation_rules = _coerce_custom_field_json(data, 'validationRules', 'validation_rules', default={})
+        role_perms = _coerce_custom_field_json(data, 'rolePermissions', 'role_permissions', default={})
         c.done()
-        return CustomField.objects.create(module=mod, name=nm, label=lbl, field_type=ftype, options=opts_val, required=req)
+
+        validate_custom_field_settings(nm, lbl, req, hidden, read_only)
+        return CustomField.objects.create(
+            organization=get_user_org(user),
+            module=mod,
+            name=nm,
+            label=lbl,
+            field_type=ftype,
+            options=opts_val,
+            required=req,
+            active=act,
+            hidden=hidden,
+            display_order=display_order,
+            default_value=default_val,
+            validation_rules=validation_rules,
+            read_only=read_only,
+            searchable=searchable,
+            filterable=filterable,
+            list_visible=list_visible,
+            form_visible=form_visible,
+            pdf_visible=pdf_visible,
+            role_permissions=role_perms,
+        )
 
     def update(self, obj, data, user):
         if 'payment_terms' in data and isinstance(data['payment_terms'], str):
@@ -4683,11 +4868,43 @@ class CustomFieldResource(Resource):
             elif pt_clean.isdigit():
                 data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
-        obj.label = c.text('label', required=True, max_len=100)
-        obj.options = c.text('options', max_len=1000)
-        obj.required = c.boolean('required', default=obj.required)
-        obj.active = c.boolean('active', default=obj.active)
+        if 'label' in data or 'display_label' in data:
+            obj.label = c.text('label', default=obj.label, required=True, max_len=100) or c.text('display_label', default=obj.label, max_len=100)
+        if 'apiName' in data or 'name' in data:
+            obj.name = c.text('apiName', default=obj.name, max_len=60) or c.text('name', default=obj.name, max_len=60)
+        if 'dataType' in data or 'field_type' in data:
+            obj.field_type = c.text('dataType', default=obj.field_type, max_len=20) or c.text('field_type', default=obj.field_type, max_len=20)
+        if 'options' in data:
+            obj.options = c.text('options', max_len=1000)
+        if 'required' in data or 'mandatory' in data:
+            req_val = _coerce_custom_field_bool(data, 'required', 'mandatory', default=obj.required)
+            obj.required = req_val
+        if 'active' in data or 'status' in data:
+            obj.active = _coerce_custom_field_bool(data, 'active', 'status', default=obj.active)
+        if 'hidden' in data or 'is_hidden' in data:
+            obj.hidden = _coerce_custom_field_bool(data, 'hidden', 'is_hidden', default=obj.hidden)
+        if 'readOnly' in data or 'read_only' in data:
+            obj.read_only = _coerce_custom_field_bool(data, 'readOnly', 'read_only', default=obj.read_only)
+        if 'displayOrder' in data or 'display_order' in data:
+            obj.display_order = c.integer('displayOrder', default=obj.display_order) if 'displayOrder' in data else c.integer('display_order', default=obj.display_order)
+        if 'defaultValue' in data or 'default_value' in data:
+            obj.default_value = _coerce_custom_field_json(data, 'defaultValue', 'default_value', default=obj.default_value or {})
+        if 'validationRules' in data or 'validation_rules' in data:
+            obj.validation_rules = _coerce_custom_field_json(data, 'validationRules', 'validation_rules', default=obj.validation_rules or {})
+        if 'rolePermissions' in data or 'role_permissions' in data:
+            obj.role_permissions = _coerce_custom_field_json(data, 'rolePermissions', 'role_permissions', default=obj.role_permissions or {})
+        if 'searchable' in data:
+            obj.searchable = _coerce_custom_field_bool(data, 'searchable', default=obj.searchable)
+        if 'filterable' in data:
+            obj.filterable = _coerce_custom_field_bool(data, 'filterable', default=obj.filterable)
+        if 'listVisible' in data or 'list_visible' in data:
+            obj.list_visible = _coerce_custom_field_bool(data, 'listVisible', 'list_visible', default=obj.list_visible)
+        if 'formVisible' in data or 'form_visible' in data:
+            obj.form_visible = _coerce_custom_field_bool(data, 'formVisible', 'form_visible', default=obj.form_visible)
+        if 'showInPdf' in data or 'pdf_visible' in data:
+            obj.pdf_visible = _coerce_custom_field_bool(data, 'showInPdf', 'pdf_visible', default=obj.pdf_visible)
         c.done()
+        validate_custom_field_settings(obj.name, obj.label, obj.required, obj.hidden, obj.read_only)
         obj.save()
 
 class WorkflowRuleResource(Resource):
@@ -9437,7 +9654,9 @@ def me(request):
                 'can_reconcile_bank': (role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT)) or u.is_superuser,
                 'can_billing': (role in (UserProfile.ADMIN, UserProfile.ACCOUNTANT, UserProfile.CASHIER)) or u.is_superuser,
                 'is_read_only': role == UserProfile.AUDITOR,
-            }
+            },
+            'field_preferences': getattr(profile, 'personal_field_preferences', {}) if profile else {},
+            'personal_preferences': getattr(profile, 'personal_field_preferences', {}) if profile else {},
         },
         'organization': org_json(user_org) if user_org else None,
         'enabled_modules': get_organization_enabled_modules(user_org) if user_org else {},

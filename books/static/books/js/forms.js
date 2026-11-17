@@ -13056,7 +13056,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
   const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const soShipDate = rec ? (rec.expected_shipment_date || '') : (srcQuote ? (srcQuote.expiry_date || '') : '');
-  const soOrderNum = rec ? (rec.order_number || '') : (srcQuote ? (srcQuote.reference_number || srcQuote.number) : '');
+  const soRefNum = rec ? (rec.reference_number || rec.order_number || '') : (srcQuote ? (srcQuote.reference_number || srcQuote.number) : '');
+  const soOrderNum = soRefNum;
   const soSalesperson = rec ? (rec.salesperson || '') : (srcQuote ? (srcQuote.salesperson || '') : '');
   const soSubject = rec ? (rec.subject || '') : (srcQuote ? (srcQuote.subject || '') : '');
   const soPos = rec ? (rec.place_of_supply || APP.org.state) : (srcQuote ? (srcQuote.place_of_supply || APP.org.state) : (parties.find(p => String(p.id) === String(soCustomer))?.state || APP.org.state));
@@ -13349,13 +13350,18 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <h3 class="so-card-heading">1. Customer Details</h3>
 
             <div class="so-card-field">
-              <label class="so-card-label" for="so-order-number">Order Number</label>
-              <input class="in" id="so-order-number" name="order_number" value="${esc(soOrderNum)}" placeholder="e.g. ORD-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+              <label class="so-card-label" for="so-reference">Reference Number</label>
+              <input class="in" id="so-reference" name="reference_number" value="${esc(soRefNum)}" placeholder="e.g. REF-2026-001 / PO-8921" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
             <div class="so-card-field">
               <label class="so-card-label">Salesperson</label>
               <div id="so-salesperson-container" style="width:100%;"></div>
+            </div>
+
+            <div class="so-card-field">
+              <label class="so-card-label" for="so-subject">Subject</label>
+              <input class="in" id="so-subject" name="subject" value="${esc(soSubject)}" placeholder="Let your customer know what this Sales Order is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
@@ -13409,16 +13415,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
                   <input class="in" type="date" id="so-ship-date" name="expected_shipment_date" value="${soShipDate}" style="width:100%;box-sizing:border-box;padding:0 8px;">
                 </div>
               </div>
-            </div>
-
-            <div class="so-card-field">
-              <label class="so-card-label" for="so-reference">Reference# / PO#</label>
-              <input class="in" id="so-reference" name="reference_number" value="${esc(rec ? (rec.reference_number || '') : '')}" placeholder="e.g. PO-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
-            </div>
-
-            <div class="so-card-field">
-              <label class="so-card-label" for="so-subject">Subject</label>
-              <input class="in" id="so-subject" name="subject" value="${esc(soSubject)}" placeholder="Let your customer know what this Sales Order is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
         </div>
@@ -13847,7 +13843,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       customer: custId,
       customer_id: custId,
       number: numVal,
-      order_number: ($('#so-order-number', form)?.value || $('#so-reference', form)?.value || '').trim(),
+      reference_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
+      order_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
       location: $('#so-location', form)?.value || 'HO Kottayam',
       branch: $('#so-branch', form)?.value || '',
       transaction_series: $('#so-series', form)?.value || 'Default Transaction Series',

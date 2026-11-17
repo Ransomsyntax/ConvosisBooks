@@ -176,7 +176,8 @@ const IMPORT_SPECS = {
     { key: 'notes', label: 'Notes', aliases: ['notes', 'remarks', 'terms', 'comments', 'customer_notes'] }
   ],
   'sales-orders': [
-    { key: 'number', label: 'Order / SO Number', aliases: ['number', 'order_number', 'so_number', 'order#', 'so#'] },
+    { key: 'number', label: 'Sales Order Number', aliases: ['number', 'so_number', 'so#'] },
+    { key: 'reference_number', label: 'Reference Number', aliases: ['reference_number', 'reference', 'ref_no', 'order_number', 'po_number', 'po#'] },
     { key: 'customer', label: 'Customer Name', req: true, aliases: ['customer', 'customer_name', 'client', 'party'] },
     { key: 'date', label: 'Order Date', req: true, aliases: ['date', 'order_date', 'doc_date'] },
     { key: 'expected_shipment_date', label: 'Expected Shipment Date', aliases: ['expected_shipment_date', 'shipment_date', 'delivery_date'] },
@@ -1702,7 +1703,8 @@ const LISTS = {
     ],
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
-      { h: 'Order#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` },
+      { h: 'Sales Order#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` },
+      { h: 'Reference Number', f: r => esc(r.reference_number || r.order_number || '—') },
       { h: 'Customer', f: r => esc(r.customer_name || r.party || '—') },
       { h: 'Status', f: r => {
         const map = {
@@ -2198,7 +2200,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const logoSrc = org.logo_data || '';
   const hasLogo = showLogo && Boolean(logoSrc);
 
-  const orderNum = d.order_number || d.vendor_ref || '';
+  const orderNum = d.reference_number || d.order_number || d.vendor_ref || '';
   const isDarkHead = theme === 'modern' || (!inv && theme !== 'convosis');
   const taxPricingLabel = d.tax_pricing_type === 'tax_inclusive' ? 'Tax Inclusive' : 'Tax Exclusive';
   const partyTypeLabel = d.customer_type ? (
@@ -2241,7 +2243,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
             <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
 
             ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
-            ${orderNum ? `<tr><td>${isRetainer ? 'Reference#' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
+            ${orderNum ? `<tr><td>${(isRetainer || kind === 'sales-orders') ? 'Reference Number' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
             ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
             ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
@@ -3273,7 +3275,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
               </div>
             </div>
             <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i><span class="btn-text"> Table</span></button>
-            <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> New</button>
+            <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> <span class="btn-new-text">New</span></button>
           </div>
         </div>
         <div class="master-search-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-subtle,#f8fafc);border-bottom:1px solid var(--bd);">
@@ -10416,7 +10418,7 @@ async function viewSalesOrderDetail(id) {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;">
               <div><b>Order Date:</b></div><div>${fd(so.date)}</div>
               <div><b>Expected Shipment:</b></div><div>${so.expected_shipment_date ? fd(so.expected_shipment_date) : (so.due_date ? fd(so.due_date) : '—')}</div>
-              <div><b>Reference / PO#:</b></div><div>${esc(so.order_number || '—')}</div>
+              <div><b>Reference Number:</b></div><div>${esc(so.reference_number || so.order_number || '—')}</div>
               <div><b>Place of Supply:</b></div><div>${esc(so.place_of_supply || '—')}</div>
             </div>
           </div>

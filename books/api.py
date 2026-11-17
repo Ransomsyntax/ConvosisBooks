@@ -5271,8 +5271,8 @@ class SalesOrderResource(Resource):
     search_fields = ('number', 'customer__name', 'order_number')
     default_ordering = ('-date', '-id')
     csv_cols = [
-        ('Order#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'), ('Due date', 'due_date'),
-        ('Expected Shipment Date', 'expected_shipment_date'), ('Item Name', 'item'),
+        ('Sales Order#', 'number'), ('Customer Name', 'customer'), ('Date', 'date'), ('Due date', 'due_date'),
+        ('Expected Shipment Date', 'expected_shipment_date'), ('Reference Number', 'order_number'), ('Item Name', 'item'),
         ('Description', 'description'), ('HSN/SAC', 'hsn_sac'), ('Quantity', 'quantity'),
         ('Rate', 'rate'), ('GST Rate (%)', 'gst_rate'), ('Notes', 'notes')
     ]
@@ -5366,6 +5366,7 @@ class SalesOrderResource(Resource):
             'status': o.status, 'subtotal': o.subtotal, 'total': o.total,
             'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst,
             'order_number': o.order_number or '',
+            'reference_number': o.order_number or '',
             'lines_count': o.lines.count(),
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
@@ -5439,7 +5440,7 @@ class SalesOrderResource(Resource):
         due_dt = c.date('due_date') or ship_dt or dt
         terms = c.text('terms', max_len=2000) or ''
         notes = c.text('notes', max_len=2000) or ''
-        order_num = c.text('order_number', max_len=60) or ''
+        order_num = c.text('reference_number', max_len=60) or c.text('order_number', max_len=60) or ''
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
         pos = c.text('place_of_supply', max_len=60) or cust.state or (user_org.state if user_org else Organization.get().state)
@@ -5516,8 +5517,8 @@ class SalesOrderResource(Resource):
             obj.terms = c.text('terms', max_len=2000) or ''
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=2000) or ''
-        if 'order_number' in data:
-            obj.order_number = c.text('order_number', max_len=60) or ''
+        if 'reference_number' in data or 'order_number' in data:
+            obj.order_number = c.text('reference_number', max_len=60) or c.text('order_number', max_len=60) or ''
         if 'branch' in data:
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:

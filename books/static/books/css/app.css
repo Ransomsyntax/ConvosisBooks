@@ -459,9 +459,9 @@ body.modal-open {
   position: relative;
 }
 .master-col {
-  width: 440px;
-  min-width: 380px;
-  max-width: 500px;
+  width: 340px;
+  min-width: 290px;
+  max-width: 400px;
   border-right: 1px solid var(--bd-glass);
   background: var(--surface-glass);
   backdrop-filter: blur(20px);
@@ -469,14 +469,15 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   height: 100%;
+  flex-shrink: 0;
 }
 .master-col-hd {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--bd-glass);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   min-height: 48px;
   box-sizing: border-box;
 }
@@ -494,11 +495,10 @@ body.modal-open {
   align-items: center;
   min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
 }
 .master-filter-sel {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--tx);
   border: 1px solid transparent;
   background: transparent;
@@ -507,7 +507,7 @@ body.modal-open {
   cursor: pointer;
   outline: none;
   transition: all 0.15s ease;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -657,6 +657,8 @@ body.modal-open {
   height: 100%;
   background: var(--bg-alt, rgba(0, 0, 0, 0.02));
   position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .doc-detail-bar {
   padding: 8px 18px;

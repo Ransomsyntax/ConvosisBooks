@@ -307,14 +307,32 @@ function getNavAddAction(k, c) {
   return NAV_NEW_ACTIONS[target] || NAV_NEW_ACTIONS[k + '/' + c] || NAV_NEW_ACTIONS[c] || null;
 }
 
+function isNavSubmoduleEnabled(groupKey, childTitle) {
+  if (!window.APP || !window.APP.org || !window.APP.org.enabled_modules) return true;
+  const em = window.APP.org.enabled_modules;
+  const s = slug(childTitle);
+  if (groupKey === 'sales') {
+    if (s === 'quotes' && em.quotes === false) return false;
+    if (s === 'sales-orders' && em.sales_orders === false) return false;
+    if (s === 'delivery-challans' && em.delivery_challans === false) return false;
+    if (s === 'retainer-invoices' && em.retainer_invoices === false) return false;
+  } else if (groupKey === 'time') {
+    if ((s === 'projects' || s === 'tasks' || s === 'milestones') && em.projects === false) return false;
+    if (s === 'timesheets' && em.timesheets === false) return false;
+  }
+  return true;
+}
+
 function drawNav(cur) {
   const normCur = (cur || (location.hash.slice(2) || 'home/dashboard')).replace(/^\/+|\/+$/g, '').split('?')[0];
   const items = NAV.map(([l, k, ch], i) => {
-    const hasSub = ch && ch.length > 0;
+    const visibleCh = (ch || []).filter(c => isNavSubmoduleEnabled(k, c));
+    if (k === 'time' && visibleCh.length === 0) return '';
+    const hasSub = visibleCh && visibleCh.length > 0;
     const isAct = normCur === k || normCur.startsWith(k + '/');
     const isOpen = openG.includes(k);
     const reportingBadge = k === 'reports' ? '<span class="pastel-chip chip-sky" style="font-size:10px;margin-left:6px;font-weight:700;padding:1px 6px;">Reporting</span>' : '';
-    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${reportingBadge}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${ch.map((c, cIdx) => {
+    return `${i === 11 ? '<div class="sec">APPS</div>' : ''}<div class="ni ${isOpen ? 'open' : ''} ${isAct ? 'act' : ''}"><button type="button" data-g="${k}" aria-expanded="${isOpen}"><div class="nav-pastel-icon ${PASTEL[k] || 'icon-sky'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[k]}"/></svg></div><span class="lb">${esc(l)}</span>${k === 'home' ? '<span class="pastel-chip chip-sky">Live</span>' : ''}${reportingBadge}${hasSub ? `<span class="ar-btn" data-toggle-g="${k}" title="Toggle submenu" aria-label="Toggle submenu"><svg class="ar" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></span>` : ''}</button>${hasSub ? `<div class="ch">${visibleCh.map((c, cIdx) => {
       const target = k + '/' + slug(c);
       const subActive = isNavSubActive(normCur, target);
       const hasAdd = Boolean(getNavAddAction(k, c));
@@ -334,6 +352,7 @@ function drawNav(cur) {
   const footer = `<div class="sidebar-footer"><div class="user-snippet" onclick="orgForm()"><div class="user-avatar-badge" id="sidebarUserAvatar">${esc((APP.user.name || 'A')[0].toUpperCase())}</div><div class="user-info"><span class="user-name" id="sidebarUserName">${esc(APP.user.name || APP.user.username || 'Admin')}</span><span class="user-role-tag" id="sidebarUserRoleTag"><span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block;"></span><span id="sidebarUserRole">${esc(roleName)}</span></span></div></div></div>`;
   $('#side').innerHTML = items + footer;
 }
+window.renderSidebar = () => drawNav();
 
 function route() {
   destroyCharts(); PAGE.reload = null;
@@ -369,6 +388,37 @@ function route() {
   drawNav(h);
   document.body.classList.remove('mo');
   closePops();
+
+  // Organisation Module Gating Direct Route Guard
+  const directModuleCheck = {
+    'sales/quotes': { key: 'quotes', name: 'Quotes' },
+    'sales/sales-orders': { key: 'sales_orders', name: 'Sales Orders' },
+    'sales/delivery-challans': { key: 'delivery_challans', name: 'Delivery Challans' },
+    'sales/retainer-invoices': { key: 'retainer_invoices', name: 'Retainer Invoices' },
+    'time/projects': { key: 'projects', name: 'Projects' },
+    'time/tasks': { key: 'projects', name: 'Project Tasks' },
+    'time/milestones': { key: 'projects', name: 'Project Milestones' },
+    'time/timesheets': { key: 'timesheets', name: 'Timesheets' },
+  };
+  for (const [prefix, modInfo] of Object.entries(directModuleCheck)) {
+    if (h === prefix || h.startsWith(prefix + '/')) {
+      if (window.APP && window.APP.org && window.APP.org.enabled_modules && window.APP.org.enabled_modules[modInfo.key] === false) {
+        root.innerHTML = `
+          <div class="bc">Home / Gating / Locked</div>
+          <div class="card" style="padding:40px;text-align:center;margin-top:20px;border-left:4px solid var(--warn,#f59e0b);">
+            <i class="fa-solid fa-lock" style="font-size:42px;color:var(--warn,#f59e0b);margin-bottom:16px;"></i>
+            <h2 style="font-size:20px;margin-bottom:8px;">${esc(modInfo.name)} Module is Disabled</h2>
+            <p style="color:var(--muted);max-width:520px;margin:0 auto 16px;">
+              The ${esc(modInfo.name)} module is currently disabled for this organization.
+              An administrator can activate it under <strong>Enterprise Settings &rarr; Preferences &rarr; General Modules</strong>.
+            </p>
+            <button class="btn p" onclick="location.hash='#/settings/enterprise/preferences'" type="button">Open Enterprise Settings</button>
+          </div>`;
+        return;
+      }
+    }
+  }
+
   let fn = ROUTES[h] || ROUTES[raw];
   if (!fn) {
     const rawParts = raw.split('/');

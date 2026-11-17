@@ -3266,16 +3266,16 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
             </select>
           </div>
           <div class="master-hd-actions">
-            <button class="btn" id="master-import-btn" type="button" title="Import ${esc(meta.title)}"><i class="fa-solid fa-file-import"></i><span class="btn-text"> Import</span></button>
+            <button class="btn" id="master-import-btn" type="button" title="Import ${esc(meta.title)}" aria-label="Import ${esc(meta.title)}"><i class="fa-solid fa-file-import"></i><span class="btn-text"> Import</span></button>
             <div class="export-dropdown-wrap">
-              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${esc(meta.title)}"><i class="fa-solid fa-file-export"></i><span class="btn-text"> Export</span> ▾</button>
+              <button class="btn" id="master-export-toggle-btn" type="button" title="Export ${esc(meta.title)}" aria-label="Export ${esc(meta.title)}"><i class="fa-solid fa-file-export"></i><i class="fa-solid fa-caret-down" style="font-size:10px;margin-left:2px;"></i><span class="btn-text"> Export</span></button>
               <div class="pop right export-menu-pop" id="master-export-pop" style="display:none;position:absolute;">
                 <button type="button" class="btn" id="master-export-csv-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button>
                 <button type="button" class="btn" id="master-export-json-btn" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button>
               </div>
             </div>
-            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View"><i class="fa-solid fa-table-list"></i><span class="btn-text"> Table</span></button>
-            <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> <span class="btn-new-text">New</span></button>
+            <button class="btn" id="master-view-mode-btn" type="button" title="Switch to Table View" aria-label="Switch to Table View"><i class="fa-solid fa-table-list"></i><span class="btn-text"> Table</span></button>
+            <button class="btn p" id="master-new-btn" type="button" title="Create New ${esc(meta.singular)}" aria-label="Create New ${esc(meta.singular)}"><i class="fa-solid fa-plus"></i> <span class="btn-new-text">New</span></button>
           </div>
         </div>
         <div class="master-search-bar" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-subtle,#f8fafc);border-bottom:1px solid var(--bd);">

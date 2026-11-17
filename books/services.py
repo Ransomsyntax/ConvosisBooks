@@ -26,6 +26,12 @@ from django.utils import timezone
 
 from .calc import q2, compute, is_intra_state
 from .cleaning import ApiError
+from .features.module_gating import (
+    get_organization_module_preferences,
+    get_organization_enabled_modules,
+    is_module_enabled,
+    validate_module_dependencies,
+)
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
                      StockTransfer, StockTransferLine,
                      BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,

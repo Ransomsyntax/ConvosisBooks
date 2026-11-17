@@ -3,6 +3,7 @@ import csv
 import base64
 import datetime
 from datetime import timedelta
+import hashlib
 import io
 import json
 import re
@@ -30,6 +31,11 @@ REQUIRED = 'This field is required.'
 from . import services
 from .calc import GST_SLABS, compute, is_intra_state, q2
 from .cleaning import EXPENSE_REFERENCE_RE, GSTIN_RE, PAN_RE, ApiError, Cleaner
+from .features.module_gating import (
+    get_organization_enabled_modules,
+    is_module_enabled,
+    validate_module_dependencies,
+)
 from .models import (
     Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     StockTransfer, StockTransferLine,
@@ -357,11 +363,27 @@ def parse_range(request):
 
 class Resource:
     name = ''
+    module_key = None
     model = None
     search_fields = ()
     orderings = {}
     default_ordering = ('-id',)
     csv_cols = ()
+
+    def check_module_enabled(self, request):
+        if not getattr(self, 'module_key', None):
+            return
+        user_org = get_user_org(request.user, request)
+        if not user_org:
+            return
+        if not is_module_enabled(user_org, self.module_key):
+            from .features.module_gating import MODULE_DISPLAY_NAMES
+            display_name = MODULE_DISPLAY_NAMES.get(self.module_key, self.name.replace('-', ' ').title())
+            raise ApiError(
+                403,
+                f"The {display_name} module is disabled for your organization. "
+                "An administrator can enable it in Enterprise Settings."
+            )
 
     def base_qs(self):
         return self.model.objects.all()
@@ -608,6 +630,8 @@ class Resource:
 
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
+        if request.method in ('POST', 'DELETE'):
+            self.check_module_enabled(request)
         if request.method == 'GET':
             qs = self.queryset(request)
             if request.GET.get('export') == 'csv':
@@ -917,6 +941,7 @@ class Resource:
         obj = self.get_object(pk, request)
         if request.method == 'GET':
             return j(self.detail(obj))
+        self.check_module_enabled(request)
         if request.method in ('PUT', 'PATCH'):
             prev_row = {}
             try:
@@ -984,6 +1009,8 @@ class Resource:
         check_permission(request, resource_name=self.name, action_name=name)
         if request.method not in ('POST', 'GET') if name in ('view-journal', 'journals', 'journal-entries') else request.method != 'POST':
             raise ApiError(405, 'Method not allowed.')
+        if request.method == 'POST':
+            self.check_module_enabled(request)
         obj = self.get_object(pk, request)
         if name in ('email', 'send-email'):
             res = self.action(request, obj, name)
@@ -2555,6 +2582,7 @@ class InvoiceResource(DocResource):
 
 class RetainerInvoiceResource(DocResource):
     name = 'retainer-invoices'
+    module_key = 'retainer-invoices'
     Model, Line, Party = RetainerInvoice, RetainerInvoiceLine, Customer
     party_attr, line_fk, prefix, posted = 'customer', 'retainer', 'RET', 'sent'
     search_fields = ('number', 'customer__name')
@@ -2794,6 +2822,7 @@ class RetainerInvoiceResource(DocResource):
 
 class QuoteResource(DocResource):
     name = 'quotes'
+    module_key = 'quotes'
     Model, Line, Party = Quote, QuoteLine, Customer
     party_attr, line_fk, prefix, posted = 'customer', 'quote', 'QTN', 'sent'
     search_fields = ('number', 'customer__name', 'reference_number', 'subject')
@@ -5267,6 +5296,7 @@ class ManagedDocumentResource(Resource):
 
 class SalesOrderResource(Resource):
     name = 'sales-orders'
+    module_key = 'sales-orders'
     model = SalesOrder
     search_fields = ('number', 'customer__name', 'order_number')
     default_ordering = ('-date', '-id')
@@ -7228,6 +7258,7 @@ class RecurringInvoiceResource(Resource):
 
 class DeliveryChallanResource(Resource):
     name = 'delivery-challans'
+    module_key = 'delivery-challans'
     model = DeliveryChallan
     search_fields = ('number', 'customer__name', 'vehicle_number')
     default_ordering = ('-date', '-id')
@@ -7964,6 +7995,7 @@ def normalize_project_billing_method(value):
 
 class ProjectResource(Resource):
     name = 'projects'
+    module_key = 'projects'
     model = Project
     search_fields = ('name', 'code', 'customer__name')
     default_ordering = ('name',)
@@ -8319,6 +8351,7 @@ class ProjectResource(Resource):
 
 class ProjectTaskResource(Resource):
     name = 'project-tasks'
+    module_key = 'projects'
     model = ProjectTask
     search_fields = ('name', 'description', 'project__name')
     default_ordering = ('project__name', 'name')
@@ -8531,6 +8564,7 @@ class ProjectMilestoneResource(Resource):
 
 class TimeLogResource(Resource):
     name = 'timesheets'
+    module_key = 'timesheets'
     model = TimeLog
     search_fields = ('project__name', 'task', 'notes')
     default_ordering = ('-date', '-id')
@@ -9210,6 +9244,8 @@ class EmployeeResource(Resource):
 
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
+        if request.method in ('POST', 'DELETE'):
+            self.check_module_enabled(request)
         if request.method == 'GET':
             user_org = get_user_org(request.user)
             from django.contrib.auth import get_user_model
@@ -9368,6 +9404,7 @@ def org_json(o):
         'notes_default': o.notes_default or 'Thanks for your business.',
         'terms_default': o.terms_default or 'Due on Receipt',
         'opening_cash': o.opening_cash,
+        'enabled_modules': get_organization_enabled_modules(o),
     }
 
 @api_view
@@ -9403,6 +9440,7 @@ def me(request):
             }
         },
         'organization': org_json(user_org) if user_org else None,
+        'enabled_modules': get_organization_enabled_modules(user_org) if user_org else {},
         'today': timezone.localdate(),
         'counts': {
             'customers': (Customer.objects.filter(organization=user_org) if user_org else Customer.objects.none()).count(),
@@ -10380,7 +10418,7 @@ def banking_import_view(request):
         ba = BankAccount.objects.select_for_update().get(pk=ba.pk)
         bal = ba.current_balance
         batch = BankStatementBatch.objects.create(
-            organization=ba.organization,
+            organization=ba.organization or getattr(request, 'org', None) or Organization.get(),
             bank_account=ba,
             batch_number=next_number('STMT'),
             filename=filename,
@@ -11819,6 +11857,12 @@ def settings_enterprise_preferences_view(request, group_key):
         }
         next_values = dict(previous) if request.method == 'PATCH' else {}
         next_values.update(validated)
+
+        if group_key == 'generalModules':
+            is_valid, dep_err = validate_module_dependencies(locked_org, next_values)
+            if not is_valid:
+                raise ApiError(400, dep_err)
+
         preference_store[group_key] = next_values
         general_settings['enterprise_preferences'] = preference_store
         locked_org.general_settings = general_settings
@@ -11830,11 +11874,14 @@ def settings_enterprise_preferences_view(request, group_key):
             previous_values=previous, new_values=next_values,
         )
 
-    return j({
+    resp_data = {
         'group': group_key,
         'values': next_values,
         'integration_status': group_schema.get('integrationStatus', 'requires_workflow_wiring'),
-    })
+    }
+    if group_key == 'generalModules':
+        resp_data['enabled_modules'] = get_organization_enabled_modules(locked_org)
+    return j(resp_data)
 
 
 @api_view

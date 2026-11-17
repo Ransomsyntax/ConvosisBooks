@@ -4538,6 +4538,14 @@ async function renderEnterpriseSettingsPage(container) {
         toast(saved.integration_status === 'requires_workflow_wiring'
           ? 'Preferences saved; runtime behavior is not wired for this setting yet.'
           : 'Preferences saved.', 'success');
+        if (saved && saved.enabled_modules) {
+          if (window.APP && window.APP.org) {
+            window.APP.org.enabled_modules = saved.enabled_modules;
+          }
+          if (typeof window.renderSidebar === 'function') {
+            window.renderSidebar();
+          }
+        }
         await renderSubmodule(activeCategoryId, activeSubmoduleId);
       } catch (error) {
         toast(error.message || 'Failed to save preferences.', 'error');

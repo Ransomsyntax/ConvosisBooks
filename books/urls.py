@@ -18,6 +18,7 @@ urlpatterns = [
     path('auth/reset-password/', api.api_reset_password_view),
     path('auth/change-contact/', api.api_change_contact_view),
     path('me/', api.me),
+    path('settings/me/', api.me),
     path('organization/', api.organization),
     path('attachments/', api.attachments_view),
     path('attachments/<int:pk>/', api.attachments_view),

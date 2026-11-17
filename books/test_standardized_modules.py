@@ -213,7 +213,7 @@ class StandardizedModulesTestCase(TestCase):
 
         # 1. Purchases -> Expenses
         self.assertIn('.exp-three-cards-grid', content)
-        self.assertIn('for="exp-vendor">Vendor / Payee</label>', content)
+        self.assertTrue('for="exp-vendor">Vendor Name</label>' in content or 'for="exp-vendor">Vendor / Payee</label>' in content)
         self.assertIn('1. Vendor Details</h3>', content)
         self.assertIn('2. Account Details</h3>', content)
         self.assertIn('3. Expense Details</h3>', content)

@@ -83,7 +83,7 @@ class TenantIsolationAndAdminTests(TestCase):
             'full_name': 'Ramesh Kumar',
             'role': 'accountant',
             'phone': '9876543210',
-            'password': 'InitialSecret123'
+            'password': 'InitialSecret123!'
         }), content_type='application/json')
         self.assertEqual(res_inv.status_code, 200)
         data = res_inv.json()
@@ -110,11 +110,11 @@ class TenantIsolationAndAdminTests(TestCase):
 
         # 4. Reset password
         res_reset = self.client.post(f'/api/tenant/admin/users/{new_uid}/reset-password/', json.dumps({
-            'password': 'BrandNewPassword999'
+            'password': 'BrandNewPassword999!'
         }), content_type='application/json')
         self.assertEqual(res_reset.status_code, 200)
         new_user.refresh_from_db()
-        self.assertTrue(new_user.check_password('BrandNewPassword999'))
+        self.assertTrue(new_user.check_password('BrandNewPassword999!'))
 
     def test_submodules_saving_and_updating(self):
         self.client.force_login(self.user_a)

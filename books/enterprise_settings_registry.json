@@ -834,7 +834,7 @@
     "generalModules": {
       "title": "Workspace Module Visibility & General Preferences",
       "subtitle": "Choose which transactional modules are enabled in the left navigation bar for your organization.",
-      "integrationStatus": "requires_workflow_wiring",
+      "integrationStatus": "wired",
       "fields": [
         {
           "key": "enableQuotes",

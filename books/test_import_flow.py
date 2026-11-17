@@ -138,7 +138,9 @@ class TestUniversalImport(TestCase):
         self.assertEqual(inv.total, Decimal('11800.00'))
 
     def test_banking_statement_csv_upload(self):
+        org = Organization.get()
         ba = BankAccount.objects.create(
+            organization=org,
             name='Test Current', bank_name='Axis Bank',
             account_number='912020001234567', current_balance=Decimal('100000.00')
         )
@@ -236,7 +238,7 @@ class TestUniversalImport(TestCase):
             'signup_name': 'Anil Kapoor',
             'signup_username': 'anil_k',
             'signup_email': 'anil@example.com',
-            'signup_password': 'password123',
+            'signup_password': 'Password123!',
             'signup_confirm_password': 'differentpassword'
         })
         self.assertEqual(res_mismatch.status_code, 200)
@@ -249,8 +251,8 @@ class TestUniversalImport(TestCase):
             'signup_org': 'Kapoor Enterprises',
             'signup_username': 'anil_k',
             'signup_email': 'anil@example.com',
-            'signup_password': 'password123',
-            'signup_confirm_password': 'password123'
+            'signup_password': 'Password123!',
+            'signup_confirm_password': 'Password123!'
         })
         self.assertEqual(res_reg.status_code, 302)
         self.assertEqual(res_reg.url, '/')

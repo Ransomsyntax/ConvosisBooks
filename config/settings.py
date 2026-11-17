@@ -5,6 +5,26 @@ from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Auto-load .env file if present, safely stripping whitespace, quotes, and accidental bullets
+env_file = BASE_DIR / '.env'
+if env_file.is_file():
+    try:
+        with open(env_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                # Strip leading bullet points or dash prefixes if present
+                line = line.lstrip('•-* ').strip()
+                if '=' in line:
+                    key, val = line.split('=', 1)
+                    key = key.strip()
+                    val = val.strip().strip("'\"")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+    except Exception:
+        pass
+
 is_render = bool(os.environ.get('RENDER') or os.environ.get('RENDER_SERVICE_ID') or os.environ.get('RENDER_EXTERNAL_HOSTNAME'))
 default_debug = '0' if is_render else '1'
 DEBUG = os.environ.get('DJANGO_DEBUG', default_debug) == '1'
@@ -14,12 +34,25 @@ if not SECRET_KEY:
         raise ImproperlyConfigured('Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0.')
     SECRET_KEY = 'dev-only-insecure-key-change-me'
 
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver,convosisbooks.onrender.com,books-d8i1.onrender.com').split(',') if h.strip()]
+raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS') or os.environ.get('ALLOWED_HOSTS') or 'localhost,127.0.0.1,testserver,convosisbooks.onrender.com,books-d8i1.onrender.com,api.convosis.com,convosis.com,www.convosis.com'
+ALLOWED_HOSTS = []
+for h in raw_hosts.replace(';', ',').split(','):
+    h = h.strip()
+    if h and h not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(h)
 render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
-CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com').split(',') if o.strip()]
+raw_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS') or 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com,https://api.convosis.com,https://convosis.com,https://www.convosis.com'
+CSRF_TRUSTED_ORIGINS = []
+for o in raw_origins.replace(';', ',').split(','):
+    o = o.strip()
+    if o:
+        if not o.startswith(('http://', 'https://')):
+            o = f"https://{o}"
+        if o not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(o)
 if render_host:
     r_origin = f"https://{render_host}"
     if r_origin not in CSRF_TRUSTED_ORIGINS:
@@ -96,15 +129,20 @@ if DATABASE_URL:
                 "PORT": parsed_db.port or 5432,
             }
         }
-elif os.environ.get("POSTGRES_DB"):
+elif os.environ.get("POSTGRES_DB") or os.environ.get("DB_NAME"):
+    db_name = (os.environ.get("POSTGRES_DB") or os.environ.get("DB_NAME") or "").strip()
+    db_user = (os.environ.get("POSTGRES_USER") or os.environ.get("DB_USER") or "postgres").strip()
+    db_password = os.environ.get("POSTGRES_PASSWORD") or os.environ.get("DB_PASSWORD") or ""
+    db_host = (os.environ.get("POSTGRES_HOST") or os.environ.get("DB_HOST") or "localhost").strip()
+    db_port = (os.environ.get("POSTGRES_PORT") or os.environ.get("DB_PORT") or "5432").strip()
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ["POSTGRES_DB"],
-            "USER": os.environ.get("POSTGRES_USER", "postgres"),
-            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
-            "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
-            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+            "NAME": db_name,
+            "USER": db_user,
+            "PASSWORD": db_password,
+            "HOST": db_host,
+            "PORT": db_port,
         }
     }
 else:

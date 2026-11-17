@@ -4632,9 +4632,23 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
       <div class="doc-canvas-scroll" style="padding:16px 20px 60px; display:flex; flex-direction:column; align-items:center; background:var(--bg-alt, rgba(0, 0, 0, 0.02)); box-sizing:border-box;">
         <form id="on-screen-doc-form" class="doc-form-card" style="width:100%; max-width:940px; height:auto; min-height:auto; box-sizing:border-box;" novalidate>
           <div class="fe" data-err="_" role="alert"></div>
+          <!-- Party (Customer / Vendor) Name Field (Placed outside and above document form fields) -->
+          <div class="customer-select-outer" style="margin-bottom:24px;width:50%;min-width:320px;max-width:100%;box-sizing:border-box;">
+            <label class="customer-select-outer-label" for="doc-party-select" style="font-size:13px;font-weight:600;color:#ef4444;display:block;margin-bottom:8px;line-height:1.2;">${inv ? 'Customer Name*' : 'Vendor Name*'}</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <select class="in" id="doc-party-select" name="${pk}" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;border-radius:8px !important;border:1px solid #e2e8f0 !important;background:#ffffff !important;font-size:13px !important;color:#0f172a !important;">
+                <option value="">${inv ? 'Select or add a customer' : 'Select or add a vendor'}</option>
+                <option value="${inv ? '__new_customer__' : '__new_vendor__'}" style="color:var(--accent,#0284c7);font-weight:600;">${inv ? '+ Add New Customer…' : '+ Add New Vendor…'}</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(partyId) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-doc-party-lookup" title="${inv ? 'Search / Add Customer' : 'Search / Add Vendor'}" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+              </button>
+            </div>
+          </div>
+
           <div class="zb-form-wrap">
             ${[
-              fld({ name: pk, label: inv ? 'Customer' : 'Vendor', type: 'select', req: 1, opts: [['', 'Select…'], [inv ? '__new_customer__' : '__new_vendor__', inv ? '+ Add New Customer…' : '+ Add New Vendor…'], ...parties.map(p => [p.id, p.name])], value: partyId }),
               fld({
                 name: 'customer_type',
                 label: inv ? 'Customer Type' : 'Supplier Type',
@@ -4855,6 +4869,20 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         setDue();
       }
       calc();
+    });
+
+    $('#btn-doc-party-lookup', form)?.addEventListener('click', () => {
+      partyForm(inv ? 'customers' : 'vendors', null, newParty => {
+        if (newParty && newParty.id) {
+          parties.push(newParty);
+          const sel = form.elements[pk];
+          if (sel) {
+            sel.insertAdjacentHTML('beforeend', `<option value="${newParty.id}" selected>${esc(newParty.name)}</option>`);
+            sel.value = newParty.id;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
+      });
     });
 
     form.addEventListener('click', e => {
@@ -5605,9 +5633,17 @@ async function paymentReceivedForm(pre = {}) {
           color: #ef4444;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -6410,9 +6446,17 @@ async function paymentMadeForm(pre = {}) {
           color: #f8fafc !important;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -7561,9 +7605,17 @@ async function expenseForm(id) {
           color: #f8fafc !important;
         }
         .customer-select-outer {
-          margin-bottom: 20px;
-          width: 100%;
-          max-width: 440px;
+          margin-bottom: 24px;
+          width: 50%;
+          min-width: 320px;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: 768px) {
+          .customer-select-outer {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
         }
         .customer-select-outer-label {
           font-size: 13px;
@@ -7591,7 +7643,7 @@ async function expenseForm(id) {
 
       <!-- Vendor / Payee Selection (Placed outside and above Three-Card Information Layout) -->
       <div class="customer-select-outer">
-        <label class="customer-select-outer-label" for="exp-vendor">Vendor / Payee</label>
+        <label class="customer-select-outer-label" for="exp-vendor">Vendor Name</label>
         <div style="display:flex;align-items:center;gap:10px;">
           <select class="in" id="exp-vendor" name="vendor" style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
             <option value="">Direct Expense (No Vendor)</option>
@@ -9250,9 +9302,17 @@ async function challanModal(id) {
         color: #ef4444;
       }
       .customer-select-outer {
-        margin-bottom: 20px;
-        width: 100%;
-        max-width: 440px;
+        margin-bottom: 24px;
+        width: 50%;
+        min-width: 320px;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      @media (max-width: 768px) {
+        .customer-select-outer {
+          width: 100% !important;
+          max-width: 100% !important;
+        }
       }
       .customer-select-outer-label {
         font-size: 13px;
@@ -12108,13 +12168,16 @@ ${renderStockQuantityCell(l, items, whList)}
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -13183,13 +13246,16 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -14027,11 +14093,17 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              width: 100% !important;
+              max-width: 100% !important;
+            }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -14072,7 +14144,6 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
             <button type="button" class="btn p" id="btn-bill-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
               <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
             </button>
-            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
         </div>
 
@@ -14851,11 +14922,17 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
               grid-template-columns: 1fr;
               gap: 16px;
             }
+            .customer-select-outer {
+              width: 100% !important;
+              max-width: 100% !important;
+            }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;
@@ -14896,7 +14973,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <button type="button" class="btn p" id="btn-po-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
               <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
             </button>
-            <div style="height:38px;padding:0 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12.5px;font-weight:600;color:#334155;display:flex;align-items:center;justify-content:center;flex-shrink:0;">INR</div>
           </div>
         </div>
 
@@ -15851,13 +15927,16 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
               gap: 16px;
             }
             .customer-select-outer {
+              width: 100% !important;
               max-width: 100% !important;
             }
           }
           .customer-select-outer {
             margin-bottom: 24px;
-            width: 100%;
-            max-width: 440px;
+            width: 50%;
+            min-width: 320px;
+            max-width: 100%;
+            box-sizing: border-box;
           }
           .customer-select-outer-label {
             font-size: 13px;

@@ -267,15 +267,19 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 
-STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_URL = '/static/'
+static_root_env = os.environ.get('STATIC_ROOT', '').strip()
+STATIC_ROOT = Path(static_root_env) if static_root_env else (BASE_DIR / 'staticfiles')
+
 try:
     import whitenoise
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 except ImportError:
     pass
-MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+
+MEDIA_URL = '/media/'
+media_root_env = os.environ.get('MEDIA_ROOT', '').strip()
+MEDIA_ROOT = Path(media_root_env) if media_root_env else (BASE_DIR / 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 LOGIN_URL = '/accounts/login/'

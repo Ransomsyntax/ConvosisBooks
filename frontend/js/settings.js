@@ -58,6 +58,7 @@ const SETTINGS_MENU_STRUCTURE = [
         icon: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
         items: [
           { key: 'number-series', label: 'Transaction Number Series', hash: '#/settings/number-series' },
+          { key: 'custom-fields', label: 'Custom Fields', hash: '#/settings/custom-fields' },
           { key: 'pdf-templates', label: 'PDF Templates', hash: '#/settings/pdf-templates' },
           { key: 'email-notifications', label: 'Email Notifications', hash: '#/settings/email-notifications' },
           { key: 'sms-notifications', label: 'SMS Notifications', hash: '#/settings/sms-notifications' },
@@ -250,6 +251,7 @@ async function renderSettingsDashboard(root) {
                 </div>
                 <ul class="settings-cat-list">
                   <li><a href="#/settings/number-series" class="settings-link"><span class="link-label">Transaction Number Series</span></a></li>
+                  <li><a href="#/settings/custom-fields" class="settings-link"><span class="link-label">Custom Fields</span></a></li>
                   <li><a href="#/settings/pdf-templates" class="settings-link"><span class="link-label">PDF Templates</span></a></li>
                   <li><a href="#/settings/email-notifications" class="settings-link"><span class="link-label">Email Notifications</span></a></li>
                   <li><a href="#/settings/sms-notifications" class="settings-link"><span class="link-label">SMS Notifications</span></a></li>
@@ -420,11 +422,252 @@ function getSettingsPageRenderer(key) {
     'sms-notifications': typeof renderNotificationsPage === 'function' ? renderNotificationsPage : null,
     'digital-signature': typeof renderDigitalSignaturePage === 'function' ? renderDigitalSignaturePage : null,
     'enterprise-settings': typeof renderEnterpriseSettingsPage === 'function' ? renderEnterpriseSettingsPage : null,
+    'custom-fields': typeof renderCustomFieldsSettingsPage === 'function' ? renderCustomFieldsSettingsPage : null,
     'mod-prefs': typeof renderGeneralSettingsPage === 'function' ? renderGeneralSettingsPage : null,
     'sales-invoices': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
     'sales-quotes': typeof renderNumberSeriesPage === 'function' ? renderNumberSeriesPage : null,
   };
   return map[key] || null;
+}
+
+async function renderCustomFieldsSettingsPage(container) {
+  const modules = [
+    { key: 'quotes', label: 'Quotes' },
+    { key: 'payments_received', label: 'Payments Received' },
+  ];
+  const fieldTypes = [
+    ['text', 'Text'],
+    ['number', 'Number'],
+    ['date', 'Date'],
+    ['select', 'Dropdown'],
+    ['checkbox', 'Checkbox'],
+  ];
+  let customFields = [];
+  let selectedModule = '';
+
+  const moduleLabel = module => modules.find(item => item.key === module)?.label
+    || String(module || '').replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+  const filterModules = () => {
+    const availableModules = modules.slice();
+    customFields.forEach(field => {
+      if (field.module && !availableModules.some(item => item.key === field.module)) {
+        availableModules.push({ key: field.module, label: moduleLabel(field.module) });
+      }
+    });
+    return availableModules;
+  };
+  const render = () => {
+    const filteredFields = customFields.filter(field => !selectedModule || field.module === selectedModule);
+    container.innerHTML = `
+      <div class="settings-panel-card">
+        <div class="settings-panel-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <h2>Custom Fields</h2>
+            <div class="sub">Create organization-level fields for supported modules.</div>
+          </div>
+          <button type="button" class="btn p" data-custom-field-add>Add Custom Field</button>
+        </div>
+        <div style="padding:0 20px 20px;">
+          <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;margin:8px 0 16px;">
+            Module
+            <select class="in" data-custom-field-module style="max-width:260px;">
+              <option value="">All modules</option>
+              ${filterModules().map(item => `<option value="${item.key}" ${selectedModule === item.key ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          ${filteredFields.length ? `
+            <div style="overflow-x:auto;">
+              <table class="tbl" style="width:100%;">
+                <thead><tr><th>Field</th><th>Module</th><th>Type</th><th>Requirement</th><th>Status</th><th>Visibility</th><th>Actions</th></tr></thead>
+                <tbody>
+                  ${filteredFields.map(field => `
+                    <tr>
+                      <td><strong>${esc(field.label)}</strong><div class="sub">${esc(field.name)}</div>${field.field_type === 'select' && field.options ? `<div class="sub">${esc(field.options)}</div>` : ''}</td>
+                      <td>${esc(moduleLabel(field.module))}</td>
+                      <td>${esc(fieldTypes.find(([value]) => value === field.field_type)?.[1] || field.field_type)}</td>
+                      <td>${field.required ? 'Mandatory' : 'Optional'}</td>
+                      <td>${field.active ? 'Active' : 'Inactive'}</td>
+                      <td>${field.hidden ? 'Hidden' : 'Visible'}${field.module === 'quotes' && field.pdf_visible ? '<div class="sub">Shown in Quote PDF</div>' : ''}</td>
+                      <td style="white-space:nowrap;">
+                        <button type="button" class="btn" data-custom-field-edit="${field.id}">Edit</button>
+                        <button type="button" class="btn" data-custom-field-toggle="${field.id}" data-active="${field.active ? '1' : '0'}">${field.active ? 'Deactivate' : 'Activate'}</button>
+                        <button type="button" class="btn" data-custom-field-visibility="${field.id}" data-hidden="${field.hidden ? '1' : '0'}">${field.hidden ? 'Show' : 'Hide'}</button>
+                        <button type="button" class="btn d" data-custom-field-delete="${field.id}">Delete</button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : '<div class="sub" style="padding:18px 0;">No custom fields are configured for this module.</div>'}
+        </div>
+      </div>
+    `;
+  };
+
+  const loadFields = async () => {
+    container.innerHTML = '<div class="spin" style="margin:40px auto;">Loading custom fields…</div>';
+    const firstPage = await api('custom-fields/?include_hidden=true&page_size=100');
+    customFields = firstPage.results || [];
+    for (let page = 2; page <= (firstPage.pages || 1); page++) {
+      const nextPage = await api(`custom-fields/?include_hidden=true&page_size=100&page=${page}`);
+      customFields.push(...(nextPage.results || []));
+    }
+    render();
+  };
+
+  const showLoadError = error => {
+    container.innerHTML = `
+      <div class="error-msg-card" style="padding:20px;margin:20px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#b91c1c;">
+        <div>${esc(error.message || 'Could not load custom fields.')}</div>
+        <button type="button" class="btn" data-custom-field-retry style="margin-top:12px;">Retry</button>
+      </div>
+    `;
+  };
+
+  const openFieldForm = field => {
+    const editing = Boolean(field);
+    const quoteModule = editing ? field.module === 'quotes' : true;
+    const moduleControl = editing
+      ? `<div class="s12"><b>Module:</b> ${esc(moduleLabel(field.module))}</div>`
+      : fld({
+        name: 'module',
+        label: 'Module',
+        type: 'select',
+        opts: [['', 'Select a module'], ...modules.map(item => [item.key, item.label])],
+        value: selectedModule || 'quotes',
+        req: true,
+        col: 's12',
+      });
+    formModal({
+      title: editing ? 'Edit Custom Field' : 'Add Custom Field',
+      dialog: true,
+      wide: false,
+      body: `<div class="g">
+        ${moduleControl}
+        ${fld({ name: 'label', label: 'Field Name', value: field?.label || '', req: true, col: 's12', attrs: 'maxlength="100"' })}
+        ${fld({ name: 'field_type', label: 'Field Type', type: 'select', opts: fieldTypes, value: field?.field_type || 'text', req: true, col: 's12' })}
+        <div class="s12" data-custom-field-options-row>
+          ${fld({ name: 'options', label: 'Dropdown Options (comma separated)', value: field?.options || '', col: 's12', attrs: 'maxlength="1000"' })}
+        </div>
+        ${fld({ name: 'required', label: 'Mandatory field', type: 'checkbox', value: field?.required || false, col: 's12' })}
+        ${fld({ name: 'active', label: 'Active', type: 'checkbox', value: field ? field.active : true, col: 's12' })}
+        <div class="s12" data-custom-field-pdf-row ${quoteModule ? '' : 'hidden'}>
+          ${fld({ name: 'pdf_visible', label: 'Show in Quote preview and PDF', type: 'checkbox', value: field?.pdf_visible || false, col: 's12' })}
+        </div>
+      </div>`,
+      onReady: form => {
+        const typeSelect = form.querySelector('[name="field_type"]');
+        const moduleSelect = form.querySelector('[name="module"]');
+        const optionsRow = form.querySelector('[data-custom-field-options-row]');
+        const pdfRow = form.querySelector('[data-custom-field-pdf-row]');
+        const updateConditionalFields = () => {
+          optionsRow.hidden = !typeSelect || typeSelect.value !== 'select';
+          if (moduleSelect && pdfRow) pdfRow.hidden = moduleSelect.value !== 'quotes';
+        };
+        typeSelect?.addEventListener('change', updateConditionalFields);
+        moduleSelect?.addEventListener('change', updateConditionalFields);
+        updateConditionalFields();
+      },
+      onSubmit: async (values, action, form) => {
+        const type = form.querySelector('[name="field_type"]').value;
+        const options = String(values.options || '').trim();
+        if (type === 'select' && !options) {
+          throw new ApiErr(400, { options: 'Enter at least one dropdown option.' }, 'Dropdown options are required.');
+        }
+        const payload = {
+          label: String(values.label || '').trim(),
+          field_type: type,
+          options: type === 'select' ? options : '',
+          required: form.querySelector('[name="required"]').checked,
+          active: form.querySelector('[name="active"]').checked,
+        };
+        if (!editing) {
+          payload.module = form.querySelector('[name="module"]').value;
+          payload.pdf_visible = payload.module === 'quotes' && form.querySelector('[name="pdf_visible"]').checked;
+        } else if (field.module === 'quotes') {
+          payload.pdf_visible = form.querySelector('[name="pdf_visible"]').checked;
+        }
+        if (editing) {
+          await api(`custom-fields/${field.id}/`, { method: 'PATCH', body: JSON.stringify(payload) });
+        } else {
+          await api('custom-fields/', { method: 'POST', body: JSON.stringify(payload) });
+        }
+        await loadFields();
+        toast(editing ? 'Custom field updated.' : 'Custom field created.', 'ok');
+      },
+    });
+  };
+
+  container.addEventListener('change', event => {
+    if (event.target.matches('[data-custom-field-module]')) {
+      selectedModule = event.target.value;
+      render();
+    }
+  });
+  container.addEventListener('click', async event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.hasAttribute('data-custom-field-retry')) {
+      loadFields().catch(showLoadError);
+      return;
+    }
+    if (button.hasAttribute('data-custom-field-add')) {
+      openFieldForm(null);
+      return;
+    }
+    const editId = button.dataset.customFieldEdit;
+    if (editId) {
+      const field = customFields.find(item => String(item.id) === String(editId));
+      if (field) openFieldForm(field);
+      return;
+    }
+    const activeId = button.dataset.customFieldToggle;
+    if (activeId) {
+      try {
+        await api(`custom-fields/${activeId}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ active: button.dataset.active !== '1' }),
+        });
+        await loadFields();
+      } catch (error) {
+        toast(error.message || 'Could not update custom field status.', 'err');
+      }
+      return;
+    }
+    const visibilityId = button.dataset.customFieldVisibility;
+    if (visibilityId) {
+      try {
+        await api(`custom-fields/${visibilityId}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ hidden: button.dataset.hidden !== '1' }),
+        });
+        await loadFields();
+      } catch (error) {
+        toast(error.message || 'Could not update custom field visibility.', 'err');
+      }
+      return;
+    }
+    const deleteId = button.dataset.customFieldDelete;
+    if (deleteId) {
+      const field = customFields.find(item => String(item.id) === String(deleteId));
+      if (!(await confirmBox({
+        title: 'Delete custom field?',
+        message: `Delete "${field?.label || 'this field'}" configuration? Existing saved values will remain on records but the field will no longer be shown.`,
+        okText: 'Delete',
+        danger: true,
+      }))) return;
+      try {
+        await api(`custom-fields/${deleteId}/`, { method: 'DELETE' });
+        await loadFields();
+        toast('Custom field deleted.', 'ok');
+      } catch (error) {
+        toast(error.message || 'Could not delete custom field.', 'err');
+      }
+    }
+  });
+
+  await loadFields().catch(showLoadError);
 }
 
 function toggleSettingsNavGroup(btn) {

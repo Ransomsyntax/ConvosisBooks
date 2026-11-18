@@ -854,22 +854,48 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(len(qdata['lines']), 1)
 
     def test_quote_order_number_and_custom_fields_persist_on_update(self):
-        CustomField.objects.create(
-            organization=self.org,
-            module='quotes',
-            name='delivery_window',
-            label='Delivery Window',
-            field_type='text',
-            required=True,
-            pdf_visible=True,
+        field_definitions = [
+            {'label': 'Delivery Window', 'field_type': 'text', 'required': True},
+            {'label': 'Seat Count', 'field_type': 'number'},
+            {'label': 'Start Date', 'field_type': 'date'},
+            {'label': 'Priority', 'field_type': 'select', 'options': 'Standard,Expedited'},
+            {'label': 'Customer Confirmed', 'field_type': 'checkbox'},
+        ]
+        created_fields = {}
+        for field_definition in field_definitions:
+            response = self.client.post(
+                '/api/custom-fields/',
+                data=json.dumps({'module': 'quotes', **field_definition}),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            field = response.json()
+            created_fields[field['name']] = field
+        self.assertEqual(set(created_fields), {
+            'delivery_window', 'seat_count', 'start_date', 'priority', 'customer_confirmed'
+        })
+
+        updated_field_response = self.client.patch(
+            f"/api/custom-fields/{created_fields['delivery_window']['id']}/",
+            data=json.dumps({'label': 'Delivery Window Updated', 'pdf_visible': True}),
+            content_type='application/json',
         )
+        self.assertEqual(updated_field_response.status_code, 200, updated_field_response.content)
+
+        other_org = Organization.objects.create(name='Other Quote Fields Org', company_id='other-quote-fields')
         CustomField.objects.create(
-            organization=self.org,
+            organization=other_org,
             module='quotes',
-            name='seat_count',
-            label='Seat Count',
-            field_type='number',
+            name='private_field',
+            label='Private Field',
         )
+        configured_fields = self.client.get('/api/custom-fields/?module=quotes&include_hidden=true')
+        self.assertEqual(configured_fields.status_code, 200)
+        configured_names = {field['name'] for field in configured_fields.json()['results']}
+        self.assertIn('delivery_window', configured_names)
+        self.assertIn('seat_count', configured_names)
+        self.assertNotIn('private_field', configured_names)
+
         self.customer.billing_address = '10 Main Street'
         self.customer.shipping_address = '20 Warehouse Road'
         self.customer.save()
@@ -879,7 +905,13 @@ class TestQuoteModule(BaseAccountingTestCase):
             'expiry_date': '2026-11-30',
             'order_number': 'SO-REF-001',
             'reference_number': 'REF-Q-002',
-            'custom_fields_data': {'delivery_window': 'Within 14 days', 'seat_count': '8'},
+            'custom_fields_data': {
+                'delivery_window': 'Within 14 days',
+                'seat_count': '8',
+                'start_date': '2026-11-15',
+                'priority': 'Expedited',
+                'customer_confirmed': True,
+            },
             'lines': [{
                 'item_id': self.item.id,
                 'quantity': '1',
@@ -895,7 +927,11 @@ class TestQuoteModule(BaseAccountingTestCase):
             **payload,
             'number': created.json()['number'],
             'order_number': 'SO-REF-002',
-            'custom_fields_data': {'delivery_window': 'Within 7 days', 'seat_count': '12'},
+            'custom_fields_data': {
+                **payload['custom_fields_data'],
+                'delivery_window': 'Within 7 days',
+                'seat_count': '12',
+            },
         }
         updated = self.client.put(
             f'/api/quotes/{quote_id}/',
@@ -906,12 +942,21 @@ class TestQuoteModule(BaseAccountingTestCase):
 
         quote_data = self.client.get(f'/api/quotes/{quote_id}/').json()
         self.assertEqual(quote_data['order_number'], 'SO-REF-002')
-        self.assertEqual(quote_data['custom_fields_data'], {'delivery_window': 'Within 7 days', 'seat_count': '12'})
-        self.assertEqual(quote_data['custom_fields_labels'], {
-            'delivery_window': 'Delivery Window',
-            'seat_count': 'Seat Count',
+        self.assertEqual(quote_data['custom_fields_data'], {
+            'delivery_window': 'Within 7 days',
+            'seat_count': '12',
+            'start_date': '2026-11-15',
+            'priority': 'Expedited',
+            'customer_confirmed': True,
         })
-        self.assertEqual(quote_data['custom_fields_pdf_labels'], {'delivery_window': 'Delivery Window'})
+        self.assertEqual(quote_data['custom_fields_labels'], {
+            'delivery_window': 'Delivery Window Updated',
+            'seat_count': 'Seat Count',
+            'start_date': 'Start Date',
+            'priority': 'Priority',
+            'customer_confirmed': 'Customer Confirmed',
+        })
+        self.assertEqual(quote_data['custom_fields_pdf_labels'], {'delivery_window': 'Delivery Window Updated'})
         self.assertEqual(quote_data['party_details']['billing_address'], '10 Main Street')
         self.assertEqual(quote_data['party_details']['shipping_address'], '20 Warehouse Road')
         self.assertEqual(quote_data['billing_address_data']['street1'], '10 Main Street')

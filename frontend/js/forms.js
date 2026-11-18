@@ -12453,14 +12453,14 @@ ${renderStockQuantityCell(l, items, whList)}
           <div class="quote-card">
             ${qCustomFieldHtml || '<div style="font-size:12px;color:#64748b;">No custom fields configured for Quotes.</div>'}
             <div style="display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:12px;">
-              <a class="btn" href="#/settings" style="font-size:12px;text-decoration:none;">+ Add Custom Field</a>
+              <a class="btn" href="#/settings/custom-fields" style="font-size:12px;text-decoration:none;">+ Add Custom Field</a>
               <span class="q-custom-help">
                 <button type="button" class="btn ic" id="q-custom-field-help" aria-label="How to add a Custom Field" aria-expanded="false" aria-controls="q-custom-field-help-popover" style="width:24px;height:24px;padding:0;border-radius:50%;font-size:12px;font-weight:700;">?</button>
                 <div class="q-custom-help-popover" id="q-custom-field-help-popover" role="dialog" aria-label="How to add a Custom Field" hidden>
                   <strong>How to add a Custom Field</strong>
                   <ol>
                     <li>Open Settings.</li>
-                    <li>Navigate to Preferences or Custom Fields.</li>
+                    <li>Under Organization Settings, open Customization, then Custom Fields.</li>
                     <li>Select Quotes as the module.</li>
                     <li>Click Add Custom Field.</li>
                     <li>Enter the custom field name.</li>
@@ -12469,7 +12469,7 @@ ${renderStockQuantityCell(l, items, whList)}
                     <li>Save the custom field.</li>
                   </ol>
                   <div>Once created, the custom field will be available in the Quote form. You can enter its value while creating or editing a quote.</div>
-                  <a href="#/settings">Open Settings</a>
+                  <a href="#/settings/custom-fields">Open Custom Fields</a>
                 </div>
               </span>
             </div>

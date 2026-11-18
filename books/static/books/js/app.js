@@ -161,6 +161,7 @@ const ROUTES = {
   'settings/organization': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
   'settings/users': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'users', 'Users', renderSettingsUsersPage) : null,
   'settings/roles': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'roles', 'Roles', renderSettingsRolesPage) : null,
+  'settings/custom-fields': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'custom-fields', 'Custom Fields', renderCustomFieldsSettingsPage) : null,
   'settings/roles/new': r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, 'new') : null,
   'settings/profile': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
   'settings/branding': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'branding', 'Company Branding', renderBrandingPage) : null,

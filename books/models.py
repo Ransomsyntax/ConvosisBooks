@@ -854,6 +854,9 @@ class SalesOrderLine(Line):
 class Quote(Document):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='quotes')
     reference_number = models.CharField(max_length=100, blank=True, default='')
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     tax_type = models.CharField(max_length=10, default='tds', choices=[('tds', 'TDS'), ('tcs', 'TCS')])
     tds_tcs_tax = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))

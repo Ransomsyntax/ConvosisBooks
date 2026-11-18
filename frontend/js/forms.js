@@ -11958,7 +11958,7 @@ async function quoteForm(id, targetEl, onDone) {
   }
   const target = (targetEl && targetEl.nodeType) ? targetEl : document.getElementById('pg') || document.body;
 
-  const [parties, items, projects, salespersons, whList, nextNum, rec, txSeriesList] = await Promise.all([
+  const [parties, items, projects, salespersons, whList, nextNum, rec, txSeriesList, businessLocations, customFieldResponse] = await Promise.all([
     api('lookup/customers/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/projects/').catch(() => []),
@@ -11966,7 +11966,9 @@ async function quoteForm(id, targetEl, onDone) {
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
     id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/transaction-series/').catch(() => [])
+    api('lookup/transaction-series/').catch(() => []),
+    api('lookup/business-locations/').catch(() => []),
+    api('custom-fields/?module=quotes&page_size=100').catch(() => [])
   ]);
 
   const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
@@ -11975,7 +11977,7 @@ async function quoteForm(id, targetEl, onDone) {
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam';
   const qBranch = rec ? (rec.branch || '') : '';
-  const qOrderNum = rec ? (rec.order_number || '') : (rec ? (rec.reference_number || '') : '');
+  const qOrderNum = rec ? (rec.order_number || '') : '';
   const qPos = rec ? (rec.place_of_supply || (APP.org && APP.org.state) || 'Kerala') : ((APP.org && APP.org.state) || 'Kerala');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
@@ -11993,6 +11995,41 @@ async function quoteForm(id, targetEl, onDone) {
   const qAdjLabel = rec ? (rec.adjustment_label || 'Adjustment') : 'Adjustment';
   const qLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 0 }];
   const pendingFiles = [];
+  const qCustomFields = Array.isArray(customFieldResponse)
+    ? customFieldResponse
+    : (customFieldResponse && Array.isArray(customFieldResponse.results) ? customFieldResponse.results : []);
+  const qLocations = Array.isArray(businessLocations) ? businessLocations : [];
+  const branchNames = qLocations.map(location => location.name).filter(Boolean);
+  if (qBranch && !branchNames.some(name => name.toLowerCase() === qBranch.toLowerCase())) {
+    branchNames.unshift(qBranch);
+  }
+  const qCustomFieldHtml = qCustomFields.filter(field => field.active !== false && field.form_visible !== false && !field.hidden).map(field => {
+    const rawDefault = field.default_value;
+    const defaultValue = rawDefault && typeof rawDefault === 'object' ? (rawDefault.value ?? '') : (rawDefault ?? '');
+    const value = (rec && rec.custom_fields_data && rec.custom_fields_data[field.name]) ?? defaultValue;
+    const required = field.required ? 'required' : '';
+    if (field.field_type === 'select') {
+      const options = String(field.options || '').split(',').map(option => option.trim()).filter(Boolean);
+      return `<div class="quote-card-field">
+        <label class="quote-card-label ${field.required ? 'required' : ''}" for="q-cf-${esc(field.name)}">${esc(field.label)}${field.required ? '*' : ''}</label>
+        <select class="in q-custom-field" id="q-cf-${esc(field.name)}" data-custom-field="${esc(field.name)}" ${required}>
+          <option value="">Select…</option>
+          ${options.map(option => `<option value="${esc(option)}" ${String(value) === option ? 'selected' : ''}>${esc(option)}</option>`).join('')}
+        </select>
+      </div>`;
+    }
+    if (field.field_type === 'checkbox') {
+      return `<div class="quote-card-field" style="flex-direction:row;align-items:center;gap:8px;">
+        <input type="checkbox" class="q-custom-field" id="q-cf-${esc(field.name)}" data-custom-field="${esc(field.name)}" ${value === true || value === 'true' ? 'checked' : ''} ${required}>
+        <label class="quote-card-label" for="q-cf-${esc(field.name)}" style="margin:0;">${esc(field.label)}${field.required ? '*' : ''}</label>
+      </div>`;
+    }
+    const type = ['text', 'number', 'date'].includes(field.field_type) ? field.field_type : 'text';
+    return `<div class="quote-card-field">
+      <label class="quote-card-label ${field.required ? 'required' : ''}" for="q-cf-${esc(field.name)}">${esc(field.label)}${field.required ? '*' : ''}</label>
+      <input class="in q-custom-field" type="${type}" id="q-cf-${esc(field.name)}" data-custom-field="${esc(field.name)}" value="${esc(value)}" ${required}>
+    </div>`;
+  }).join('');
 
   const rowHtml = (l = {}) => `
     <tr class="ln-quote" style="border-bottom:1px solid var(--bd);">
@@ -12079,14 +12116,6 @@ ${renderStockQuantityCell(l, items, whList)}
             flex-direction: column;
             box-sizing: border-box;
           }
-          .quote-card-heading {
-            font-size: 15px;
-            font-weight: 700;
-            color: #0284c7;
-            margin: 0 0 20px 0;
-            letter-spacing: -0.01em;
-            line-height: 1.3;
-          }
           .quote-card-field {
             margin-bottom: 18px;
             display: flex;
@@ -12161,14 +12190,22 @@ ${renderStockQuantityCell(l, items, whList)}
             border-color: #334155 !important;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
           }
-          [data-theme="dark"] .quote-card-heading {
-            color: #38bdf8 !important;
-          }
           [data-theme="dark"] .quote-card-label {
             color: #f1f5f9 !important;
           }
           [data-theme="dark"] .quote-card-label.required {
             color: #f87171 !important;
+          }
+          [data-theme="dark"] .quote-customer-address {
+            color: #cbd5e1;
+          }
+          [data-theme="dark"] .quote-customer-address strong {
+            color: #f1f5f9;
+          }
+          [data-theme="dark"] .q-custom-help-popover {
+            background: #1e293b;
+            border-color: #475569;
+            color: #e2e8f0;
           }
           [data-theme="dark"] .quote-card .in {
             background: #0f172a !important;
@@ -12189,6 +12226,50 @@ ${renderStockQuantityCell(l, items, whList)}
             border-color: #475569 !important;
             color: #f8fafc !important;
           }
+          .quote-customer-row {
+            display: grid;
+            grid-template-columns: minmax(320px, 42%) minmax(0, 1fr);
+          }
+          .quote-customer-row .customer-select-outer {
+            width: 100%;
+            min-width: 0;
+          }
+          .quote-customer-addresses {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-items: start;
+            gap: 12px;
+          }
+          .quote-customer-address {
+            min-width: 0;
+            color: var(--tx, #334155);
+            font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+          }
+          .quote-customer-address-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 3px;
+          }
+          .quote-customer-address-edit {
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--accent, #0284c7);
+            font: inherit;
+            cursor: pointer;
+          }
+          .quote-customer-address-lines {
+            white-space: pre-line;
+          }
+          .quote-card .quote-number-row {
+            width: 100%;
+            max-width: none;
+            margin-bottom: 18px;
+          }
           @media (max-width: 1024px) {
             .quote-three-cards-grid {
               grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -12200,14 +12281,37 @@ ${renderStockQuantityCell(l, items, whList)}
               grid-template-columns: 1fr;
               gap: 16px;
             }
-            .customer-select-outer {
+            .quote-customer-row {
+              grid-template-columns: 1fr;
+              gap: 12px;
+            }
+            .quote-customer-row .customer-select-outer {
               width: 100% !important;
+              min-width: 0;
               max-width: 100% !important;
+            }
+            .quote-customer-addresses {
+              width: 100%;
+            }
+            .quote-number-row {
+              max-width: 100%;
+            }
+          }
+          @media (max-width: 480px) {
+            .quote-customer-addresses {
+              grid-template-columns: 1fr;
+            }
+            .quote-number-row {
+              align-items: stretch;
+              flex-direction: column;
+            }
+            .q-date-grid {
+              grid-template-columns: 1fr !important;
             }
           }
           .customer-select-outer {
-            margin-bottom: 24px;
-            width: 50%;
+            margin-bottom: 0;
+            width: 42%;
             min-width: 320px;
             max-width: 100%;
             box-sizing: border-box;
@@ -12249,19 +12353,21 @@ ${renderStockQuantityCell(l, items, whList)}
           }
         </style>
 
-        <!-- Customer Name Field (Placed outside and above Three-Card Information Layout) -->
-        <div class="customer-select-outer">
-          <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <select class="in" id="q-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
-              <option value="">Search or type customer name...</option>
-              <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-              ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-            </select>
-            <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
-            </button>
+        <div class="quote-customer-row">
+          <div class="customer-select-outer">
+            <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <select class="in" id="q-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+                <option value="">Search or type customer name...</option>
+                <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(qCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-quote-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+              </button>
+            </div>
           </div>
+          <div class="quote-customer-addresses" id="q-customer-addresses" aria-live="polite"></div>
         </div>
 
         <div class="quote-three-cards-grid">
@@ -12271,13 +12377,58 @@ ${renderStockQuantityCell(l, items, whList)}
           <input type="hidden" id="q-pos" name="place_of_supply" value="${esc(qPos)}">
           <span id="q-customer-gstin" style="display:none;">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(qCustomer))?.gstin) || ''}</span>
 
-          <!-- Card 1: 1. Customer Details -->
+          <!-- Card 1: quote reference information -->
           <div class="quote-card">
-            <h3 class="quote-card-heading">1. Customer Details</h3>
+            <div class="quote-number-row">
+              <div class="quote-card-field">
+                <label class="quote-card-label" for="q-series">Quote Series</label>
+                <select class="in" id="q-series" name="transaction_series" style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
+                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="quote-card-field">
+                <label class="quote-card-label required" for="q-number">Quote Number*</label>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                  <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                    <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-reference">Reference#</label>
+              <div class="q-date-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label class="quote-card-label required" for="q-date">Date*</label>
+                  <input class="in" type="date" id="q-date" name="date" value="${qDate}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+                <div>
+                  <label class="quote-card-label required" for="q-expiry">Expiry Date*</label>
+                  <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
+                </div>
+              </div>
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-reference">Reference Number</label>
               <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-order-number">Sales Order Number</label>
+              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="Optional sales order number" style="width:100%;box-sizing:border-box;padding:0 12px;">
+            </div>
+          </div>
+
+          <!-- Card 2: additional quote information -->
+          <div class="quote-card">
+            <div class="quote-card-field">
+              <label class="quote-card-label" for="q-branch">Branch</label>
+              <select class="in" id="q-branch" name="branch" style="width:100%;box-sizing:border-box;padding:0 10px;">
+                <option value="">Select Branch…</option>
+                ${branchNames.map(name => `<option value="${esc(name)}" ${qBranch === name ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+              </select>
             </div>
 
             <div class="quote-card-field">
@@ -12286,61 +12437,41 @@ ${renderStockQuantityCell(l, items, whList)}
             </div>
 
             <div class="quote-card-field">
+              <label class="quote-card-label" for="q-project">Project Name</label>
+              <select class="in" id="q-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
+                <option value="">There are no active projects for this customer.</option>
+              </select>
+            </div>
+
+            <div class="quote-card-field">
               <label class="quote-card-label" for="q-subject">Subject</label>
               <input class="in" id="q-subject" name="subject" value="${esc(qSubject)}" placeholder="Let your customer know what this Quote is for" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
           </div>
 
-          <!-- Card 2: 2. Account Details -->
+          <!-- Card 3: custom fields -->
           <div class="quote-card">
-            <h3 class="quote-card-heading">2. Account Details</h3>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-branch">Branch &amp; Supply</label>
-              <div style="display:flex;flex-direction:column;gap:6px;">
-                <input class="in" id="q-branch" name="branch" maxlength="120" placeholder="Branch / Location" value="${esc(qBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
-                <div id="q-source-of-supply" style="font-size:11.5px;color:#64748b;">
-                  Source of Supply: ${esc(qPos)}
+            ${qCustomFieldHtml || '<div style="font-size:12px;color:#64748b;">No custom fields configured for Quotes.</div>'}
+            <div style="display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:12px;">
+              <a class="btn" href="#/settings" style="font-size:12px;text-decoration:none;">+ Add Custom Field</a>
+              <span class="q-custom-help">
+                <button type="button" class="btn ic" id="q-custom-field-help" aria-label="How to add a Custom Field" aria-expanded="false" aria-controls="q-custom-field-help-popover" style="width:24px;height:24px;padding:0;border-radius:50%;font-size:12px;font-weight:700;">?</button>
+                <div class="q-custom-help-popover" id="q-custom-field-help-popover" role="dialog" aria-label="How to add a Custom Field" hidden>
+                  <strong>How to add a Custom Field</strong>
+                  <ol>
+                    <li>Open Settings.</li>
+                    <li>Navigate to Preferences or Custom Fields.</li>
+                    <li>Select Quotes as the module.</li>
+                    <li>Click Add Custom Field.</li>
+                    <li>Enter the custom field name.</li>
+                    <li>Select the appropriate field type, such as Text, Number, Date, Dropdown, or Checkbox.</li>
+                    <li>Configure mandatory or optional status.</li>
+                    <li>Save the custom field.</li>
+                  </ol>
+                  <div>Once created, the custom field will be available in the Quote form. You can enter its value while creating or editing a quote.</div>
+                  <a href="#/settings">Open Settings</a>
                 </div>
-              </div>
-            </div>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-project">Associate Project(s)</label>
-              <select class="in" id="q-project" name="project_name" style="width:100%;box-sizing:border-box;padding:0 10px;" disabled>
-                <option value="">There are no active projects for this customer.</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Card 3: 3. Quote Details -->
-          <div class="quote-card">
-            <h3 class="quote-card-heading">3. Quote Details</h3>
-
-            <div class="quote-card-field">
-              <label class="quote-card-label required" for="q-number">Quote#*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <select class="in" id="q-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
-                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1.2;min-width:0;padding:0 12px;">
-                <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-                </button>
-              </div>
-            </div>
-
-            <div class="quote-card-field">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div>
-                  <label class="quote-card-label required" for="q-date">Quote Date*</label>
-                  <input class="in" type="date" id="q-date" name="date" value="${qDate}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
-                </div>
-                <div>
-                  <label class="quote-card-label required" for="q-expiry">Expiry Date*</label>
-                  <input class="in" type="date" id="q-expiry" name="expiry_date" value="${qExpiry}" required style="width:100%;box-sizing:border-box;padding:0 8px;">
-                </div>
-              </div>
+              </span>
             </div>
           </div>
         </div>
@@ -12522,8 +12653,170 @@ ${renderStockQuantityCell(l, items, whList)}
     setupProjectSelectorForCustomer($('#q-project', form), $('#q-customer', form)?.value, qProject);
   }
   updateProjectFilter();
-  $('#q-customer', form)?.addEventListener('change', (e) => {
-    updateProjectFilter();
+  const quoteAddressFields = ['attention', 'country', 'street1', 'street2', 'city', 'state', 'pincode', 'phone', 'fax'];
+  const quoteAddressLimits = {
+    attention: 150,
+    country: 100,
+    street1: 1000,
+    street2: 500,
+    city: 100,
+    state: 100,
+    pincode: 20,
+    phone: 30,
+    fax: 30
+  };
+  const normalizeQuoteAddress = address => Object.fromEntries(quoteAddressFields.map(field => [
+    field,
+    address && address[field] != null ? String(address[field]) : ''
+  ]));
+  const quoteAddressFromCustomer = (customer, side) => {
+    if (!customer) return normalizeQuoteAddress({});
+    const shipping = side === 'shipping';
+    return normalizeQuoteAddress({
+      attention: customer[shipping ? 'shipping_attention' : 'billing_attention'],
+      country: customer[shipping ? 'shipping_country' : 'billing_country'],
+      street1: customer[shipping ? 'shipping_address' : 'billing_address'],
+      city: customer[shipping ? 'shipping_city' : 'billing_city'],
+      state: customer[shipping ? 'shipping_state' : 'state'],
+      pincode: customer[shipping ? 'shipping_pincode' : 'billing_pincode'],
+      phone: customer[shipping ? 'shipping_phone' : 'billing_phone'] || customer.phone
+    });
+  };
+  let quoteAddressData = {
+    billing: quoteAddressFromCustomer(parties.find(p => String(p.id) === String(qCustomer)), 'billing'),
+    shipping: quoteAddressFromCustomer(parties.find(p => String(p.id) === String(qCustomer)), 'shipping')
+  };
+  let quoteAddressRequest = 0;
+  function renderQuoteCustomerAddresses() {
+    const addresses = $('#q-customer-addresses', form);
+    if (!addresses || !$('#q-customer', form)?.value) {
+      if (addresses) addresses.innerHTML = '';
+      return;
+    }
+    const renderSide = (side, label) => {
+      const address = quoteAddressData[side];
+      const hasAddress = [address.attention, address.street1, address.street2, address.city, address.state, address.pincode]
+        .some(value => String(value || '').trim());
+      const cityLine = [address.city, address.state, address.pincode].filter(Boolean).join(', ');
+      const lines = [
+        address.attention ? `Attention: ${address.attention}` : '',
+        address.street1,
+        address.street2,
+        cityLine,
+        address.country,
+        address.phone ? `Phone: ${address.phone}` : '',
+        address.fax ? `Fax: ${address.fax}` : ''
+      ].filter(Boolean);
+      const text = hasAddress ? lines.map(esc).join('<br>') : `No ${side} address on file.`;
+      return `<div class="quote-customer-address">
+        <div class="quote-customer-address-heading"><strong>${label}</strong><button type="button" class="quote-customer-address-edit" data-quote-address-edit="${side}">Edit</button></div>
+        <div class="quote-customer-address-lines">${text}</div>
+      </div>`;
+    };
+    addresses.innerHTML = `${renderSide('billing', 'Billing Address')}${renderSide('shipping', 'Shipping Address')}`;
+  }
+  async function loadQuoteCustomerAddressDetails(customer, refreshSides) {
+    if (!customer || !customer.id) return;
+    const request = ++quoteAddressRequest;
+    try {
+      const details = await api(`customers/${customer.id}/`);
+      if (request !== quoteAddressRequest || String($('#q-customer', form)?.value) !== String(customer.id)) return;
+      if (refreshSides.billing) quoteAddressData.billing = quoteAddressFromCustomer(details, 'billing');
+      if (refreshSides.shipping) quoteAddressData.shipping = quoteAddressFromCustomer(details, 'shipping');
+      renderQuoteCustomerAddresses();
+    } catch (error) {
+      if (request === quoteAddressRequest) {
+        toast(`Could not load customer addresses: ${error.message || 'Request failed.'}`, 'err');
+      }
+    }
+  }
+  function updateQuoteCustomerAddresses(cust) {
+    if (!cust) {
+      quoteAddressRequest++;
+      quoteAddressData = { billing: normalizeQuoteAddress({}), shipping: normalizeQuoteAddress({}) };
+      renderQuoteCustomerAddresses();
+      return;
+    }
+    const billingSnapshot = rec && String(rec.party_id || rec.customer_id) === String(cust.id) ? rec.billing_address_data : null;
+    const shippingSnapshot = rec && String(rec.party_id || rec.customer_id) === String(cust.id) ? rec.shipping_address_data : null;
+    const hasBillingSnapshot = billingSnapshot && typeof billingSnapshot === 'object' && Object.keys(billingSnapshot).length > 0;
+    const hasShippingSnapshot = shippingSnapshot && typeof shippingSnapshot === 'object' && Object.keys(shippingSnapshot).length > 0;
+    quoteAddressData.billing = normalizeQuoteAddress(hasBillingSnapshot ? billingSnapshot : quoteAddressFromCustomer(cust, 'billing'));
+    quoteAddressData.shipping = normalizeQuoteAddress(hasShippingSnapshot ? shippingSnapshot : quoteAddressFromCustomer(cust, 'shipping'));
+    renderQuoteCustomerAddresses();
+    if (!hasBillingSnapshot || !hasShippingSnapshot) {
+      loadQuoteCustomerAddressDetails(cust, {
+        billing: !hasBillingSnapshot,
+        shipping: !hasShippingSnapshot
+      });
+    }
+  }
+  updateQuoteCustomerAddresses(parties.find(p => String(p.id) === String(qCustomer)));
+  $('#q-customer-addresses', form)?.addEventListener('click', event => {
+    const button = event.target.closest('[data-quote-address-edit]');
+    if (!button) return;
+    const side = button.dataset.quoteAddressEdit;
+    const title = side === 'billing' ? 'Billing Address' : 'Shipping Address';
+    const initial = normalizeQuoteAddress(quoteAddressData[side]);
+    const field = (name, label, col = 's6') => `
+      <label class="${col}" style="display:block;font-size:12px;font-weight:600;color:var(--tx,#334155);">
+        ${label}
+        <input class="in" name="${name}" maxlength="${quoteAddressLimits[name]}" value="${esc(initial[name])}" style="width:100%;margin-top:5px;">
+      </label>`;
+    formModal({
+      title: `Edit ${title}`,
+      wide: false,
+      dialog: true,
+      body: `<div class="g">
+        ${field('attention', 'Attention')}
+        ${field('country', 'Country')}
+        ${field('street1', 'Street 1', 's12')}
+        ${field('street2', 'Street 2', 's12')}
+        ${field('city', 'City')}
+        ${field('state', 'State')}
+        ${field('pincode', 'Postal Code')}
+        ${field('phone', 'Phone')}
+        ${field('fax', 'Fax')}
+      </div>`,
+      onSubmit: async values => {
+        for (const name of quoteAddressFields) {
+          if (String(values[name] || '').length > quoteAddressLimits[name]) {
+            throw new Error(`${name.replace('_', ' ')} must be ${quoteAddressLimits[name]} characters or fewer.`);
+          }
+        }
+        quoteAddressData[side] = normalizeQuoteAddress(values);
+        renderQuoteCustomerAddresses();
+      }
+    });
+  });
+  const customFieldHelp = $('#q-custom-field-help', form);
+  const customFieldHelpPopover = $('#q-custom-field-help-popover', form);
+  const customFieldHelpWrap = customFieldHelp?.parentElement;
+  let customFieldHelpPinned = false;
+  const showCustomFieldHelp = () => {
+    if (!customFieldHelpPopover || !customFieldHelp) return;
+    customFieldHelpPopover.hidden = false;
+    customFieldHelp.setAttribute('aria-expanded', 'true');
+  };
+  const hideCustomFieldHelp = () => {
+    if (!customFieldHelpPopover || !customFieldHelp) return;
+    customFieldHelpPopover.hidden = true;
+    customFieldHelp.setAttribute('aria-expanded', 'false');
+  };
+  customFieldHelp?.addEventListener('click', () => {
+    customFieldHelpPinned = !customFieldHelpPinned;
+    if (customFieldHelpPinned) showCustomFieldHelp();
+    else hideCustomFieldHelp();
+  });
+  customFieldHelpWrap?.addEventListener('mouseenter', () => {
+    if (!customFieldHelpPinned) showCustomFieldHelp();
+  });
+  customFieldHelpWrap?.addEventListener('mouseleave', () => {
+    if (!customFieldHelpPinned) hideCustomFieldHelp();
+  });
+  customFieldHelpWrap?.addEventListener('focusin', showCustomFieldHelp);
+  customFieldHelpWrap?.addEventListener('focusout', event => {
+    if (!customFieldHelpPinned && !customFieldHelpWrap.contains(event.relatedTarget)) hideCustomFieldHelp();
   });
 
   $('#btn-quote-num-pref', form)?.addEventListener('click', () => {
@@ -12689,6 +12982,7 @@ ${renderStockQuantityCell(l, items, whList)}
   $('#q-adj-val', form)?.addEventListener('input', calcQuote);
 
   function applyQuoteCustomerDetails(cust) {
+    updateQuoteCustomerAddresses(cust);
     if (!cust) return;
     const custType = (cust.customer_type === 'individual' || cust.customer_type === 'b2c') ? 'b2c' : 'b2b';
     const custLoc = cust.billing_city || cust.city || cust.state || 'HO Kottayam';
@@ -12702,12 +12996,12 @@ ${renderStockQuantityCell(l, items, whList)}
       $('#q-location', form).dispatchEvent(new Event('change', { bubbles: true }));
     }
     if ($('#q-pos', form)) $('#q-pos', form).value = custPos;
-    if ($('#q-source-of-supply', form)) $('#q-source-of-supply', form).textContent = 'Source of Supply: ' + custPos;
     const gstinEl = $('#q-customer-gstin', form);
     if (gstinEl) gstinEl.textContent = cust.gstin || '';
   }
 
   $('#btn-quote-cust-lookup', form)?.addEventListener('click', () => {
+    updateQuoteCustomerAddresses(null);
     handleQuickCreateSelect($('#q-customer', form), newCust => {
       parties.push(newCust);
       const opt = document.createElement('option');
@@ -12723,6 +13017,7 @@ ${renderStockQuantityCell(l, items, whList)}
 
   $('#q-customer', form)?.addEventListener('change', e => {
     if (e.target.value === '__new_customer__') {
+      updateQuoteCustomerAddresses(null);
       handleQuickCreateSelect(e.target, newCust => {
         parties.push(newCust);
         const opt = document.createElement('option');
@@ -12740,6 +13035,8 @@ ${renderStockQuantityCell(l, items, whList)}
     const cObj = parties.find(p => String(p.id) === String(cId));
     if (cObj) {
       applyQuoteCustomerDetails(cObj);
+    } else {
+      updateQuoteCustomerAddresses(null);
     }
     updateProjectFilter();
   });
@@ -12924,8 +13221,10 @@ ${renderStockQuantityCell(l, items, whList)}
     const payload = {
       customer: Number(custId),
       number: numVal,
+      billing_address_data: normalizeQuoteAddress(quoteAddressData.billing),
+      shipping_address_data: normalizeQuoteAddress(quoteAddressData.shipping),
       reference_number: ($('#q-reference', form)?.value || '').trim(),
-      order_number: ($('#q-order-number', form)?.value || $('#q-reference', form)?.value || '').trim(),
+      order_number: ($('#q-order-number', form)?.value || '').trim(),
       location: $('#q-location', form)?.value || 'HO Kottayam',
       branch: $('#q-branch', form)?.value || '',
       transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
@@ -12946,6 +13245,10 @@ ${renderStockQuantityCell(l, items, whList)}
       signature_data: $('#q-signature-data', form)?.value || '',
       signed_by: $('#q-signed-by', form)?.value || '',
       signature_title: $('#q-signature-title', form)?.value || '',
+      custom_fields_data: Object.fromEntries($$('.q-custom-field', form).map(input => [
+        input.dataset.customField,
+        input.type === 'checkbox' ? input.checked : input.value
+      ])),
       lines: lines,
       force: true
     };

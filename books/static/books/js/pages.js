@@ -10152,6 +10152,23 @@ async function convertQuoteToSalesOrder(id) {
 async function viewQuoteDetail(id) {
   try {
     const q = await api(`quotes/${id}/`);
+    const resolveQuoteAddress = (snapshot, fallback) => {
+      if (!snapshot || typeof snapshot !== 'object' || !Object.keys(snapshot).length) return fallback || '';
+      const hasAddress = [snapshot.attention, snapshot.street1, snapshot.street2, snapshot.city, snapshot.state, snapshot.pincode]
+        .some(value => String(value || '').trim());
+      if (!hasAddress) return '';
+      return [
+        snapshot.attention ? `Attention: ${snapshot.attention}` : '',
+        snapshot.street1,
+        snapshot.street2,
+        [snapshot.city, snapshot.state, snapshot.pincode].filter(Boolean).join(', '),
+        snapshot.country,
+        snapshot.phone ? `Phone: ${snapshot.phone}` : '',
+        snapshot.fax ? `Fax: ${snapshot.fax}` : ''
+      ].filter(Boolean).join(', ');
+    };
+    const billingAddress = resolveQuoteAddress(q.billing_address_data, q.party_details && q.party_details.billing_address);
+    const shippingAddress = resolveQuoteAddress(q.shipping_address_data, q.party_details && q.party_details.shipping_address);
     const isConverted = q.status === 'invoiced' || q.status === 'ordered' || !!q.converted_to_invoice_id || !!q.converted_to_sales_order_id;
     Modal.open({
       title: `Quote ${q.number}`,
@@ -10184,7 +10201,8 @@ async function viewQuoteDetail(id) {
               <div style="font-size:15px;font-weight:700;color:#0f172a;">${esc(q.party || (q.party_details && q.party_details.name) || q.customer_name)}</div>
               <div style="font-size:12px;color:#64748b;line-height:1.5;margin-top:4px;">
                 ${q.party_details && q.party_details.company ? `<div>${esc(q.party_details.company)}</div>` : ''}
-                ${q.party_details && q.party_details.billing_address ? `<div>${esc(q.party_details.billing_address)}</div>` : ''}
+                ${billingAddress ? `<div><b>Billing Address:</b> ${esc(billingAddress)}</div>` : ''}
+                ${shippingAddress ? `<div><b>Shipping Address:</b> ${esc(shippingAddress)}</div>` : '<div><b>Shipping Address:</b> No shipping address on file.</div>'}
                 ${q.party_details && q.party_details.gstin ? `<div>GSTIN: <b>${esc(q.party_details.gstin)}</b></div>` : ''}
                 ${q.party_details && q.party_details.email ? `<div>Email: ${esc(q.party_details.email)}</div>` : ''}
               </div>
@@ -10192,7 +10210,9 @@ async function viewQuoteDetail(id) {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;">
               <div><b>Quote Date:</b></div><div>${fd(q.date)}</div>
               <div><b>Expiry Date:</b></div><div>${q.expiry_date ? fd(q.expiry_date) : '—'}</div>
+              <div><b>Sales Order Number:</b></div><div>${esc(q.order_number || '—')}</div>
               <div><b>Reference#:</b></div><div>${esc(q.reference_number || '—')}</div>
+              <div><b>Branch:</b></div><div>${esc(q.branch || '—')}</div>
               <div><b>Salesperson:</b></div><div>${esc(q.salesperson || '—')}</div>
               <div><b>Project:</b></div><div>${esc(q.project_name || '—')}</div>
               <div><b>Place of Supply:</b></div><div>${esc(q.place_of_supply || '—')}</div>
@@ -10244,6 +10264,13 @@ async function viewQuoteDetail(id) {
                 <div>
                   <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Terms & Conditions</div>
                   <div style="font-size:12px;color:#334155;white-space:pre-wrap;">${esc(q.terms)}</div>
+                </div>
+              ` : ''}
+              ${q.custom_fields_data && Object.keys(q.custom_fields_data).length ? `
+                <div style="margin-top:16px;">
+                  ${Object.entries(q.custom_fields_data).filter(([name, value]) => value !== '' && value !== null && value !== false && (q.custom_fields_pdf_labels || {})[name]).map(([name, value]) => `
+                    <div style="font-size:12px;color:#334155;margin-bottom:4px;"><b>${esc(q.custom_fields_pdf_labels[name])}:</b> ${esc(value)}</div>
+                  `).join('')}
                 </div>
               ` : ''}
             </div>

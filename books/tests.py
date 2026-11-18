@@ -25,7 +25,7 @@ from books.models import (
     Bill, BusinessLocation, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
     LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
     UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project, ProjectMilestone,
-    ProjectTask, TimeLog
+    ProjectTask, TimeLog, CustomField
 )
 
 User = get_user_model()
@@ -853,6 +853,167 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(qdata['status'], 'draft')
         self.assertEqual(len(qdata['lines']), 1)
 
+    def test_quote_order_number_and_custom_fields_persist_on_update(self):
+        CustomField.objects.create(
+            organization=self.org,
+            module='quotes',
+            name='delivery_window',
+            label='Delivery Window',
+            field_type='text',
+            required=True,
+            pdf_visible=True,
+        )
+        CustomField.objects.create(
+            organization=self.org,
+            module='quotes',
+            name='seat_count',
+            label='Seat Count',
+            field_type='number',
+        )
+        self.customer.billing_address = '10 Main Street'
+        self.customer.shipping_address = '20 Warehouse Road'
+        self.customer.save()
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'expiry_date': '2026-11-30',
+            'order_number': 'SO-REF-001',
+            'reference_number': 'REF-Q-002',
+            'custom_fields_data': {'delivery_window': 'Within 14 days', 'seat_count': '8'},
+            'lines': [{
+                'item_id': self.item.id,
+                'quantity': '1',
+                'rate': '100.00',
+                'tax_rate': '18.00',
+            }],
+        }
+        created = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(created.status_code, 201)
+        quote_id = created.json()['id']
+
+        updated_payload = {
+            **payload,
+            'number': created.json()['number'],
+            'order_number': 'SO-REF-002',
+            'custom_fields_data': {'delivery_window': 'Within 7 days', 'seat_count': '12'},
+        }
+        updated = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(updated_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200)
+
+        quote_data = self.client.get(f'/api/quotes/{quote_id}/').json()
+        self.assertEqual(quote_data['order_number'], 'SO-REF-002')
+        self.assertEqual(quote_data['custom_fields_data'], {'delivery_window': 'Within 7 days', 'seat_count': '12'})
+        self.assertEqual(quote_data['custom_fields_labels'], {
+            'delivery_window': 'Delivery Window',
+            'seat_count': 'Seat Count',
+        })
+        self.assertEqual(quote_data['custom_fields_pdf_labels'], {'delivery_window': 'Delivery Window'})
+        self.assertEqual(quote_data['party_details']['billing_address'], '10 Main Street')
+        self.assertEqual(quote_data['party_details']['shipping_address'], '20 Warehouse Road')
+        self.assertEqual(quote_data['billing_address_data']['street1'], '10 Main Street')
+        self.assertEqual(quote_data['shipping_address_data']['street1'], '20 Warehouse Road')
+
+        updated_payload['custom_fields_data'] = {'delivery_window': 'Within 7 days', 'seat_count': 'many'}
+        invalid_number = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(updated_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_number.status_code, 400)
+
+        updated_payload['custom_fields_data'] = {'delivery_window': ''}
+        invalid = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(updated_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.billing_address, '10 Main Street')
+        self.assertEqual(self.customer.shipping_address, '20 Warehouse Road')
+
+    def test_quote_addresses_are_saved_on_quote_without_changing_customer(self):
+        self.customer.billing_address = '10 Main Street'
+        self.customer.billing_city = 'Kottayam'
+        self.customer.state = 'Kerala'
+        self.customer.shipping_address = '20 Warehouse Road'
+        self.customer.shipping_city = 'Kochi'
+        self.customer.shipping_state = 'Kerala'
+        self.customer.save()
+        payload = {
+            'customer_id': self.customer.id,
+            'date': '2026-10-31',
+            'expiry_date': '2026-11-30',
+            'billing_address_data': {
+                'attention': 'Accounts',
+                'country': 'India',
+                'street1': '22 Quote Street',
+                'street2': 'Suite 4',
+                'city': 'Kottayam',
+                'state': 'Kerala',
+                'pincode': '686001',
+                'phone': '9876543210',
+                'fax': '',
+            },
+            'shipping_address_data': {
+                'attention': 'Receiving',
+                'country': 'India',
+                'street1': '33 Delivery Road',
+                'street2': '',
+                'city': 'Kochi',
+                'state': 'Kerala',
+                'pincode': '682001',
+                'phone': '',
+                'fax': '',
+            },
+            'lines': [{
+                'item_id': self.item.id,
+                'quantity': '1',
+                'rate': '100.00',
+                'tax_rate': '18.00',
+            }],
+        }
+        created = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(created.status_code, 201)
+        quote_id = created.json()['id']
+
+        updated_payload = {
+            **payload,
+            'number': created.json()['number'],
+            'billing_address_data': {
+                **payload['billing_address_data'],
+                'street1': '44 Updated Quote Street',
+            },
+        }
+        updated = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(updated_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200)
+
+        quote_data = self.client.get(f'/api/quotes/{quote_id}/').json()
+        self.assertEqual(quote_data['billing_address_data']['street1'], '44 Updated Quote Street')
+        self.assertEqual(quote_data['shipping_address_data'], payload['shipping_address_data'])
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.billing_address, '10 Main Street')
+        self.assertEqual(self.customer.shipping_address, '20 Warehouse Road')
+
+        payload_without_addresses = {key: value for key, value in updated_payload.items() if key not in ('billing_address_data', 'shipping_address_data')}
+        preserved = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(payload_without_addresses),
+            content_type='application/json',
+        )
+        self.assertEqual(preserved.status_code, 200)
+        quote_data = self.client.get(f'/api/quotes/{quote_id}/').json()
+        self.assertEqual(quote_data['billing_address_data']['street1'], '44 Updated Quote Street')
+        self.assertEqual(quote_data['shipping_address_data'], payload['shipping_address_data'])
+
     def test_quote_actions_send_accept_decline(self):
         quote = Quote.objects.create(
             organization=self.org,
@@ -895,6 +1056,11 @@ class TestQuoteModule(BaseAccountingTestCase):
         payload = {
             'customer_id': self.customer.id,
             'date': '2026-10-31',
+            'order_number': 'SO-QUOTE-001',
+            'branch': 'Kottayam',
+            'salesperson': 'Alex Doe',
+            'project_name': 'Migration Work',
+            'subject': 'Quote conversion metadata',
             'lines': [
                 {
                     'item_id': self.item.id,
@@ -921,6 +1087,11 @@ class TestQuoteModule(BaseAccountingTestCase):
         self.assertEqual(len(inv_data['lines']), 1)
         self.assertEqual(inv_data['lines'][0]['item'], self.item.id)
         self.assertEqual(Decimal(str(inv_data['lines'][0]['quantity'])), Decimal('3'))
+        self.assertEqual(inv_data['order_number'], 'SO-QUOTE-001')
+        self.assertEqual(inv_data['salesperson'], 'Alex Doe')
+        self.assertEqual(inv_data['project_name'], 'Migration Work')
+        self.assertEqual(inv_data['subject'], 'Quote conversion metadata')
+        self.assertEqual(inv_data['branch'], 'Kottayam')
 
         q_res = self.client.get(f'/api/quotes/{quote_id}/')
         self.assertEqual(q_res.json()['status'], 'invoiced')
@@ -929,6 +1100,10 @@ class TestQuoteModule(BaseAccountingTestCase):
         payload = {
             'customer_id': self.customer.id,
             'date': '2026-10-31',
+            'order_number': 'SO-QUOTE-002',
+            'salesperson': 'Sam Doe',
+            'project_name': 'Implementation',
+            'subject': 'Sales order conversion metadata',
             'lines': [
                 {
                     'item_id': self.item.id,
@@ -953,8 +1128,26 @@ class TestQuoteModule(BaseAccountingTestCase):
         so_data = so_res.json()
         self.assertEqual(so_data['customer_id'], self.customer.id)
         self.assertEqual(len(so_data['lines']), 1)
+        self.assertEqual(so_data['order_number'], 'SO-QUOTE-002')
+        self.assertEqual(so_data['salesperson'], 'Sam Doe')
+        self.assertEqual(so_data['project_name'], 'Implementation')
+        self.assertEqual(so_data['subject'], 'Sales order conversion metadata')
         self.assertEqual(so_data['lines'][0]['item'], self.item.id)
         self.assertEqual(Decimal(str(so_data['lines'][0]['quantity'])), Decimal('5'))
+        updated_so = self.client.put(
+            f'/api/sales-orders/{so_id}/',
+            data=json.dumps({
+                'salesperson': 'Updated Sam',
+                'project_name': 'Updated Implementation',
+                'subject': 'Updated sales order subject',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(updated_so.status_code, 200)
+        updated_so_data = self.client.get(f'/api/sales-orders/{so_id}/').json()
+        self.assertEqual(updated_so_data['salesperson'], 'Updated Sam')
+        self.assertEqual(updated_so_data['project_name'], 'Updated Implementation')
+        self.assertEqual(updated_so_data['subject'], 'Updated sales order subject')
 
         q_res = self.client.get(f'/api/quotes/{quote_id}/')
         self.assertEqual(q_res.json()['status'], 'ordered')

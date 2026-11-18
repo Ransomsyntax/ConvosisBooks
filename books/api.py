@@ -2328,7 +2328,7 @@ class DocResource(Resource):
     def extra_detail(self, o):
         return {}
 
-    def extra_clean(self, c, user_org=None):
+    def extra_clean(self, c, user_org=None, user=None):
         return {}
 
     def parse(self, data, user=None, user_org=None):
@@ -2378,7 +2378,7 @@ class DocResource(Resource):
             head['signed_by'] = str(data.get('signed_by') or '')
         if 'signature_title' in data:
             head['signature_title'] = str(data.get('signature_title') or '')
-        head.update(self.extra_clean(c, user_org=user_org))
+        head.update(self.extra_clean(c, user_org=user_org, user=user))
         c.done()
         return head, parse_lines(data.get('lines'), org=user_org)
 
@@ -2462,6 +2462,10 @@ class DocResource(Resource):
 
     def update(self, obj, data, user):
         user_org = obj.organization or get_user_org(user)
+        if hasattr(obj, 'custom_fields_data'):
+            previous_custom_fields = obj.custom_fields_data or {}
+            data.setdefault('custom_fields_data', previous_custom_fields)
+            data['_previous_custom_fields_data'] = previous_custom_fields
         services.check_transaction_lock(obj.date, org=user_org)
         if isinstance(obj, Invoice) and obj.source_delivery_challan_id:
             raise ApiError(409, 'Edit the delivery challan and recreate its draft invoice to preserve the source quantities.')
@@ -2592,7 +2596,7 @@ class InvoiceResource(DocResource):
     def get_template_sample(self):
         return ['INV-00101', 'Acme Infotech Ltd', '2026-10-15', '2026-11-14', 'Ergonomic Mesh Chair', 'Ergonomic office chair with lumbar support', '940310', '2', '8500.00', '18.00', 'Thanks for your business.']
 
-    def extra_clean(self, c, user_org=None):
+    def extra_clean(self, c, user_org=None, user=None):
         return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
 
     def extra_detail(self, o):
@@ -2698,7 +2702,7 @@ class RetainerInvoiceResource(DocResource):
                 ('Status', 'status'), ('Taxable', 'subtotal'), ('Total', 'total'),
                 ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
 
-    def extra_clean(self, c, user_org=None):
+    def extra_clean(self, c, user_org=None, user=None):
         res = {
             'terms': c.text('terms_conditions' if 'terms_conditions' in c.d else 'terms', max_len=2000),
             'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60)
@@ -2943,7 +2947,71 @@ class QuoteResource(DocResource):
     def get_template_sample(self):
         return ['EST-00050', 'Acme Infotech Ltd', '2026-10-12', '2026-11-12', 'Consulting Services', 'Software audit and advisory', '1', '45000.00', '18.00', 'Valid for 30 days']
 
-    def extra_clean(self, c, user_org=None):
+    @staticmethod
+    def _customer_address_snapshot(customer, side):
+        if not customer:
+            return {}
+        if side == 'billing':
+            return {
+                'attention': customer.billing_attention,
+                'country': customer.billing_country,
+                'street1': customer.billing_address,
+                'street2': '',
+                'city': customer.billing_city,
+                'state': customer.state,
+                'pincode': customer.billing_pincode,
+                'phone': customer.billing_phone or customer.phone,
+                'fax': '',
+            }
+        return {
+            'attention': customer.shipping_attention,
+            'country': customer.shipping_country,
+            'street1': customer.shipping_address,
+            'street2': '',
+            'city': customer.shipping_city,
+            'state': customer.shipping_state,
+            'pincode': customer.shipping_pincode,
+            'phone': customer.shipping_phone or customer.phone,
+            'fax': '',
+        }
+
+    @staticmethod
+    def _clean_quote_address(c, key, fallback):
+        fields = {
+            'attention': 150,
+            'country': 100,
+            'street1': 1000,
+            'street2': 500,
+            'city': 100,
+            'state': 100,
+            'pincode': 20,
+            'phone': 30,
+            'fax': 30,
+        }
+        value = c.d.get(key, fallback)
+        if not isinstance(value, dict):
+            c.err(key, 'Address details must be an object.')
+            return {}
+        cleaned = {}
+        for field, max_length in fields.items():
+            field_value = value.get(field, '')
+            if field_value is None:
+                field_value = ''
+            if not isinstance(field_value, (str, int, float)):
+                c.err(key, 'Address fields must contain text values.')
+                continue
+            field_value = str(field_value).strip()
+            if len(field_value) > max_length:
+                c.err(key, f'{field.replace("_", " ").title()} must be {max_length} characters or fewer.')
+                continue
+            cleaned[field] = field_value
+        return cleaned
+
+    def extra_clean(self, c, user_org=None, user=None):
+        customer_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+        customer = Customer.objects.filter(pk=customer_id, organization=user_org).first() if customer_id and user_org else None
+        billing_fallback = self._customer_address_snapshot(customer, 'billing')
+        shipping_fallback = self._customer_address_snapshot(customer, 'shipping')
         tds_val = c.d.get('tds_tcs_tax')
         if isinstance(tds_val, str) and ('%' in tds_val or '(' in tds_val):
             import re
@@ -2952,8 +3020,68 @@ class QuoteResource(DocResource):
                 c.d['tds_tcs_tax'] = m.group(1)
             else:
                 c.d['tds_tcs_tax'] = '0.00'
+        values = c.d.get('custom_fields_data', {})
+        previous_values = c.d.get('_previous_custom_fields_data', {})
+        if not isinstance(values, dict):
+            c.err('custom_fields_data', 'Custom field values must be an object.')
+            values = {}
+        if not isinstance(previous_values, dict):
+            previous_values = {}
+        custom_fields = {}
+        if user_org:
+            for field in CustomField.objects.filter(
+                organization=user_org, module='quotes', active=True
+            ).order_by('display_order', 'label', 'id'):
+                previous_value = previous_values.get(field.name, previous_values.get(field.label, ''))
+                value = values.get(field.name, values.get(field.label, previous_value))
+                if field.hidden or not field.form_visible or field.read_only or not _custom_field_role_allows(field, user, 'edit'):
+                    if field.name in previous_values or field.label in previous_values:
+                        value = previous_value
+                    else:
+                        value = field.default_value
+                        if isinstance(value, dict) and 'value' in value:
+                            value = value['value']
+                        value = '' if value in ({}, None) else value
+                if field.field_type == 'checkbox':
+                    if isinstance(value, bool):
+                        checked = value
+                    elif value in (None, '', 'false', 'False', '0', 0):
+                        checked = False
+                    elif value in ('true', 'True', '1', 1):
+                        checked = True
+                    else:
+                        c.err(f'cf__{field.name}', f'Enter a valid value for {field.label}.')
+                        continue
+                    if field.required and not checked:
+                        c.err(f'cf__{field.name}', f'{field.label} is required.')
+                    custom_fields[field.name] = checked
+                    continue
+                value = '' if value is None else str(value).strip()
+                if field.required and not value:
+                    c.err(f'cf__{field.name}', f'{field.label} is required.')
+                    continue
+                if value and field.field_type == 'number':
+                    try:
+                        if not Decimal(value).is_finite():
+                            raise ValueError
+                    except (ArithmeticError, ValueError):
+                        c.err(f'cf__{field.name}', f'Enter a valid number for {field.label}.')
+                        continue
+                if value and field.field_type == 'date':
+                    try:
+                        datetime.date.fromisoformat(value)
+                    except ValueError:
+                        c.err(f'cf__{field.name}', f'Enter a valid date for {field.label}.')
+                        continue
+                if value and field.field_type == 'select':
+                    choices = [choice.strip() for choice in field.options.split(',') if choice.strip()]
+                    if value not in choices:
+                        c.err(f'cf__{field.name}', f'Select a valid value for {field.label}.')
+                        continue
+                custom_fields[field.name] = value[:1000]
         return {
             'reference_number': c.text('reference_number', max_len=100) or '',
+            'custom_fields_data': custom_fields,
             'expiry_date': c.date('expiry_date'),
             'salesperson': c.text('salesperson', max_len=120) or '',
             'project_name': c.text('project_name', max_len=150) or '',
@@ -2963,11 +3091,36 @@ class QuoteResource(DocResource):
             'tds_tcs_tax': c.number('tds_tcs_tax', lo=0, default=Decimal('0.00')),
             'adjustment': c.number('adjustment', default=Decimal('0.00')),
             'adjustment_label': c.text('adjustment_label', max_len=50) or 'Adjustment',
+            'billing_address_data': self._clean_quote_address(c, 'billing_address_data', billing_fallback),
+            'shipping_address_data': self._clean_quote_address(c, 'shipping_address_data', shipping_fallback),
         }
+
+    def update(self, obj, data, user):
+        data = dict(data)
+        if 'billing_address_data' not in data:
+            data['billing_address_data'] = obj.billing_address_data or self._customer_address_snapshot(obj.customer, 'billing')
+        if 'shipping_address_data' not in data:
+            data['shipping_address_data'] = obj.shipping_address_data or self._customer_address_snapshot(obj.customer, 'shipping')
+        return super().update(obj, data, user)
 
     def extra_detail(self, o):
         return {
             'reference_number': o.reference_number,
+            'billing_address_data': o.billing_address_data or {},
+            'shipping_address_data': o.shipping_address_data or {},
+            'custom_fields_data': o.custom_fields_data or {},
+            'custom_fields_labels': {
+                field.name: field.label
+                for field in CustomField.objects.filter(
+                    organization=o.organization, module='quotes'
+                )
+            },
+            'custom_fields_pdf_labels': {
+                field.name: field.label
+                for field in CustomField.objects.filter(
+                    organization=o.organization, module='quotes', pdf_visible=True
+                )
+            },
             'expiry_date': o.expiry_date,
             'salesperson': o.salesperson,
             'project_name': o.project_name,
@@ -3050,9 +3203,12 @@ class QuoteResource(DocResource):
                 sgst=obj.sgst,
                 igst=obj.igst,
                 total=obj.total,
-                order_number=obj.reference_number or obj.number,
+                order_number=obj.order_number or obj.reference_number or obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                salesperson=obj.salesperson,
+                project_name=obj.project_name,
+                subject=obj.subject,
                 notes=obj.notes,
                 terms=obj.terms
             )
@@ -3114,9 +3270,12 @@ class QuoteResource(DocResource):
                 sgst=obj.sgst,
                 igst=obj.igst,
                 total=obj.total,
-                order_number=obj.reference_number or obj.number,
+                order_number=obj.order_number or obj.reference_number or obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                salesperson=obj.salesperson,
+                project_name=obj.project_name,
+                subject=obj.subject,
                 notes=obj.notes,
                 terms=obj.terms
             )
@@ -3156,7 +3315,7 @@ class BillResource(DocResource):
     def get_template_sample(self):
         return ['BILL-00201', 'Reliable Hardware Supplies', '2026-10-10', '2026-11-09', 'Ergonomic Mesh Chair', 'Raw frame materials', '940310', '10', '5200.00', '18.00', 'Standard supplies bill']
 
-    def extra_clean(self, c, user_org=None):
+    def extra_clean(self, c, user_org=None, user=None):
         return {'vendor_ref': c.text('vendor_ref', max_len=60), 'order_number': c.text('order_number', max_len=60)}
 
     def extra_detail(self, o):
@@ -5809,6 +5968,9 @@ class SalesOrderResource(Resource):
             'date': o.date, 'due_date': o.due_date,
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'salesperson': getattr(o, 'salesperson', '') or '',
+            'project_name': getattr(o, 'project_name', '') or '',
+            'subject': getattr(o, 'subject', '') or '',
             'expected_shipment_date': o.expected_shipment_date,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
@@ -5892,6 +6054,9 @@ class SalesOrderResource(Resource):
         order_num = c.text('reference_number', max_len=60) or c.text('order_number', max_len=60) or ''
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        salesperson = c.text('salesperson', max_len=120)
+        project_name = c.text('project_name', max_len=150)
+        subject = c.text('subject', max_len=2000)
         pos = c.text('place_of_supply', max_len=60) or cust.state or (user_org.state if user_org else Organization.get().state)
         status = c.choice('status', ['draft', 'confirmed'], default='confirmed')
         c.done()
@@ -5924,7 +6089,8 @@ class SalesOrderResource(Resource):
             place_of_supply=pos,
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
-            order_number=order_num, status=status, branch=branch, location=location
+            order_number=order_num, status=status, branch=branch, location=location,
+            salesperson=salesperson, project_name=project_name, subject=subject
         )
         lines = parse_lines(data.get('lines', []), org=user_org)
         intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
@@ -5972,6 +6138,12 @@ class SalesOrderResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+        if 'salesperson' in data:
+            obj.salesperson = c.text('salesperson', max_len=120)
+        if 'project_name' in data:
+            obj.project_name = c.text('project_name', max_len=150)
+        if 'subject' in data:
+            obj.subject = c.text('subject', max_len=2000)
         if 'status' in data and data['status']:
             obj.status = c.choice('status', ['draft', 'confirmed', 'closed', 'void'], default=obj.status)
         if 'tax_pricing_type' in data:

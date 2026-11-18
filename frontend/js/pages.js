@@ -7653,6 +7653,87 @@ async function cashFlowPage(root) {
   } catch (e) { $('#cf-container', root).innerHTML = errBox(e.message, true); }
 }
 
+async function customerStatementPage(root) {
+  PAGE.reload = () => customerStatementPage(root);
+  root.innerHTML = `
+    <div class="bc">Home / Reports / Customer Statements</div>
+    <div class="hd">
+      <div><h1>Customer Statements</h1><div class="sub">Opening balance, invoices, payments, credit notes and closing balance</div></div>
+      <div class="act">
+        <button class="btn" id="cs-export-csv" type="button"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+        <button class="btn" id="cs-email" type="button"><i class="fa-solid fa-envelope"></i> Email</button>
+        <button class="btn" id="cs-print" type="button"><i class="fa-solid fa-print"></i> Print / PDF</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px;padding:14px;">
+      <div class="tb">
+        <select class="in" id="cs-customer" style="max-width:280px;"><option value="">Select customer</option></select>
+        <input class="in" type="date" id="cs-start" value="${APP.today.slice(0, 8)}01" style="max-width:180px;">
+        <input class="in" type="date" id="cs-end" value="${APP.today}" style="max-width:180px;">
+      </div>
+      <div class="tw" id="cs-table">${spinner}</div>
+    </div>
+  `;
+
+  const customerSelect = $('#cs-customer', root);
+  const startInput = $('#cs-start', root);
+  const endInput = $('#cs-end', root);
+  let currentStatement = null;
+
+  try {
+    const customers = await api('customers/?page_size=500');
+    (customers.results || []).forEach(customer => {
+      customerSelect.insertAdjacentHTML('beforeend',
+        `<option value="${customer.id}">${esc(customer.name)}</option>`);
+    });
+  } catch (error) {
+    $('#cs-table', root).innerHTML = errBox(error.message, true);
+  }
+
+  async function loadStatement() {
+    if (!customerSelect.value) {
+      $('#cs-table', root).innerHTML = '<div class="empty">Select a customer to generate the statement.</div>';
+      return;
+    }
+    $('#cs-table', root).innerHTML = spinner;
+    try {
+      currentStatement = await api(`reports/customer-statement/?customer=${encodeURIComponent(customerSelect.value)}&start=${encodeURIComponent(startInput.value)}&end=${encodeURIComponent(endInput.value)}`);
+      if (!root.isConnected) return;
+      const rows = currentStatement.results || [];
+      $('#cs-table', root).innerHTML = `
+        <div style="display:flex;gap:12px;margin-bottom:12px;">
+          <div class="card" style="padding:12px;flex:1;"><div class="sub">Opening Balance</div><b>${inr(currentStatement.opening_balance || 0)}</b></div>
+          <div class="card" style="padding:12px;flex:1;"><div class="sub">Outstanding Invoices</div><b>${inr(currentStatement.outstanding_total || 0)}</b></div>
+          <div class="card" style="padding:12px;flex:1;"><div class="sub">Closing Balance</div><b>${inr(currentStatement.closing_balance || 0)}</b></div>
+        </div>
+        <table><thead><tr><th>Date</th><th>Type</th><th>Number</th><th>Reference</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead><tbody>
+          ${rows.map(row => `<tr><td>${esc(fd(row.date))}</td><td>${esc(row.type)}</td><td>${esc(row.number)}</td><td>${esc(row.reference || '—')}</td><td class="r">${inr(row.debit || 0)}</td><td class="r">${inr(row.credit || 0)}</td><td class="r">${inr(row.balance || 0)}</td></tr>`).join('') || '<tr><td colspan="7" class="sub">No transactions found.</td></tr>'}
+        </tbody></table>
+      `;
+    } catch (error) {
+      $('#cs-table', root).innerHTML = errBox(error.message, true);
+    }
+  }
+
+  customerSelect.addEventListener('change', loadStatement);
+  startInput.addEventListener('change', loadStatement);
+  endInput.addEventListener('change', loadStatement);
+  $('#cs-export-csv', root).addEventListener('click', () => exportTableToCsv($('#cs-table', root), `customer_statement_${iso(new Date())}.csv`));
+  $('#cs-print', root).addEventListener('click', () => window.print());
+  $('#cs-email', root).addEventListener('click', async () => {
+    if (!customerSelect.value) return toast('Select a customer first.', 'err');
+    try {
+      await api(`reports/customer-statement/email/?start=${encodeURIComponent(startInput.value)}&end=${encodeURIComponent(endInput.value)}`, {
+        method: 'POST',
+        body: JSON.stringify({customer: customerSelect.value}),
+      });
+      toast('Customer statement email sent.', 'ok');
+    } catch (error) {
+      toast(error.message || 'Failed to send customer statement.', 'err');
+    }
+  });
+}
+
 function reportsCenterPage(root) {
   const reportingCards = [
     { title: 'Stock Movement', sub: 'Comprehensive stock movement history, transfers, stock in/out, and warehouse tracking', href: '#/reports/stock-movement', icon: '🔄' },
@@ -7668,6 +7749,16 @@ function reportsCenterPage(root) {
     { title: 'Business Overview (P&L)', sub: 'Gross profit, operating margin, net profit breakdown', href: '#/reports/business-overview', icon: '📈' },
     { title: 'Trial Balance', sub: 'Checks whether total debits and credits match in the trial balance.', href: '#/reports/accounting-reports', icon: '⚖️' },
     { title: 'Statement of Cash Flows', sub: 'Operating, investing, and financing cash flows', href: '#/reports/cash-flow-reports', icon: '💸' },
+    { title: 'Customer Statements', sub: 'Customer transactions, opening balance, credits, payments and closing balance', href: '#/reports/customer-statement', icon: '🧾' },
+    { title: 'Account Transactions', sub: 'Journal transactions for the chart of accounts with debit and credit totals', href: '#/reports/account-transactions', icon: '📒' },
+    { title: 'Day Book', sub: 'Chronological register of balanced accounting journal entries', href: '#/reports/day-book', icon: '📅' },
+    { title: 'Customer Balances', sub: 'Organization customer receivable balances and credit notes', href: '#/reports/customer-balances', icon: '👥' },
+    { title: 'Vendor Balances', sub: 'Organization vendor payable balances and vendor credits', href: '#/reports/vendor-balances', icon: '🏪' },
+    { title: 'Expense Report', sub: 'Expense amounts, taxes and project or vendor allocation', href: '#/reports/expense-report', icon: '💳' },
+    { title: 'Project Report', sub: 'Project hours, expenses, invoices and budget variance', href: '#/reports/project-report', icon: '📁' },
+    { title: 'Timesheet Report', sub: 'Timesheet hours, billability and invoice status', href: '#/reports/timesheet-report', icon: '⏱️' },
+    { title: 'Bank Reconciliation Report', sub: 'Completed reconciliation statements and differences', href: '#/reports/bank-reconciliation', icon: '🏦' },
+    { title: 'Profit by Item', sub: 'Item sales, estimated cost, profit and margin', href: '#/reports/profit-by-item', icon: '📦' },
     { title: 'Sales Reports by Customer', sub: 'Customer-wise turnover and GST breakdown', href: '#/reports/sales-reports', icon: '👥' },
     { title: 'Purchases Reports by Vendor', sub: 'Vendor bill volume and expenditure trends', href: '#/reports/purchase-reports', icon: '🛒' },
     { title: 'Accounts Receivable Aging', sub: 'Outstanding invoices bucketed by overdue duration', href: '#/reports/receivables', icon: '⏳' },

@@ -43,7 +43,7 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
                      StockMovement, SubscriptionInvoice, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
-                     Warehouse, WebhookSubscription)
+                     Warehouse, WebhookSubscription, Project, TimeLog)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
@@ -2853,6 +2853,304 @@ def general_ledger_report(account_id=None, start=None, end=None, org=None):
             })
 
     return {'start': s, 'end': e, 'accounts': ledger}
+
+def account_transactions_report(start=None, end=None, account_id=None, org=None):
+    """All journal transactions for an account or the complete chart."""
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    items = JournalItem.objects.filter(journal__organization=org, journal__date__range=(s, e)).select_related(
+        'journal', 'account'
+    ).order_by('journal__date', 'journal__id', 'id')
+    if account_id:
+        items = items.filter(account_id=account_id)
+    rows = [{
+        'date': item.journal.date,
+        'journal_number': item.journal.number,
+        'entry_type': item.journal.entry_type,
+        'reference': item.journal.reference,
+        'account_code': item.account.code,
+        'account': item.account.name,
+        'description': item.description or item.journal.notes,
+        'debit': item.debit,
+        'credit': item.credit,
+    } for item in items]
+    return {
+        'start': s,
+        'end': e,
+        'results': rows,
+        'total_debit': sum((row['debit'] for row in rows), Z),
+        'total_credit': sum((row['credit'] for row in rows), Z),
+        'count': len(rows),
+    }
+
+def day_book_report(start=None, end=None, org=None):
+    """Journal register grouped as day-book entries."""
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    journals = Journal.objects.filter(organization=org, date__range=(s, e)).prefetch_related(
+        'items', 'items__account'
+    ).order_by('date', 'id')
+    rows = []
+    for journal in journals:
+        items = list(journal.items.all())
+        debit = sum((item.debit for item in items), Z)
+        credit = sum((item.credit for item in items), Z)
+        rows.append({
+            'date': journal.date,
+            'journal_number': journal.number,
+            'entry_type': journal.entry_type,
+            'reference': journal.reference,
+            'description': journal.notes,
+            'accounts': ', '.join(item.account.name for item in items),
+            'debit': debit,
+            'credit': credit,
+            'balanced': debit == credit,
+        })
+    return {
+        'start': s,
+        'end': e,
+        'results': rows,
+        'total_debit': sum((row['debit'] for row in rows), Z),
+        'total_credit': sum((row['credit'] for row in rows), Z),
+        'count': len(rows),
+    }
+
+def customer_statement_report(customer_id, start=None, end=None, org=None):
+    """Customer statement with opening, invoices, payments, credits and closing balance."""
+    customer = Customer.objects.filter(organization=org, pk=customer_id).first()
+    if not customer:
+        raise ApiError(404, 'Customer not found.')
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    opening = customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
+
+    opening_invoices = invoice_qs(org).filter(customer=customer, date__lt=s).exclude(status='void')
+    opening_credits = CreditNote.objects.filter(organization=org, customer=customer, date__lt=s).exclude(status='void')
+    opening_payments = PaymentReceived.objects.filter(organization=org, customer=customer, date__lt=s)
+    opening += sum((i.balance_due for i in opening_invoices), Z)
+    opening -= sum((c.total for c in opening_credits), Z)
+    opening -= sum((p.amount for p in opening_payments), Z)
+
+    rows = []
+    for invoice in invoice_qs(org).filter(customer=customer, date__range=(s, e)).exclude(status='void'):
+        rows.append({'date': invoice.date, 'type': 'Invoice', 'number': invoice.number, 'reference': invoice.order_number,
+                     'debit': invoice.total, 'credit': Z, 'balance': Z})
+    for payment in PaymentReceived.objects.filter(organization=org, customer=customer, date__range=(s, e)):
+        rows.append({'date': payment.date, 'type': 'Payment', 'number': payment.number, 'reference': payment.reference,
+                     'debit': Z, 'credit': payment.amount, 'balance': Z})
+    for credit in CreditNote.objects.filter(organization=org, customer=customer, date__range=(s, e)).exclude(status='void'):
+        rows.append({'date': credit.date, 'type': 'Credit Note', 'number': credit.number, 'reference': credit.reason,
+                     'debit': Z, 'credit': credit.total, 'balance': Z})
+    rows.sort(key=lambda row: (row['date'], row['type'], row['number']))
+
+    balance = opening
+    for row in rows:
+        balance += row['debit'] - row['credit']
+        row['balance'] = balance
+
+    outstanding = []
+    for invoice in invoice_qs(org).filter(customer=customer, date__lte=e).exclude(status__in=('draft', 'void')):
+        balance_due = invoice.balance_due
+        if balance_due > Z:
+            outstanding.append({'number': invoice.number, 'date': invoice.date, 'due_date': invoice.due_date,
+                                'total': invoice.total, 'paid': invoice.paid_amount, 'balance': balance_due})
+    return {
+        'customer': {'id': customer.pk, 'name': customer.name, 'email': customer.email, 'gstin': customer.gstin},
+        'start': s,
+        'end': e,
+        'opening_balance': opening,
+        'closing_balance': balance,
+        'results': rows,
+        'outstanding_invoices': outstanding,
+        'outstanding_total': sum((row['balance'] for row in outstanding), Z),
+        'count': len(rows),
+    }
+
+def customer_balances_report(start=None, end=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    rows = []
+    for customer in Customer.objects.filter(organization=org, active=True).order_by('name'):
+        invoices = invoice_qs(org).filter(customer=customer, date__lte=e).exclude(status__in=('draft', 'void'))
+        credits = CreditNote.objects.filter(organization=org, customer=customer, date__lte=e).exclude(status='void')
+        invoice_balance = sum((invoice.balance_due for invoice in invoices), Z)
+        credit_balance = sum((credit.total for credit in credits), Z)
+        opening = customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
+        rows.append({'customer_id': customer.pk, 'customer': customer.name, 'opening_balance': opening,
+                     'invoice_balance': invoice_balance, 'credit_notes': credit_balance,
+                     'closing_balance': opening + invoice_balance - credit_balance})
+    return {'start': s, 'end': e, 'results': rows,
+            'total': sum((row['closing_balance'] for row in rows), Z), 'count': len(rows)}
+
+def vendor_balances_report(start=None, end=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    rows = []
+    for vendor in Vendor.objects.filter(organization=org, active=True).order_by('name'):
+        bills = bill_qs(org).filter(vendor=vendor, date__lte=e).exclude(status__in=('draft', 'void'))
+        credits = VendorCredit.objects.filter(organization=org, vendor=vendor, date__lte=e).exclude(status='void')
+        bill_balance = sum((bill.balance_due for bill in bills), Z)
+        credit_balance = sum((credit.total for credit in credits), Z)
+        opening = vendor.opening_balance if vendor.opening_balance_type == 'credit' else -vendor.opening_balance
+        rows.append({'vendor_id': vendor.pk, 'vendor': vendor.name, 'opening_balance': opening,
+                     'bill_balance': bill_balance, 'vendor_credits': credit_balance,
+                     'closing_balance': opening + bill_balance - credit_balance})
+    return {'start': s, 'end': e, 'results': rows,
+            'total': sum((row['closing_balance'] for row in rows), Z), 'count': len(rows)}
+
+def expense_report(start=None, end=None, account_id=None, project_id=None, vendor_id=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    qs = Expense.objects.filter(organization=org, date__range=(s, e)).select_related(
+        'expense_account', 'vendor', 'project'
+    )
+    if account_id:
+        qs = qs.filter(expense_account_id=account_id)
+    if project_id:
+        qs = qs.filter(project_id=project_id)
+    if vendor_id:
+        qs = qs.filter(vendor_id=vendor_id)
+    rows = [{
+        'date': expense.date,
+        'number': expense.number,
+        'expense_account': expense.expense_account.name,
+        'vendor': expense.vendor.name if expense.vendor else '',
+        'project': expense.project.name if expense.project else '',
+        'reference': expense.reference,
+        'amount': expense.amount,
+        'tax': expense.tax_amount,
+        'total': expense.total,
+    } for expense in qs.order_by('date', 'id')]
+    return {'start': s, 'end': e, 'results': rows,
+            'total_amount': sum((row['amount'] for row in rows), Z),
+            'total_tax': sum((row['tax'] for row in rows), Z),
+            'total': sum((row['total'] for row in rows), Z), 'count': len(rows)}
+
+def project_report(start=None, end=None, project_id=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    qs = Project.objects.filter(organization=org)
+    if project_id:
+        qs = qs.filter(pk=project_id)
+    rows = []
+    for project in qs.order_by('name'):
+        logs = TimeLog.objects.filter(organization=org, project=project, date__range=(s, e))
+        billable_hours = sum((log.hours for log in logs.filter(billable=True)), Z)
+        total_hours = sum((log.hours for log in logs), Z)
+        expenses = Expense.objects.filter(organization=org, project=project, date__range=(s, e))
+        expense_total = sum((expense.total for expense in expenses), Z)
+        invoices = Invoice.objects.filter(organization=org, project=project, date__range=(s, e)).exclude(status='void')
+        invoice_total = sum((invoice.total for invoice in invoices), Z)
+        invoiced_hours = sum((log.hours for log in logs.filter(status='invoiced')), Z)
+        rows.append({
+            'project_id': project.pk,
+            'project': project.name,
+            'customer': project.customer.name if project.customer else '',
+            'budget_hours': project.budget_hours,
+            'total_hours': total_hours,
+            'billable_hours': billable_hours,
+            'invoiced_hours': invoiced_hours,
+            'expense_total': expense_total,
+            'invoice_total': invoice_total,
+            'variance_hours': project.budget_hours - total_hours,
+        })
+    return {'start': s, 'end': e, 'results': rows,
+            'total_invoice': sum((row['invoice_total'] for row in rows), Z),
+            'total_expense': sum((row['expense_total'] for row in rows), Z),
+            'count': len(rows)}
+
+def timesheet_report(start=None, end=None, project_id=None, user_id=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    qs = TimeLog.objects.filter(organization=org, date__range=(s, e)).select_related(
+        'project', 'user', 'task_record'
+    )
+    if project_id:
+        qs = qs.filter(project_id=project_id)
+    if user_id:
+        qs = qs.filter(user_id=user_id)
+    rows = [{
+        'date': log.date,
+        'project': log.project.name,
+        'task': log.task,
+        'user': log.user.get_full_name() or log.user.username if log.user else '',
+        'hours': log.hours,
+        'billable': log.billable,
+        'status': log.status,
+        'invoiced_amount': log.invoiced_amount or Z,
+    } for log in qs.order_by('date', 'id')]
+    return {'start': s, 'end': e, 'results': rows,
+            'total_hours': sum((row['hours'] for row in rows), Z),
+            'billable_hours': sum((row['hours'] for row in rows if row['billable']), Z),
+            'count': len(rows)}
+
+def bank_reconciliation_report(start=None, end=None, bank_account_id=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    qs = BankReconciliation.objects.filter(
+        organization=org, statement_date__range=(s, e)
+    ).select_related('bank_account')
+    if bank_account_id:
+        qs = qs.filter(bank_account_id=bank_account_id)
+    rows = [{
+        'statement_date': reconciliation.statement_date,
+        'reconciliation_number': reconciliation.reconciliation_number,
+        'bank_account': reconciliation.bank_account.name,
+        'statement_ending_balance': reconciliation.statement_ending_balance,
+        'book_balance': reconciliation.book_balance,
+        'cleared_balance': reconciliation.cleared_balance,
+        'difference': reconciliation.difference,
+        'cleared_count': reconciliation.cleared_count,
+        'status': reconciliation.status,
+    } for reconciliation in qs.order_by('-statement_date', '-id')]
+    return {'start': s, 'end': e, 'results': rows,
+            'total_difference': sum((row['difference'] for row in rows), Z),
+            'count': len(rows)}
+
+def profit_by_item_report(start=None, end=None, item_id=None, org=None):
+    today = timezone.localdate()
+    s = start or today.replace(day=1)
+    e = end or today
+    qs = InvoiceLine.objects.filter(
+        invoice__organization=org,
+        invoice__date__range=(s, e),
+    ).exclude(invoice__status='void').select_related('item', 'invoice')
+    if item_id:
+        qs = qs.filter(item_id=item_id)
+    grouped = {}
+    for line in qs:
+        key = line.item_id
+        if key not in grouped:
+            grouped[key] = {'item_id': line.item_id, 'item': line.item.name if line.item else line.description,
+                            'sku': line.item.sku if line.item else '', 'quantity': Z,
+                            'sales': Z, 'cost': Z}
+        grouped[key]['quantity'] += line.quantity
+        grouped[key]['sales'] += line.line_total
+        cost_per_unit = line.item.purchase_price if line.item else Z
+        grouped[key]['cost'] += line.quantity * cost_per_unit
+    rows = []
+    for row in grouped.values():
+        row['sales'] = q2(row['sales'])
+        row['cost'] = q2(row['cost'])
+        profit = q2(row['sales'] - row['cost'])
+        row['profit'] = profit
+        row['margin_pct'] = float(profit / row['sales'] * 100) if row['sales'] else 0.0
+        rows.append(row)
+    rows.sort(key=lambda row: (-row['profit'], row['item']))
+    return {'start': s, 'end': e, 'results': rows,
+            'total_sales': sum((row['sales'] for row in rows), Z),
+            'total_cost': sum((row['cost'] for row in rows), Z),
+            'total_profit': sum((row['profit'] for row in rows), Z),
+            'count': len(rows)}
 
 def profit_and_loss_report(start, end, org=None):
     """Accrual and cash operating P&L."""

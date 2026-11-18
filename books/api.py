@@ -17,6 +17,7 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
+from django.core.mail import EmailMessage
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Max, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
@@ -360,6 +361,111 @@ def parse_range(request):
     if (end.year - start.year) * 12 + end.month - start.month >= 24:
         raise ApiError(400, 'Choose a range of 24 months or less.')
     return start, end
+
+def _apply_report_listing(request, data):
+    """Apply report search, sorting and pagination without changing report totals."""
+    rows = data.get('results', [])
+    search = (request.GET.get('search') or '').strip().lower()
+    if search:
+        rows = [row for row in rows if search in json.dumps(row, cls=DjangoJSONEncoder, default=str).lower()]
+
+    sort = (request.GET.get('sort') or '').strip()
+    descending = str(request.GET.get('direction', '')).lower() == 'desc'
+    if sort and rows and sort in rows[0]:
+        rows = sorted(rows, key=lambda row: (str(row.get(sort)) if row.get(sort) is not None else ''),
+                      reverse=descending)
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+        page_size = min(500, max(1, int(request.GET.get('page_size', 100))))
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Invalid report pagination.')
+    paginator = Paginator(rows, page_size)
+    if page > paginator.num_pages:
+        page = paginator.num_pages or 1
+    page_rows = list(paginator.page(page).object_list) if paginator.count else []
+
+    result = dict(data)
+    result['results'] = page_rows
+    result['count'] = len(rows)
+    result['pagination'] = {
+        'page': page,
+        'page_size': page_size,
+        'total': paginator.count,
+        'pages': paginator.num_pages,
+    }
+    return result
+
+def _flatten_report_row(row):
+    return {str(key): value for key, value in row.items()}
+
+def _report_export_response(request, name, data):
+    export_format = (request.GET.get('export') or '').lower()
+    if export_format not in ('csv', 'xlsx', 'excel', 'pdf'):
+        return None
+
+    rows = data.get('results', [])
+    if not rows and export_format in ('csv', 'xlsx', 'excel'):
+        rows = [{key: value for key, value in data.items() if key not in ('results', 'pagination')}]
+    columns = list(rows[0].keys()) if rows else ['report']
+
+    if export_format == 'csv':
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=columns)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: str(value) if isinstance(value, (Decimal, datetime.date, datetime.datetime)) else value
+                             for key, value in _flatten_report_row(row).items()})
+        response = HttpResponse(output.getvalue(), content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="{name}.csv"'
+        return response
+
+    if export_format in ('xlsx', 'excel'):
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            raise ApiError(501, 'Excel export is not installed in the server environment.')
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = name[:31]
+        sheet.append(columns)
+        for row in rows:
+            sheet.append([row.get(column) for column in columns])
+        output = io.BytesIO()
+        workbook.save(output)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='application/vnd.openpyxlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{name}.xlsx"'
+        return response
+
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    except ImportError:
+        raise ApiError(501, 'PDF export is not installed in the server environment.')
+    output = io.BytesIO()
+    document = SimpleDocTemplate(output, pagesize=landscape(A4), title=name)
+    styles = getSampleStyleSheet()
+    elements = [Paragraph(name.replace('-', ' ').title(), styles['Title'])]
+    table_data = [columns]
+    table_data.extend([[str(row.get(column, '')) for column in columns] for row in rows])
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+    ]))
+    elements.append(table)
+    document.build(elements)
+    response = HttpResponse(output.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{name}.pdf"'
+    return response
 
 class Resource:
     name = ''
@@ -10405,6 +10511,58 @@ def health_view(request):
     })
 
 @api_view
+def customer_statement_email_view(request):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    data = body(request)
+    customer_id = data.get('customer')
+    if not customer_id:
+        raise ApiError(400, 'Customer selection is required.')
+    try:
+        customer_id = int(customer_id)
+    except (TypeError, ValueError):
+        raise ApiError(400, 'Invalid customer selection.')
+
+    start, end = parse_range(request)
+    user_org = get_user_org(request.user)
+    statement = services.customer_statement_report(customer_id, start, end, org=user_org)
+    recipient = (data.get('email') or statement['customer'].get('email') or '').strip()
+    if not recipient:
+        raise ApiError(400, 'Customer does not have an email address.')
+
+    lines = [
+        f"Customer statement for {statement['customer']['name']}",
+        f"Period: {start} to {end}",
+        f"Opening balance: {statement['opening_balance']}",
+        f"Closing balance: {statement['closing_balance']}",
+        f"Outstanding invoices: {statement['outstanding_total']}",
+    ]
+    message = EmailMessage(
+        subject=f"Customer statement - {statement['customer']['name']} - {start} to {end}",
+        body='\\n'.join(lines),
+        to=[recipient],
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Date', 'Type', 'Number', 'Reference', 'Debit', 'Credit', 'Balance'])
+    for row in statement['results']:
+        writer.writerow([
+            row['date'], row['type'], row['number'], row['reference'],
+            row['debit'], row['credit'], row['balance'],
+        ])
+    message.attach(
+        f"customer_statement_{customer_id}_{start}_{end}.csv",
+        output.getvalue(),
+        'text/csv',
+    )
+    sent = message.send()
+    if sent != 1:
+        raise ApiError(502, 'Customer statement email could not be sent.')
+    return j({'status': 'sent', 'recipient': recipient,
+              'opening_balance': statement['opening_balance'],
+              'closing_balance': statement['closing_balance']})
+
+@api_view
 def reports_view(request, name):
     if request.method != 'GET':
         raise ApiError(405, 'Method not allowed.')
@@ -10425,6 +10583,97 @@ def reports_view(request, name):
         return j(services.balance_sheet_report(as_of_date, org=user_org))
     elif name == 'cash-flow':
         return j(services.cash_flow_report(start, end, org=user_org))
+    elif name == 'account-transactions':
+        account_id = request.GET.get('account')
+        data = services.account_transactions_report(
+            start, end,
+            int(account_id) if account_id and account_id.isdigit() else None,
+            org=user_org,
+        )
+        data = _apply_report_listing(request, data)
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'day-book':
+        data = _apply_report_listing(
+            request,
+            services.day_book_report(start, end, org=user_org),
+        )
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'customer-statement':
+        customer_id = request.GET.get('customer')
+        if not customer_id or not customer_id.isdigit():
+            raise ApiError(400, 'Customer selection is required.')
+        data = services.customer_statement_report(
+            int(customer_id), start, end, org=user_org
+        )
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'customer-balances':
+        data = _apply_report_listing(
+            request,
+            services.customer_balances_report(start, end, org=user_org),
+        )
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'vendor-balances':
+        data = _apply_report_listing(
+            request,
+            services.vendor_balances_report(start, end, org=user_org),
+        )
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'expense-report':
+        account_id = request.GET.get('account')
+        project_id = request.GET.get('project')
+        vendor_id = request.GET.get('vendor')
+        data = _apply_report_listing(request, services.expense_report(
+            start, end,
+            int(account_id) if account_id and account_id.isdigit() else None,
+            int(project_id) if project_id and project_id.isdigit() else None,
+            int(vendor_id) if vendor_id and vendor_id.isdigit() else None,
+            org=user_org,
+        ))
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'project-report':
+        project_id = request.GET.get('project')
+        data = _apply_report_listing(request, services.project_report(
+            start, end,
+            int(project_id) if project_id and project_id.isdigit() else None,
+            org=user_org,
+        ))
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'timesheet-report':
+        project_id = request.GET.get('project')
+        user_id = request.GET.get('user')
+        data = _apply_report_listing(request, services.timesheet_report(
+            start, end,
+            int(project_id) if project_id and project_id.isdigit() else None,
+            int(user_id) if user_id and user_id.isdigit() else None,
+            org=user_org,
+        ))
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'bank-reconciliation':
+        bank_account_id = request.GET.get('bank_account')
+        data = _apply_report_listing(request, services.bank_reconciliation_report(
+            start, end,
+            int(bank_account_id) if bank_account_id and bank_account_id.isdigit() else None,
+            org=user_org,
+        ))
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
+    elif name == 'profit-by-item':
+        item_id = request.GET.get('item')
+        data = _apply_report_listing(request, services.profit_by_item_report(
+            start, end,
+            int(item_id) if item_id and item_id.isdigit() else None,
+            org=user_org,
+        ))
+        export = _report_export_response(request, name, data)
+        return export if export is not None else j(data)
     elif name == 'gstr1':
         data = services.gstr1_report(start, end, org=user_org)
         if request.GET.get('export') == 'json':

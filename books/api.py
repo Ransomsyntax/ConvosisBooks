@@ -50,7 +50,9 @@ from .models import (
     PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
     SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, OTPVerification, Vendor, VendorCredit,
-    VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule
+    VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule,
+    FixedAsset, DepreciationEntry, Budget, RecurringBill, RecurringExpense, ExchangeRate,
+    MileageExpenseClaim, BalanceNetting, BillOfEntry
 )
 from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
 
@@ -9727,6 +9729,438 @@ class EmployeeResource(Resource):
         raise ApiError(405, 'Method not allowed.')
 
 
+class FixedAssetResource(Resource):
+    name = 'fixed-assets'
+    model = FixedAsset
+    search_fields = ('name', 'code', 'category')
+    default_ordering = ('name',)
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'name': o.name, 'code': o.code, 'category': o.category,
+            'purchase_date': o.purchase_date, 'purchase_cost': o.purchase_cost,
+            'residual_value': o.residual_value, 'useful_life_months': o.useful_life_months,
+            'depreciation_method': o.depreciation_method, 'depreciation_frequency': o.depreciation_frequency,
+            'accumulated_depreciation': o.accumulated_depreciation, 'book_value': o.book_value,
+            'status': o.status, 'disposal_date': o.disposal_date,
+            'disposal_amount': o.disposal_amount, 'disposal_details': o.disposal_details,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        name = c.text('name', required=True, max_len=150)
+        code = c.text('code', required=True, max_len=60)
+        category = c.text('category', max_len=100)
+        purchase_date = c.date('purchase_date', required=True)
+        purchase_cost = c.number('purchase_cost', required=True, lo=Decimal('0'))
+        residual = c.number('residual_value', lo=Decimal('0'), default=Decimal('0'))
+        useful_life = c.integer('useful_life_months', lo=1, hi=1200, default=12)
+        method = c.choice('depreciation_method', ['straight_line', 'reducing_balance'], default='straight_line')
+        frequency = c.choice('depreciation_frequency', ['monthly', 'quarterly', 'yearly'], default='monthly')
+        c.done()
+        org = get_user_org(user)
+        if FixedAsset.objects.filter(organization=org, code__iexact=code).exists():
+            raise ApiError(409, 'A fixed asset with this code already exists.')
+        asset = FixedAsset.objects.create(
+            organization=org, name=name, code=code, category=category,
+            purchase_date=purchase_date, purchase_cost=purchase_cost,
+            residual_value=residual, useful_life_months=useful_life,
+            depreciation_method=method, depreciation_frequency=frequency,
+            book_value=purchase_cost,
+        )
+        services.log_audit(user, 'create', 'FixedAsset', asset.pk, f"Created fixed asset {asset.name}",
+                           org=org, module='accounting', submodule='fixed_assets')
+        return asset
+
+    def action(self, request, obj, name):
+        check_permission(request, resource_name='fixed_assets', action_name='edit')
+        if name == 'depreciate':
+            d = body(request)
+            period_date = Cleaner(d).date('period_date', required=True)
+            entry = services.post_fixed_asset_depreciation(obj, period_date, request.user)
+            return j(self.detail(entry.asset))
+        if name == 'dispose':
+            d = body(request)
+            c = Cleaner(d)
+            disposal_date = c.date('disposal_date', required=True)
+            disposal_amount = c.number('disposal_amount', lo=Decimal('0'), required=True)
+            details = c.text('disposal_details', max_len=1000)
+            c.done()
+            result = services.dispose_fixed_asset(obj, disposal_date, disposal_amount, details, request.user)
+            data = self.detail(result['asset'])
+            data['gain_loss'] = result['gain_loss']
+            return j(data)
+        raise ApiError(404, f'Unknown action "{name}".')
+
+
+class BudgetResource(Resource):
+    name = 'budgets'
+    model = Budget
+    search_fields = ('name', 'financial_year')
+    default_ordering = ('-period_start', 'name')
+
+    def row(self, o):
+        actual = o.actual_amount
+        return {
+            'id': o.pk, 'name': o.name, 'financial_year': o.financial_year,
+            'period': o.period, 'period_start': o.period_start,
+            'account_id': o.account_id, 'project_id': o.project_id,
+            'budget_amount': o.budget_amount, 'actual_amount': actual,
+            'variance': o.budget_amount - actual, 'revision': o.revision,
+            'approval_status': o.approval_status,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        name = c.text('name', required=True, max_len=150)
+        financial_year = c.text('financial_year', required=True, max_len=10)
+        period = c.choice('period', ['monthly', 'quarterly', 'annual'], required=True)
+        period_start = c.date('period_start', required=True)
+        budget_amount = c.number('budget_amount', required=True)
+        account_id = data.get('account') or data.get('account_id')
+        project_id = data.get('project') or data.get('project_id')
+        c.done()
+        org = get_user_org(user)
+        budget = Budget.objects.create(
+            organization=org, name=name, financial_year=financial_year, period=period,
+            period_start=period_start, account_id=account_id or None, project_id=project_id or None,
+            budget_amount=budget_amount,
+        )
+        services.log_audit(user, 'create', 'Budget', budget.pk, f"Created budget {budget.name}",
+                           org=org, module='accounting', submodule='budgets')
+        return budget
+
+    def update(self, obj, data, user):
+        if 'name' in data:
+            obj.name = Cleaner(data).text('name', required=True, max_len=150)
+        if 'budget_amount' in data:
+            obj.budget_amount = q2(data['budget_amount'])
+        if 'actual_amount' in data:
+            obj.actual_amount = q2(data['actual_amount'])
+        if 'revision' in data:
+            obj.revision = max(int(data['revision'] or 1), 1)
+        if 'approval_status' in data:
+            if data['approval_status'] not in ('draft', 'submitted', 'approved', 'rejected'):
+                raise ApiError(400, 'Invalid budget approval status.')
+            obj.approval_status = data['approval_status']
+        obj.save()
+        services.log_audit(user, 'update', 'Budget', obj.pk, f"Updated budget {obj.name}",
+                           org=obj.organization, module='accounting', submodule='budgets')
+        return obj
+
+    def action(self, request, obj, name):
+        if name not in ('submit', 'approve', 'reject'):
+            raise ApiError(404, f'Unknown action "{name}".')
+        status_map = {'submit': 'submitted', 'approve': 'approved', 'reject': 'rejected'}
+        obj.approval_status = status_map[name]
+        obj.save(update_fields=['approval_status'])
+        services.log_audit(request.user, name, 'Budget', obj.pk,
+                           f"Changed budget {obj.name} status to {obj.approval_status}",
+                           org=obj.organization, module='accounting', submodule='budgets')
+        return j(self.detail(obj))
+
+
+class RecurringBillResource(Resource):
+    name = 'recurring-bills'
+    model = RecurringBill
+    search_fields = ('profile_name',)
+    default_ordering = ('-next_date', 'profile_name')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'profile_name': o.profile_name, 'vendor_id': o.vendor_id,
+            'frequency': o.frequency, 'repeat_every': o.repeat_every,
+            'start_date': o.start_date, 'end_date': o.end_date, 'next_date': o.next_date,
+            'auto_generate': o.auto_generate, 'status': o.status,
+            'amount': o.amount, 'tax_amount': o.tax_amount,
+            'last_generated_date': o.last_generated_date,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        profile_name = c.text('profile_name', required=True, max_len=150)
+        vendor_id = data.get('vendor') or data.get('vendor_id')
+        if not vendor_id:
+            raise ApiError(400, 'Vendor is required.')
+        frequency = c.choice('frequency', ['weekly', 'monthly', 'quarterly', 'yearly'], default='monthly')
+        repeat_every = c.integer('repeat_every', lo=1, hi=24, default=1)
+        start_date = c.date('start_date', required=True)
+        end_date = c.date('end_date')
+        amount = c.number('amount', required=True, lo=Z)
+        tax_amount = c.number('tax_amount', lo=Z, default=Z)
+        auto_generate = bool(data.get('auto_generate', True))
+        c.done()
+        org = get_user_org(user)
+        profile = RecurringBill.objects.create(
+            organization=org, vendor_id=int(vendor_id), profile_name=profile_name,
+            frequency=frequency, repeat_every=repeat_every, start_date=start_date,
+            end_date=end_date, next_date=start_date, amount=amount, tax_amount=tax_amount,
+            template=data.get('template', {}), lines_data=data.get('lines', data.get('lines_data', [])),
+            auto_generate=auto_generate,
+        )
+        services.log_audit(user, 'create', 'RecurringBill', profile.pk, f"Created recurring bill {profile.profile_name}",
+                           org=org, module='accounting', submodule='recurring_bills')
+        return profile
+
+    def action(self, request, obj, name):
+        if name == 'pause':
+            obj.status = 'paused'
+            obj.save(update_fields=['status'])
+        elif name == 'resume':
+            obj.status = 'active'
+            obj.save(update_fields=['status'])
+        elif name == 'generate':
+            bill = services.generate_recurring_bill(obj, user=request.user)
+            return j(BillResource().row(bill))
+        else:
+            raise ApiError(404, f'Unknown action "{name}".')
+        return j(self.detail(obj))
+
+
+class RecurringExpenseResource(Resource):
+    name = 'recurring-expenses'
+    model = RecurringExpense
+    search_fields = ('profile_name', 'category', 'description')
+    default_ordering = ('-next_date', 'profile_name')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'profile_name': o.profile_name, 'expense_account_id': o.expense_account_id,
+            'vendor_id': o.vendor_id, 'category': o.category, 'description': o.description,
+            'amount': o.amount, 'tax_amount': o.tax_amount, 'frequency': o.frequency,
+            'repeat_every': o.repeat_every, 'start_date': o.start_date, 'end_date': o.end_date,
+            'next_date': o.next_date, 'auto_generate': o.auto_generate, 'status': o.status,
+            'last_generated_date': o.last_generated_date,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        profile_name = c.text('profile_name', required=True, max_len=150)
+        account_id = data.get('expense_account') or data.get('expense_account_id')
+        if not account_id:
+            raise ApiError(400, 'Expense account is required.')
+        vendor_id = data.get('vendor') or data.get('vendor_id')
+        frequency = c.choice('frequency', ['weekly', 'monthly', 'quarterly', 'yearly'], default='monthly')
+        repeat_every = c.integer('repeat_every', lo=1, hi=24, default=1)
+        start_date = c.date('start_date', required=True)
+        end_date = c.date('end_date')
+        amount = c.number('amount', required=True, lo=Z)
+        tax_amount = c.number('tax_amount', lo=Z, default=Z)
+        category = c.text('category', max_len=100)
+        description = c.text('description', max_len=1000)
+        c.done()
+        org = get_user_org(user)
+        profile = RecurringExpense.objects.create(
+            organization=org, profile_name=profile_name, expense_account_id=int(account_id),
+            vendor_id=int(vendor_id) if vendor_id else None, frequency=frequency,
+            repeat_every=repeat_every, start_date=start_date, end_date=end_date,
+            next_date=start_date, amount=amount, tax_amount=tax_amount,
+            category=category, description=description,
+            auto_generate=bool(data.get('auto_generate', True)),
+        )
+        services.log_audit(user, 'create', 'RecurringExpense', profile.pk, f"Created recurring expense {profile.profile_name}",
+                           org=org, module='accounting', submodule='recurring_expenses')
+        return profile
+
+    def action(self, request, obj, name):
+        if name == 'pause':
+            obj.status = 'paused'
+            obj.save(update_fields=['status'])
+        elif name == 'resume':
+            obj.status = 'active'
+            obj.save(update_fields=['status'])
+        elif name == 'generate':
+            expense = services.generate_recurring_expense(obj, user=request.user)
+            return j(ExpenseResource().row(expense))
+        else:
+            raise ApiError(404, f'Unknown action "{name}".')
+        return j(self.detail(obj))
+
+
+class ExchangeRateResource(Resource):
+    name = 'exchange-rates'
+    model = ExchangeRate
+    search_fields = ('currency_code', 'source')
+    default_ordering = ('-rate_date', 'currency_code')
+
+    def row(self, o):
+        return {'id': o.pk, 'currency_code': o.currency_code, 'rate_date': o.rate_date,
+                'rate': o.rate, 'source': o.source}
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        currency_code = c.text('currency_code', required=True, max_len=10).upper()
+        rate_date = c.date('rate_date', required=True)
+        rate = c.number('rate', required=True)
+        source = c.text('source', max_len=80)
+        c.done()
+        if rate <= Z:
+            raise ApiError(400, 'Exchange rate must be greater than zero.')
+        org = get_user_org(user)
+        rate_obj, created = ExchangeRate.objects.update_or_create(
+            organization=org, currency_code=currency_code, rate_date=rate_date,
+            defaults={'rate': rate, 'source': source or 'manual'},
+        )
+        services.log_audit(user, 'create' if created else 'update', 'ExchangeRate', rate_obj.pk,
+                           f"Saved {currency_code} exchange rate {rate}",
+                           org=org, module='accounting', submodule='multi_currency')
+        return rate_obj
+
+
+class MileageExpenseClaimResource(Resource):
+    name = 'mileage-claims'
+    model = MileageExpenseClaim
+    search_fields = ('claim_number', 'origin', 'destination', 'vehicle')
+    default_ordering = ('-date', '-id')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'employee_id': o.employee_id, 'claim_number': o.claim_number,
+            'date': o.date, 'travel_date': o.travel_date, 'origin': o.origin,
+            'destination': o.destination, 'distance': o.distance, 'mileage_rate': o.mileage_rate,
+            'vehicle': o.vehicle, 'expense_category': o.expense_category, 'amount': o.amount,
+            'status': o.status, 'reimbursement_status': o.reimbursement_status,
+            'rejection_reason': o.rejection_reason,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        claim_number = c.text('claim_number', required=True, max_len=60)
+        date = c.date('date', required=True)
+        travel_date = c.date('travel_date', required=True)
+        origin = c.text('origin', required=True, max_len=200)
+        destination = c.text('destination', required=True, max_len=200)
+        distance = c.number('distance', required=True, lo=Z)
+        mileage_rate = c.number('mileage_rate', required=True, lo=Z)
+        vehicle = c.text('vehicle', max_len=100)
+        expense_category = c.text('expense_category', required=True, max_len=100)
+        c.done()
+        amount = q2(distance * mileage_rate)
+        org = get_user_org(user)
+        employee_id = data.get('employee') or data.get('employee_id') or user.pk
+        claim = MileageExpenseClaim.objects.create(
+            organization=org, employee_id=int(employee_id), claim_number=claim_number,
+            date=date, travel_date=travel_date, origin=origin, destination=destination,
+            distance=distance, mileage_rate=mileage_rate, vehicle=vehicle,
+            expense_category=expense_category, amount=amount,
+        )
+        return claim
+
+    def action(self, request, obj, name):
+        d = body(request) if request.body else {}
+        if name in ('submit', 'approve', 'reject', 'reimburse'):
+            if name == 'submit':
+                obj.status = 'submitted'
+            elif name == 'approve':
+                obj.status = 'approved'
+            elif name == 'reject':
+                obj.status = 'rejected'
+                obj.rejection_reason = d.get('reason') or d.get('rejection_reason') or ''
+                obj.reimbursement_status = 'rejected'
+            elif name == 'reimburse':
+                reimbursement_date = Cleaner(d).date('reimbursement_date', required=True)
+                result = services.reimburse_mileage_claim(obj, reimbursement_date, request.user)
+                return j(self.detail(result['claim']))
+            obj.save()
+            return j(self.detail(obj))
+        raise ApiError(404, f'Unknown action "{name}".')
+
+
+class BalanceNettingResource(Resource):
+    name = 'balance-netting'
+    model = BalanceNetting
+    search_fields = ('adjustment_reference',)
+    default_ordering = ('-netting_date', '-id')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'customer_id': o.customer_id, 'vendor_id': o.vendor_id,
+            'invoice_id': o.invoice_id, 'bill_id': o.bill_id, 'currency': o.currency,
+            'netting_date': o.netting_date, 'amount': o.amount,
+            'remaining_receivable': o.remaining_receivable,
+            'remaining_payable': o.remaining_payable,
+            'adjustment_reference': o.adjustment_reference, 'status': o.status,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        netting_date = c.date('netting_date', required=True)
+        amount = c.number('amount', required=True, lo=Z)
+        currency = c.text('currency', max_len=10)
+        c.done()
+        org = get_user_org(user)
+        customer_id = data.get('customer') or data.get('customer_id')
+        vendor_id = data.get('vendor') or data.get('vendor_id')
+        invoice_id = data.get('invoice') or data.get('invoice_id')
+        bill_id = data.get('bill') or data.get('bill_id')
+        customer = Customer.objects.filter(pk=customer_id, organization=org).first()
+        vendor = Vendor.objects.filter(pk=vendor_id, organization=org).first()
+        invoice = Invoice.objects.filter(pk=invoice_id, organization=org).first()
+        bill = Bill.objects.filter(pk=bill_id, organization=org).first()
+        if not all((customer, vendor, invoice, bill)):
+            raise ApiError(404, 'Customer, vendor, invoice or bill not found.')
+        return services.create_balance_netting(
+            customer, vendor, invoice, bill, netting_date, amount,
+            currency or 'INR', user,
+        )
+
+
+class BillOfEntryResource(Resource):
+    name = 'bills-of-entry'
+    model = BillOfEntry
+    search_fields = ('boe_number', 'country_of_origin')
+    default_ordering = ('-import_date', '-id')
+
+    def row(self, o):
+        return {
+            'id': o.pk, 'boe_number': o.boe_number, 'supplier_id': o.supplier_id,
+            'linked_bill_id': o.linked_bill_id, 'import_date': o.import_date,
+            'country_of_origin': o.country_of_origin, 'assessable_value': o.assessable_value,
+            'currency': o.currency, 'exchange_rate': o.exchange_rate,
+            'customs_duty': o.customs_duty, 'import_igst': o.import_igst,
+            'other_charges': o.other_charges, 'landed_cost': o.landed_cost,
+            'supporting_documents': o.supporting_documents, 'status': o.status,
+        }
+
+    def create(self, data, user):
+        c = Cleaner(data)
+        boe_number = c.text('boe_number', required=True, max_len=80)
+        supplier_id = data.get('supplier') or data.get('supplier_id')
+        if not supplier_id:
+            raise ApiError(400, 'Supplier is required.')
+        import_date = c.date('import_date', required=True)
+        country = c.text('country_of_origin', required=True, max_len=100)
+        assessable = c.number('assessable_value', required=True, lo=Z)
+        currency = c.text('currency', max_len=10)
+        exchange_rate = c.number('exchange_rate', lo=Z, default=Decimal('1'))
+        customs = c.number('customs_duty', lo=Z, default=Z)
+        igst = c.number('import_igst', lo=Z, default=Z)
+        charges = c.number('other_charges', lo=Z, default=Z)
+        c.done()
+        if exchange_rate <= Z:
+            raise ApiError(400, 'Exchange rate must be greater than zero.')
+        org = get_user_org(user)
+        boe = BillOfEntry.objects.create(
+            organization=org, boe_number=boe_number, supplier_id=int(supplier_id),
+            linked_bill_id=data.get('linked_bill') or data.get('linked_bill_id') or None,
+            import_date=import_date, country_of_origin=country,
+            assessable_value=assessable, currency=currency or 'INR',
+            exchange_rate=exchange_rate, customs_duty=customs,
+            import_igst=igst, other_charges=charges,
+            landed_cost=q2(assessable * exchange_rate + customs + igst + charges),
+            supporting_documents=data.get('supporting_documents', []),
+        )
+        services.log_audit(user, 'create', 'BillOfEntry', boe.pk, f"Created Bill of Entry {boe.boe_number}",
+                           org=org, module='accounting', submodule='bill_of_entry')
+        return boe
+
+    def action(self, request, obj, name):
+        if name == 'post':
+            check_permission(request, resource_name='bills_of_entry', action_name='approve')
+            return j(self.detail(services.post_bill_of_entry(obj, request.user)))
+        raise ApiError(404, f'Unknown action "{name}".')
+
+
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), QuoteResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
@@ -9738,7 +10172,9 @@ RESOURCES = {r.name: r for r in (
     EWayBillResource(), ProjectResource(), ProjectTaskResource(), ProjectMilestoneResource(),
     TimeLogResource(), ItemCategoryResource(), PriceListResource(),
     WarehouseResource(), PaymentTransactionResource(), FinancialAnomalyResource(),
-    StockTransferResource(), SalespersonResource(), EmployeeResource()
+    StockTransferResource(), SalespersonResource(), EmployeeResource(),
+    FixedAssetResource(), BudgetResource(), RecurringBillResource(), RecurringExpenseResource(),
+    ExchangeRateResource(), MileageExpenseClaimResource(), BalanceNettingResource(), BillOfEntryResource()
 )}
 RESOURCES['timelogs'] = RESOURCES.get('timesheets')
 RESOURCES['time-entries'] = RESOURCES.get('timesheets')

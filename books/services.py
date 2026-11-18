@@ -43,7 +43,9 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
                      StockMovement, SubscriptionInvoice, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
-                     Warehouse, WebhookSubscription, Project, TimeLog)
+                     Warehouse, WebhookSubscription, Project, TimeLog, FixedAsset, DepreciationEntry,
+                     Budget, RecurringBill, RecurringExpense, ExchangeRate, MileageExpenseClaim,
+                     BalanceNetting, BillOfEntry)
 
 DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
@@ -2511,6 +2513,282 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
                 if existing_jrn:
                     return existing_jrn
             raise
+
+@transaction.atomic
+def post_fixed_asset_depreciation(asset, period_date, user=None):
+    if not isinstance(period_date, date):
+        period_date = timezone.datetime.strptime(str(period_date), '%Y-%m-%d').date()
+    check_transaction_lock(period_date, org=asset.organization)
+    asset = FixedAsset.objects.select_for_update().get(pk=asset.pk)
+    if asset.status != 'active':
+        raise ApiError(400, 'Depreciation can only be posted for active assets.')
+    existing = DepreciationEntry.objects.filter(organization=asset.organization, asset=asset, period_date=period_date).first()
+    if existing:
+        return existing
+
+    depreciable = max(asset.purchase_cost - asset.residual_value, Z)
+    if asset.depreciation_method == 'straight_line':
+        amount = q2(depreciable / Decimal(asset.useful_life_months))
+    else:
+        if asset.useful_life_months <= 0:
+            amount = Z
+        else:
+            useful_years = Decimal(asset.useful_life_months) / Decimal('12')
+            annual_rate = min(Decimal('2') / useful_years, Decimal('1'))
+            amount = q2(asset.book_value * annual_rate / Decimal('12'))
+    amount = min(amount, max(asset.book_value - asset.residual_value, Z))
+    if amount <= Z:
+        raise ApiError(400, 'The asset has no depreciable book value remaining.')
+
+    reference = f"{asset.code}-{period_date.strftime('%Y%m')}"
+    journal = post_journal_entry(
+        period_date,
+        'fixed_asset_depreciation',
+        reference,
+        f"Depreciation for fixed asset {asset.code}",
+        [('6080', amount, Z, f"Depreciation expense - {asset.name}"),
+         ('1500', Z, amount, f"Accumulated depreciation - {asset.name}")],
+        user,
+        org=asset.organization,
+    )
+    entry = DepreciationEntry.objects.create(
+        organization=asset.organization,
+        asset=asset,
+        period_date=period_date,
+        amount=amount,
+        journal=journal,
+    )
+    asset.accumulated_depreciation = q2(asset.accumulated_depreciation + amount)
+    asset.book_value = q2(asset.purchase_cost - asset.accumulated_depreciation)
+    asset.save(update_fields=['accumulated_depreciation', 'book_value'])
+    log_audit(user, 'post', 'FixedAsset', asset.pk, f"Posted depreciation ₹{amount} for {asset.name}",
+              org=asset.organization, module='accounting', submodule='fixed_assets')
+    return entry
+
+@transaction.atomic
+def dispose_fixed_asset(asset, disposal_date, disposal_amount, details, user=None):
+    check_transaction_lock(disposal_date, org=asset.organization)
+    asset = FixedAsset.objects.select_for_update().get(pk=asset.pk)
+    if asset.status == 'disposed':
+        raise ApiError(409, 'Fixed asset is already disposed.')
+    gain_loss = q2(disposal_amount - asset.book_value)
+    items = [('1010', disposal_amount, Z, f"Disposal proceeds - {asset.name}")]
+    if asset.accumulated_depreciation > Z:
+        items.append(('1500', asset.accumulated_depreciation, Z, f"Remove accumulated depreciation - {asset.name}"))
+    items.append(('1500', Z, asset.purchase_cost, f"Remove fixed asset - {asset.name}"))
+    if gain_loss >= Z:
+        items.append(('4900', Z, gain_loss, f"Gain on disposal - {asset.name}"))
+    else:
+        items.append(('5050', abs(gain_loss), Z, f"Loss on disposal - {asset.name}"))
+    journal = post_journal_entry(
+        disposal_date,
+        'fixed_asset_disposal',
+        f"{asset.code}-DISPOSE-{disposal_date.isoformat()}",
+        f"Disposal of fixed asset {asset.name}",
+        items,
+        user,
+        org=asset.organization,
+    )
+    asset.status = 'disposed'
+    asset.disposal_date = disposal_date
+    asset.disposal_amount = q2(disposal_amount)
+    asset.disposal_details = details
+    asset.save(update_fields=['status', 'disposal_date', 'disposal_amount', 'disposal_details'])
+    log_audit(user, 'dispose', 'FixedAsset', asset.pk, f"Disposed fixed asset {asset.name}",
+              org=asset.organization, module='accounting', submodule='fixed_assets')
+    return {'asset': asset, 'journal': journal, 'gain_loss': gain_loss}
+
+def advance_recurring_frequency(current, frequency, repeat_every=1):
+    repeat_every = max(int(repeat_every), 1)
+    if frequency == 'weekly':
+        return current + timedelta(days=7 * repeat_every)
+    if frequency == 'quarterly':
+        month_offset = 3 * repeat_every
+    elif frequency == 'yearly':
+        month_offset = 12 * repeat_every
+    else:
+        month_offset = repeat_every
+    month_index = current.year * 12 + current.month - 1 + month_offset
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    try:
+        day = min(current.day, 28)
+        return current.replace(year=year, month=month, day=day)
+    except ValueError:
+        return current.replace(year=year, month=month, day=1)
+
+@transaction.atomic
+def generate_recurring_expense(profile, scheduled_date=None, user=None):
+    profile = RecurringExpense.objects.select_for_update().get(pk=profile.pk)
+    if profile.status != 'active':
+        raise ApiError(409, 'Only active recurring expense profiles can generate expenses.')
+    scheduled_date = scheduled_date or profile.next_date
+    if profile.end_date and scheduled_date > profile.end_date:
+        profile.status = 'expired'
+        profile.save(update_fields=['status'])
+        raise ApiError(409, 'The recurring expense profile has expired.')
+    check_transaction_lock(scheduled_date, org=profile.organization)
+    total = q2(profile.amount + profile.tax_amount)
+    number = next_number('EXP', org=profile.organization, date=scheduled_date)
+    expense = Expense.objects.create(
+        organization=profile.organization,
+        number=number,
+        date=scheduled_date,
+        expense_account=profile.expense_account,
+        vendor=profile.vendor,
+        amount=q2(profile.amount),
+        tax_amount=q2(profile.tax_amount),
+        total=total,
+        reference=profile.profile_name,
+        notes=profile.description,
+    )
+    post_expense_journal(expense, user)
+    profile.last_generated_date = scheduled_date
+    profile.next_date = advance_recurring_frequency(scheduled_date, profile.frequency, profile.repeat_every)
+    if profile.end_date and profile.next_date > profile.end_date:
+        profile.status = 'expired'
+    profile.save(update_fields=['last_generated_date', 'next_date', 'status'])
+    log_audit(user, 'generate', 'RecurringExpense', profile.pk, f"Generated expense {expense.number}",
+              org=profile.organization, module='accounting', submodule='recurring_expenses')
+    return expense
+
+@transaction.atomic
+def generate_recurring_bill(profile, scheduled_date=None, user=None):
+    profile = RecurringBill.objects.select_for_update().get(pk=profile.pk)
+    if profile.status != 'active':
+        raise ApiError(409, 'Only active recurring bill profiles can generate bills.')
+    scheduled_date = scheduled_date or profile.next_date
+    if profile.end_date and scheduled_date > profile.end_date:
+        profile.status = 'expired'
+        profile.save(update_fields=['status'])
+        raise ApiError(409, 'The recurring bill profile has expired.')
+    check_transaction_lock(scheduled_date, org=profile.organization)
+    template = profile.template if isinstance(profile.template, dict) else {}
+    number = next_number('BILL', org=profile.organization, date=scheduled_date)
+    bill = Bill.objects.create(
+        organization=profile.organization,
+        vendor=profile.vendor,
+        number=number,
+        date=scheduled_date,
+        due_date=template.get('due_date') and timezone.datetime.strptime(str(template['due_date']), '%Y-%m-%d').date() or scheduled_date,
+        place_of_supply=template.get('place_of_supply', ''),
+        status='draft',
+        subtotal=q2(profile.amount),
+        total=q2(profile.amount + profile.tax_amount),
+    )
+    profile.last_generated_date = scheduled_date
+    profile.next_date = advance_recurring_frequency(scheduled_date, profile.frequency, profile.repeat_every)
+    if profile.end_date and profile.next_date > profile.end_date:
+        profile.status = 'expired'
+    profile.save(update_fields=['last_generated_date', 'next_date', 'status'])
+    log_audit(user, 'generate', 'RecurringBill', profile.pk, f"Generated bill {bill.number}",
+              org=profile.organization, module='accounting', submodule='recurring_bills')
+    return bill
+
+@transaction.atomic
+def reimburse_mileage_claim(claim, reimbursement_date, user=None):
+    check_transaction_lock(reimbursement_date, org=claim.organization)
+    claim = MileageExpenseClaim.objects.select_for_update().get(pk=claim.pk)
+    if claim.status != 'approved':
+        raise ApiError(409, 'Only approved mileage claims can be reimbursed.')
+    if claim.reimbursement_status == 'paid':
+        raise ApiError(409, 'Mileage claim is already reimbursed.')
+    reference = f"{claim.claim_number}-REIMBURSE"
+    journal = post_journal_entry(
+        reimbursement_date,
+        'mileage_claim_reimbursement',
+        reference,
+        f"Reimbursement for mileage claim {claim.claim_number}",
+        [('6040', claim.amount, Z, f"Mileage reimbursement - {claim.claim_number}"),
+         ('1010', Z, claim.amount, f"Payment - {claim.claim_number}")],
+        user,
+        org=claim.organization,
+    )
+    claim.reimbursement_status = 'paid'
+    claim.status = 'reimbursed'
+    claim.save(update_fields=['reimbursement_status', 'status'])
+    log_audit(user, 'reimburse', 'MileageExpenseClaim', claim.pk,
+              f"Reimbursed mileage claim {claim.claim_number}",
+              org=claim.organization, module='accounting', submodule='mileage_claims')
+    return {'claim': claim, 'journal': journal}
+
+@transaction.atomic
+def create_balance_netting(customer, vendor, invoice, bill, netting_date, amount, currency='INR', user=None):
+    org = invoice.organization
+    if bill.organization_id != org.pk or vendor.pk != bill.vendor_id or customer.pk != invoice.customer_id:
+        raise ApiError(400, 'Netting parties and documents do not belong to the same organization.')
+    check_transaction_lock(netting_date, org=org)
+    amount = q2(amount)
+    receivable = q2(invoice.balance_due)
+    payable = q2(bill.balance_due)
+    if amount <= Z:
+        raise ApiError(400, 'Netting amount must be greater than zero.')
+    if amount > receivable or amount > payable:
+        raise ApiError(400, 'Netting amount cannot exceed both the receivable and payable balances.')
+    reference = f"NET-{invoice.number}-{bill.number}-{netting_date.isoformat()}"
+    existing = BalanceNetting.objects.filter(organization=org, adjustment_reference=reference).first()
+    if existing:
+        return existing
+    journal = post_journal_entry(
+        netting_date,
+        'balance_netting',
+        reference,
+        f"Balance netting of invoice {invoice.number} and bill {bill.number}",
+        [('2000', amount, Z, f"Net payable offset - {bill.number}"),
+         ('1200', Z, amount, f"Net receivable offset - {invoice.number}")],
+        user,
+        org=org,
+    )
+    netting = BalanceNetting.objects.create(
+        organization=org,
+        customer=customer,
+        vendor=vendor,
+        invoice=invoice,
+        bill=bill,
+        currency=currency,
+        netting_date=netting_date,
+        amount=amount,
+        remaining_receivable=q2(receivable - amount),
+        remaining_payable=q2(payable - amount),
+        adjustment_reference=reference,
+        status='completed',
+        journal=journal,
+    )
+    log_audit(user, 'net', 'BalanceNetting', netting.pk,
+              f"Netted ₹{amount} between {invoice.number} and {bill.number}",
+              org=org, module='accounting', submodule='netting')
+    return netting
+
+@transaction.atomic
+def post_bill_of_entry(boe, user=None):
+    boe = BillOfEntry.objects.select_for_update().get(pk=boe.pk)
+    if boe.status == 'posted':
+        return boe
+    check_transaction_lock(boe.import_date, org=boe.organization)
+    assessable_base = q2(boe.assessable_value * boe.exchange_rate)
+    boe.landed_cost = q2(assessable_base + boe.customs_duty + boe.import_igst + boe.other_charges)
+    reference = f"{boe.boe_number}-POST"
+    items = [
+        ('1300', q2(boe.landed_cost - boe.import_igst), Z, f"Landed cost - {boe.boe_number}"),
+        ('2260', boe.import_igst, Z, f"Import IGST credit - {boe.boe_number}"),
+        ('2000', Z, boe.landed_cost, f"Import payable - {boe.boe_number}"),
+    ]
+    journal = post_journal_entry(
+        boe.import_date,
+        'bill_of_entry',
+        reference,
+        f"Bill of Entry {boe.boe_number}",
+        items,
+        user,
+        org=boe.organization,
+    )
+    boe.status = 'posted'
+    boe.journal = journal
+    boe.save(update_fields=['landed_cost', 'status', 'journal'])
+    log_audit(user, 'post', 'BillOfEntry', boe.pk,
+              f"Posted Bill of Entry {boe.boe_number}",
+              org=boe.organization, module='accounting', submodule='bill_of_entry')
+    return boe
 
 def post_invoice_journal(inv, user):
     """Debit AR, Credit Sales Revenue, Credit Output Taxes, balance Adjustment/TCS."""

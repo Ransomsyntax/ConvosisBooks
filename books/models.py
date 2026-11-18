@@ -2426,6 +2426,195 @@ class PostingOutbox(models.Model):
         return f"PostingOutbox {self.source_transaction_type}:{self.source_transaction_id} ({self.status})"
 
 
+class FixedAsset(models.Model):
+    DEPRECIATION_METHODS = [('straight_line', 'Straight Line'), ('reducing_balance', 'Reducing Balance')]
+    STATUSES = [('active', 'Active'), ('disposed', 'Disposed'), ('inactive', 'Inactive')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='fixed_assets')
+    name = models.CharField(max_length=150)
+    code = models.CharField(max_length=60)
+    category = models.CharField(max_length=100)
+    purchase_date = models.DateField()
+    purchase_cost = models.DecimalField(**MONEY)
+    residual_value = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    useful_life_months = models.PositiveIntegerField(default=12)
+    depreciation_method = models.CharField(max_length=30, choices=DEPRECIATION_METHODS, default='straight_line')
+    depreciation_frequency = models.CharField(max_length=20, default='monthly')
+    accumulated_depreciation = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    book_value = models.DecimalField(**MONEY)
+    status = models.CharField(max_length=20, choices=STATUSES, default='active')
+    disposal_date = models.DateField(null=True, blank=True)
+    disposal_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    disposal_details = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [models.UniqueConstraint(fields=['organization', 'code'], name='uniq_org_fixed_asset_code')]
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class DepreciationEntry(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='depreciation_entries')
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name='depreciation_entries')
+    period_date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    journal = models.ForeignKey(Journal, null=True, blank=True, on_delete=models.PROTECT, related_name='depreciation_entries')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-period_date', '-id']
+        constraints = [models.UniqueConstraint(fields=['organization', 'asset', 'period_date'], name='uniq_org_asset_depreciation_period')]
+
+
+class Budget(models.Model):
+    PERIODS = [('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('annual', 'Annual')]
+    APPROVAL_STATUSES = [('draft', 'Draft'), ('submitted', 'Submitted'), ('approved', 'Approved'), ('rejected', 'Rejected')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='budgets')
+    name = models.CharField(max_length=150)
+    financial_year = models.CharField(max_length=10)
+    period = models.CharField(max_length=20, choices=PERIODS)
+    period_start = models.DateField()
+    account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.PROTECT, related_name='budgets')
+    project = models.ForeignKey(Project, null=True, blank=True, on_delete=models.PROTECT, related_name='budgets')
+    budget_amount = models.DecimalField(**MONEY)
+    actual_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    revision = models.PositiveIntegerField(default=1)
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_STATUSES, default='draft')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-period_start', 'name']
+
+
+class RecurringBill(models.Model):
+    FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
+    STATUSES = [('active', 'Active'), ('paused', 'Paused'), ('expired', 'Expired'), ('cancelled', 'Cancelled')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='recurring_bills')
+    vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='recurring_bills')
+    profile_name = models.CharField(max_length=150)
+    template = models.JSONField(default=dict, blank=True)
+    frequency = models.CharField(max_length=20, choices=FREQUENCIES, default='monthly')
+    repeat_every = models.PositiveIntegerField(default=1)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    next_date = models.DateField()
+    auto_generate = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, choices=STATUSES, default='active')
+    amount = models.DecimalField(**MONEY)
+    tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    lines_data = models.JSONField(default=list, blank=True)
+    last_generated_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-next_date', 'profile_name']
+
+
+class RecurringExpense(models.Model):
+    FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
+    STATUSES = [('active', 'Active'), ('paused', 'Paused'), ('expired', 'Expired'), ('cancelled', 'Cancelled')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='recurring_expenses')
+    vendor = models.ForeignKey(Vendor, null=True, blank=True, on_delete=models.PROTECT, related_name='recurring_expenses')
+    expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='recurring_expenses')
+    profile_name = models.CharField(max_length=150)
+    category = models.CharField(max_length=100, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    amount = models.DecimalField(**MONEY)
+    tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    frequency = models.CharField(max_length=20, choices=FREQUENCIES, default='monthly')
+    repeat_every = models.PositiveIntegerField(default=1)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    next_date = models.DateField()
+    auto_generate = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, choices=STATUSES, default='active')
+    last_generated_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ExchangeRate(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='exchange_rates')
+    currency_code = models.CharField(max_length=10)
+    rate_date = models.DateField()
+    rate = models.DecimalField(max_digits=18, decimal_places=8)
+    source = models.CharField(max_length=80, blank=True, default='manual')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-rate_date', 'currency_code']
+        constraints = [models.UniqueConstraint(fields=['organization', 'currency_code', 'rate_date'], name='uniq_org_currency_rate_date')]
+
+
+class MileageExpenseClaim(models.Model):
+    STATUSES = [('draft', 'Draft'), ('submitted', 'Submitted'), ('approved', 'Approved'), ('rejected', 'Rejected'), ('reimbursed', 'Reimbursed')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='mileage_claims')
+    employee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='mileage_claims')
+    claim_number = models.CharField(max_length=60)
+    date = models.DateField()
+    travel_date = models.DateField()
+    origin = models.CharField(max_length=200)
+    destination = models.CharField(max_length=200)
+    distance = models.DecimalField(max_digits=12, decimal_places=3)
+    mileage_rate = models.DecimalField(max_digits=12, decimal_places=4)
+    vehicle = models.CharField(max_length=100, blank=True, default='')
+    expense_category = models.CharField(max_length=100)
+    amount = models.DecimalField(**MONEY)
+    receipt = models.ForeignKey(ManagedDocument, null=True, blank=True, on_delete=models.SET_NULL, related_name='mileage_claims')
+    status = models.CharField(max_length=20, choices=STATUSES, default='draft')
+    reimbursement_status = models.CharField(max_length=20, default='pending')
+    rejection_reason = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-id']
+        constraints = [models.UniqueConstraint(fields=['organization', 'claim_number'], name='uniq_org_mileage_claim_number')]
+
+
+class BalanceNetting(models.Model):
+    STATUSES = [('draft', 'Draft'), ('completed', 'Completed'), ('cancelled', 'Cancelled')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='balance_nettings')
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='balance_nettings')
+    vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='balance_nettings')
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name='balance_nettings')
+    bill = models.ForeignKey(Bill, on_delete=models.PROTECT, related_name='balance_nettings')
+    currency = models.CharField(max_length=10, default='INR')
+    netting_date = models.DateField()
+    amount = models.DecimalField(**MONEY)
+    remaining_receivable = models.DecimalField(**MONEY)
+    remaining_payable = models.DecimalField(**MONEY)
+    adjustment_reference = models.CharField(max_length=100, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUSES, default='completed')
+    journal = models.ForeignKey(Journal, null=True, blank=True, on_delete=models.PROTECT, related_name='balance_nettings')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class BillOfEntry(models.Model):
+    STATUSES = [('draft', 'Draft'), ('posted', 'Posted'), ('cancelled', 'Cancelled')]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='bills_of_entry')
+    boe_number = models.CharField(max_length=80)
+    supplier = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='bills_of_entry')
+    linked_bill = models.ForeignKey(Bill, null=True, blank=True, on_delete=models.PROTECT, related_name='bills_of_entry')
+    import_date = models.DateField()
+    country_of_origin = models.CharField(max_length=100)
+    assessable_value = models.DecimalField(**MONEY)
+    currency = models.CharField(max_length=10, default='INR')
+    exchange_rate = models.DecimalField(max_digits=18, decimal_places=8, default=Decimal('1.00000000'))
+    customs_duty = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    import_igst = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    other_charges = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    landed_cost = models.DecimalField(**MONEY)
+    supporting_documents = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=20, choices=STATUSES, default='draft')
+    journal = models.ForeignKey(Journal, null=True, blank=True, on_delete=models.PROTECT, related_name='bills_of_entry')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-import_date', '-id']
+        constraints = [models.UniqueConstraint(fields=['organization', 'boe_number'], name='uniq_org_boe_number')]
+
+
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model

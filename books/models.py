@@ -334,6 +334,9 @@ class Invoice(Document):
     recurring_invoice = models.ForeignKey('RecurringInvoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_invoices')
     project = models.ForeignKey('Project', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices')
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
@@ -356,6 +359,9 @@ class Bill(Document):
     source_purchase_order = models.ForeignKey('PurchaseOrder', null=True, blank=True, on_delete=models.SET_NULL, related_name='derived_bills')
     accounts_payable = models.CharField(max_length=120, default='Accounts Payable', blank=True)
     vendor_ref = models.CharField(max_length=60, blank=True)
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
 
     def __str__(self):
         return self.number
@@ -451,6 +457,9 @@ class PaymentReceived(Payment):
 
 class PaymentMade(Payment):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='payments')
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
 
 class ReceivedAllocation(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
@@ -847,6 +856,9 @@ class SalesOrder(Document):
     converted_to_invoice = models.ForeignKey('Invoice', null=True, blank=True, on_delete=models.SET_NULL, related_name='originating_sales_orders')
     converted_at = models.DateTimeField(null=True, blank=True)
     expected_shipment_date = models.DateField(null=True, blank=True)
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
 
 class SalesOrderLine(Line):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
@@ -900,6 +912,9 @@ class RecurringInvoice(models.Model):
     subtotal = models.DecimalField(default=Decimal('0.00'), **MONEY)
     total = models.DecimalField(default=Decimal('0.00'), **MONEY)
     lines_data = models.JSONField(default=list, blank=True)
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class RetainerInvoice(Document):
@@ -908,6 +923,8 @@ class RetainerInvoice(Document):
     business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='retainer_invoices')
     business_location_gstin = models.CharField(max_length=15, blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
     applied_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     accounts_receivable = models.CharField(max_length=120, default='Accounts Receivable', blank=True)
     purpose = models.CharField(max_length=255, blank=True, default='')
@@ -1036,6 +1053,9 @@ class PurchaseOrder(Document):
     converted_to_bill = models.ForeignKey('Bill', null=True, blank=True, on_delete=models.SET_NULL, related_name='originating_purchase_orders')
     converted_at = models.DateTimeField(null=True, blank=True)
     delivery_date = models.DateField(null=True, blank=True)
+    custom_fields_data = models.JSONField(default=dict, blank=True)
+    billing_address_data = models.JSONField(default=dict, blank=True)
+    shipping_address_data = models.JSONField(default=dict, blank=True)
 
 class PurchaseOrderLine(Line):
     order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines')

@@ -433,6 +433,13 @@ function getSettingsPageRenderer(key) {
 async function renderCustomFieldsSettingsPage(container) {
   const modules = [
     { key: 'quotes', label: 'Quotes' },
+    { key: 'sales_orders', label: 'Sales Orders' },
+    { key: 'invoices', label: 'Invoices' },
+    { key: 'recurring_invoices', label: 'Recurring Invoices' },
+    { key: 'retainer_invoices', label: 'Retainer Invoices' },
+    { key: 'purchase_orders', label: 'Purchase Orders' },
+    { key: 'bills', label: 'Bills' },
+    { key: 'payments_made', label: 'Payments Made' },
     { key: 'payments_received', label: 'Payments Received' },
   ];
   const fieldTypes = [

@@ -433,6 +433,13 @@ function getSettingsPageRenderer(key) {
 async function renderCustomFieldsSettingsPage(container) {
   const modules = [
     { key: 'quotes', label: 'Quotes' },
+    { key: 'sales_orders', label: 'Sales Orders' },
+    { key: 'invoices', label: 'Invoices' },
+    { key: 'recurring_invoices', label: 'Recurring Invoices' },
+    { key: 'retainer_invoices', label: 'Retainer Invoices' },
+    { key: 'purchase_orders', label: 'Purchase Orders' },
+    { key: 'bills', label: 'Bills' },
+    { key: 'payments_made', label: 'Payments Made' },
     { key: 'payments_received', label: 'Payments Received' },
   ];
   const fieldTypes = [
@@ -2823,10 +2830,18 @@ async function renderDirectTaxesPage(container) {
 
 async function renderNumberSeriesPage(container, selectedSeriesId = null) {
   const url = selectedSeriesId ? `/settings/transaction-series/?series_id=${selectedSeriesId}` : '/settings/transaction-series/';
-  const data = await api(url).catch(() => ({ series_list: [], items: [], current_series: null }));
+  let data;
+  try {
+    data = await api(url);
+  } catch (error) {
+    toast(error.message || 'Failed to load transaction number series.', 'error');
+    container.innerHTML = '<div class="settings-card">Transaction number series could not be loaded.</div>';
+    return;
+  }
   const seriesList = data.series_list || [];
   const currentSeries = data.current_series || (seriesList[0] || null);
   const items = data.items || [];
+  const supportedTypes = data.supported_types || [];
 
   container.innerHTML = `
     <div class="settings-page-header">
@@ -2895,7 +2910,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${item.document_type}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}">
                     Configure
                   </button>
                 </td>
@@ -2916,7 +2931,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
 
   // Bind Add New Series
   container.querySelector('#btnAddNewSeries')?.addEventListener('click', () => {
-    openAddTransactionSeriesModal(container);
+    openAddTransactionSeriesModal(container, supportedTypes);
   });
 
   // Bind Set As Default
@@ -2967,15 +2982,23 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         label: btn.dataset.editItemLabel,
         prefix: btn.dataset.editItemPrefix,
         next_number: btn.dataset.editItemNext,
-        padding: btn.dataset.editItemPad
+        padding: btn.dataset.editItemPad,
+        sample_preview: btn.dataset.editItemPreview,
+        financial_year: btn.dataset.editItemFy,
+        current_year: btn.dataset.editItemYear,
+        org_code: btn.dataset.editItemOrg,
+        branch: btn.dataset.editItemBranch,
+        location: btn.dataset.editItemLocation,
+        separator: btn.dataset.editItemSeparator
       });
     });
   });
 }
 
 function openEditSeriesItemModal(container, currentSeries, item) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   const paddedNext = String(item.next_number || 1).padStart(Number(item.padding) || 1, '0');
   modal.innerHTML = `
     <div class="modal-box" style="max-width:440px;">
@@ -2994,7 +3017,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           <input type="text" id="seriesNextSeqInput" value="${esc(paddedNext)}" class="form-control" style="font-family:monospace;">
         </div>
         <div style="font-size:12px;color:#64748b;background:#f8fafc;padding:8px 12px;border-radius:4px;border:1px solid #e2e8f0;">
-          Sample Preview: <b id="seriesSamplePreview">${esc(item.prefix + paddedNext)}</b>
+          Sample Preview: <b id="seriesSamplePreview">${esc(item.sample_preview || '')}</b>
         </div>
       </div>
       <div class="modal-footer">
@@ -3010,19 +3033,66 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   const prevEl = modal.querySelector('#seriesSamplePreview');
 
   const updatePreview = () => {
-    prevEl.textContent = (prefixInp.value || '') + (nextInp.value || '1');
+    const raw = nextInp.value.trim();
+    if (!/^\d{1,12}$/.test(raw) || Number(raw) < 1) {
+      prevEl.textContent = 'Enter a positive sequence number';
+      return;
+    }
+    let prefix = prefixInp.value.trim();
+    const fy = item.financial_year || '';
+    const startYY = fy.split('-')[0] || '';
+    const endYY = fy.split('-')[1] || '';
+    const startYear = startYY ? String(2000 + Number(startYY)) : String(item.current_year || '');
+    const replacements = {
+      '%ORG%': item.org_code || '',
+      '${ORG}': item.org_code || '',
+      '%FY%': fy,
+      '${FY}': fy,
+      '%FYS_YY%': startYY,
+      '${FYS_YY}': startYY,
+      '%FYE_YY%': endYY,
+      '${FYE_YY}': endYY,
+      '%YEAR%': String(item.current_year || startYear),
+      '${YEAR}': String(item.current_year || startYear),
+      '%BRANCH%': item.branch || '',
+      '${BRANCH}': item.branch || '',
+      '%LOCATION%': item.location || '',
+      '${LOCATION}': item.location || ''
+    };
+    Object.entries(replacements).forEach(([token, value]) => {
+      prefix = prefix.split(token).join(value);
+    });
+    const separator = item.separator || '';
+    if (separator && prefix && !prefix.endsWith(separator) && !prefix.endsWith('-') && !prefix.endsWith('/')) {
+      prefix += separator;
+    }
+    prevEl.textContent = prefix + String(Number(raw)).padStart(raw.length, '0');
   };
   prefixInp.addEventListener('input', updatePreview);
   nextInp.addEventListener('input', updatePreview);
 
   modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', () => modal.remove()));
 
-  modal.querySelector('#btnSaveSeriesItem').addEventListener('click', async () => {
+  const saveItemBtn = modal.querySelector('#btnSaveSeriesItem');
+  saveItemBtn.addEventListener('click', async () => {
+    if (saveItemBtn.disabled) return;
     const prefix = prefixInp.value.trim();
     const rawNext = nextInp.value.trim();
-    const next_number = parseInt(rawNext, 10) || 1;
+    if (!prefix) {
+      toast('Prefix is required.', 'error');
+      prefixInp.focus();
+      return;
+    }
+    if (!/^\d{1,12}$/.test(rawNext) || Number(rawNext) < 1) {
+      toast('Next number must be a positive whole number of at most 12 digits.', 'error');
+      nextInp.focus();
+      return;
+    }
+    const next_number = Number(rawNext);
     const padding = rawNext.length > 1 ? rawNext.length : 1;
 
+    saveItemBtn.disabled = true;
+    saveItemBtn.textContent = 'Saving...';
     try {
       await api(`/settings/transaction-series/${currentSeries.id}/`, {
         method: 'PUT',
@@ -3039,14 +3109,28 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       modal.remove();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
+      saveItemBtn.disabled = false;
+      saveItemBtn.textContent = 'Save';
       toast(err.message || 'Failed to update numbering series.', 'error');
     }
   });
 }
 
-function openAddTransactionSeriesModal(container) {
+function openAddTransactionSeriesModal(container, supportedTypes) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
+
+  // Deep clone supportedTypes to guarantee independent, immutable base prefixes
+  const typesList = (supportedTypes || []).map(item => ({
+    document_type: item.document_type,
+    label: item.label,
+    prefix: item.prefix || '',
+    base_prefix: item.base_prefix || item.prefix || '',
+    next_number: item.next_number || 1,
+    padding: item.padding || 5
+  }));
+
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   modal.innerHTML = `
     <div class="modal-box" style="max-width:760px;max-height:90vh;overflow-y:auto;">
       <div class="modal-header">
@@ -3078,26 +3162,11 @@ function openAddTransactionSeriesModal(container) {
               </tr>
             </thead>
             <tbody id="newSeriesItemsTbody">
-              ${[
-                ['invoices','Invoice','INV-','000001'],
-                ['sales_orders','Sales Order','SO-','000001'],
-                ['quotes','Estimate / Quote','QT-','000001'],
-                ['credit_notes','Credit Note','CN-','000001'],
-                ['payments_received','Customer Payment','PAY-','000001'],
-                ['retainer_invoices','Retainer Invoice','RET-','000001'],
-                ['recurring_invoices','Recurring Invoice','RINV-','000001'],
-                ['purchase_orders','Purchase Order','PO-','000001'],
-                ['bills','Bill','BILL-','000001'],
-                ['payments_made','Vendor Payment','VP-','000001'],
-                ['vendor_credits','Vendor Credit','VC-','000001'],
-                ['delivery_challans','Delivery Challan','DC-','000001'],
-                ['stock_adjustments','Inventory Adjustment','ADJ-','000001'],
-                ['stock_transfers','Stock Transfer','ST-','000001']
-              ].map(([k, label, pfx, nxt]) => `
-                <tr data-type="${k}">
-                  <td><b>${label}</b></td>
-                  <td><input type="text" class="form-control s-pfx" value="${pfx}" style="padding:4px 8px;font-size:12px;"></td>
-                  <td><input type="text" class="form-control s-nxt" value="${nxt}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
+              ${typesList.map(item => `
+                <tr data-type="${esc(item.document_type)}">
+                  <td><b>${esc(item.label)}</b></td>
+                  <td><input type="text" class="form-control s-pfx" data-base-prefix="${esc(item.base_prefix)}" value="${esc(item.base_prefix)}" style="padding:4px 8px;font-size:12px;"></td>
+                  <td><input type="text" class="form-control s-nxt" value="${esc(String(item.next_number).padStart(item.padding || 1, '0'))}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -3112,44 +3181,104 @@ function openAddTransactionSeriesModal(container) {
   `;
   document.body.appendChild(modal);
 
-  // Auto update prefixes if user types name
   const nameInput = modal.querySelector('#newSeriesName');
   const pfxInputs = modal.querySelectorAll('.s-pfx');
-  nameInput.addEventListener('blur', () => {
-    const val = nameInput.value.trim();
-    if (val && !val.toLowerCase().includes('default')) {
-      const pfxWord = val.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
-      pfxInputs.forEach(input => {
-        if (!input.dataset.userEdited && !input.value.startsWith(pfxWord)) {
-          input.value = `${pfxWord}-${input.value}`;
-        }
-      });
+
+  function deriveSeriesIdentifier(name) {
+    const raw = (name || '').trim();
+    if (!raw || raw.toLowerCase().includes('default')) return '';
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length === 1) {
+      return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
     }
+    const initials = words.map(w => w[0]).join('').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (initials.length >= 2 && initials.length <= 5) {
+      return initials;
+    }
+    return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+  }
+
+  // Pure function: generates prefix from immutable basePrefix and current series identifier
+  const applyPrefixUpdates = () => {
+    const seriesId = deriveSeriesIdentifier(nameInput.value);
+    pfxInputs.forEach(input => {
+      if (input.dataset.userEdited === '1') return;
+      const basePrefix = input.dataset.basePrefix || '';
+      input.value = seriesId ? `${seriesId}-${basePrefix}` : basePrefix;
+    });
+  };
+
+  let updateTimer = null;
+  nameInput.addEventListener('input', () => {
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(applyPrefixUpdates, 50);
   });
-  pfxInputs.forEach(inp => inp.addEventListener('input', () => { inp.dataset.userEdited = '1'; }));
+  nameInput.addEventListener('blur', () => {
+    if (updateTimer) clearTimeout(updateTimer);
+    applyPrefixUpdates();
+  });
 
-  modal.querySelectorAll('[data-close-series]').forEach(b => b.addEventListener('click', () => modal.remove()));
+  pfxInputs.forEach(inp => {
+    inp.addEventListener('input', () => {
+      inp.dataset.userEdited = '1';
+    });
+  });
 
-  modal.querySelector('#btnSaveNewSeries').addEventListener('click', async () => {
+  modal.querySelectorAll('[data-close-series]').forEach(b => {
+    b.addEventListener('click', () => {
+      modal.remove();
+    });
+  });
+
+  const saveBtn = modal.querySelector('#btnSaveNewSeries');
+  saveBtn.addEventListener('click', async () => {
+    if (saveBtn.disabled) return;
     const name = nameInput.value.trim();
     if (!name) {
       toast('Please enter a Series Name.', 'error');
+      nameInput.focus();
       return;
     }
     const branch = modal.querySelector('#newSeriesBranch').value.trim();
     const isDefault = modal.querySelector('#newSeriesDefault').checked;
     const isActive = modal.querySelector('#newSeriesActive').checked;
 
+    if (isDefault && !isActive) {
+      toast('An inactive series cannot be set as the default series.', 'error');
+      return;
+    }
+
     const items = [];
+    let hasError = false;
     modal.querySelectorAll('#newSeriesItemsTbody tr').forEach(row => {
+      if (hasError) return;
       const type = row.dataset.type;
-      const pfx = row.querySelector('.s-pfx').value.trim();
-      const rawNxt = row.querySelector('.s-nxt').value.trim();
-      const nxt = parseInt(rawNxt, 10) || 1;
+      const pfxInput = row.querySelector('.s-pfx');
+      const nxtInput = row.querySelector('.s-nxt');
+      const pfx = pfxInput.value.trim();
+      const rawNxt = nxtInput.value.trim();
+
+      if (!pfx) {
+        toast('Every transaction type needs a valid prefix.', 'error');
+        pfxInput.focus();
+        hasError = true;
+        return;
+      }
+      if (!/^\d{1,12}$/.test(rawNxt) || Number(rawNxt) < 1) {
+        toast('Next sequence number must be a positive whole number of at most 12 digits.', 'error');
+        nxtInput.focus();
+        hasError = true;
+        return;
+      }
+      const nxt = Number(rawNxt);
       const pad = rawNxt.length > 1 ? rawNxt.length : 1;
       items.push({ document_type: type, prefix: pfx, next_number: nxt, padding: pad });
     });
 
+    if (hasError || items.length !== typesList.length) return;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
     try {
       const res = await api('/settings/transaction-series/', {
         method: 'POST',
@@ -3166,14 +3295,17 @@ function openAddTransactionSeriesModal(container) {
       modal.remove();
       await renderNumberSeriesPage(container, res.id);
     } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Series';
       toast(err.message || 'Failed to create series.', 'error');
     }
   });
 }
 
 function openEditSeriesMetaModal(container, currentSeries) {
+  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop';
+  modal.className = 'modal-backdrop transaction-series-modal';
   modal.innerHTML = `
     <div class="modal-box" style="max-width:480px;">
       <div class="modal-header">
@@ -3200,16 +3332,26 @@ function openEditSeriesMetaModal(container, currentSeries) {
 
   modal.querySelectorAll('[data-close-meta]').forEach(b => b.addEventListener('click', () => modal.remove()));
 
-  modal.querySelector('#btnSaveSeriesMeta').addEventListener('click', async () => {
+  const saveMetaBtn = modal.querySelector('#btnSaveSeriesMeta');
+  saveMetaBtn.addEventListener('click', async () => {
+    if (saveMetaBtn.disabled) return;
     const name = modal.querySelector('#editMetaName').value.trim();
     if (!name) {
       toast('Series name is required.', 'error');
+      modal.querySelector('#editMetaName').focus();
       return;
     }
     const branch = modal.querySelector('#editMetaBranch').value.trim();
     const isDefault = modal.querySelector('#editMetaDefault').checked;
     const isActive = modal.querySelector('#editMetaActive').checked;
 
+    if (isDefault && !isActive) {
+      toast('An inactive series cannot be set as the default series.', 'error');
+      return;
+    }
+
+    saveMetaBtn.disabled = true;
+    saveMetaBtn.textContent = 'Saving...';
     try {
       await api(`/settings/transaction-series/${currentSeries.id}/`, {
         method: 'PUT',
@@ -3225,6 +3367,8 @@ function openEditSeriesMetaModal(container, currentSeries) {
       modal.remove();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
+      saveMetaBtn.disabled = false;
+      saveMetaBtn.textContent = 'Save';
       toast(err.message || 'Failed to update series.', 'error');
     }
   });

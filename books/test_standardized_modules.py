@@ -221,32 +221,26 @@ class StandardizedModulesTestCase(TestCase):
         self.assertIn('id="btn-exp-num-pref"', content)
         self.assertIn('id="exp-sum-total"', content)
 
-        # 2. Purchases -> Purchase Orders
+        # 2. Purchases -> Purchase Orders (Standardized Quote-style cards without headings)
         self.assertIn('.po-three-cards-grid', content)
         self.assertIn('for="po-vendor">Vendor Name*</label>', content)
-        self.assertIn('1. Vendor Details</h3>', content)
-        self.assertIn('2. Account Details</h3>', content)
-        self.assertIn('3. Purchase Order Details</h3>', content)
+        self.assertIn('id="po-vendor-addresses"', content)
         self.assertIn('id="btn-po-vendor-lookup"', content)
         self.assertIn('id="btn-po-num-pref"', content)
         self.assertIn('btn-po-tax-mode', content)
 
-        # 3. Purchases -> Bills
+        # 3. Purchases -> Bills (Standardized Quote-style cards without headings)
         self.assertIn('.bill-three-cards-grid', content)
         self.assertIn('for="bill-vendor">Vendor Name*</label>', content)
-        self.assertIn('1. Vendor Details</h3>', content)
-        self.assertIn('2. Account Details</h3>', content)
-        self.assertIn('3. Bill Details</h3>', content)
+        self.assertIn('id="bill-vendor-addresses"', content)
         self.assertIn('id="btn-bill-vendor-lookup"', content)
         self.assertIn('id="btn-bill-num-pref"', content)
         self.assertIn('btn-bill-tax-mode', content)
 
-        # 4. Purchases -> Payments Made
+        # 4. Purchases -> Payments Made (Standardized Quote-style cards without headings)
         self.assertIn('.paym-three-cards-grid', content)
         self.assertIn('for="pay-vendor">Vendor Name*</label>', content)
-        self.assertIn('1. Vendor Details</h3>', content)
-        self.assertIn('2. Account Details</h3>', content)
-        self.assertIn('3. Payment Details</h3>', content)
+        self.assertIn('id="paym-vendor-addresses"', content)
         self.assertIn('id="btn-pay-vendor-lookup"', content)
         self.assertIn('id="btn-paym-num-pref"', content)
         self.assertIn('id="alloc"', content)

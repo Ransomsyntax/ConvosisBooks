@@ -1910,6 +1910,172 @@ def unsign_document_action(obj, request):
     services.log_audit(request.user, 'update', obj.__class__.__name__, getattr(obj, 'number', str(obj.pk)), f'Removed signature from {obj.__class__.__name__} {getattr(obj, "number", obj.pk)}')
     return j({'status': 'unsigned'})
 
+
+def _custom_field_role_allows(field, user, action):
+    role = get_user_role(user)
+    if role == UserProfile.ADMIN or getattr(user, 'is_superuser', False):
+        return True
+    permissions = field.role_permissions if isinstance(field.role_permissions, dict) else {}
+    if not permissions:
+        return True
+    role_permissions = permissions.get(role)
+    if isinstance(role_permissions, bool):
+        return role_permissions
+    if isinstance(role_permissions, dict):
+        return bool(role_permissions.get(action, role_permissions.get('view', False) if action == 'view' else False))
+    return False
+
+
+def _party_address_snapshot(party, side):
+    if not party:
+        return {}
+    if side == 'billing':
+        return {
+            'attention': getattr(party, 'billing_attention', '') or '',
+            'country': getattr(party, 'billing_country', 'India') or 'India',
+            'street1': getattr(party, 'billing_address', '') or '',
+            'street2': '',
+            'city': getattr(party, 'billing_city', '') or '',
+            'state': getattr(party, 'state', '') or '',
+            'pincode': getattr(party, 'billing_pincode', '') or '',
+            'phone': getattr(party, 'billing_phone', '') or getattr(party, 'phone', '') or '',
+            'fax': '',
+        }
+    return {
+        'attention': getattr(party, 'shipping_attention', getattr(party, 'billing_attention', '')) or '',
+        'country': getattr(party, 'shipping_country', getattr(party, 'billing_country', 'India')) or 'India',
+        'street1': getattr(party, 'shipping_address', getattr(party, 'billing_address', '')) or '',
+        'street2': '',
+        'city': getattr(party, 'shipping_city', getattr(party, 'billing_city', '')) or '',
+        'state': getattr(party, 'shipping_state', getattr(party, 'state', '')) or '',
+        'pincode': getattr(party, 'shipping_pincode', getattr(party, 'billing_pincode', '')) or '',
+        'phone': getattr(party, 'shipping_phone', '') or getattr(party, 'billing_phone', '') or getattr(party, 'phone', '') or '',
+        'fax': '',
+    }
+
+
+def _clean_transaction_address(c, key, fallback):
+    fields = {
+        'attention': 150,
+        'country': 100,
+        'street1': 1000,
+        'street2': 500,
+        'city': 100,
+        'state': 100,
+        'pincode': 20,
+        'phone': 30,
+        'fax': 30,
+    }
+    value = c.d.get(key, fallback)
+    if not isinstance(value, dict):
+        c.err(key, 'Address details must be an object.')
+        return {}
+    cleaned = {}
+    for field, max_length in fields.items():
+        field_value = value.get(field, '')
+        if field_value is None:
+            field_value = ''
+        if not isinstance(field_value, (str, int, float)):
+            c.err(key, 'Address fields must contain text values.')
+            continue
+        field_value = str(field_value).strip()
+        if len(field_value) > max_length:
+            c.err(key, f'{field.replace("_", " ").title()} must be {max_length} characters or fewer.')
+            continue
+        cleaned[field] = field_value
+    return cleaned
+
+
+def _clean_module_custom_fields(c, user_org, user, module_name, previous_values=None):
+    values = c.d.get('custom_fields_data', {})
+    if previous_values is None:
+        previous_values = c.d.get('_previous_custom_fields_data', {})
+    if not isinstance(values, dict):
+        c.err('custom_fields_data', 'Custom field values must be an object.')
+        values = {}
+    if not isinstance(previous_values, dict):
+        previous_values = {}
+    custom_fields = {}
+    if not module_name:
+        for k, v in values.items():
+            if isinstance(k, str) and k.strip() and isinstance(v, (str, int, float, bool)):
+                custom_fields[k.strip()] = v if isinstance(v, bool) else str(v)[:1000]
+        return custom_fields
+
+    defined_names = set()
+    if user_org:
+        mod_variants = [module_name, str(module_name).replace('_', '-'), str(module_name).replace('-', '_')]
+        for field in CustomField.objects.filter(
+            organization=user_org, module__in=mod_variants, active=True
+        ).order_by('display_order', 'label', 'id'):
+            defined_names.add(field.name)
+            defined_names.add(field.label)
+            previous_value = previous_values.get(field.name, previous_values.get(field.label, ''))
+            value = values.get(field.name, values.get(field.label, previous_value))
+            if field.hidden or not field.form_visible or field.read_only or not _custom_field_role_allows(field, user, 'edit'):
+                if field.name in previous_values or field.label in previous_values:
+                    value = previous_value
+                else:
+                    value = field.default_value
+                    if isinstance(value, dict) and 'value' in value:
+                        value = value['value']
+                    value = '' if value in ({}, None) else value
+            if field.field_type == 'checkbox':
+                if isinstance(value, bool):
+                    checked = value
+                elif value in (None, '', 'false', 'False', '0', 0):
+                    checked = False
+                elif value in ('true', 'True', '1', 1):
+                    checked = True
+                else:
+                    c.err(f'cf__{field.name}', f'Enter a valid value for {field.label}.')
+                    continue
+                if field.required and not checked:
+                    c.err(f'cf__{field.name}', f'{field.label} is required.')
+                custom_fields[field.name] = checked
+                continue
+            value = '' if value is None else str(value).strip()
+            if field.required and not value:
+                c.err(f'cf__{field.name}', f'{field.label} is required.')
+                continue
+            if value and field.field_type == 'number':
+                try:
+                    if not Decimal(value).is_finite():
+                        raise ValueError
+                except (ArithmeticError, ValueError):
+                    c.err(f'cf__{field.name}', f'Enter a valid number for {field.label}.')
+                    continue
+            if value and field.field_type == 'date':
+                try:
+                    datetime.date.fromisoformat(value)
+                except ValueError:
+                    c.err(f'cf__{field.name}', f'Enter a valid date for {field.label}.')
+                    continue
+            if value and field.field_type == 'select':
+                choices = [choice.strip() for choice in field.options.split(',') if choice.strip()]
+                if value not in choices:
+                    c.err(f'cf__{field.name}', f'Select a valid value for {field.label}.')
+                    continue
+            custom_fields[field.name] = value[:1000]
+
+    for k, v in values.items():
+        if isinstance(k, str) and k.strip() and k not in defined_names and k not in custom_fields:
+            if isinstance(v, (str, int, float, bool)):
+                custom_fields[k.strip()] = v if isinstance(v, bool) else str(v)[:1000]
+
+    return custom_fields
+
+
+def _custom_fields_metadata(organization, module_name):
+    if not organization or not module_name:
+        return {}, {}
+    mod_variants = [module_name, str(module_name).replace('_', '-'), str(module_name).replace('-', '_')]
+    fields = list(CustomField.objects.filter(organization=organization, module__in=mod_variants, active=True))
+    labels = {f.name: f.label for f in fields}
+    pdf_labels = {f.name: f.label for f in fields if f.pdf_visible}
+    return labels, pdf_labels
+
+
 class DocResource(Resource):
     Model = Line = Party = None
     party_attr = line_fk = prefix = posted = ''
@@ -2325,8 +2491,19 @@ class DocResource(Resource):
         r.update(self.extra_detail(o))
         return r
 
+    _customer_address_snapshot = staticmethod(_party_address_snapshot)
+    _clean_quote_address = staticmethod(_clean_transaction_address)
+
     def extra_detail(self, o):
-        return {}
+        mod_key = getattr(self, 'module_key', None) or getattr(self, 'name', '') or ''
+        labels, pdf_labels = _custom_fields_metadata(getattr(o, 'organization', None), mod_key)
+        return {
+            'billing_address_data': getattr(o, 'billing_address_data', None) or {},
+            'shipping_address_data': getattr(o, 'shipping_address_data', None) or {},
+            'custom_fields_data': getattr(o, 'custom_fields_data', None) or {},
+            'custom_fields_labels': labels,
+            'custom_fields_pdf_labels': pdf_labels,
+        }
 
     def extra_clean(self, c, user_org=None, user=None):
         return {}
@@ -2466,6 +2643,10 @@ class DocResource(Resource):
             previous_custom_fields = obj.custom_fields_data or {}
             data.setdefault('custom_fields_data', previous_custom_fields)
             data['_previous_custom_fields_data'] = previous_custom_fields
+        if hasattr(obj, 'billing_address_data') and 'billing_address_data' not in data:
+            data['billing_address_data'] = obj.billing_address_data or self._customer_address_snapshot(getattr(obj, self.party_attr, None), 'billing')
+        if hasattr(obj, 'shipping_address_data') and 'shipping_address_data' not in data:
+            data['shipping_address_data'] = obj.shipping_address_data or self._customer_address_snapshot(getattr(obj, self.party_attr, None), 'shipping')
         services.check_transaction_lock(obj.date, org=user_org)
         if isinstance(obj, Invoice) and obj.source_delivery_challan_id:
             raise ApiError(409, 'Edit the delivery challan and recreate its draft invoice to preserve the source quantities.')
@@ -2597,13 +2778,41 @@ class InvoiceResource(DocResource):
         return ['INV-00101', 'Acme Infotech Ltd', '2026-10-15', '2026-11-14', 'Ergonomic Mesh Chair', 'Ergonomic office chair with lumbar support', '940310', '2', '8500.00', '18.00', 'Thanks for your business.']
 
     def extra_clean(self, c, user_org=None, user=None):
-        return {'terms': c.text('terms', max_len=2000), 'order_number': c.text('order_number', max_len=60)}
+        cust_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+        customer = Customer.objects.filter(pk=cust_id, organization=user_org).first() if cust_id and user_org else (Customer.objects.filter(pk=cust_id).first() if cust_id else None)
+        billing_fallback = _party_address_snapshot(customer, 'billing')
+        shipping_fallback = _party_address_snapshot(customer, 'shipping')
+        custom_fields = _clean_module_custom_fields(c, user_org, user, 'invoices')
+        return {
+            'terms': c.text('terms', max_len=2000) or '',
+            'order_number': c.text('order_number', max_len=60) or c.text('reference_number', max_len=60) or '',
+            'branch': c.text('branch', max_len=120) or '',
+            'location': c.text('location', max_len=120) or 'HO Kottayam',
+            'salesperson': c.text('salesperson', max_len=120) or '',
+            'project_name': c.text('project_name', max_len=150) or '',
+            'subject': c.text('subject', max_len=2000) or '',
+            'billing_address_data': _clean_transaction_address(c, 'billing_address_data', billing_fallback),
+            'shipping_address_data': _clean_transaction_address(c, 'shipping_address_data', shipping_fallback),
+            'custom_fields_data': custom_fields,
+        }
 
     def extra_detail(self, o):
-        return {
-            'terms': o.terms, 'order_number': o.order_number,
-            'project_id': o.project_id, 'project_name': o.project_name,
-        }
+        res = super().extra_detail(o)
+        res.update({
+            'terms': o.terms,
+            'order_number': o.order_number,
+            'reference_number': o.order_number,
+            'project_id': o.project_id,
+            'project_name': o.project_name,
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'salesperson': getattr(o, 'salesperson', '') or '',
+            'subject': getattr(o, 'subject', '') or '',
+            'billing_address_data': o.billing_address_data or {},
+            'shipping_address_data': o.shipping_address_data or {},
+            'custom_fields_data': o.custom_fields_data or {},
+        })
+        return res
 
     def destroy(self, obj):
         if obj.project_id:
@@ -2703,9 +2912,17 @@ class RetainerInvoiceResource(DocResource):
                 ('Paid', 'paid'), ('Applied', 'applied_amount'), ('Available', 'available_balance')]
 
     def extra_clean(self, c, user_org=None, user=None):
+        customer_id_val = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
+        cust_obj = Customer.objects.filter(pk=customer_id_val, organization=user_org).first() if customer_id_val and user_org else (Customer.objects.filter(pk=customer_id_val).first() if customer_id_val else None)
+        billing_fallback = _party_address_snapshot(cust_obj, 'billing')
+        shipping_fallback = _party_address_snapshot(cust_obj, 'shipping')
+        custom_fields = _clean_module_custom_fields(c, user_org, user, 'retainer_invoices')
         res = {
             'terms': c.text('terms_conditions' if 'terms_conditions' in c.d else 'terms', max_len=2000),
-            'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60)
+            'order_number': c.text('reference' if 'reference' in c.d else 'order_number', max_len=60) or c.text('reference_number', max_len=60) or '',
+            'billing_address_data': _clean_transaction_address(c, 'billing_address_data', billing_fallback),
+            'shipping_address_data': _clean_transaction_address(c, 'shipping_address_data', shipping_fallback),
+            'custom_fields_data': custom_fields,
         }
         project_id = c.integer('project_id', lo=1) if 'project_id' in c.d else None
         if 'project_id' in c.d or 'project_name' in c.d:
@@ -2785,12 +3002,14 @@ class RetainerInvoiceResource(DocResource):
         return res
 
     def extra_detail(self, o):
+        base_extra = super().extra_detail(o)
         paid = q2(getattr(o, 'paid_sum', o.paid_amount))
         applied = q2(getattr(o, 'applied_sum', o.applied_amount))
-        return {
+        base_extra.update({
             'business_location_id': o.business_location_id,
             'business_location_gstin': o.business_location_gstin,
             'project_id': o.project_id,
+            'project_name': o.project.name if o.project else '',
             'business_location_details': ({
                 'name': o.business_location.name,
                 'address': o.business_location.address,
@@ -2801,14 +3020,18 @@ class RetainerInvoiceResource(DocResource):
             'terms': getattr(o, 'terms', ''),
             'order_number': o.order_number,
             'reference': o.order_number,
+            'reference_number': o.order_number,
             'sent_at': o.sent_at,
             'purpose': getattr(o, 'subject', '') or '',
             'subject': getattr(o, 'subject', '') or '',
+            'billing_address_data': o.billing_address_data or {},
+            'shipping_address_data': o.shipping_address_data or {},
             'custom_fields_data': o.custom_fields_data or {},
             'paid': paid,
             'applied_amount': applied,
             'available_balance': max(Z, paid - applied)
-        }
+        })
+        return base_extra
 
     def parse(self, data, user=None, user_org=None):
         if isinstance(data, dict) and isinstance(data.get('lines'), list):
@@ -3210,7 +3433,10 @@ class QuoteResource(DocResource):
                 project_name=obj.project_name,
                 subject=obj.subject,
                 notes=obj.notes,
-                terms=obj.terms
+                terms=obj.terms,
+                billing_address_data=getattr(obj, 'billing_address_data', None) or {},
+                shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
+                custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
             )
             for l in obj.lines.all():
                 InvoiceLine.objects.create(
@@ -3277,7 +3503,10 @@ class QuoteResource(DocResource):
                 project_name=obj.project_name,
                 subject=obj.subject,
                 notes=obj.notes,
-                terms=obj.terms
+                terms=obj.terms,
+                billing_address_data=getattr(obj, 'billing_address_data', None) or {},
+                shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
+                custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
             )
             for l in obj.lines.all():
                 SalesOrderLine.objects.create(
@@ -3316,10 +3545,40 @@ class BillResource(DocResource):
         return ['BILL-00201', 'Reliable Hardware Supplies', '2026-10-10', '2026-11-09', 'Ergonomic Mesh Chair', 'Raw frame materials', '940310', '10', '5200.00', '18.00', 'Standard supplies bill']
 
     def extra_clean(self, c, user_org=None, user=None):
-        return {'vendor_ref': c.text('vendor_ref', max_len=60), 'order_number': c.text('order_number', max_len=60)}
+        ven_id = c.integer('vendor', lo=1) or c.integer('vendor_id', lo=1)
+        vendor = Vendor.objects.filter(pk=ven_id, organization=user_org).first() if ven_id and user_org else (Vendor.objects.filter(pk=ven_id).first() if ven_id else None)
+        billing_fallback = _party_address_snapshot(vendor, 'billing')
+        shipping_fallback = _party_address_snapshot(vendor, 'shipping')
+        custom_fields = _clean_module_custom_fields(c, user_org, user, 'bills')
+        return {
+            'vendor_ref': c.text('vendor_ref', max_len=60) or c.text('reference_number', max_len=60) or '',
+            'order_number': c.text('order_number', max_len=60) or '',
+            'branch': c.text('branch', max_len=120) or '',
+            'location': c.text('location', max_len=120) or 'HO Kottayam',
+            'accounts_payable': c.text('accounts_payable', max_len=120) or 'Accounts Payable',
+            'terms': c.text('terms', max_len=2000) or '',
+            'notes': c.text('notes', max_len=2000) or '',
+            'subject': c.text('subject', max_len=2000) or '',
+            'billing_address_data': _clean_transaction_address(c, 'billing_address_data', billing_fallback),
+            'shipping_address_data': _clean_transaction_address(c, 'shipping_address_data', shipping_fallback),
+            'custom_fields_data': custom_fields,
+        }
 
     def extra_detail(self, o):
-        return {'vendor_ref': o.vendor_ref, 'order_number': o.order_number}
+        res = super().extra_detail(o)
+        res.update({
+            'vendor_ref': o.vendor_ref,
+            'reference_number': o.vendor_ref or o.order_number,
+            'order_number': o.order_number,
+            'accounts_payable': getattr(o, 'accounts_payable', 'Accounts Payable'),
+            'branch': getattr(o, 'branch', '') or '',
+            'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'subject': getattr(o, 'subject', '') or '',
+            'billing_address_data': o.billing_address_data or {},
+            'shipping_address_data': o.shipping_address_data or {},
+            'custom_fields_data': o.custom_fields_data or {},
+        })
+        return res
 
     def action(self, request, obj, name):
         if name == 'approve':
@@ -3397,6 +3656,26 @@ class PaymentResource(Resource):
 
     def detail(self, o):
         r = self.row(o)
+        mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
+        cf_labels, cf_pdf = _custom_fields_metadata(getattr(o, 'organization', None), mod_name)
+        p = getattr(o, self.party_attr, None)
+        r['billing_address_data'] = getattr(o, 'billing_address_data', None) or {}
+        r['shipping_address_data'] = getattr(o, 'shipping_address_data', None) or {}
+        r['custom_fields_data'] = getattr(o, 'custom_fields_data', None) or {}
+        r['custom_fields_labels'] = cf_labels
+        r['custom_fields_pdf_labels'] = cf_pdf
+        r['reference_number'] = getattr(o, 'reference', '') or ''
+        if p:
+            r['party_details'] = {
+                'id': p.pk,
+                'name': p.name,
+                'company': getattr(p, 'company_name', '') or getattr(p, 'company', '') or '',
+                'billing_address': getattr(p, 'billing_address', '') or '',
+                'gstin': getattr(p, 'gstin', '') or '',
+                'email': getattr(p, 'email', '') or '',
+                'phone': getattr(p, 'phone', '') or '',
+                'state': getattr(p, 'state', '') or '',
+            }
         r['allocations'] = [{'doc_id': getattr(a, self.doc_attr + '_id'), 'number': getattr(a, self.doc_attr).number,
                              'amount': a.amount} for a in o.allocations.select_related(self.doc_attr)]
         return r
@@ -3479,11 +3758,23 @@ class PaymentResource(Resource):
                'account': acc_name,
                'amount': c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999')),
                'reference': c.text('reference', max_len=80), 'notes': c.text('notes', max_len=2000)}
+        billing_fallback = _party_address_snapshot(party, 'billing')
+        shipping_fallback = _party_address_snapshot(party, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
+        cf_data = _clean_module_custom_fields(c, user_org, user, mod_name)
         c.done()
         services.check_transaction_lock(out['date'], org=user_org)
         extra = {}
         if hasattr(self.Model, 'organization'):
             extra['organization'] = user_org
+        if hasattr(self.Model, 'billing_address_data'):
+            extra['billing_address_data'] = billing_addr
+        if hasattr(self.Model, 'shipping_address_data'):
+            extra['shipping_address_data'] = shipping_addr
+        if hasattr(self.Model, 'custom_fields_data'):
+            extra['custom_fields_data'] = cf_data
         pay_num = (data.get('number') or '').strip()
         series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
         series_id = data.get('numbering_series_id') or data.get('series_id')
@@ -3579,6 +3870,18 @@ class PaymentResource(Resource):
             obj.reference = c.text('reference', max_len=80)
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=2000)
+        user_org = getattr(obj, 'organization', None) or get_user_org(user)
+        mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
+        if hasattr(obj, 'billing_address_data'):
+            billing_fallback = obj.billing_address_data or _party_address_snapshot(getattr(obj, self.party_attr, None), 'billing')
+            obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        if hasattr(obj, 'shipping_address_data'):
+            shipping_fallback = obj.shipping_address_data or _party_address_snapshot(getattr(obj, self.party_attr, None), 'shipping')
+            obj.shipping_address_data = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        if hasattr(obj, 'custom_fields_data'):
+            prev_cf = obj.custom_fields_data or {}
+            data.setdefault('custom_fields_data', prev_cf)
+            obj.custom_fields_data = _clean_module_custom_fields(c, user_org, user, mod_name, previous_values=prev_cf)
         c.done()
         obj.save()
 
@@ -5006,21 +5309,6 @@ def _get_user_hidden_custom_field_names(user, module=None):
     return hidden_names
 
 
-def _custom_field_role_allows(field, user, action):
-    role = get_user_role(user)
-    if role == UserProfile.ADMIN or getattr(user, 'is_superuser', False):
-        return True
-    permissions = field.role_permissions if isinstance(field.role_permissions, dict) else {}
-    if not permissions:
-        return True
-    role_permissions = permissions.get(role)
-    if isinstance(role_permissions, bool):
-        return role_permissions
-    if isinstance(role_permissions, dict):
-        return bool(role_permissions.get(action, role_permissions.get('view', False) if action == 'view' else False))
-    return False
-
-
 def _can_manage_custom_fields(user, action):
     if get_user_role(user) == UserProfile.ADMIN or getattr(user, 'is_superuser', False):
         return True
@@ -5071,7 +5359,7 @@ class CustomFieldResource(Resource):
     def filter_qs(self, qs, request):
         mod = request.GET.get('module')
         if mod:
-            qs = qs.filter(module=mod)
+            qs = qs.filter(module__in=[mod, mod.replace('_', '-'), mod.replace('-', '_')])
         active = request.GET.get('active')
         if active is not None:
             qs = qs.filter(active=active.lower() in ('1', 'true', 'yes'))
@@ -6001,10 +6289,18 @@ class SalesOrderResource(Resource):
             related_documents.append({
                 'kind': 'invoices', 'type': 'Invoice', 'id': o.converted_to_invoice.pk, 'number': o.converted_to_invoice.number, 'date': o.converted_to_invoice.date.isoformat() if hasattr(o.converted_to_invoice.date, 'isoformat') else str(o.converted_to_invoice.date), 'total': o.converted_to_invoice.total, 'status': o.converted_to_invoice.status, 'relation': 'Converted to Invoice'
             })
+        cf_labels, cf_pdf = _custom_fields_metadata(o.organization, 'sales_orders')
         r.update({
             'place_of_supply': o.place_of_supply,
             'terms': o.terms or '',
             'notes': o.notes or '',
+            'reference_number': o.order_number or '',
+            'order_number': o.order_number or '',
+            'billing_address_data': o.billing_address_data or {},
+            'shipping_address_data': o.shipping_address_data or {},
+            'custom_fields_data': o.custom_fields_data or {},
+            'custom_fields_labels': cf_labels,
+            'custom_fields_pdf_labels': cf_pdf,
             'related_documents': related_documents,
             'party_details': {
                 'id': o.customer.pk,
@@ -6058,6 +6354,11 @@ class SalesOrderResource(Resource):
         project_name = c.text('project_name', max_len=150)
         subject = c.text('subject', max_len=2000)
         pos = c.text('place_of_supply', max_len=60) or cust.state or (user_org.state if user_org else Organization.get().state)
+        billing_fallback = _party_address_snapshot(cust, 'billing')
+        shipping_fallback = _party_address_snapshot(cust, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        cf_data = _clean_module_custom_fields(c, user_org, user, 'sales_orders')
         status = c.choice('status', ['draft', 'confirmed'], default='confirmed')
         c.done()
 
@@ -6090,7 +6391,9 @@ class SalesOrderResource(Resource):
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
             order_number=order_num, status=status, branch=branch, location=location,
-            salesperson=salesperson, project_name=project_name, subject=subject
+            salesperson=salesperson, project_name=project_name, subject=subject,
+            billing_address_data=billing_addr, shipping_address_data=shipping_addr,
+            custom_fields_data=cf_data
         )
         lines = parse_lines(data.get('lines', []), org=user_org)
         intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
@@ -6150,6 +6453,16 @@ class SalesOrderResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        user_org = obj.organization or get_user_org(user)
+        if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
+            billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.customer, 'billing')
+            obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        if 'shipping_address_data' in data or hasattr(obj, 'shipping_address_data'):
+            shipping_fallback = obj.shipping_address_data or _party_address_snapshot(obj.customer, 'shipping')
+            obj.shipping_address_data = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        prev_cf = obj.custom_fields_data or {}
+        data.setdefault('custom_fields_data', prev_cf)
+        obj.custom_fields_data = _clean_module_custom_fields(c, user_org, user, 'sales_orders', previous_values=prev_cf)
         c.done()
 
         if 'lines' in data:
@@ -6227,7 +6540,10 @@ class SalesOrderResource(Resource):
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes,
-                terms=obj.terms
+                terms=obj.terms,
+                billing_address_data=getattr(obj, 'billing_address_data', None) or {},
+                shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
+                custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
             )
             for l in obj.lines.all():
                 InvoiceLine.objects.create(
@@ -6507,6 +6823,7 @@ class PurchaseOrderResource(Resource):
 
     def detail(self, o):
         r = self.row(o)
+        cf_labels, cf_pdf = _custom_fields_metadata(o.organization, 'purchase_orders')
         r['party_details'] = {
             'id': o.vendor.pk,
             'name': o.vendor.name,
@@ -6517,6 +6834,12 @@ class PurchaseOrderResource(Resource):
             'phone': o.vendor.phone or '',
             'state': o.vendor.state or '',
         }
+        r['reference_number'] = getattr(o, 'order_number', '') or ''
+        r['billing_address_data'] = getattr(o, 'billing_address_data', None) or {}
+        r['shipping_address_data'] = getattr(o, 'shipping_address_data', None) or {}
+        r['custom_fields_data'] = getattr(o, 'custom_fields_data', None) or {}
+        r['custom_fields_labels'] = cf_labels
+        r['custom_fields_pdf_labels'] = cf_pdf
         r['place_of_supply'] = o.place_of_supply
         r['notes'] = o.notes or ''
         r['terms'] = getattr(o, 'terms', '') or ''
@@ -6545,6 +6868,12 @@ class PurchaseOrderResource(Resource):
         deliv = c.date('delivery_date')
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        billing_fallback = _party_address_snapshot(ven, 'billing')
+        shipping_fallback = _party_address_snapshot(ven, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        user_org = get_user_org(user) if user else None
+        cf_data = _clean_module_custom_fields(c, user_org, user, 'purchase_orders')
         c.done()
 
         user_org = get_user_org(user) if user else None
@@ -6576,7 +6905,9 @@ class PurchaseOrderResource(Resource):
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             delivery_date=deliv, status='draft',
             tax_pricing_type=tax_pricing, customer_type=cust_type,
-            branch=branch, location=location
+            branch=branch, location=location,
+            billing_address_data=billing_addr, shipping_address_data=shipping_addr,
+            custom_fields_data=cf_data
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(po.place_of_supply, Organization.get().state)
@@ -6621,6 +6952,16 @@ class PurchaseOrderResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+        user_org = obj.organization or get_user_org(user)
+        if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
+            billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.vendor, 'billing')
+            obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        if 'shipping_address_data' in data or hasattr(obj, 'shipping_address_data'):
+            shipping_fallback = obj.shipping_address_data or _party_address_snapshot(obj.vendor, 'shipping')
+            obj.shipping_address_data = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        prev_cf = obj.custom_fields_data or {}
+        data.setdefault('custom_fields_data', prev_cf)
+        obj.custom_fields_data = _clean_module_custom_fields(c, user_org, user, 'purchase_orders', previous_values=prev_cf)
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
@@ -6681,7 +7022,10 @@ class PurchaseOrderResource(Resource):
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
                 notes=obj.notes,
-                terms=obj.terms
+                terms=obj.terms,
+                billing_address_data=getattr(obj, 'billing_address_data', None) or {},
+                shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
+                custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
             )
             for l in obj.lines.all():
                 BillLine.objects.create(
@@ -7404,7 +7748,9 @@ class VendorCreditResource(Resource):
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open',
             tax_pricing_type=tax_pricing, customer_type=cust_type,
-            branch=branch, location=location
+            branch=branch, location=location,
+            billing_address_data=billing_addr, shipping_address_data=shipping_addr,
+            custom_fields_data=cf_data
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(vc.place_of_supply, Organization.get().state)
@@ -7522,6 +7868,7 @@ class RecurringInvoiceResource(Resource):
         if pt is None:
             pt = getattr(o.customer, 'payment_terms', 30) or 30
         freq_disp = dict(getattr(o, 'FREQUENCIES', [])).get(o.frequency, o.frequency.replace('_', ' ').capitalize())
+        cf_labels, cf_pdf = _custom_fields_metadata(o.organization, 'recurring_invoices')
         return {
             'id': o.pk, 'profile_name': o.profile_name, 'name': o.profile_name, 'customer_id': o.customer_id,
             'customer_name': o.customer.name, 'frequency': o.frequency,
@@ -7529,6 +7876,7 @@ class RecurringInvoiceResource(Resource):
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'order_number': getattr(o, 'order_number', '') or '',
+            'reference_number': getattr(o, 'order_number', '') or '',
             'salesperson': getattr(o, 'salesperson', '') or '',
             'project_name': getattr(o, 'project_name', '') or '',
             'subject': getattr(o, 'subject', '') or '',
@@ -7544,7 +7892,12 @@ class RecurringInvoiceResource(Resource):
             'total': o.total, 'total_amount': o.total, 'subtotal': o.subtotal,
             'tax_amount': max(Decimal('0.00'), (o.total or Decimal('0.00')) - (o.subtotal or Decimal('0.00'))),
             'payment_terms': int(pt),
-            'auto_send': bool(meta.get('auto_send', False))
+            'auto_send': bool(meta.get('auto_send', False)),
+            'billing_address_data': getattr(o, 'billing_address_data', None) or {},
+            'shipping_address_data': getattr(o, 'shipping_address_data', None) or {},
+            'custom_fields_data': getattr(o, 'custom_fields_data', None) or {},
+            'custom_fields_labels': cf_labels,
+            'custom_fields_pdf_labels': cf_pdf,
         }
 
     def detail(self, o):
@@ -7636,6 +7989,11 @@ class RecurringInvoiceResource(Resource):
         notes = c.text('notes', max_len=2000)
         terms = c.text('terms', max_len=2000)
         max_occ = c.integer('max_occurrences', lo=1)
+        billing_fallback = _party_address_snapshot(cust, 'billing')
+        shipping_fallback = _party_address_snapshot(cust, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        cf_data = _clean_module_custom_fields(c, user_org, user, 'recurring_invoices')
         c.done()
 
         # Handle lines
@@ -7699,6 +8057,9 @@ class RecurringInvoiceResource(Resource):
             customer_type=str(data.get('customer_type') or 'b2b').strip().lower(),
             total=tot,
             subtotal=tot,
+            billing_address_data=billing_addr,
+            shipping_address_data=shipping_addr,
+            custom_fields_data=cf_data,
             lines_data=meta_dict
         )
         services.log_audit(user, 'create', 'RecurringInvoice', rec.pk, f"Created recurring profile {rec.profile_name}", org=user_org, module='sales', submodule='recurring_invoices')
@@ -7778,6 +8139,15 @@ class RecurringInvoiceResource(Resource):
             tot = c.number('total', required=True, lo=Decimal('0.01'))
             obj.total = tot
             obj.subtotal = tot
+        if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
+            billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.customer, 'billing')
+            obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        if 'shipping_address_data' in data or hasattr(obj, 'shipping_address_data'):
+            shipping_fallback = obj.shipping_address_data or _party_address_snapshot(obj.customer, 'shipping')
+            obj.shipping_address_data = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        prev_cf = obj.custom_fields_data or {}
+        data.setdefault('custom_fields_data', prev_cf)
+        obj.custom_fields_data = _clean_module_custom_fields(c, user_org, user, 'recurring_invoices', previous_values=prev_cf)
         c.done()
 
         meta = obj.lines_data if isinstance(obj.lines_data, dict) else {}

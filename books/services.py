@@ -5291,7 +5291,11 @@ def sync_live_bank_feed(bank_account_id, provider='setu_aa', user=None):
 
 def apply_bank_rules_to_transaction(txn):
     """Evaluate active BankRules against an unreconciled transaction."""
-    rules = BankRule.objects.filter(active=True).order_by('priority')
+    txn_org = getattr(txn, 'organization', None) or (txn.bank_account.organization if getattr(txn, 'bank_account', None) else None)
+    rules_qs = BankRule.objects.filter(active=True)
+    if txn_org:
+        rules_qs = rules_qs.filter(Q(organization=txn_org) | Q(organization__isnull=True))
+    rules = rules_qs.order_by('priority', 'id')
     for rule in rules:
         target = getattr(txn, rule.field, '') or ''
         target_str = str(target).lower()
@@ -5300,9 +5304,11 @@ def apply_bank_rules_to_transaction(txn):
         matched = False
         if rule.operator == 'contains' and val_str in target_str:
             matched = True
-        elif rule.operator == 'equals' and val_str == target_str:
+        elif rule.operator in ('equals', 'exact') and val_str == target_str:
             matched = True
         elif rule.operator == 'starts_with' and target_str.startswith(val_str):
+            matched = True
+        elif rule.operator == 'ends_with' and target_str.endswith(val_str):
             matched = True
 
         if matched:
@@ -5533,10 +5539,13 @@ def get_advanced_bank_match_suggestions(txn_id):
     suggestions.sort(key=lambda s: s['confidence_score'], reverse=True)
     return suggestions
 
-def ensure_default_bank_rules(force=False):
+def ensure_default_bank_rules(org=None, force=False):
     """Seed comprehensive standard bank rules for automated categorization."""
-    if not force and BankRule.objects.filter(active=True).exists():
-        return list(BankRule.objects.filter(active=True))
+    existing_qs = BankRule.objects.filter(active=True)
+    if org:
+        existing_qs = existing_qs.filter(organization=org)
+    if not force and existing_qs.exists():
+        return list(existing_qs)
 
     rule_defs = [
         {
@@ -5631,10 +5640,17 @@ def ensure_default_bank_rules(force=False):
 
     created_rules = []
     for rd in rule_defs:
-        if BankRule.objects.filter(name=rd['name']).exists():
+        check_qs = BankRule.objects.filter(name=rd['name'])
+        if org:
+            check_qs = check_qs.filter(organization=org)
+        if check_qs.exists():
             continue
-        acc = Account.objects.filter(code=rd.get('account_code')).first()
+        acc_qs = Account.objects.filter(code=rd.get('account_code'))
+        if org:
+            acc_qs = acc_qs.filter(organization=org)
+        acc = acc_qs.first()
         r = BankRule.objects.create(
+            organization=org,
             name=rd['name'],
             field=rd['field'],
             operator=rd['operator'],
@@ -5657,7 +5673,12 @@ def run_banking_automation(bank_account_id=None, user=None):
     3. Re-computes account books and feed balances.
     Returns details of matched, categorized, and rules evaluated.
     """
-    ensure_default_bank_rules()
+    org = None
+    if user and getattr(user, 'is_authenticated', False):
+        profile = getattr(user, 'profile', None)
+        if profile and profile.organization:
+            org = profile.organization
+    ensure_default_bank_rules(org=org)
 
     txns_qs = BankTransaction.objects.filter(status__in=['unmatched', 'unreconciled'])
     if bank_account_id:
@@ -5796,10 +5817,102 @@ def rollback_statement_batch(batch_id, user=None):
         'current_account_balance': str(acc.current_balance)
     }
 
-def get_bank_dashboard_summary(bank_account_id=None):
+def get_monthly_cashflow_report(org=None, bank_account_id=None, start_date=None, end_date=None):
+    """
+    Computes monthly cash inflow (deposits) and outflow (withdrawals) for banking transactions.
+    Groups transactions by month and ensures months without transactions display zero values.
+    Applies organization data isolation.
+    """
+    today = timezone.localdate()
+
+    if end_date is None:
+        end_date = today
+    if start_date is None:
+        start_year = end_date.year
+        start_month = end_date.month - 5
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        start_date = date(start_year, start_month, 1)
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    month_sequence = []
+    curr_y, curr_m = start_date.year, start_date.month
+    end_y, end_m = end_date.year, end_date.month
+
+    while (curr_y < end_y) or (curr_y == end_y and curr_m <= end_m):
+        m_key = f"{curr_y:04d}-{curr_m:02d}"
+        m_label = date(curr_y, curr_m, 1).strftime('%b %Y')
+        month_sequence.append({
+            'key': m_key,
+            'label': m_label,
+            'year': curr_y,
+            'month': curr_m,
+            'inflow': Decimal('0.00'),
+            'outflow': Decimal('0.00'),
+        })
+        curr_m += 1
+        if curr_m > 12:
+            curr_m = 1
+            curr_y += 1
+
+    month_map = {m['key']: m for m in month_sequence}
+
+    tx_qs = BankTransaction.objects.all()
+    if org:
+        tx_qs = tx_qs.filter(Q(bank_account__organization=org) | Q(organization=org))
+    if bank_account_id:
+        tx_qs = tx_qs.filter(bank_account_id=bank_account_id)
+
+    tx_qs = tx_qs.exclude(status='excluded')
+    tx_qs = tx_qs.filter(date__gte=start_date, date__lte=end_date)
+
+    tx_count = 0
+    total_inflow = Decimal('0.00')
+    total_outflow = Decimal('0.00')
+
+    for t in tx_qs:
+        tx_count += 1
+        k = t.date.strftime('%Y-%m')
+        dep = t.deposit or Decimal('0.00')
+        wth = t.withdrawal or Decimal('0.00')
+        total_inflow += dep
+        total_outflow += wth
+        if k in month_map:
+            month_map[k]['inflow'] += dep
+            month_map[k]['outflow'] += wth
+
+    has_data = bool(tx_count > 0 and (total_inflow > Decimal('0.00') or total_outflow > Decimal('0.00')))
+    net_cashflow = total_inflow - total_outflow
+
+    currency = 'INR'
+    if org and hasattr(org, 'base_currency') and org.base_currency:
+        currency = org.base_currency
+
+    return {
+        'months': [m['label'] for m in month_sequence],
+        'month_keys': [m['key'] for m in month_sequence],
+        'inflow': [float(m['inflow']) for m in month_sequence],
+        'outflow': [float(m['outflow']) for m in month_sequence],
+        'total_inflow': float(total_inflow),
+        'total_outflow': float(total_outflow),
+        'net_cashflow': float(net_cashflow),
+        'has_data': has_data,
+        'transaction_count': tx_count,
+        'currency': currency,
+        'currency_symbol': '₹' if currency == 'INR' else currency,
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+    }
+
+def get_bank_dashboard_summary(bank_account_id=None, org=None):
     acc = None
     if bank_account_id:
         acc = BankAccount.objects.filter(pk=bank_account_id).first()
+    if not acc and org:
+        acc = BankAccount.objects.filter(organization=org, active=True).first()
     if not acc:
         acc = BankAccount.objects.filter(name='Kotak1').first() or BankAccount.objects.filter(active=True).first()
     if not acc:
@@ -5891,7 +6004,8 @@ def get_bank_dashboard_summary(bank_account_id=None):
         'total_unrec_count': total_unrec_count,
         'accounts': all_accs,
         'all_accounts': all_accs,
-        'recent_transactions': recent_txns
+        'recent_transactions': recent_txns,
+        'cashflow': get_monthly_cashflow_report(org=org, bank_account_id=acc.pk if acc else None)
     }
 
 @transaction.atomic

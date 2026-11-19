@@ -6122,16 +6122,52 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       </div>
 
       <div id="bnk-panel-banking-reports" class="bnk-panel" style="display:${currentTab === 'banking-reports' ? 'block' : 'none'};">
-        <div style="margin-bottom:16px;">
-          <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Banking Financial Analytics</h2>
-          <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Cashflow trajectory, account balance breakdown, and fee summaries</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;color:var(--tx);margin:0;">Banking Financial Analytics</h2>
+            <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Cashflow trajectory, account balance breakdown, and fee summaries</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <select id="bnkReportAccountFilter" class="in" style="font-size:12px;padding:6px 10px;">
+              <option value="">All Bank Accounts</option>
+              ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+            </select>
+            <select id="bnkReportPeriodFilter" class="in" style="font-size:12px;padding:6px 10px;">
+              <option value="6m" selected>Last 6 Months</option>
+              <option value="12m">Last 12 Months</option>
+              <option value="fy">Current Fiscal Year</option>
+              <option value="custom">Custom Date Range</option>
+            </select>
+            <span id="bnkReportCustomDates" style="display:none;align-items:center;gap:6px;">
+              <input type="date" id="bnkReportStartDate" class="in" style="font-size:12px;padding:4px 8px;" />
+              <span style="font-size:12px;color:var(--tx-muted);">to</span>
+              <input type="date" id="bnkReportEndDate" class="in" style="font-size:12px;padding:4px 8px;" />
+            </span>
+            <button type="button" class="btn" id="bnkReportRefreshBtn" style="font-size:12px;padding:6px 12px;display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-arrows-rotate"></i> Refresh
+            </button>
+          </div>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
           <div class="glass-card" style="padding:20px;">
-            <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 12px;">Monthly Cash Inflow vs Outflow</h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+              <h3 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">Monthly Cash Inflow vs Outflow</h3>
+              <div id="bnkCashflowTotals" style="font-size:11px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;"></div>
+            </div>
             <div style="height:260px;position:relative;">
-              <canvas id="bnkChartCashflow"></canvas>
+              <div id="bnkCashflowLoading" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,0.7);z-index:2;align-items:center;justify-content:center;font-size:12px;color:var(--tx-muted);">
+                <i class="fa-solid fa-circle-notch fa-spin" style="margin-right:6px;"></i> Loading cashflow data...
+              </div>
+              <div id="bnkCashflowCanvasWrap" style="height:100%;width:100%;">
+                <canvas id="bnkChartCashflow"></canvas>
+              </div>
+              <div id="bnkCashflowEmptyState" style="display:none;height:100%;width:100%;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;">
+                <div style="width:40px;height:40px;border-radius:50%;background:rgba(100,116,139,0.1);color:var(--tx-muted);display:grid;place-items:center;margin-bottom:10px;font-size:18px;">
+                  <i class="fa-solid fa-chart-column"></i>
+                </div>
+                <div style="font-size:13px;font-weight:600;color:var(--tx-muted);">No cash inflow or outflow data available for the selected period.</div>
+              </div>
             </div>
           </div>
           <div class="glass-card" style="padding:20px;">
@@ -6216,25 +6252,50 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     <div id="bnkAddRuleModal" class="banking-modal-overlay" style="display:none;">
       <div class="glass-card" style="max-width:440px;width:100%;padding:24px;background:var(--surface-glass-solid);">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd-glass);padding-bottom:12px;margin-bottom:16px;">
-          <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Create Automation Bank Rule</h3>
+          <h3 id="bnkRuleModalTitle" style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Create Automation Bank Rule</h3>
           <button type="button" class="btn" data-close-modal="bnkAddRuleModal" style="padding:2px 8px;font-size:12px;">✕</button>
         </div>
         <form id="bnkAddRuleForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+          <input type="hidden" id="bnkRuleEditId" value="" />
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">Rule Name</label>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Rule Name <span style="color:#ef4444;">*</span></label>
             <input type="text" id="bnkRuleName" required placeholder="e.g. AWS Cloud Subscription" class="in" style="width:100%;"/>
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label style="display:block;font-weight:600;margin-bottom:4px;">Field to Match</label>
+              <select id="bnkRuleField" class="in" style="width:100%;">
+                <option value="description" selected>Description</option>
+                <option value="payee">Payee</option>
+                <option value="reference">Reference</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-weight:600;margin-bottom:4px;">Condition</label>
+              <select id="bnkRuleOperator" class="in" style="width:100%;">
+                <option value="contains" selected>Contains</option>
+                <option value="exact">Exact Match</option>
+                <option value="starts_with">Starts With</option>
+                <option value="ends_with">Ends With</option>
+              </select>
+            </div>
+          </div>
           <div>
-            <label style="display:block;font-weight:600;margin-bottom:4px;">If Description Contains Keyword</label>
+            <label style="display:block;font-weight:600;margin-bottom:4px;">Keyword / Value to Match <span style="color:#ef4444;">*</span></label>
             <input type="text" id="bnkRuleKeyword" required placeholder="e.g. AWS / Amazon Web" class="in" style="width:100%;"/>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Automatically Categorize As</label>
-            <input type="text" id="bnkRuleCategory" required placeholder="e.g. Software & Hosting Expense" class="in" style="width:100%;"/>
+            <input type="text" id="bnkRuleCategory" placeholder="e.g. Software & Hosting Expense" class="in" style="width:100%;"/>
+          </div>
+          <div>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">
+              <input type="checkbox" id="bnkRuleActive" checked /> Enable this rule for automated categorization
+            </label>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
             <button type="button" class="btn" data-close-modal="bnkAddRuleModal">Cancel</button>
-            <button type="submit" class="btn p" style="background:#4f46e5;border-color:#4f46e5;">Create Rule</button>
+            <button type="submit" id="bnkRuleSubmitBtn" class="btn p" style="background:#4f46e5;border-color:#4f46e5;">Create Rule</button>
           </div>
         </form>
       </div>
@@ -6679,13 +6740,29 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
     grid.innerHTML = bankRules.map(r => `
-      <div class="glass-card" style="padding:16px;border-left:4px solid #6366f1;display:flex;flex-direction:column;gap:8px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0;">${esc(r.name)}</h4>
-          <span class="banking-badge-pill banking-badge-indigo">Active</span>
+      <div class="glass-card" style="padding:16px;border-left:4px solid ${r.active !== false ? '#6366f1' : '#94a3b8'};display:flex;flex-direction:column;gap:10px;opacity:${r.active !== false ? '1' : '0.8'};">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div>
+            <h4 style="font-size:14px;font-weight:700;color:var(--tx);margin:0 0 4px;">${esc(r.name)}</h4>
+            <span class="banking-badge-pill ${r.active !== false ? 'banking-badge-indigo' : 'banking-badge-gray'}" style="${r.active !== false ? '' : 'background:#e2e8f0;color:#64748b;'}">
+              ${r.active !== false ? 'Active' : 'Disabled'}
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button type="button" class="btn" data-toggle-rule="${r.id}" title="${r.active !== false ? 'Disable Rule' : 'Enable Rule'}" style="padding:4px 8px;font-size:11px;display:inline-flex;align-items:center;gap:4px;">
+              <i class="fa-solid ${r.active !== false ? 'fa-toggle-on' : 'fa-toggle-off'}" style="color:${r.active !== false ? '#10b981' : '#94a3b8'};font-size:14px;"></i>
+              <span>${r.active !== false ? 'Enabled' : 'Disabled'}</span>
+            </button>
+            <button type="button" class="btn" data-edit-rule="${r.id}" title="Edit Rule" style="padding:4px 8px;font-size:11px;">
+              <i class="fa-solid fa-pen-to-square"></i> Edit
+            </button>
+            <button type="button" class="btn" data-delete-rule="${r.id}" title="Delete Rule" style="padding:4px 8px;font-size:11px;color:#ef4444;border-color:rgba(239,68,68,0.3);">
+              <i class="fa-solid fa-trash-can"></i> Delete
+            </button>
+          </div>
         </div>
-        <p style="font-size:12px;color:var(--tx-muted);margin:0;">Condition: If <code>${esc(r.field || 'description')}</code> contains <b style="color:var(--tx);">"${esc(r.value || r.keyword || '')}"</b></p>
-        <p style="font-size:12px;color:#059669;font-weight:600;margin:0;">Assign Category: ${esc(r.gl_account_name || r.account || 'Automated GL')}</p>
+        <p style="font-size:12px;color:var(--tx-muted);margin:0;">Condition: If <code>${esc(r.field || 'description')}</code> ${esc(r.operator || 'contains')} <b style="color:var(--tx);">"${esc(r.value || r.keyword || '')}"</b></p>
+        <p style="font-size:12px;color:#059669;font-weight:600;margin:0;">Assign Category: ${esc(r.assign_account_name || r.assign_payee || r.gl_account_name || r.account || 'Automated GL')}</p>
       </div>
     `).join('');
   }
@@ -6822,42 +6899,144 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   let chartCashflowInstance = null;
   let chartDistributionInstance = null;
 
-  function initCharts() {
+  async function loadCashflowChart() {
     if (typeof Chart === 'undefined') return;
     const ctx1 = root.querySelector('#bnkChartCashflow');
-    const ctx2 = root.querySelector('#bnkChartDistribution');
+    const emptyState = root.querySelector('#bnkCashflowEmptyState');
+    const canvasWrap = root.querySelector('#bnkCashflowCanvasWrap');
+    const totalsElem = root.querySelector('#bnkCashflowTotals');
+    const loadingElem = root.querySelector('#bnkCashflowLoading');
+    if (!ctx1) return;
 
-    if (ctx1) {
+    const accFilter = root.querySelector('#bnkReportAccountFilter');
+    const periodFilter = root.querySelector('#bnkReportPeriodFilter');
+    const startInput = root.querySelector('#bnkReportStartDate');
+    const endInput = root.querySelector('#bnkReportEndDate');
+
+    const params = new URLSearchParams();
+    if (accFilter && accFilter.value) params.set('bank_account', accFilter.value);
+
+    const period = periodFilter ? periodFilter.value : '6m';
+    const now = new Date();
+    const endDate = now.toISOString().split('T')[0];
+
+    if (period === 'custom') {
+      if (startInput && startInput.value) params.set('start_date', startInput.value);
+      if (endInput && endInput.value) params.set('end_date', endInput.value);
+    } else if (period === '12m') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+      params.set('start_date', d.toISOString().split('T')[0]);
+      params.set('end_date', endDate);
+    } else if (period === 'fy') {
+      const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      params.set('start_date', `${startYear}-04-01`);
+      params.set('end_date', endDate);
+    } else {
+      const d = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      params.set('start_date', d.toISOString().split('T')[0]);
+      params.set('end_date', endDate);
+    }
+
+    try {
+      if (loadingElem) loadingElem.style.display = 'flex';
+      const data = await api('banking/reports/cashflow/?' + params.toString());
+      if (loadingElem) loadingElem.style.display = 'none';
+
+      if (totalsElem && data) {
+        const sym = data.currency_symbol || '₹';
+        totalsElem.innerHTML = `
+          <span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;">
+            <i class="fa-solid fa-arrow-down-left"></i> Inflow: ${sym}${Number(data.total_inflow || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:4px;color:#ef4444;font-weight:600;">
+            <i class="fa-solid fa-arrow-up-right"></i> Outflow: ${sym}${Number(data.total_outflow || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:4px;color:${(data.net_cashflow || 0) >= 0 ? '#059669' : '#dc2626'};font-weight:700;">
+            Net: ${sym}${Number(data.net_cashflow || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}
+          </span>
+        `;
+      }
+
+      if (!data || !data.has_data || !data.months || data.months.length === 0) {
+        if (chartCashflowInstance) {
+          chartCashflowInstance.destroy();
+          chartCashflowInstance = null;
+        }
+        if (canvasWrap) canvasWrap.style.display = 'none';
+        if (emptyState) emptyState.style.display = 'flex';
+        return;
+      }
+
+      if (emptyState) emptyState.style.display = 'none';
+      if (canvasWrap) canvasWrap.style.display = 'block';
+
       if (chartCashflowInstance) chartCashflowInstance.destroy();
 
-      const months = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-      const inflow = [0, 0, 0, 0, 0, 0];
-      const outflow = [0, 0, 0, 0, 0, 0];
-
-      allTransactions.forEach(t => {
-        const d = new Date(t.date);
-        const m = d.getMonth();
-        const cr = parseFloat(t.deposit || 0);
-        const dr = parseFloat(t.withdrawal || 0);
-        if (m >= 4 && m <= 9) {
-          inflow[m - 4] += cr;
-          outflow[m - 4] += dr;
-        }
-      });
-
+      const sym = data.currency_symbol || '₹';
       chartCashflowInstance = new Chart(ctx1.getContext('2d'), {
         type: 'bar',
         data: {
-          labels: months,
+          labels: data.months,
           datasets: [
-            { label: 'Inflow (Deposits)', data: inflow, backgroundColor: '#10b981' },
-            { label: 'Outflow (Expenses)', data: outflow, backgroundColor: '#ef4444' }
+            {
+              label: 'Cash Inflow',
+              data: data.inflow,
+              backgroundColor: '#10b981',
+              borderRadius: 4
+            },
+            {
+              label: 'Cash Outflow',
+              data: data.outflow,
+              backgroundColor: '#ef4444',
+              borderRadius: 4
+            }
           ]
         },
-        options: { responsive: true, maintainAspectRatio: false }
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                boxWidth: 12,
+                font: { size: 12, family: 'inherit' },
+                color: 'var(--tx, #1e293b)'
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const val = context.parsed.y || 0;
+                  return `${context.dataset.label}: ${sym}${val.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return sym + value.toLocaleString('en-IN');
+                }
+              }
+            }
+          }
+        }
       });
+    } catch(err) {
+      if (loadingElem) loadingElem.style.display = 'none';
+      if (emptyState) emptyState.style.display = 'flex';
+      if (canvasWrap) canvasWrap.style.display = 'none';
+      console.error('Error loading cashflow report', err);
     }
+  }
 
+  function initCharts() {
+    if (typeof Chart === 'undefined') return;
+    loadCashflowChart();
+    const ctx2 = root.querySelector('#bnkChartDistribution');
     if (ctx2) {
       if (chartDistributionInstance) chartDistributionInstance.destroy();
       chartDistributionInstance = new Chart(ctx2.getContext('2d'), {
@@ -6874,7 +7053,78 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   }
 
-  root.addEventListener('click', e => {
+  root.addEventListener('click', async e => {
+    const editRuleBtn = e.target.closest('[data-edit-rule]');
+    if (editRuleBtn) {
+      const rId = editRuleBtn.dataset.editRule;
+      const r = bankRules.find(x => String(x.id) === String(rId));
+      if (r) {
+        const editIdInp = root.querySelector('#bnkRuleEditId');
+        if (editIdInp) editIdInp.value = r.id;
+        const nameInp = root.querySelector('#bnkRuleName');
+        if (nameInp) nameInp.value = r.name || '';
+        const fieldInp = root.querySelector('#bnkRuleField');
+        if (fieldInp) fieldInp.value = r.field || 'description';
+        const opInp = root.querySelector('#bnkRuleOperator');
+        if (opInp) opInp.value = r.operator || 'contains';
+        const kwInp = root.querySelector('#bnkRuleKeyword');
+        if (kwInp) kwInp.value = r.value || r.keyword || '';
+        const catInp = root.querySelector('#bnkRuleCategory');
+        if (catInp) catInp.value = r.assign_account_name || r.assign_payee || r.account || '';
+        const actInp = root.querySelector('#bnkRuleActive');
+        if (actInp) actInp.checked = r.active !== false;
+        const title = root.querySelector('#bnkRuleModalTitle');
+        if (title) title.textContent = 'Edit Automation Bank Rule';
+        const subBtn = root.querySelector('#bnkRuleSubmitBtn');
+        if (subBtn) subBtn.textContent = 'Save Changes';
+        openModal('bnkAddRuleModal');
+      }
+      return;
+    }
+
+    const delRuleBtn = e.target.closest('[data-delete-rule]');
+    if (delRuleBtn) {
+      const rId = delRuleBtn.dataset.deleteRule;
+      const ok = await confirmBox({
+        title: 'Delete Automation Rule',
+        message: 'Are you sure you want to delete this automation rule? This action cannot be undone.',
+        okText: 'Delete',
+        danger: true
+      });
+      if (ok) {
+        try {
+          await api(`banking/rules/${rId}/`, { method: 'DELETE' });
+          toast('Automation bank rule deleted successfully!', 'ok');
+          bankRules = bankRules.filter(x => String(x.id) !== String(rId));
+          renderRules();
+        } catch(err) {
+          toast(err.message || 'Error deleting rule', 'err');
+        }
+      }
+      return;
+    }
+
+    const toggleRuleBtn = e.target.closest('[data-toggle-rule]');
+    if (toggleRuleBtn) {
+      const rId = toggleRuleBtn.dataset.toggleRule;
+      const r = bankRules.find(x => String(x.id) === String(rId));
+      if (r) {
+        const nextActive = !r.active;
+        try {
+          await api(`banking/rules/${rId}/`, {
+            method: 'PATCH',
+            body: { active: nextActive }
+          });
+          r.active = nextActive;
+          toast(`Rule "${r.name}" ${nextActive ? 'activated' : 'disabled'} successfully!`, 'ok');
+          renderRules();
+        } catch(err) {
+          toast(err.message || 'Error updating rule status', 'err');
+        }
+      }
+      return;
+    }
+
     const btn = e.target.closest('button, [data-tab], [data-close-modal], [data-act]');
     if (!btn) return;
 
@@ -6900,7 +7150,22 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
     if (btn.id === 'bnkActAddRule' || btn.id === 'bnkRulesAddBtn' || btn.dataset.act === 'open-rule-modal') {
+      const editIdInp = root.querySelector('#bnkRuleEditId');
+      if (editIdInp) editIdInp.value = '';
+      const form = root.querySelector('#bnkAddRuleForm');
+      if (form) form.reset();
+      const title = root.querySelector('#bnkRuleModalTitle');
+      if (title) title.textContent = 'Create Automation Bank Rule';
+      const subBtn = root.querySelector('#bnkRuleSubmitBtn');
+      if (subBtn) subBtn.textContent = 'Create Rule';
+      const actInp = root.querySelector('#bnkRuleActive');
+      if (actInp) actInp.checked = true;
       openModal('bnkAddRuleModal');
+      return;
+    }
+    if (btn.id === 'bnkReportRefreshBtn') {
+      loadCashflowChart();
+      toast('Cashflow report refreshed', 'ok');
       return;
     }
     if (btn.id === 'bnkActTransfer' || btn.id === 'bnkTransfersAddBtn') {
@@ -7136,28 +7401,60 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   if (addRuleForm) {
     addRuleForm.addEventListener('submit', async e => {
       e.preventDefault();
+      const editId = root.querySelector('#bnkRuleEditId')?.value;
       const name = root.querySelector('#bnkRuleName').value;
+      const field = root.querySelector('#bnkRuleField')?.value || 'description';
+      const operator = root.querySelector('#bnkRuleOperator')?.value || 'contains';
       const keyword = root.querySelector('#bnkRuleKeyword').value;
+      const category = root.querySelector('#bnkRuleCategory').value;
+      const active = root.querySelector('#bnkRuleActive') ? root.querySelector('#bnkRuleActive').checked : true;
+
+      const payload = {
+        name: name,
+        field: field,
+        operator: operator,
+        value: keyword,
+        category: category,
+        active: active
+      };
 
       try {
-        await api('banking/rules/', {
-          method: 'POST',
-          body: {
-            name: name,
-            field: 'description',
-            operator: 'contains',
-            value: keyword,
-            priority: bankRules.length + 1
-          }
-        });
+        if (editId) {
+          await api(`banking/rules/${editId}/`, {
+            method: 'PUT',
+            body: payload
+          });
+          toast('Automation bank rule updated successfully!', 'ok');
+        } else {
+          payload.priority = bankRules.length + 1;
+          await api('banking/rules/', {
+            method: 'POST',
+            body: payload
+          });
+          toast('Automation bank rule created!', 'ok');
+        }
         closeModal('bnkAddRuleModal');
-        toast('Automation bank rule created!', 'ok');
-        renderBankingModule(root, currentTab);
+        const updatedRules = await api('banking/rules/').catch(() => []);
+        bankRules = Array.isArray(updatedRules) ? updatedRules : ((updatedRules && updatedRules.results) ? updatedRules.results : []);
+        renderRules();
       } catch(err) {
-        toast(err.message || 'Error creating rule', 'err');
+        toast(err.message || 'Error saving rule', 'err');
       }
     });
   }
+
+  root.addEventListener('change', e => {
+    if (e.target && (e.target.id === 'bnkReportAccountFilter' || e.target.id === 'bnkReportPeriodFilter' || e.target.id === 'bnkReportStartDate' || e.target.id === 'bnkReportEndDate')) {
+      if (e.target.id === 'bnkReportPeriodFilter') {
+        const customWrap = root.querySelector('#bnkReportCustomDates');
+        if (customWrap) {
+          customWrap.style.display = (e.target.value === 'custom') ? 'inline-flex' : 'none';
+        }
+        if (e.target.value === 'custom') return;
+      }
+      loadCashflowChart();
+    }
+  });
 
   const transferFormElem = root.querySelector('#bnkTransferForm');
   if (transferFormElem) {

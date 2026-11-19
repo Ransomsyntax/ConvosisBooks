@@ -1357,11 +1357,17 @@ body.in-settings .pg {
   width: 100%;
 }
 
+.settings-panel-header {
+  border-bottom: 1px solid var(--bd, #e2e8f0);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+
 .settings-panel-header h2 {
   font-size: 18px;
   font-weight: 700;
   color: #0f172a;
-  margin: 0 0 20px 0;
+  margin: 0;
 }
 
 .settings-dashboard-grid {

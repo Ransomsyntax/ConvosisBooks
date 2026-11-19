@@ -12125,7 +12125,41 @@ def banking_dashboard_summary_view(request):
         ba_id = int(ba_id)
     else:
         ba_id = None
-    res = services.get_bank_dashboard_summary(ba_id)
+    user_org = get_user_org(request.user, request)
+    res = services.get_bank_dashboard_summary(ba_id, org=user_org)
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT, UserProfile.AUDITOR, UserProfile.CASHIER)
+def banking_cashflow_report_view(request):
+    if request.method != 'GET':
+        raise ApiError(405, 'Method not allowed.')
+    user_org = get_user_org(request.user, request)
+    ba_id = request.GET.get('bank_account') or request.GET.get('bank_account_id')
+    ba_id = int(ba_id) if ba_id and str(ba_id).isdigit() else None
+
+    start_str = request.GET.get('start_date') or request.GET.get('start')
+    end_str = request.GET.get('end_date') or request.GET.get('end')
+
+    start_date = None
+    end_date = None
+    if start_str:
+        try:
+            start_date = datetime.date.fromisoformat(str(start_str).strip())
+        except ValueError:
+            pass
+    if end_str:
+        try:
+            end_date = datetime.date.fromisoformat(str(end_str).strip())
+        except ValueError:
+            pass
+
+    res = services.get_monthly_cashflow_report(
+        org=user_org,
+        bank_account_id=ba_id,
+        start_date=start_date,
+        end_date=end_date
+    )
     return j(res)
 
 @api_view
@@ -12570,17 +12604,25 @@ def banking_feed_sync_view(request, bank_account_id):
     return j(res)
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_rules_view(request):
+    user_org = get_user_org(request.user, request)
     if request.method == 'GET':
-        rules = BankRule.objects.all().order_by('priority')
+        qs = BankRule.objects.all()
+        if user_org:
+            qs = qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+        rules = qs.order_by('priority', 'name', 'id')
         return j([
             {
                 'id': r.pk, 'name': r.name, 'priority': r.priority, 'field': r.field,
                 'operator': r.operator, 'value': r.value,
                 'assign_account': r.assign_account_id,
+                'assign_account_id': r.assign_account_id,
                 'assign_account_name': r.assign_account.name if r.assign_account else None,
                 'assign_party_type': r.assign_party_type,
                 'assign_party_id': r.assign_party_id,
+                'assign_transaction_type': r.assign_transaction_type,
+                'assign_payee': r.assign_payee,
                 'auto_reconcile': r.auto_reconcile,
                 'active': r.active
             }
@@ -12592,41 +12634,139 @@ def banking_rules_view(request):
         name = c.text('name', required=True, max_len=150)
         field = c.text('field', default='description', max_len=40)
         operator = c.text('operator', default='contains', max_len=20)
-        val = c.text('value', required=True, max_len=200)
+        val = c.text('value', max_len=200) or c.text('keyword', max_len=200)
+        if not val:
+            raise ApiError(400, "Validation failed: 'value' (or 'keyword') is required.")
         auto_rec = c.boolean('auto_reconcile', default=False)
         prio = c.integer('priority', default=10, lo=1, hi=100)
-        acc_id = c.integer('assign_account')
-        party_type = c.text('assign_party_type', max_len=20)
+        acc_id = c.integer('assign_account') or c.integer('assign_account_id')
+        category_str = c.text('category', max_len=200) or c.text('assign_category', max_len=200) or ''
+        if not acc_id and category_str:
+            acc_match = Account.objects.filter(name__iexact=category_str)
+            if user_org:
+                acc_match = acc_match.filter(Q(organization=user_org) | Q(organization__isnull=True))
+            acc_found = acc_match.first()
+            if acc_found:
+                acc_id = acc_found.pk
+            else:
+                payee = category_str
+        party_type = c.text('assign_party_type', max_len=20) or ''
         party_id = c.integer('assign_party_id')
+        tx_type = c.text('assign_transaction_type', max_len=50) or ''
+        payee = c.text('assign_payee', max_len=200) or (category_str if not acc_id else '')
+        active = c.boolean('active', default=True)
         c.done()
 
         rule = BankRule.objects.create(
+            organization=user_org,
             name=name, field=field, operator=operator, value=val,
             auto_reconcile=auto_rec, priority=prio,
             assign_account_id=acc_id, assign_party_type=party_type,
-            assign_party_id=party_id
+            assign_party_id=party_id, assign_transaction_type=tx_type,
+            assign_payee=payee, active=active
         )
-        services.log_audit(request.user, 'create', 'bank_rule', rule.pk, f"Created bank rule {rule.name}")
-        return j({'id': rule.pk, 'name': rule.name, 'status': 'created'}, 201)
+        services.log_audit(request.user, 'create', 'bank_rule', rule.pk, f"Created bank rule {rule.name}", org=user_org)
+        return j({
+            'id': rule.pk, 'name': rule.name, 'priority': rule.priority, 'field': rule.field,
+            'operator': rule.operator, 'value': rule.value, 'assign_account': rule.assign_account_id,
+            'assign_account_id': rule.assign_account_id,
+            'assign_account_name': rule.assign_account.name if rule.assign_account else None,
+            'assign_transaction_type': rule.assign_transaction_type,
+            'assign_payee': rule.assign_payee,
+            'auto_reconcile': rule.auto_reconcile, 'active': rule.active, 'status': 'created'
+        }, 201)
     raise ApiError(405, 'Method not allowed.')
 
 @api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def banking_rules_detail_view(request, pk):
-    rule = BankRule.objects.filter(pk=pk).first()
+    user_org = get_user_org(request.user, request)
+    rule_qs = BankRule.objects.filter(pk=pk)
+    if user_org:
+        rule_qs = rule_qs.filter(Q(organization=user_org) | Q(organization__isnull=True))
+    rule = rule_qs.first()
     if not rule:
         raise ApiError(404, 'Rule not found.')
-    if request.method == 'DELETE':
-        rule.delete()
-        services.log_audit(request.user, 'delete', 'bank_rule', pk, f"Deleted bank rule {rule.name}")
-        return j({'status': 'deleted'})
-    elif request.method == 'PUT':
+
+    if request.method == 'GET':
+        return j({
+            'id': rule.pk, 'name': rule.name, 'priority': rule.priority, 'field': rule.field,
+            'operator': rule.operator, 'value': rule.value,
+            'assign_account': rule.assign_account_id,
+            'assign_account_id': rule.assign_account_id,
+            'assign_account_name': rule.assign_account.name if rule.assign_account else None,
+            'assign_party_type': rule.assign_party_type,
+            'assign_party_id': rule.assign_party_id,
+            'assign_transaction_type': rule.assign_transaction_type,
+            'assign_payee': rule.assign_payee,
+            'auto_reconcile': rule.auto_reconcile,
+            'active': rule.active
+        })
+    elif request.method in ('PUT', 'PATCH'):
         d = body(request)
-        rule.active = d.get('active', rule.active)
-        if 'name' in d: rule.name = d['name']
-        if 'value' in d: rule.value = d['value']
-        if 'auto_reconcile' in d: rule.auto_reconcile = d['auto_reconcile']
+        if 'active' in d:
+            rule.active = bool(d.get('active'))
+        if 'name' in d and str(d.get('name', '')).strip():
+            rule.name = str(d.get('name')).strip()[:150]
+        if 'value' in d and str(d.get('value', '')).strip():
+            rule.value = str(d.get('value')).strip()[:200]
+        if 'field' in d:
+            rule.field = str(d.get('field', 'description')).strip()[:40] or 'description'
+        if 'operator' in d:
+            rule.operator = str(d.get('operator', 'contains')).strip()[:20] or 'contains'
+        if 'priority' in d:
+            try:
+                rule.priority = max(1, min(100, int(d.get('priority', 10))))
+            except (ValueError, TypeError):
+                pass
+        if 'auto_reconcile' in d:
+            rule.auto_reconcile = bool(d.get('auto_reconcile'))
+        if 'assign_account' in d or 'assign_account_id' in d:
+            acc_val = d.get('assign_account', d.get('assign_account_id'))
+            rule.assign_account_id = int(acc_val) if acc_val and str(acc_val).isdigit() else None
+        elif 'category' in d or 'assign_category' in d:
+            cat_str = str(d.get('category') or d.get('assign_category') or '').strip()
+            if cat_str:
+                acc_match = Account.objects.filter(name__iexact=cat_str)
+                if user_org:
+                    acc_match = acc_match.filter(Q(organization=user_org) | Q(organization__isnull=True))
+                acc_found = acc_match.first()
+                if acc_found:
+                    rule.assign_account = acc_found
+                elif not rule.assign_payee:
+                    rule.assign_payee = cat_str[:200]
+        if 'assign_transaction_type' in d:
+            rule.assign_transaction_type = str(d.get('assign_transaction_type') or '')[:50]
+        if 'assign_payee' in d:
+            rule.assign_payee = str(d.get('assign_payee') or '')[:200]
+        if 'assign_party_type' in d:
+            rule.assign_party_type = str(d.get('assign_party_type') or '')[:20]
+        if 'assign_party_id' in d:
+            pid = d.get('assign_party_id')
+            rule.assign_party_id = int(pid) if pid and str(pid).isdigit() else None
+
         rule.save()
-        return j({'status': 'updated', 'id': rule.pk})
+        services.log_audit(request.user, 'update', 'bank_rule', rule.pk, f"Updated bank rule {rule.name}", org=user_org)
+        return j({
+            'status': 'updated',
+            'id': rule.pk,
+            'rule': {
+                'id': rule.pk, 'name': rule.name, 'priority': rule.priority, 'field': rule.field,
+                'operator': rule.operator, 'value': rule.value,
+                'assign_account': rule.assign_account_id,
+                'assign_account_id': rule.assign_account_id,
+                'assign_account_name': rule.assign_account.name if rule.assign_account else None,
+                'assign_transaction_type': rule.assign_transaction_type,
+                'assign_payee': rule.assign_payee,
+                'auto_reconcile': rule.auto_reconcile,
+                'active': rule.active
+            }
+        })
+    elif request.method == 'DELETE':
+        rule_name = rule.name
+        rule.delete()
+        services.log_audit(request.user, 'delete', 'bank_rule', pk, f"Deleted bank rule {rule_name}", org=user_org)
+        return j({'status': 'deleted', 'id': pk})
     raise ApiError(405, 'Method not allowed.')
 
 @api_view

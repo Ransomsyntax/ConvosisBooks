@@ -166,8 +166,8 @@ async function renderSettingsDashboard(root) {
       <!-- Main Settings Grid Container -->
       <div class="settings-content-body">
         <div class="settings-panel-card">
-          <div class="settings-panel-header">
-            <h2>Organization Settings</h2>
+          <div class="settings-panel-header" style="border-bottom:1px solid var(--bd, #e2e8f0); padding-bottom:16px; margin-bottom:24px;">
+            <h2 style="font-size:18px; font-weight:700; color:var(--tx, #0f172a); margin:0;">Organization Settings</h2>
           </div>
 
           <div class="settings-dashboard-grid" id="settingsDashboardGrid">
@@ -261,6 +261,14 @@ async function renderSettingsDashboard(root) {
               </div>
             </div>
           </div>
+
+          <div id="settingsSearchEmptyState" style="display:none; text-align:center; padding:64px 20px;">
+            <div style="width:52px; height:52px; border-radius:50%; background:var(--bg-muted, #f1f5f9); color:var(--tx-muted, #94a3b8); display:grid; place-items:center; margin:0 auto 16px; font-size:22px;">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <h3 style="font-size:16px; font-weight:700; color:var(--tx, #0f172a); margin:0 0 6px;">No results found</h3>
+            <p style="font-size:13px; color:var(--tx-muted, #64748b); margin:0;">Try another keyword or check your spelling.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -268,23 +276,54 @@ async function renderSettingsDashboard(root) {
 
   // Search filtering logic
   const searchInput = $('#settingsSearchInput');
+  const emptyState = $('#settingsSearchEmptyState');
+  const dashboardGrid = $('#settingsDashboardGrid');
+
   if (searchInput) {
     searchInput.focus();
     searchInput.addEventListener('input', (e) => {
       const q = e.target.value.toLowerCase().trim();
-      $$('.settings-link').forEach(link => {
-        const text = link.textContent.toLowerCase();
-        const li = link.closest('li');
-        if (!q || text.includes(q)) {
-          li.style.display = '';
-        } else {
-          li.style.display = 'none';
-        }
+      if (!q) {
+        if (dashboardGrid) dashboardGrid.style.display = 'grid';
+        if (emptyState) emptyState.style.display = 'none';
+        $$('.settings-cat-col').forEach(col => { col.style.display = ''; });
+        $$('.settings-link').forEach(link => {
+          const li = link.closest('li');
+          if (li) li.style.display = '';
+        });
+        return;
+      }
+
+      let totalMatchingLinks = 0;
+
+      $$('.settings-cat-col').forEach(col => {
+        const catTitles = Array.from(col.querySelectorAll('.cat-title')).map(t => t.textContent.toLowerCase());
+        const catMatches = catTitles.some(t => t.includes(q));
+
+        let visibleInCol = 0;
+        const links = col.querySelectorAll('.settings-link');
+        links.forEach(link => {
+          const text = link.textContent.toLowerCase();
+          const li = link.closest('li');
+          if (catMatches || text.includes(q)) {
+            if (li) li.style.display = '';
+            visibleInCol++;
+            totalMatchingLinks++;
+          } else {
+            if (li) li.style.display = 'none';
+          }
+        });
+
+        col.style.display = visibleInCol > 0 ? '' : 'none';
       });
-      $$('.settings-cat-card').forEach(card => {
-        const visibleLi = card.querySelectorAll('li:not([style*="display: none"])');
-        card.closest('.settings-cat-col').style.display = (visibleLi.length === 0 && q) ? 'none' : '';
-      });
+
+      if (totalMatchingLinks === 0) {
+        if (dashboardGrid) dashboardGrid.style.display = 'none';
+        if (emptyState) emptyState.style.display = 'block';
+      } else {
+        if (dashboardGrid) dashboardGrid.style.display = 'grid';
+        if (emptyState) emptyState.style.display = 'none';
+      }
     });
   }
 }

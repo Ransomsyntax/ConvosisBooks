@@ -34,6 +34,7 @@ urlpatterns = [
     path('inventory/stock-in-hand-preview/', api.stock_in_hand_preview_view),
 
     path('banking/dashboard-summary/', api.banking_dashboard_summary_view),
+    path('banking/reports/cashflow/', api.banking_cashflow_report_view),
     path('banking/statement-import/', api.banking_import_view),
     path('banking/feed-sync/<int:bank_account_id>/', api.banking_feed_sync_view),
     path('banking/rules/', api.banking_rules_view),

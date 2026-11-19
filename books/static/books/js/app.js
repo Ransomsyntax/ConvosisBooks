@@ -72,7 +72,7 @@ const ROUTES = {
 
   'sales': r => listPage(r, LISTS.customers),
   'sales/customers': r => listPage(r, LISTS.customers),
-  'sales/customers/new': () => partyForm('customers'),
+  'sales/customers/new': r => { listPage(r, LISTS.customers); partyForm('customers'); },
   'sales/quotes': r => docMasterDetail(r, 'quotes'),
   'sales/quotes/new': r => docMasterDetail(r, 'quotes', 'new'),
   'sales/sales-orders': r => docMasterDetail(r, 'sales-orders'),
@@ -97,7 +97,7 @@ const ROUTES = {
 
   'purchases': r => listPage(r, LISTS.vendors),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
-  'purchases/vendors/new': () => partyForm('vendors'),
+  'purchases/vendors/new': r => { listPage(r, LISTS.vendors); partyForm('vendors'); },
   'purchases/expenses': r => listPage(r, LISTS.expenses),
   'purchases/expenses/new': () => expenseForm(),
   'purchases/purchase-orders': r => docMasterDetail(r, 'purchase-orders'),

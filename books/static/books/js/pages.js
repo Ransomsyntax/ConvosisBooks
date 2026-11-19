@@ -1163,6 +1163,14 @@ function listPage(root, cfg) {
     }
   }
 
+  function clearSelection() {
+    selectedIds.clear();
+    root.querySelectorAll('.cb-row').forEach(cb => { cb.checked = false; });
+    const allBox = $('#cb-all', root);
+    if (allBox) { allBox.checked = false; allBox.indeterminate = false; }
+    updateSelectionUI();
+  }
+
   const hideBulkDel = Boolean(cfg.noDelete || cfg.api === 'stock-transfers');
   root.innerHTML = `<div class="bc">Home / ${esc(cfg.bc)}</div><div class="hd"><h1>${esc(cfg.title)}</h1><div class="act">${cfg.noImport ? '' : `<button class="btn" data-x="import" type="button" title="Import ${esc(cfg.title)}"><i class="fa-solid fa-file-import"></i> Import</button>`}<div class="export-dropdown-wrap" style="position:relative;display:inline-block;"><button class="btn" data-x="export-toggle" type="button" title="Export ${esc(cfg.title)}"><i class="fa-solid fa-file-export"></i> Export ▾</button><div class="pop right export-menu-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:145px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);"><button type="button" class="btn" data-x="csv" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-file-csv" style="color:#10b981;"></i> Export CSV</button><button type="button" class="btn" data-x="json" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-code" style="color:#3b82f6;"></i> Export JSON</button></div></div>${cfg.onNew ? `<button class="btn p" data-x="new" type="button">+ ${esc(cfg.newLabel)}</button>` : ''}</div></div>${cfg.note ? `<div class="note">${cfg.note}</div>` : ''}
 <div class="card" style="margin-top:14px"><div class="tb" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;"><input class="in" type="search" id="tq" placeholder="Search ${esc(cfg.title.toLowerCase())}" aria-label="Search" style="max-width:300px">${(cfg.filters || []).map(f => `<select class="btn" data-f="${f.name}" aria-label="${esc(f.label)}">${opts(f.opts || [], '')}</select>`).join('')}<span class="sub" id="cnt"></span>${hideBulkDel ? '' : `<div id="bulk-bar" style="display:none;margin-left:auto;align-items:center;gap:8px;"><span class="sub" style="font-weight:600;color:var(--text-primary,#111827);"><span id="bulk-cnt">0</span> selected</span><button class="btn dn" type="button" id="btn-bulk-delete" style="display:inline-flex;align-items:center;gap:6px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;font-weight:600;cursor:pointer;"><i class="fa-solid fa-trash-can"></i> Delete</button></div>`}</div><div class="tw" id="lt">${spinner}</div><div class="pager" id="pgr"></div></div>`;
@@ -1254,7 +1262,10 @@ function listPage(root, cfg) {
         message: `Are you sure you want to delete ${count === 1 ? 'this record' : 'these ' + count + ' records'}? This cannot be undone.`,
         okText: 'Delete',
         danger: true
-      }))) return;
+      }))) {
+        clearSelection();
+        return;
+      }
 
       const ids = Array.from(selectedIds);
       try {
@@ -1338,7 +1349,12 @@ function listPage(root, cfg) {
       return;
     }
     const b = e.target.closest('[data-act]');
-    if (b) { try { await cfg.onAction(b.dataset.act, cache[b.dataset.id]); } catch (err) { toast(err.message, 'err'); } }
+    if (b) {
+      if (b.disabled || b.dataset.busy === '1') return;
+      b.dataset.busy = '1';
+      setTimeout(() => { delete b.dataset.busy; }, 600);
+      try { await cfg.onAction(b.dataset.act, cache[b.dataset.id]); } catch (err) { toast(err.message, 'err'); }
+    }
   });
   load();
 }
@@ -1346,7 +1362,14 @@ function listPage(root, cfg) {
 async function deleteRecord(resource, row, label) {
   const id = row && (row.id != null ? row.id : row);
   if (!id) return;
-  if (!(await confirmBox({ title: 'Delete ' + label + '?', message: 'This cannot be undone.', okText: 'Delete', danger: true }))) return;
+  if (!(await confirmBox({ title: 'Delete ' + label + '?', message: 'This cannot be undone.', okText: 'Delete', danger: true }))) {
+    const cb = document.querySelector(`.cb-row[data-id="${id}"]`);
+    if (cb && cb.checked) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return;
+  }
   try {
     await api(`${resource}/${id}/`, { method: 'DELETE' });
     toast(label + ' deleted', 'ok');
@@ -2151,7 +2174,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
     kind === 'bills' ? 'BILL' : (kind || '').replace(/-/g, ' ').toUpperCase()
   );
   const sigData = d.signature_data || org.signature_data || '';
-  const sigTitle = d.signature_title || org.signature_title || 'Authorized Signature';
+  const sigTitle = d.signature_title || (kind === 'delivery-challans' ? 'Customer Signature' : (org.signature_title || 'Authorized Signature'));
   const signedBy = d.signed_by || '';
   const signedAt = d.signed_at ? fd(d.signed_at) : '';
 
@@ -2387,8 +2410,14 @@ function renderDocSheet(d, kind, customOpts = {}) {
       ${isDeliveryNote ? `
         <div style="margin-top:28px;display:flex;justify-content:space-between;align-items:flex-end;">
           <div style="border-top:1px dashed #64748b;padding-top:6px;width:220px;text-align:center;font-size:11px;color:#475569;">
-            <div><b>Receiver's Signature &amp; Stamp</b></div>
-            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Received in good condition</div>
+            ${(kind === 'delivery-challans' && sigData) ? `
+              <div style="height:50px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:4px;">
+                <img src="${esc(sigData)}" alt="Customer Signature" style="max-height:46px;max-width:180px;object-fit:contain;display:block;">
+              </div>
+            ` : ''}
+            <div><b>Customer Signature</b></div>
+            ${signedBy ? `<div style="font-size:10.5px;color:#475569;margin-top:2px;"><b>${esc(signedBy)}</b></div>` : '<div style="font-size:10px;color:#94a3b8;margin-top:2px;">Received in good condition</div>'}
+            ${signedAt ? `<div style="font-size:9.5px;color:#94a3b8;margin-top:1px;">Signed on ${esc(signedAt)}</div>` : ''}
           </div>
           <div style="border-top:1px dashed #64748b;padding-top:6px;width:220px;text-align:center;font-size:11px;color:#475569;">
             <div><b>For ${esc(org.name || 'Convosis Technologies Pvt Ltd')}</b></div>
@@ -3709,7 +3738,14 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
         message: `Are you sure you want to delete ${count === 1 ? 'this record' : 'these ' + count + ' records'}? This cannot be undone.`,
         okText: 'Delete',
         danger: true
-      }))) return;
+      }))) {
+        masterSelectedIds.clear();
+        root.querySelectorAll('.master-doc-cb').forEach(cb => { cb.checked = false; });
+        const allBox = $('#master-cb-all', root);
+        if (allBox) { allBox.checked = false; allBox.indeterminate = false; }
+        updateMasterSelectionUI();
+        return;
+      }
 
       const ids = Array.from(masterSelectedIds);
       try {

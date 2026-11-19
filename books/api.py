@@ -8450,14 +8450,15 @@ class DeliveryChallanResource(Resource):
             })
         if errors:
             raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
-        if challan_type == 'delivering_goods':
+        if challan_type in ('delivering_goods', 'relocating_goods'):
             for line in parsed:
                 item = line['item']
                 if not item or not item.track_inventory or item.item_type != Item.GOODS or getattr(org, 'allow_negative_stock', False):
                     continue
+                wh = line['warehouse'] or source_warehouse or line['warehouse_code']
                 available = services.get_item_warehouse_stock(
-                    item, line['warehouse'] or line['warehouse_code'], org=org
-                ) if line['warehouse'] or line['warehouse_code'] else item.stock
+                    item, wh, org=org
+                ) if wh else item.stock
                 if line['quantity'] > available:
                     raise ApiError(400, f'Insufficient stock for {item.name}. Available: {available}.')
         return parsed
@@ -8538,6 +8539,7 @@ class DeliveryChallanResource(Resource):
             )
         subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
         total = max(Decimal('0.00'), subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + adjustment)
+        dc_status = 'open' if (data.get('status') == 'open' or data.get('action') in ('submit', 'save_and_submit')) else 'draft'
         dc = DeliveryChallan.objects.create(
             organization=user_org,
             number=num, customer=cust, date=dt, reference_number=reference,
@@ -8547,7 +8549,7 @@ class DeliveryChallanResource(Resource):
             gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or ''),
             currency=currency, subtotal=subtotal,
             adjustment=adjustment, total=total, vehicle_number=vnum, notes=notes,
-            terms=terms, status='draft',
+            terms=terms, status=dc_status,
         )
         DeliveryChallanLine.objects.bulk_create([
             DeliveryChallanLine(
@@ -8626,6 +8628,8 @@ class DeliveryChallanResource(Resource):
             else obj.customer.gstin or ''
         )
         obj.currency = (obj.customer.currency or getattr(user_org, 'base_currency', '') or 'INR').upper()
+        if data.get('status') == 'open' or data.get('action') in ('submit', 'save_and_submit'):
+            obj.status = 'open'
         lines = self._parse_lines(data['lines'], user_org, obj.challan_type, obj.source_warehouse) if 'lines' in data else None
         if lines:
             obj.subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
@@ -11024,6 +11028,8 @@ def lookup(request, name):
                  'company': o.company, 'gstin': o.gstin, 'gst_treatment': o.gst_treatment,
                  'customer_type': getattr(o, 'customer_type', 'business'),
                  'currency': o.currency,
+                 'email': o.email or '',
+                 'phone': o.phone or o.mobile or '',
                  'billing_address': o.billing_address, 'shipping_address': getattr(o, 'shipping_address', ''),
                  'place_of_supply': getattr(o, 'place_of_supply', '') or o.state}
                 for o in org_filter(Customer.objects.filter(active=True)).order_by('name')]

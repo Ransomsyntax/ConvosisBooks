@@ -656,12 +656,15 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
 
   const menu = document.createElement('div');
   menu.className = 'searchable-select-menu';
-  menu.style.cssText = 'display:none;position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--surface-glass-solid, #fff);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,0.15);border-radius:6px;z-index:999;margin-top:4px;';
+  menu.style.cssText = 'display:none;position:fixed;max-height:220px;overflow-y:auto;background:var(--surface-glass-solid, #fff);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,0.15);border-radius:6px;z-index:99999;box-sizing:border-box;';
 
   wrapper.appendChild(input);
   wrapper.appendChild(arrow);
   wrapper.appendChild(menu);
   selectEl.parentNode.insertBefore(wrapper, selectEl.nextSibling);
+
+  selectEl._searchableInput = input;
+  selectEl._searchableWrapper = wrapper;
 
   function syncFromSelect() {
     const selOpt = selectEl.options[selectEl.selectedIndex];
@@ -669,6 +672,29 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
   }
   selectEl._searchableSync = syncFromSelect;
   syncFromSelect();
+
+  function positionMenu() {
+    if (menu.style.display !== 'block') return;
+    const rect = input.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const openUp = spaceBelow < 220 && spaceAbove > spaceBelow;
+
+    menu.style.position = 'fixed';
+    menu.style.left = `${Math.max(8, rect.left)}px`;
+    const targetWidth = Math.max(rect.width, 340);
+    const maxWidth = Math.min(window.innerWidth - rect.left - 16, 550);
+    menu.style.width = `${Math.min(targetWidth, maxWidth)}px`;
+    menu.style.zIndex = '99999';
+
+    if (openUp) {
+      menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+      menu.style.top = 'auto';
+    } else {
+      menu.style.top = `${rect.bottom + 4}px`;
+      menu.style.bottom = 'auto';
+    }
+  }
 
   function renderOptions(filterText = '') {
     menu.innerHTML = '';
@@ -679,18 +705,40 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
     optsList.forEach(opt => {
       if (!opt.value && !opt.text.trim()) return;
       if (opt.value.startsWith('__new_') || opt.value === '__add_new__' || (opt.text && opt.text.toLowerCase().includes('+ add new'))) return;
-      if (q && !opt.text.toLowerCase().includes(q)) return;
+
+      const haystack = [
+        opt.text || '',
+        opt.dataset?.phone || '',
+        opt.dataset?.email || '',
+        opt.dataset?.code || '',
+        opt.dataset?.sku || '',
+        opt.dataset?.search || ''
+      ].join(' ').toLowerCase();
+
+      if (q && !haystack.includes(q)) return;
 
       count++;
       const item = document.createElement('div');
       item.className = 'searchable-opt-item';
-      item.style.cssText = 'padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--bd-glass-subtle, rgba(0,0,0,0.04));';
+      item.style.cssText = 'padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--bd-glass-subtle, rgba(0,0,0,0.04));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      item.title = opt.text;
+
       if (String(selectEl.value) === String(opt.value)) {
         item.style.background = 'var(--surface-glass-active, rgba(59,130,246,0.1))';
         item.style.fontWeight = '600';
         item.style.color = 'var(--accent, #2563eb)';
       }
-      item.textContent = opt.text;
+
+      const metaPhone = opt.dataset?.phone || '';
+      const metaEmail = opt.dataset?.email || '';
+      const meta = [metaPhone, metaEmail].filter(Boolean).join(' · ');
+
+      if (meta) {
+        item.innerHTML = `<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(opt.text)}</div><div style="font-size:11px;color:var(--tx-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(meta)}</div>`;
+      } else {
+        item.textContent = opt.text;
+      }
+
       item.addEventListener('mousedown', e => {
         e.preventDefault();
         selectEl.value = opt.value;
@@ -736,12 +784,16 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
   function openMenu() {
     renderOptions(input.value);
     menu.style.display = 'block';
+    positionMenu();
   }
 
   function closeMenu() {
     menu.style.display = 'none';
     syncFromSelect();
   }
+
+  selectEl._searchableOpen = openMenu;
+  selectEl._searchableClose = closeMenu;
 
   input.addEventListener('focus', () => {
     openMenu();
@@ -750,6 +802,7 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
   input.addEventListener('input', e => {
     openMenu();
     renderOptions(e.target.value);
+    positionMenu();
   });
   input.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeMenu();
@@ -759,8 +812,17 @@ function setupSearchableSelect(selectEl, { placeholder = 'Search or select…', 
     }
   });
 
+  const onDocScrollOrResize = e => {
+    if (menu.style.display === 'block') {
+      if (e && e.target && menu.contains(e.target)) return;
+      positionMenu();
+    }
+  };
+  window.addEventListener('scroll', onDocScrollOrResize, true);
+  window.addEventListener('resize', onDocScrollOrResize);
+
   document.addEventListener('click', e => {
-    if (!wrapper.contains(e.target)) closeMenu();
+    if (!wrapper.contains(e.target) && !menu.contains(e.target)) closeMenu();
   });
 
   selectEl.addEventListener('change', () => syncFromSelect());
@@ -2331,6 +2393,16 @@ async function partyForm(kind, id, onDone) {
     wide: true,
     dialog: Boolean(onDone || Modal.count() > 0),
     body: formHtml,
+    onClose: () => {
+      if (onDone) return;
+      const targetHash = isCust ? '#/sales/customers' : '#/purchases/vendors';
+      if (location.hash.includes('/new') || location.hash !== targetHash) {
+        location.hash = targetHash;
+      } else {
+        const pg = $('#pg');
+        if (pg && !pg.children.length && typeof route === 'function') route();
+      }
+    },
     onReady: (form, modal) => {
       modalInstance = modal;
       const partyBrowseDocs = $('#btn_party_browse_docs', modal.el);
@@ -9509,24 +9581,39 @@ function rejectTimesheetModal(row) {
   });
 }
 
+let _categoryModalBusy = false;
 async function categoryModal(id, onDone) {
-  const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
-  formModal({
-    title: id ? 'Edit Item Category' : 'New Item Category',
-    dialog: Boolean(onDone || Modal.count() > 0),
-    body: `<div class="g">
-      ${fld({ name: 'name', label: 'Category Name', req: true, value: o ? o.name : '', col: 's12', ph: 'e.g. Hardware Components' })}
-      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o ? (o.description || '') : '', col: 's12' })}
-    </div>`,
-    onSubmit: async d => {
-      let res;
-      if (id) res = await api(`item-categories/${id}/`, { method: 'PUT', body: d });
-      else res = await api('item-categories/', { method: 'POST', body: d });
-      toast(id ? 'Category updated' : 'Category created');
-      if (onDone) onDone(res || d);
-      else refresh();
-    }
-  });
+  if (_categoryModalBusy) return;
+  if (document.querySelector('.category-modal-active')) return;
+  _categoryModalBusy = true;
+  try {
+    const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
+    formModal({
+      title: id ? 'Edit Item Category' : 'New Item Category',
+      dialog: Boolean(onDone || Modal.count() > 0),
+      body: `<div class="g category-modal-active">
+        ${fld({ name: 'name', label: 'Category Name', req: true, value: o ? o.name : '', col: 's12', ph: 'e.g. Hardware Components' })}
+        ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o ? (o.description || '') : '', col: 's12' })}
+      </div>`,
+      onClose: () => {
+        _categoryModalBusy = false;
+      },
+      onSubmit: async d => {
+        let res;
+        if (id) res = await api(`item-categories/${id}/`, { method: 'PUT', body: d });
+        else res = await api('item-categories/', { method: 'POST', body: d });
+        toast(id ? 'Category updated' : 'Category created');
+        _categoryModalBusy = false;
+        if (onDone) onDone(res || d);
+        else refresh();
+      }
+    });
+  } catch (err) {
+    _categoryModalBusy = false;
+    throw err;
+  } finally {
+    setTimeout(() => { _categoryModalBusy = false; }, 300);
+  }
 }
 
 async function priceListModal(id, onDone) {
@@ -9830,9 +9917,9 @@ async function challanModal(id) {
         <select class="in" id="dc-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
           <option value="">Search or select a customer…</option>
           <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-          ${custs.map(customer => `<option value="${customer.id}" ${String(o.customer_id || '') === String(customer.id) ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
+          ${custs.map(customer => `<option value="${customer.id}" data-phone="${esc(customer.phone || '')}" data-email="${esc(customer.email || '')}" ${String(o.customer_id || '') === String(customer.id) ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
         </select>
-        <button type="button" class="btn p" id="btn-dc-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+        <button type="button" class="btn p" id="btn-dc-cust-lookup" title="Search customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
           <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
         </button>
       </div>
@@ -9952,11 +10039,11 @@ async function challanModal(id) {
           <button type="button" class="btn" id="dc-add-bulk" style="font-size:12px;">Bulk Actions</button>
         </div>
       </div>
-      <div class="tw" style="overflow-x:auto;">
+      <div class="tw dc-item-table-wrap" style="overflow-x:auto;">
         <table style="min-width:880px;width:100%;">
           <thead>
             <tr>
-              <th>Item Details</th>
+              <th style="min-width:280px;width:35%;">Item Details</th>
               <th>Quantity</th>
               <th>Rate</th>
               <th>Discount</th>
@@ -9987,7 +10074,7 @@ async function challanModal(id) {
         </div>
         <div class="dc-card-field">
           <label class="dc-card-label" for="dc-attach">Attach Files</label>
-          <input class="in" id="dc-attach" type="file" multiple>
+          <input class="in" id="dc-attach" type="file" multiple style="display:inline-flex;align-items:center;height:38px;padding:3px 8px;width:100%;box-sizing:border-box;">
           <div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:4px">Maximum 5 files, 10 MB each</div>
           <div id="dc-attachments" style="margin-top:8px"></div>
         </div>
@@ -10010,7 +10097,10 @@ async function challanModal(id) {
     title: id ? 'Edit Delivery Challan' : 'New Delivery Challan',
     body,
     wide: true,
-    submit: 'Save as Draft',
+    actions: [
+      { label: 'Save as Draft', value: 'draft', primary: false },
+      { label: 'Save & Submit', value: 'submit', primary: true }
+    ],
     onReady: (form, m) => {
       modal = m;
       const customerSelect = form.elements.customer;
@@ -10064,14 +10154,13 @@ async function challanModal(id) {
           customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
         })
       });
-      $('#btn-dc-cust-lookup', form)?.addEventListener('click', () => {
-        partyForm('customers', null, newCustomer => {
-          if (!newCustomer || !newCustomer.id) return;
-          custs.push(newCustomer);
-          customerSelect.add(new Option(newCustomer.name, newCustomer.id));
-          customerSelect.value = String(newCustomer.id);
-          customerSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        });
+      $('#btn-dc-cust-lookup', form)?.addEventListener('click', e => {
+        e.preventDefault();
+        const inp = customerSelect._searchableInput || customerSelect.parentNode.querySelector('.searchable-select-input');
+        if (inp) {
+          inp.focus();
+          if (customerSelect._searchableOpen) customerSelect._searchableOpen();
+        }
       });
       $('#btn-dc-num-pref', form)?.addEventListener('click', () => {
         openDocNumberPreferencesModal({
@@ -10252,6 +10341,7 @@ async function challanModal(id) {
       if (invalid) {
         throw new ApiErr(400, { lines: 'Select an item and enter a quantity greater than zero and a valid rate for each row.' }, 'Correct the item details.');
       }
+      const isSubmit = (action === 'submit');
       const payload = {
         number: d.number,
         transaction_series: d.transaction_series,
@@ -10268,6 +10358,8 @@ async function challanModal(id) {
         adjustment: Number(d.adjustment || 0),
         notes: d.notes,
         terms: d.terms,
+        status: isSubmit ? 'open' : 'draft',
+        action: isSubmit ? 'submit' : 'draft',
         lines
       };
       if (payload.challan_type === 'relocating_goods' && (!payload.source_warehouse_id || !payload.destination_warehouse_id)) {
@@ -10294,7 +10386,12 @@ async function challanModal(id) {
           uploadErrors.push(`${file.name}: ${error.message || 'upload failed'}`);
         }
       }
-      toast(id ? 'Delivery Challan draft updated' : 'Delivery Challan draft created');
+      toast(
+        isSubmit
+          ? (id ? 'Delivery Challan updated and submitted' : 'Delivery Challan submitted successfully')
+          : (id ? 'Delivery Challan draft updated' : 'Delivery Challan draft saved'),
+        'ok'
+      );
       if (uploadErrors.length) toast(`Challan saved, but attachment upload failed: ${uploadErrors.join('; ')}`, 'err');
       refresh();
     }
@@ -10420,7 +10517,21 @@ function challanPrint(record, printWindow) {
       <p><b>Customer:</b> ${esc(data.customer_name || '')}<br><b>GSTIN:</b> ${esc(data.gstin || '')}<br><b>Branch / Location:</b> ${esc(data.branch || data.location || '')}</p>
       <p><b>Type:</b> ${esc(data.challan_type || '')}</p><table><thead><tr><th>Item Details</th><th>HSN/SAC</th><th class="num">Quantity</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="summary"><div><b>Subtotal</b><span>${esc(data.subtotal)}</span></div><div><span>Adjustment</span><span>${esc(data.adjustment)}</span></div><div><b>Total Amount (${esc(data.currency || '')})</b><b>${esc(data.total)}</b></div></div>
-      <div class="foot">${esc(data.notes || '')}${data.terms ? `\\n\\n${esc(data.terms)}` : ''}</div><script>window.onload=()=>window.print();</script></body></html>`);
+      <div class="foot">${esc(data.notes || '')}${data.terms ? `\n\n${esc(data.terms)}` : ''}</div>
+      ${(data.signature_data || data.signed_by) ? `
+      <div class="dc-signature-block" style="margin-top:36px;display:flex;justify-content:flex-end;">
+        <div style="min-width:220px;text-align:center;border-top:1px solid #172033;padding-top:8px;">
+          ${data.signature_data ? `
+            <div style="height:60px;margin-bottom:6px;display:flex;align-items:flex-end;justify-content:center;">
+              <img src="${esc(data.signature_data)}" alt="Customer Signature" style="max-height:56px;max-width:200px;object-fit:contain;">
+            </div>
+          ` : ''}
+          <div style="font-weight:700;font-size:13px;color:#172033;">${esc(data.signature_title || 'Customer Signature')}</div>
+          ${data.signed_by ? `<div style="font-size:11px;color:#526174;margin-top:2px;">Signed by: <b>${esc(data.signed_by)}</b></div>` : ''}
+          ${data.signed_at ? `<div style="font-size:10px;color:#64748b;margin-top:1px;">Digitally signed on ${esc(typeof fd === 'function' ? fd(data.signed_at) : data.signed_at)}</div>` : ''}
+        </div>
+      </div>` : ''}
+      <script>window.onload=()=>window.print();</script></body></html>`);
     printWindow.document.close();
   };
   if (record.lines) render(record);

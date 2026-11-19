@@ -26,16 +26,6 @@ const NAV = [
     'Inventory Reports',
     'Receivables',
     'Payables',
-    'Customer Statements',
-    'Account Transactions',
-    'Day Book',
-    'Customer Balances',
-    'Vendor Balances',
-    'Expense Report',
-    'Project Report',
-    'Timesheet Report',
-    'Bank Reconciliation',
-    'Profit by Item',
     'Tax Reports',
     'Accounting Reports',
     'Cash Flow Reports'
@@ -82,7 +72,7 @@ const ROUTES = {
 
   'sales': r => listPage(r, LISTS.customers),
   'sales/customers': r => listPage(r, LISTS.customers),
-  'sales/customers/new': () => partyForm('customers'),
+  'sales/customers/new': r => { listPage(r, LISTS.customers); partyForm('customers'); },
   'sales/quotes': r => docMasterDetail(r, 'quotes'),
   'sales/quotes/new': r => docMasterDetail(r, 'quotes', 'new'),
   'sales/sales-orders': r => docMasterDetail(r, 'sales-orders'),
@@ -107,7 +97,7 @@ const ROUTES = {
 
   'purchases': r => listPage(r, LISTS.vendors),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
-  'purchases/vendors/new': () => partyForm('vendors'),
+  'purchases/vendors/new': r => { listPage(r, LISTS.vendors); partyForm('vendors'); },
   'purchases/expenses': r => listPage(r, LISTS.expenses),
   'purchases/expenses/new': () => expenseForm(),
   'purchases/purchase-orders': r => docMasterDetail(r, 'purchase-orders'),
@@ -212,16 +202,6 @@ const ROUTES = {
   'reports/inventory-reports': r => reportTablePage(r, 'inventory-summary', 'Inventory Valuation Summary', 'Inventory'),
   'reports/receivables': r => reportTablePage(r, 'receivables-aging', 'Accounts Receivable Aging Summary', 'Receivables'),
   'reports/payables': r => reportTablePage(r, 'payables-aging', 'Accounts Payable Aging Summary', 'Payables'),
-  'reports/customer-statement': r => customerStatementPage(r),
-  'reports/account-transactions': r => reportTablePage(r, 'account-transactions', 'Account Transactions', 'Account Transactions'),
-  'reports/day-book': r => reportTablePage(r, 'day-book', 'Day Book', 'Day Book'),
-  'reports/customer-balances': r => reportTablePage(r, 'customer-balances', 'Customer Balances', 'Customer Balances'),
-  'reports/vendor-balances': r => reportTablePage(r, 'vendor-balances', 'Vendor Balances', 'Vendor Balances'),
-  'reports/expense-report': r => reportTablePage(r, 'expense-report', 'Expense Report', 'Expense Report'),
-  'reports/project-report': r => reportTablePage(r, 'project-report', 'Project Report', 'Project Report'),
-  'reports/timesheet-report': r => reportTablePage(r, 'timesheet-report', 'Timesheet Report', 'Timesheet Report'),
-  'reports/bank-reconciliation': r => reportTablePage(r, 'bank-reconciliation', 'Bank Reconciliation Report', 'Bank Reconciliation'),
-  'reports/profit-by-item': r => reportTablePage(r, 'profit-by-item', 'Profit by Item', 'Profit by Item'),
   'reports/tax-reports': r => gstFilingPage(r, 'overview'),
   'reports/accounting-reports': r => trialBalancePage(r),
   'reports/cash-flow-reports': r => cashFlowPage(r),
@@ -253,6 +233,8 @@ const PASTEL = {
   pay: 'icon-rose'
 };
 let openG = pref.get('open', ['home']);
+if (!Array.isArray(openG)) openG = ['home'];
+else if (openG.length > 1) openG = [openG[0]];
 
 function navigateOrRun(routePath, fallbackAction) {
   const targetHash = '#/' + routePath.replace(/^#?\/?/, '');
@@ -783,9 +765,9 @@ document.addEventListener('click', async e => {
     const hasSub = Boolean(navG && navG[2] && navG[2].length > 0);
     if (hasSub) {
       if (openG.includes(k)) {
-        openG = openG.filter(x => x !== k);
+        openG = [];
       } else {
-        openG = [...openG, k];
+        openG = [k];
       }
       pref.set('open', openG);
       document.body.classList.remove('col');

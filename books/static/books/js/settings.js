@@ -124,7 +124,7 @@ async function fetchSettingsData(force = false) {
 }
 
 // =========================================================================
-// 1. SETTINGS DASHBOARD (Card-based view matching Screenshot 2026-11-06 165029)
+// 1. SETTINGS DASHBOARD (Card-based view)
 // =========================================================================
 
 async function renderSettingsDashboard(root) {
@@ -334,7 +334,7 @@ function closeSettingsDashboard() {
 }
 
 // =========================================================================
-// 2. SETTINGS SHELL WRAPPER (2-column layout matching Screenshots 2026-11-06 165108 & 165126)
+// 2. SETTINGS SHELL WRAPPER (2-column layout)
 // =========================================================================
 
 function renderSettingsShell(root, activeSubKey, title, renderPageContentFn) {
@@ -722,7 +722,7 @@ function toggleSettingsNavGroup(btn) {
 }
 
 // =========================================================================
-// 3. USERS MANAGEMENT PAGE (Screenshot 2026-11-06 165108)
+// 3. USERS MANAGEMENT PAGE
 // =========================================================================
 
 async function renderSettingsUsersPage(container) {
@@ -961,7 +961,7 @@ async function deactivateUser(userId, name) {
 }
 
 // =========================================================================
-// 4. ROLES MANAGEMENT PAGE (Screenshot 2026-11-06 165126)
+// 4. ROLES MANAGEMENT PAGE
 // =========================================================================
 
 async function renderSettingsRolesPage(container) {
@@ -1039,7 +1039,6 @@ async function deleteRole(roleId, name) {
 
 // =========================================================================
 // 5. SEGMENTED ACCESS CONTROL – DETAILED ROLE PERMISSION EDITOR
-// (Screenshots 2026-11-06 165203 through 165531)
 // =========================================================================
 
 async function renderRoleEditorPage(container, roleId) {

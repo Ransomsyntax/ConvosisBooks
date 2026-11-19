@@ -6085,7 +6085,11 @@ def record_bank_deposit(data, user=None):
 def record_bank_transfer(data, user=None, org=None):
     from_id = data.get('from_account') or data.get('from_account_id')
     to_id = data.get('to_account') or data.get('to_account_id')
-    if str(from_id) == str(to_id):
+    if from_id is None or not str(from_id).strip():
+        raise ApiError(400, 'From Account is required.')
+    if to_id is None or not str(to_id).strip():
+        raise ApiError(400, 'To Account is required.')
+    if str(from_id).strip() == str(to_id).strip():
         raise ApiError(400, 'Source and destination bank accounts must be different.')
 
     if not org and getattr(user, 'pk', None):
@@ -6109,8 +6113,11 @@ def record_bank_transfer(data, user=None, org=None):
     if not from_acc or not to_acc:
         raise ApiError(404, 'Bank account not found in your organization.')
 
+    raw_amount = data.get('amount')
+    if raw_amount is None or str(raw_amount).strip() == '':
+        raise ApiError(400, 'Transfer amount must be greater than zero.')
     try:
-        amount = Decimal(str(data.get('amount', 0)))
+        amount = Decimal(str(raw_amount).strip())
     except (InvalidOperation, TypeError, ValueError):
         raise ApiError(400, 'Transfer amount must be a valid number.')
     if not amount.is_finite():

@@ -6343,26 +6343,31 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <h3 style="font-size:15px;font-weight:700;color:var(--tx);margin:0;">Record Internal Transfer</h3>
           <button type="button" class="btn" data-close-modal="bnkTransferModal" style="padding:2px 8px;font-size:12px;">✕</button>
         </div>
-        <form id="bnkTransferForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;">
+        <form id="bnkTransferForm" style="display:flex;flex-direction:column;gap:12px;font-size:12px;" novalidate>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">From Account</label>
             <select id="bnkTrFrom" class="in" style="width:100%;">
+              <option value="" selected>Select Account</option>
               ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
             </select>
+            <div id="bnkTrFromErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">To Account</label>
             <select id="bnkTrTo" class="in" style="width:100%;">
-              ${bankAccounts.slice().reverse().map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+              <option value="" selected>Select Account</option>
+              ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
             </select>
+            <div id="bnkTrToErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div>
             <label style="display:block;font-weight:600;margin-bottom:4px;">Amount (₹)</label>
-            <input type="number" id="bnkTrAmount" required placeholder="50000.00" class="in" style="width:100%;font-family:monospace;"/>
+            <input type="number" id="bnkTrAmount" step="any" min="0.01" placeholder="Enter Amount" class="in" style="width:100%;font-family:monospace;"/>
+            <div id="bnkTrAmountErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
             <button type="button" class="btn" data-close-modal="bnkTransferModal">Cancel</button>
-            <button type="submit" class="btn p">Submit Transfer</button>
+            <button type="submit" id="bnkTrSubmitBtn" class="btn p">Submit Transfer</button>
           </div>
         </form>
       </div>
@@ -6909,6 +6914,38 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
   }
 
+  function resetBnkTransferModal() {
+    const form = root.querySelector('#bnkTransferForm');
+    if (form) {
+      form.reset();
+      const fromEl = root.querySelector('#bnkTrFrom');
+      if (fromEl) {
+        fromEl.value = '';
+        fromEl.classList.remove('in-error');
+        fromEl.style.borderColor = '';
+      }
+      const toEl = root.querySelector('#bnkTrTo');
+      if (toEl) {
+        toEl.value = '';
+        toEl.classList.remove('in-error');
+        toEl.style.borderColor = '';
+      }
+      const amtEl = root.querySelector('#bnkTrAmount');
+      if (amtEl) {
+        amtEl.value = '';
+        amtEl.classList.remove('in-error');
+        amtEl.style.borderColor = '';
+      }
+      const errs = form.querySelectorAll('.field-error');
+      errs.forEach(e => { e.textContent = ''; e.style.display = 'none'; });
+      const submitBtn = root.querySelector('#bnkTrSubmitBtn') || form.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Transfer';
+      }
+    }
+  }
+
   function openModal(modalId) {
     const m = root.querySelector('#' + modalId);
     if (m) {
@@ -6924,12 +6961,19 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           const inputs = form.querySelectorAll('.in');
           inputs.forEach(i => { i.classList.remove('in-error'); i.style.borderColor = ''; });
         }
+      } else if (modalId === 'bnkTransferModal') {
+        resetBnkTransferModal();
       }
     }
   }
   function closeModal(modalId) {
     const m = root.querySelector('#' + modalId);
-    if (m) m.style.display = 'none';
+    if (m) {
+      m.style.display = 'none';
+      if (modalId === 'bnkTransferModal') {
+        resetBnkTransferModal();
+      }
+    }
   }
 
   let chartCashflowInstance = null;
@@ -7158,6 +7202,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           toast(err.message || 'Error updating rule status', 'err');
         }
       }
+      return;
+    }
+
+    if (e.target && e.target.classList && e.target.classList.contains('banking-modal-overlay')) {
+      closeModal(e.target.id);
       return;
     }
 
@@ -7494,13 +7543,101 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
   const transferFormElem = root.querySelector('#bnkTransferForm');
   if (transferFormElem) {
+    const fromSelect = root.querySelector('#bnkTrFrom');
+    const toSelect = root.querySelector('#bnkTrTo');
+    const amtInput = root.querySelector('#bnkTrAmount');
+    const fromErr = root.querySelector('#bnkTrFromErr');
+    const toErr = root.querySelector('#bnkTrToErr');
+    const amtErr = root.querySelector('#bnkTrAmountErr');
+    const submitBtn = root.querySelector('#bnkTrSubmitBtn') || transferFormElem.querySelector('button[type="submit"]');
+
+    function setTransferFieldError(inputEl, errEl, msg) {
+      if (!inputEl) return;
+      if (msg) {
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.style.display = 'block';
+        }
+        inputEl.classList.add('in-error');
+        inputEl.style.borderColor = '#ef4444';
+      } else {
+        if (errEl) {
+          errEl.textContent = '';
+          errEl.style.display = 'none';
+        }
+        inputEl.classList.remove('in-error');
+        inputEl.style.borderColor = '';
+      }
+    }
+
+    if (fromSelect) {
+      fromSelect.addEventListener('change', () => {
+        setTransferFieldError(fromSelect, fromErr, '');
+        if (toSelect && toSelect.value && fromSelect.value && fromSelect.value !== toSelect.value) {
+          if (toErr && toErr.textContent.includes('different')) {
+            setTransferFieldError(toSelect, toErr, '');
+          }
+        }
+      });
+    }
+    if (toSelect) {
+      toSelect.addEventListener('change', () => {
+        setTransferFieldError(toSelect, toErr, '');
+        if (fromSelect && fromSelect.value && toSelect.value && fromSelect.value !== toSelect.value) {
+          if (toErr && toErr.textContent.includes('different')) {
+            setTransferFieldError(toSelect, toErr, '');
+          }
+        }
+      });
+    }
+    if (amtInput) {
+      amtInput.addEventListener('input', () => {
+        setTransferFieldError(amtInput, amtErr, '');
+      });
+    }
+
     transferFormElem.addEventListener('submit', async e => {
       e.preventDefault();
-      const fromId = root.querySelector('#bnkTrFrom').value;
-      const toId = root.querySelector('#bnkTrTo').value;
-      const amt = parseFloat(root.querySelector('#bnkTrAmount').value) || 0;
+      let hasError = false;
+
+      const fromId = fromSelect ? fromSelect.value.trim() : '';
+      const toId = toSelect ? toSelect.value.trim() : '';
+      const amtVal = amtInput ? amtInput.value.trim() : '';
+      const amt = parseFloat(amtVal);
+
+      if (!fromId) {
+        setTransferFieldError(fromSelect, fromErr, 'Please select a From Account.');
+        hasError = true;
+      } else {
+        setTransferFieldError(fromSelect, fromErr, '');
+      }
+
+      if (!toId) {
+        setTransferFieldError(toSelect, toErr, 'Please select a To Account.');
+        hasError = true;
+      } else if (fromId && toId && fromId === toId) {
+        setTransferFieldError(toSelect, toErr, 'From Account and To Account must be different.');
+        hasError = true;
+      } else {
+        setTransferFieldError(toSelect, toErr, '');
+      }
+
+      if (!amtVal || isNaN(amt) || amt <= 0) {
+        setTransferFieldError(amtInput, amtErr, 'Please enter an amount greater than zero.');
+        hasError = true;
+      } else {
+        setTransferFieldError(amtInput, amtErr, '');
+      }
+
+      if (hasError) {
+        return;
+      }
 
       try {
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Submitting...';
+        }
         await api('banking/transfer/', {
           method: 'POST',
           body: {
@@ -7514,6 +7651,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         renderBankingModule(root, currentTab);
       } catch(err) {
         toast(err.message || 'Error recording transfer', 'err');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit Transfer';
+        }
       }
     });
   }

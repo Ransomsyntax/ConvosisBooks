@@ -9076,13 +9076,29 @@ async function transferForm() {
     title: 'Record Bank Transfer',
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'date', label: 'Transfer Date', type: 'date', req: true, value: APP.today })}
-      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true })}
-      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), req: true, value: bankAccs[1]?.id })}
-      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: '0.00' })}
+      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: [['', 'Select Account'], ...bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`])], req: true, value: '' })}
+      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: [['', 'Select Account'], ...bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`])], req: true, value: '' })}
+      ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: 'Enter Amount' })}
       ${fld({ name: 'reference', label: 'Reference / Cheque #', ph: 'e.g. IMPS-89210' })}
     </div>`,
     onSubmit: async d => {
+      if (!d.from_account) {
+        toast('Please select a From Account.', 'err');
+        return;
+      }
+      if (!d.to_account) {
+        toast('Please select a To Account.', 'err');
+        return;
+      }
+      if (String(d.from_account) === String(d.to_account)) {
+        toast('From Account and To Account must be different.', 'err');
+        return;
+      }
       d.amount = num(d.amount);
+      if (!d.amount || d.amount <= 0) {
+        toast('Please enter an amount greater than zero.', 'err');
+        return;
+      }
       await api('banking/transfer/', { method: 'POST', body: d });
       toast('Funds transferred and ledger posted');
       refresh();

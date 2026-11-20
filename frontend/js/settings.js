@@ -2975,6 +2975,12 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
   // Bind Set As Default
   container.querySelector('#btnSetAsDefault')?.addEventListener('click', async () => {
     if (!currentSeries) return;
+    const btn = container.querySelector('#btnSetAsDefault');
+    if (btn && btn.disabled) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Setting default...';
+    }
     try {
       await api(`/settings/transaction-series/${currentSeries.id}/`, {
         method: 'PUT',
@@ -2983,6 +2989,10 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
       toast(`"${currentSeries.name}" is now the default series.`, 'success');
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Set as Default';
+      }
       toast(e.message || 'Failed to update default series.', 'error');
     }
   });
@@ -2990,7 +3000,13 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
   // Bind Toggle Active
   container.querySelector('#btnToggleActive')?.addEventListener('click', async () => {
     if (!currentSeries) return;
+    const btn = container.querySelector('#btnToggleActive');
+    if (btn && btn.disabled) return;
     const newActive = !currentSeries.is_active;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = newActive ? 'Activating...' : 'Deactivating...';
+    }
     try {
       if (!newActive) {
         await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
@@ -3003,6 +3019,10 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
       toast(`Series "${currentSeries.name}" ${newActive ? 'activated' : 'deactivated'}.`, 'success');
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = currentSeries.is_active ? 'Deactivate' : 'Activate';
+      }
       toast(e.message || 'Action failed.', 'error');
     }
   });
@@ -3063,7 +3083,10 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
         <!-- Format Pattern Builder -->
         <div class="form-group" style="margin-bottom:0;">
-          <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Number Format Pattern</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <label style="font-weight:600;font-size:12px;margin-bottom:0;">Number Format Pattern</label>
+            <button type="button" id="btnResetFormatPattern" class="btn s" style="font-size:11px;padding:2px 8px;background:none;border:none;color:#3b82f6;cursor:pointer;text-decoration:underline;">Reset to Default</button>
+          </div>
           <input type="text" id="seriesFormatInput" value="${esc(currentFormat)}" class="form-control" placeholder="e.g. INV/{CUSTOMERTYPE}/{FY}/{SEQUENCE}" style="font-family:monospace;font-size:13px;">
           <small style="font-size:11px;color:#64748b;margin-top:2px;display:block;">Custom pattern with placeholders. Leave empty to auto-build from Prefix + Separator + Sequence.</small>
         </div>
@@ -3159,6 +3182,20 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   const prevEl = modal.querySelector('#seriesSamplePreview');
   const dynamicSelect = modal.querySelector('#seriesDynamicFieldSelect');
   const insertBtn = modal.querySelector('#btnInsertDynamicField');
+  const resetFormatBtn = modal.querySelector('#btnResetFormatPattern');
+
+  const closeModal = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    modal.remove();
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+  document.addEventListener('keydown', onKeyDown);
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeModal();
+  });
+  modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', closeModal));
 
   sepSelect.addEventListener('change', () => {
     if (sepSelect.value === 'custom') {
@@ -3171,7 +3208,17 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   });
   customSepInp.addEventListener('input', updatePreview);
 
-  insertBtn.addEventListener('click', () => {
+  if (resetFormatBtn) {
+    resetFormatBtn.addEventListener('click', () => {
+      const pfx = prefixInp.value.trim() || item.prefix || '';
+      const sep = sepSelect.value === 'custom' ? (customSepInp.value || '/') : (sepSelect.value || '/');
+      formatInp.value = pfx ? `${pfx}${sep}{SEQUENCE}` : '{SEQUENCE}';
+      updatePreview();
+      toast('Format pattern reset to default.', 'info');
+    });
+  }
+
+  const insertSelectedDynamicField = () => {
     const val = dynamicSelect.value;
     if (!val) return;
     const startPos = formatInp.selectionStart ?? formatInp.value.length;
@@ -3190,7 +3237,10 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     formatInp.focus();
     dynamicSelect.value = '';
     updatePreview();
-  });
+  };
+
+  insertBtn.addEventListener('click', insertSelectedDynamicField);
+  dynamicSelect.addEventListener('change', insertSelectedDynamicField);
 
   const updatePreview = () => {
     const raw = nextInp.value.trim();
@@ -3252,8 +3302,6 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   nextInp.addEventListener('input', updatePreview);
   paddingInp.addEventListener('input', updatePreview);
 
-  modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', () => modal.remove()));
-
   const saveItemBtn = modal.querySelector('#btnSaveSeriesItem');
   saveItemBtn.addEventListener('click', async () => {
     if (saveItemBtn.disabled) return;
@@ -3292,7 +3340,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
         })
       });
       toast(`Number series for ${item.label} updated successfully.`, 'success');
-      modal.remove();
+      closeModal();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
       saveItemBtn.disabled = false;
@@ -3410,10 +3458,19 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
     });
   });
 
+  const closeModal = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    modal.remove();
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+  document.addEventListener('keydown', onKeyDown);
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeModal();
+  });
   modal.querySelectorAll('[data-close-series]').forEach(b => {
-    b.addEventListener('click', () => {
-      modal.remove();
-    });
+    b.addEventListener('click', closeModal);
   });
 
   const saveBtn = modal.querySelector('#btnSaveNewSeries');
@@ -3478,7 +3535,7 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
         })
       });
       toast(`Series "${name}" created successfully.`, 'success');
-      modal.remove();
+      closeModal();
       await renderNumberSeriesPage(container, res.id);
     } catch (err) {
       saveBtn.disabled = false;
@@ -3516,7 +3573,18 @@ function openEditSeriesMetaModal(container, currentSeries) {
   `;
   document.body.appendChild(modal);
 
-  modal.querySelectorAll('[data-close-meta]').forEach(b => b.addEventListener('click', () => modal.remove()));
+  const closeModal = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    modal.remove();
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+  document.addEventListener('keydown', onKeyDown);
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeModal();
+  });
+  modal.querySelectorAll('[data-close-meta]').forEach(b => b.addEventListener('click', closeModal));
 
   const saveMetaBtn = modal.querySelector('#btnSaveSeriesMeta');
   saveMetaBtn.addEventListener('click', async () => {
@@ -3550,7 +3618,7 @@ function openEditSeriesMetaModal(container, currentSeries) {
         })
       });
       toast('Series updated successfully.', 'success');
-      modal.remove();
+      closeModal();
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (err) {
       saveMetaBtn.disabled = false;

@@ -14527,11 +14527,12 @@ def settings_transaction_series_view(request, series_id=None):
             for item in items_input:
                 if not isinstance(item, dict) or not item.get('document_type'):
                     raise ApiError(400, 'Each transaction series item must have a document type.')
-                item_type = str(item['document_type']).strip().lower()
+                raw_type = str(item.get('document_type') or item.get('module') or '').strip().lower()
+                item_type = services._number_series_doc_type(raw_type)
                 if item_type not in supported_type_keys:
-                    raise ApiError(400, f'Unsupported transaction type "{item_type}".')
+                    raise ApiError(400, f'Unsupported transaction type "{raw_type}".')
                 if item_type in item_dict:
-                    raise ApiError(400, f'Duplicate numbering configuration for "{item_type}".')
+                    raise ApiError(400, f'Duplicate numbering configuration for "{raw_type}".')
                 item_dict[item_type] = item
 
             for t in services.SUPPORTED_TRANSACTION_TYPES:
@@ -14616,6 +14617,19 @@ def settings_transaction_series_view(request, series_id=None):
                 grp.is_active = new_active
 
             grp.save()
+
+            # Always sync group-level attributes (name, branch, location, active, is_default) to child items
+            DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(
+                name=grp.name,
+                branch=grp.branch,
+                location=grp.location,
+                active=grp.is_active,
+                is_default=grp.is_default
+            )
+            DocumentNumberSeries.objects.filter(organization=org, name=grp.name).update(
+                active=grp.is_active,
+                is_default=grp.is_default
+            )
 
             # Update DocumentNumberSeries items
             items_input = data.get('items', [])

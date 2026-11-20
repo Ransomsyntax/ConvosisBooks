@@ -170,3 +170,7 @@ window.addEventListener('convosis:appearance', () => {
     PAGE.reload();
   }
 });
+
+if (typeof window !== 'undefined') {
+  window.renderDashboard = renderDashboard;
+}

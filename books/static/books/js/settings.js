@@ -5087,3 +5087,7 @@ window.openAddPaymentTermModal = openAddPaymentTermModal;
 window.openAddCurrencyModal = openAddCurrencyModal;
 window.getSettingsPageRenderer = getSettingsPageRenderer;
 window.renderEnterpriseSettingsPage = renderEnterpriseSettingsPage;
+window.renderSettingsDashboard = renderSettingsDashboard;
+window.renderSettingsShell = renderSettingsShell;
+window.renderRoleEditorPage = renderRoleEditorPage;
+

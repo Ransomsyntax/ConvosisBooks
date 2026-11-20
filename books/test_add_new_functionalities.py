@@ -283,3 +283,22 @@ class AddNewFunctionalitiesTestCase(TestCase):
         self.assertIn("toSelect.value === '__new_bank_account__'", sp_content)
         self.assertIn("!fromId || fromId === '__new_bank_account__'", sp_content)
         self.assertIn("!toId || toId === '__new_bank_account__'", sp_content)
+
+        # Check partyForm & partyDetail global window exports and safe resolution
+        self.assertIn("window.partyForm = partyForm;", sf_content)
+        self.assertIn("window.itemForm = itemForm;", sf_content)
+        self.assertIn("window.accountForm = accountForm;", sf_content)
+        self.assertIn("window.partyDetail = partyDetail;", sp_content)
+        self.assertIn("window.listPage = listPage;", sp_content)
+        self.assertIn("window.docMasterDetail = docMasterDetail;", sp_content)
+
+        static_app = os.path.join(base_dir, 'books', 'static', 'books', 'js', 'app.js')
+        front_app = os.path.join(base_dir, 'frontend', 'js', 'app.js')
+        with open(static_app, 'r', encoding='utf-8') as f:
+            sa_content = f.read()
+        with open(front_app, 'r', encoding='utf-8') as f:
+            fa_content = f.read()
+        self.assertEqual(sa_content, fa_content, "app.js is not synchronized between static and frontend!")
+        self.assertIn("((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers')", sa_content)
+        self.assertIn("((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors')", sa_content)
+

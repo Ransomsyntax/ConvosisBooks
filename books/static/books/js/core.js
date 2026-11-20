@@ -218,4 +218,14 @@ window.iso = iso;
 window.api = api;
 window.toast = toast;
 window.parseCsvString = parseCsvString;
+window.Modal = Modal;
+window.confirmBox = confirmBox;
+window.errBox = errBox;
+window.spinner = spinner;
+window.kvBox = kvBox;
+window.money = money;
+window.fd = fd;
+window.slug = slug;
+window.qs = qs;
+
 

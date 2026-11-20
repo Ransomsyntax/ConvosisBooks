@@ -430,13 +430,13 @@ function route() {
       if (docKinds.includes(sm)) {
         fn = r => docMasterDetail(r, sm, subAction);
       } else if (sm === 'customers') {
-        if (subAction === 'new') fn = () => partyForm('customers');
-        else if (subAction.startsWith('edit/')) fn = () => partyForm('customers', subAction.split('edit/')[1]);
-        else fn = () => partyDetail('customers', subAction);
+        if (subAction === 'new') fn = () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers');
+        else if (subAction.startsWith('edit/')) fn = () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers', subAction.split('edit/')[1]);
+        else fn = () => ((typeof window !== 'undefined' && window.partyDetail) || partyDetail)('customers', subAction);
       } else if (sm === 'vendors') {
-        if (subAction === 'new') fn = () => partyForm('vendors');
-        else if (subAction.startsWith('edit/')) fn = () => partyForm('vendors', subAction.split('edit/')[1]);
-        else fn = () => partyDetail('vendors', subAction);
+        if (subAction === 'new') fn = () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors');
+        else if (subAction.startsWith('edit/')) fn = () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors', subAction.split('edit/')[1]);
+        else fn = () => ((typeof window !== 'undefined' && window.partyDetail) || partyDetail)('vendors', subAction);
       } else if (sm === 'items' && m === 'items') {
         if (subAction === 'new') fn = () => itemForm();
         else fn = () => itemForm(subAction);

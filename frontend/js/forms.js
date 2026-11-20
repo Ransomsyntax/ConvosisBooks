@@ -3061,6 +3061,7 @@ async function partyForm(kind, id, onDone) {
     }
   });
 }
+window.partyForm = partyForm;
 
 function formatReorderPoint(val) {
   if (val == null || val === '') return '';
@@ -18549,3 +18550,36 @@ async function stockTransferModal(id = null, onDone = null) {
     }
   });
 }
+
+if (typeof window !== 'undefined') {
+  window.formModal = formModal;
+  window.partyForm = partyForm;
+  window.itemForm = itemForm;
+  window.accountForm = accountForm;
+  window.journalForm = journalForm;
+  window.expenseForm = expenseForm;
+  window.stockTransferModal = stockTransferModal;
+  window.warehouseModal = warehouseModal;
+  window.categoryModal = categoryModal;
+  window.priceListModal = priceListModal;
+  window.transferForm = transferForm;
+  window.bankAccountForm = bankAccountForm;
+  window.paymentForm = paymentForm;
+  window.paymentReceivedForm = paymentReceivedForm;
+  window.challanModal = challanModal;
+  window.ewayBillModal = ewayBillModal;
+  window.docForm = docForm;
+  window.projectModal = projectModal;
+  window.timelogModal = timelogModal;
+  window.documentUploadModal = documentUploadModal;
+  window.stockMoveModal = stockMoveModal;
+  window.adjustForm = adjustForm;
+  window.quoteForm = quoteForm;
+  window.salesOrderForm = salesOrderForm;
+  window.billForm = billForm;
+  window.purchaseOrderForm = purchaseOrderForm;
+  window.invoiceForm = invoiceForm;
+  window.retainerInvoiceForm = retainerInvoiceForm;
+  window.recurringInvoiceForm = recurringInvoiceForm;
+}
+

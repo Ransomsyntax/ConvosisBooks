@@ -400,6 +400,21 @@ class ApplicationWideAuditTestCase(TestCase):
         self.assertIn('window.stockTransferModal = stockTransferModal;', sf)
         self.assertIn('window.renderBankingModule = renderBankingModule;', sp)
 
+        # Verify core.js does not have undeclared Modal export
+        static_core = os.path.join(base_dir, 'books', 'static', 'books', 'js', 'core.js')
+        front_core = os.path.join(base_dir, 'frontend', 'js', 'core.js')
+        with open(static_core, 'r', encoding='utf-8') as f:
+            sc = f.read()
+        with open(front_core, 'r', encoding='utf-8') as f:
+            fc = f.read()
+        self.assertEqual(sc, fc)
+        self.assertNotIn('window.Modal = Modal;', sc)
+        self.assertNotIn('window.confirmBox = confirmBox;', sc)
+
+        # Verify stockTransferReportPage loadData has valid declaration
+        self.assertIn('const wh = $(\'#rep-wh\', root).value;', sp)
+        self.assertIn('let url = \'reports/stock-transfer-report/?\';', sp)
+
     def test_08_auth_exception_handling_and_services_get_user_org(self):
         """Verify API auth registration exception handling and services.get_user_org."""
         from books import services

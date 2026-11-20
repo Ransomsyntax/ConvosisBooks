@@ -8781,6 +8781,26 @@ async function stockTransferReportPage(root) {
   $('#btn-new-transfer', root).addEventListener('click', () => stockMoveModal());
 
   async function loadData() {
+    const wh = $('#rep-wh', root).value;
+    const start = $('#rep-start', root).value;
+    const end = $('#rep-end', root).value;
+    const q = ($('#rep-search', root).value || '').toLowerCase().trim();
+    let url = 'reports/stock-transfer-report/?';
+    if (wh) url += `warehouse=${encodeURIComponent(wh)}&`;
+    if (start) url += `start=${encodeURIComponent(start)}&`;
+    if (end) url += `end=${encodeURIComponent(end)}&`;
+
+    try {
+      const data = await api(url);
+      if (!root.isConnected) return;
+      let rows = data.results || [];
+      if (q) {
+        rows = rows.filter(r => (r.item || '').toLowerCase().includes(q) || (r.sku || '').toLowerCase().includes(q) || (r.reference || '').toLowerCase().includes(q));
+      }
+
+      const totQty = rows.reduce((acc, r) => acc + (parseFloat(r.quantity) || 0), 0);
+
+      $('#rep-kpis', root).innerHTML = `
         <div class="card" style="flex:1;min-width:180px;padding:12px 16px;border-left:4px solid #0ea5e9;background:var(--bg-subtle, #f8fafc);">
           <div style="font-size:11px;color:var(--tx-muted);font-weight:700;text-transform:uppercase;">Total Transferred Qty</div>
           <div style="font-size:22px;font-weight:700;color:#0ea5e9;margin-top:4px;">${qty(totQty)}</div>
@@ -8955,7 +8975,7 @@ async function openingStockReportPage(root) {
           </tbody>
         </table>
       `;
-
+            
       $('#rep-table', root).querySelectorAll('[data-act="prev"]').forEach(btn => {
         btn.addEventListener('click', () => previewOpeningStockModal(btn.dataset.id, btn.dataset.wh));
       });

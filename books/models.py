@@ -2259,6 +2259,7 @@ class DocumentNumberSeries(models.Model):
     gstin = models.CharField(max_length=15, blank=True, default='')
     prefix = models.CharField(max_length=100, blank=True, default='')
     separator = models.CharField(max_length=5, default='/')
+    format_pattern = models.CharField(max_length=160, blank=True, default='')
     starting_number = models.PositiveIntegerField(default=1)
     next_number = models.PositiveIntegerField(default=1)
     padding = models.PositiveSmallIntegerField(default=5)

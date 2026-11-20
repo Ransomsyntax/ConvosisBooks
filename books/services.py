@@ -573,8 +573,9 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
     )
 
 
-def _format_series_number(series_obj, value, org, date=None, branch='', location='', gstin=None, customer_type=''):
+def _format_series_number(series_obj, value, org, date=None, branch='', location='', gstin=None, customer_type='', party=None, format_pattern=None, separator=None):
     import datetime
+    import re
     if not date:
         date_val = timezone.localdate()
     elif isinstance(date, str):
@@ -589,30 +590,93 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
 
     fy = get_financial_year(date_val, org=org)
     yr = date_val.year
+    mo = f"{date_val.month:02d}"
     start_yy = f"{(yr % 100 if date_val.month >= 4 else (yr - 1) % 100):02d}"
     end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
 
-    prefix = series_obj.prefix if series_obj.prefix is not None else ''
-    replacements = {
-        '%FYS_YY%': start_yy, '${FYS_YY}': start_yy,
-        '%FYE_YY%': end_yy, '${FYE_YY}': end_yy,
-        '%FY%': fy, '${FY}': fy,
-        '%YEAR%': str(yr), '${YEAR}': str(yr),
-        '%ORG%': org.get_code() if org else '', '${ORG}': org.get_code() if org else '',
-        '%BRANCH%': branch or series_obj.branch, '${BRANCH}': branch or series_obj.branch,
-        '%LOCATION%': location or series_obj.location, '${LOCATION}': location or series_obj.location,
-    }
-    for token, replacement in replacements.items():
-        prefix = prefix.replace(token, replacement)
+    org_code = org.get_code() if org else 'CONVO'
+    branch_val = str(branch or getattr(series_obj, 'branch', '') or getattr(getattr(series_obj, 'series_group', None), 'branch', '') or '').strip()
 
-    padding = max(1, series_obj.padding or 1)
+    # Resolve location
+    loc_val = str(location or '').strip()
+    if not loc_val and party:
+        loc_val = str(
+            getattr(party, 'billing_city', '') or
+            getattr(party, 'city', '') or
+            getattr(party, 'state', '') or
+            getattr(party, 'place_of_supply', '') or ''
+        ).strip()
+    if not loc_val:
+        loc_val = str(getattr(series_obj, 'location', '') or getattr(getattr(series_obj, 'series_group', None), 'location', '') or '').strip()
+    if not loc_val:
+        loc_val = branch_val
+
+    clean_location = re.sub(r'[^A-Za-z0-9_-]+', '-', loc_val).strip('-').upper() if loc_val else 'HQ'
+
+    # Resolve customer type
+    cust_type_raw = str(customer_type or '').strip().lower()
+    if not cust_type_raw and party:
+        ptype = str(getattr(party, 'customer_type', '')).strip().lower()
+        if ptype:
+            cust_type_raw = ptype
+        elif getattr(party, 'gstin', ''):
+            cust_type_raw = 'b2b'
+        else:
+            cust_type_raw = 'b2c'
+    if not cust_type_raw:
+        cust_type_raw = str(getattr(series_obj, 'customer_type', '')).strip().lower()
+
+    if cust_type_raw in ('b2b', 'business'):
+        clean_cust_type = 'B2B'
+    elif cust_type_raw in ('b2c', 'individual', 'consumer'):
+        clean_cust_type = 'B2C'
+    elif cust_type_raw:
+        clean_cust_type = re.sub(r'[^A-Za-z0-9_-]+', '-', cust_type_raw).strip('-').upper()
+    else:
+        clean_cust_type = 'B2B'
+
+    padding = max(1, getattr(series_obj, 'padding', 5) or 5)
     num_str = f"{value:0{padding}d}"
 
-    separator = series_obj.separator or ''
-    if separator and prefix and not prefix.endswith(separator) and not prefix.endswith('-') and not prefix.endswith('/'):
-        prefix = f"{prefix}{separator}"
+    raw_pattern = format_pattern if format_pattern is not None else (getattr(series_obj, 'format_pattern', '') or '')
+    raw_pattern = raw_pattern.strip()
+    if not raw_pattern:
+        raw_pattern = (getattr(series_obj, 'prefix', '') or '').strip()
 
-    candidate = f"{prefix}{num_str}"
+    sep = separator if separator is not None else (getattr(series_obj, 'separator', '/') or '/')
+
+    # Token mappings (case-insensitive keys handled below)
+    token_map = {
+        'CUSTOMERTYPE': clean_cust_type,
+        'LOCATION': clean_location,
+        'FY': fy,
+        'ORG': org_code,
+        'BRANCH': branch_val or 'HQ',
+        'YEAR': str(yr),
+        'MONTH': mo,
+        'FYS_YY': start_yy,
+        'FYE_YY': end_yy,
+    }
+
+    result = raw_pattern
+    for key, val in token_map.items():
+        result = result.replace(f"%{key}%", val).replace(f"${{{key}}}", val)
+        rx = re.compile(rf'\{{{key}\}}', re.IGNORECASE)
+        result = rx.sub(val, result)
+
+    seq_rx = re.compile(r'\{SEQUENCE\}', re.IGNORECASE)
+    if seq_rx.search(result):
+        candidate = seq_rx.sub(num_str, result)
+    else:
+        if sep and result and not result.endswith(sep) and not result.endswith('-') and not result.endswith('/'):
+            result = f"{result}{sep}"
+        candidate = f"{result}{num_str}"
+
+    # Clean redundant duplicated separators if single char
+    if sep and len(sep) == 1:
+        sep_esc = re.escape(sep)
+        candidate = re.sub(rf'{sep_esc}{{2,}}', sep, candidate)
+
     if len(candidate) > 60:
         raise ApiError(400, 'Generated document numbers cannot exceed 60 characters.')
     return candidate
@@ -648,7 +712,7 @@ def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
     return counter
 
 
-def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None):
+def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None, party=None, format_pattern=None, separator=None):
     """
     Generate an atomic, collision-free organization-wise document number.
     Format: Document Number = Prefix + Next Number
@@ -684,7 +748,11 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
 
         while True:
             val = counter.next_number
-            candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
+            candidate = _format_series_number(
+                series_obj, val, org, date=date, branch=branch, location=location,
+                gstin=gstin, customer_type=customer_type, party=party,
+                format_pattern=format_pattern, separator=separator
+            )
             collision = False
             if model and field:
                 kwargs = {field: candidate}
@@ -733,7 +801,7 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
             return candidate
 
 
-def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None):
     """
     Preview the next document number without incrementing the sequence counter.
     """
@@ -749,7 +817,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         series=series, user=user, business_location_id=business_location_id
     )
     if not series_obj:
-        return {'next_number': '', 'formatted': '', 'prefix': '', 'next_sequence': 1}
+        return {'next_number': '', 'formatted': '', 'prefix': '', 'format_pattern': '', 'separator': '/', 'next_sequence': 1}
 
     from .models import DocumentNumberPreference
     pref = DocumentNumberPreference.objects.filter(
@@ -765,6 +833,8 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             'next_number': '',
             'formatted': '',
             'prefix': normalize_document_prefix_output(series_obj.prefix),
+            'format_pattern': series_obj.format_pattern or '',
+            'separator': series_obj.separator or '/',
             'next_sequence': counter.next_number,
             'padding': series_obj.padding,
             'auto_generate': False,
@@ -787,7 +857,11 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
     counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
     val = counter.next_number
     while True:
-        candidate = _format_series_number(series_obj, val, org, date=date, branch=branch, location=location, customer_type=customer_type)
+        candidate = _format_series_number(
+            series_obj, val, org, date=date, branch=branch, location=location,
+            gstin=gstin, customer_type=customer_type, party=party,
+            format_pattern=format_pattern, separator=separator
+        )
         collision = False
         if model and field:
             kwargs = {field: candidate}
@@ -806,6 +880,8 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
                 'next_number': candidate,
                 'formatted': candidate,
                 'prefix': normalize_document_prefix_output(series_obj.prefix),
+                'format_pattern': series_obj.format_pattern or '',
+                'separator': series_obj.separator or '/',
                 'next_sequence': val,
                 'padding': series_obj.padding,
                 'auto_generate': True,

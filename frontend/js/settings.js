@@ -2948,7 +2948,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}">
                     Configure
                   </button>
                 </td>
@@ -3019,6 +3019,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         document_type: btn.dataset.editItemDoc,
         label: btn.dataset.editItemLabel,
         prefix: btn.dataset.editItemPrefix,
+        format_pattern: btn.dataset.editItemFormat || '',
         next_number: btn.dataset.editItemNext,
         padding: btn.dataset.editItemPad,
         sample_preview: btn.dataset.editItemPreview,
@@ -3037,25 +3038,108 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
   modal.className = 'modal-backdrop transaction-series-modal';
-  const paddedNext = String(item.next_number || 1).padStart(Number(item.padding) || 1, '0');
+  const paddingVal = Number(item.padding) || 5;
+  const paddedNext = String(item.next_number || 1).padStart(paddingVal, '0');
+  const currentFormat = item.format_pattern || '';
+  const currentPrefix = item.prefix || '';
+  const currentSeparator = item.separator || '/';
+  const isCustomSep = !['/', '-', '_'].includes(currentSeparator) && currentSeparator !== '';
+
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:440px;">
+    <div class="modal-box" style="max-width:580px;max-height:90vh;overflow-y:auto;">
       <div class="modal-header">
-        <h3>Configure Numbering: ${esc(item.label)}</h3>
+        <h3 style="margin:0;font-size:16px;font-weight:700;">Configure Numbering: ${esc(item.label)}</h3>
         <button type="button" class="modal-close-btn" data-close-item>✕</button>
       </div>
-      <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
         <div style="font-size:12.5px;color:#64748b;">Series: <b>${esc(currentSeries.name)}</b></div>
-        <div class="form-group">
-          <label>Prefix*</label>
-          <input type="text" id="seriesPrefixInput" value="${esc(item.prefix)}" class="form-control">
+
+        <!-- Transaction Prefix -->
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Transaction Prefix*</label>
+          <input type="text" id="seriesPrefixInput" value="${esc(currentPrefix)}" class="form-control" placeholder="e.g. INV">
+          <small style="font-size:11px;color:#64748b;margin-top:2px;display:block;">Base prefix or standard identifier for this module.</small>
         </div>
-        <div class="form-group">
-          <label>Next Sequence Number* (e.g. 000001 or 1)</label>
-          <input type="text" id="seriesNextSeqInput" value="${esc(paddedNext)}" class="form-control" style="font-family:monospace;">
+
+        <!-- Format Pattern Builder -->
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Number Format Pattern</label>
+          <input type="text" id="seriesFormatInput" value="${esc(currentFormat)}" class="form-control" placeholder="e.g. INV/{CUSTOMERTYPE}/{FY}/{SEQUENCE}" style="font-family:monospace;font-size:13px;">
+          <small style="font-size:11px;color:#64748b;margin-top:2px;display:block;">Custom pattern with placeholders. Leave empty to auto-build from Prefix + Separator + Sequence.</small>
         </div>
-        <div style="font-size:12px;color:#64748b;background:#f8fafc;padding:8px 12px;border-radius:4px;border:1px solid #e2e8f0;">
-          Sample Preview: <b id="seriesSamplePreview">${esc(item.sample_preview || '')}</b>
+
+        <!-- Insert Dynamic Field -->
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="seriesDynamicFieldSelect" class="form-control" style="flex:1;font-size:12px;">
+            <option value="">-- Insert Dynamic Field --</option>
+            <option value="{CUSTOMERTYPE}">{CUSTOMERTYPE} - Customer Type (e.g. B2B, B2C)</option>
+            <option value="{LOCATION}">{LOCATION} - Location / City (e.g. KOTTAYAM)</option>
+            <option value="{FY}">{FY} - Financial Year (e.g. 26-27)</option>
+            <option value="{ORG}">{ORG} - Organization Code (e.g. CONVO)</option>
+            <option value="{BRANCH}">{BRANCH} - Branch Code/Name (e.g. TVM)</option>
+            <option value="{YEAR}">{YEAR} - 4-Digit Year (e.g. 2026)</option>
+            <option value="{MONTH}">{MONTH} - 2-Digit Month (e.g. 04)</option>
+            <option value="{SEQUENCE}">{SEQUENCE} - Sequential Padded Number</option>
+          </select>
+          <button type="button" class="btn s" id="btnInsertDynamicField" style="font-size:12px;white-space:nowrap;padding:6px 12px;">+ Insert Field</button>
+        </div>
+
+        <!-- Separator & Sequence -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Separator</label>
+            <select id="seriesSeparatorSelect" class="form-control" style="font-size:12px;">
+              <option value="/" ${currentSeparator === '/' ? 'selected' : ''}>Slash ( / )</option>
+              <option value="-" ${currentSeparator === '-' ? 'selected' : ''}>Hyphen ( - )</option>
+              <option value="_" ${currentSeparator === '_' ? 'selected' : ''}>Underscore ( _ )</option>
+              <option value="custom" ${isCustomSep ? 'selected' : ''}>Custom...</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Custom Separator</label>
+            <input type="text" id="seriesCustomSeparatorInput" class="form-control" maxlength="5" value="${esc(isCustomSep ? currentSeparator : '')}" ${!isCustomSep ? 'disabled' : ''} placeholder="e.g. . or #" style="font-size:12px;">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Next Sequence Number*</label>
+            <input type="text" id="seriesNextSeqInput" value="${esc(paddedNext)}" class="form-control" style="font-family:monospace;font-size:13px;" placeholder="1 or 00001">
+          </div>
+          <div>
+            <label style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Number Padding (Digits)</label>
+            <input type="number" id="seriesPaddingInput" min="1" max="12" value="${paddingVal}" class="form-control" style="font-size:12px;">
+          </div>
+        </div>
+
+        <!-- Live Interactive Sample Preview -->
+        <div style="background:#f0fdf4;border:1.5px solid #86efac;padding:12px 14px;border-radius:6px;">
+          <div style="font-size:11px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Live Interactive Sample Preview</div>
+          <div style="font-size:17px;font-family:monospace;font-weight:700;color:#15803d;word-break:break-all;" id="seriesSamplePreview">${esc(item.sample_preview || '')}</div>
+        </div>
+
+        <!-- Placeholders Reference Guide -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;">
+          <div style="font-size:11.5px;font-weight:700;color:#475569;margin-bottom:6px;">Available Placeholders Guide</div>
+          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead>
+              <tr style="color:#64748b;border-bottom:1px solid #e2e8f0;">
+                <th style="text-align:left;padding:3px 4px;">Placeholder</th>
+                <th style="text-align:left;padding:3px 4px;">Description</th>
+                <th style="text-align:left;padding:3px 4px;">Sample</th>
+              </tr>
+            </thead>
+            <tbody style="color:#334155;">
+              <tr><td style="padding:3px 4px;"><code>{CUSTOMERTYPE}</code></td><td style="padding:3px 4px;">Customer type from Master</td><td style="padding:3px 4px;">B2B</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{LOCATION}</code></td><td style="padding:3px 4px;">Customer / transaction location</td><td style="padding:3px 4px;">KOTTAYAM</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{FY}</code></td><td style="padding:3px 4px;">Financial Year</td><td style="padding:3px 4px;">26-27</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{ORG}</code></td><td style="padding:3px 4px;">Organization short code</td><td style="padding:3px 4px;">CONVO</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{BRANCH}</code></td><td style="padding:3px 4px;">Branch code / name</td><td style="padding:3px 4px;">TVM</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{YEAR}</code></td><td style="padding:3px 4px;">4-digit calendar year</td><td style="padding:3px 4px;">2026</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{MONTH}</code></td><td style="padding:3px 4px;">2-digit month</td><td style="padding:3px 4px;">04</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{SEQUENCE}</code></td><td style="padding:3px 4px;">Sequential padded number</td><td style="padding:3px 4px;">00001</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
       <div class="modal-footer">
@@ -3067,8 +3151,46 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   document.body.appendChild(modal);
 
   const prefixInp = modal.querySelector('#seriesPrefixInput');
+  const formatInp = modal.querySelector('#seriesFormatInput');
+  const sepSelect = modal.querySelector('#seriesSeparatorSelect');
+  const customSepInp = modal.querySelector('#seriesCustomSeparatorInput');
   const nextInp = modal.querySelector('#seriesNextSeqInput');
+  const paddingInp = modal.querySelector('#seriesPaddingInput');
   const prevEl = modal.querySelector('#seriesSamplePreview');
+  const dynamicSelect = modal.querySelector('#seriesDynamicFieldSelect');
+  const insertBtn = modal.querySelector('#btnInsertDynamicField');
+
+  sepSelect.addEventListener('change', () => {
+    if (sepSelect.value === 'custom') {
+      customSepInp.disabled = false;
+      customSepInp.focus();
+    } else {
+      customSepInp.disabled = true;
+    }
+    updatePreview();
+  });
+  customSepInp.addEventListener('input', updatePreview);
+
+  insertBtn.addEventListener('click', () => {
+    const val = dynamicSelect.value;
+    if (!val) return;
+    const startPos = formatInp.selectionStart ?? formatInp.value.length;
+    const endPos = formatInp.selectionEnd ?? formatInp.value.length;
+    const currentVal = formatInp.value;
+    const sep = sepSelect.value === 'custom' ? (customSepInp.value || '') : (sepSelect.value || '');
+    let insertStr = val;
+    if (!currentVal) {
+      const pfx = prefixInp.value.trim();
+      insertStr = (pfx ? pfx + sep : '') + val;
+      formatInp.value = insertStr;
+    } else {
+      const needsLeadingSep = startPos > 0 && sep && !currentVal.substring(0, startPos).endsWith(sep) && currentVal[startPos-1] !== '/' && currentVal[startPos-1] !== '-';
+      formatInp.value = currentVal.substring(0, startPos) + (needsLeadingSep ? sep : '') + val + currentVal.substring(endPos);
+    }
+    formatInp.focus();
+    dynamicSelect.value = '';
+    updatePreview();
+  });
 
   const updatePreview = () => {
     const raw = nextInp.value.trim();
@@ -3076,38 +3198,59 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       prevEl.textContent = 'Enter a positive sequence number';
       return;
     }
-    let prefix = prefixInp.value.trim();
-    const fy = item.financial_year || '';
+    const pad = Math.max(1, Math.min(12, parseInt(paddingInp.value, 10) || raw.length || 5));
+    const seqStr = String(Number(raw)).padStart(pad, '0');
+    const sep = sepSelect.value === 'custom' ? customSepInp.value : sepSelect.value;
+    
+    let pattern = formatInp.value.trim() || prefixInp.value.trim();
+    const fy = item.financial_year || '26-27';
     const startYY = fy.split('-')[0] || '';
     const endYY = fy.split('-')[1] || '';
-    const startYear = startYY ? String(2000 + Number(startYY)) : String(item.current_year || '');
-    const replacements = {
-      '%ORG%': item.org_code || '',
-      '${ORG}': item.org_code || '',
-      '%FY%': fy,
-      '${FY}': fy,
-      '%FYS_YY%': startYY,
-      '${FYS_YY}': startYY,
-      '%FYE_YY%': endYY,
-      '${FYE_YY}': endYY,
-      '%YEAR%': String(item.current_year || startYear),
-      '${YEAR}': String(item.current_year || startYear),
-      '%BRANCH%': item.branch || '',
-      '${BRANCH}': item.branch || '',
-      '%LOCATION%': item.location || '',
-      '${LOCATION}': item.location || ''
+    const yr = String(item.current_year || (startYY ? 2000 + Number(startYY) : 2026));
+    const now = new Date();
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+
+    const sampleReplacements = {
+      'CUSTOMERTYPE': 'B2B',
+      'LOCATION': (item.location || 'KOTTAYAM').toUpperCase(),
+      'FY': fy,
+      'ORG': item.org_code || 'CONVO',
+      'BRANCH': (item.branch || 'TVM').toUpperCase(),
+      'YEAR': yr,
+      'MONTH': mo,
+      'FYS_YY': startYY,
+      'FYE_YY': endYY
     };
-    Object.entries(replacements).forEach(([token, value]) => {
-      prefix = prefix.split(token).join(value);
+
+    let result = pattern;
+    Object.entries(sampleReplacements).forEach(([token, value]) => {
+      result = result.split(`%${token}%`).join(value);
+      result = result.split(`\${${token}}`).join(value);
+      const re = new RegExp(`\\{${token}\\}`, 'gi');
+      result = result.replace(re, value);
     });
-    const separator = item.separator || '';
-    if (separator && prefix && !prefix.endsWith(separator) && !prefix.endsWith('-') && !prefix.endsWith('/')) {
-      prefix += separator;
+
+    const seqRe = /\{SEQUENCE\}/gi;
+    if (seqRe.test(result)) {
+      result = result.replace(seqRe, seqStr);
+    } else {
+      if (sep && result && !result.endsWith(sep) && !result.endsWith('-') && !result.endsWith('/')) {
+        result += sep;
+      }
+      result += seqStr;
     }
-    prevEl.textContent = prefix + String(Number(raw)).padStart(raw.length, '0');
+
+    if (sep && sep.length === 1) {
+      const sepEsc = sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(`${sepEsc}{2,}`, 'g'), sep);
+    }
+
+    prevEl.textContent = result;
   };
   prefixInp.addEventListener('input', updatePreview);
+  formatInp.addEventListener('input', updatePreview);
   nextInp.addEventListener('input', updatePreview);
+  paddingInp.addEventListener('input', updatePreview);
 
   modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', () => modal.remove()));
 
@@ -3115,7 +3258,11 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   saveItemBtn.addEventListener('click', async () => {
     if (saveItemBtn.disabled) return;
     const prefix = prefixInp.value.trim();
+    const formatPattern = formatInp.value.trim();
     const rawNext = nextInp.value.trim();
+    const sep = sepSelect.value === 'custom' ? customSepInp.value.trim() : sepSelect.value;
+    const padding = Math.max(1, Math.min(12, parseInt(paddingInp.value, 10) || rawNext.length || 5));
+
     if (!prefix) {
       toast('Prefix is required.', 'error');
       prefixInp.focus();
@@ -3127,7 +3274,6 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       return;
     }
     const next_number = Number(rawNext);
-    const padding = rawNext.length > 1 ? rawNext.length : 1;
 
     saveItemBtn.disabled = true;
     saveItemBtn.textContent = 'Saving...';
@@ -3138,6 +3284,8 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           items: [{
             document_type: item.document_type,
             prefix: prefix,
+            format_pattern: formatPattern,
+            separator: sep || '/',
             next_number: next_number,
             padding: padding
           }]

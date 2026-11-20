@@ -2618,16 +2618,17 @@ class DocResource(Resource):
             customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else (
                 'b2b' if getattr(party, 'gstin', '') else 'b2c'
             )
+            loc = str(head.get('location') or getattr(party, 'billing_city', '') or getattr(party, 'city', '') or getattr(party, 'state', '') or '').strip()
             num = services.next_document_number(
                 pfx, org=user_org, date=head['date'], customer_type=customer_type,
-                branch=head.get('branch', ''), location=head.get('location', ''),
+                branch=head.get('branch', ''), location=loc,
                 business_location_id=getattr(head.get('business_location'), 'pk', None),
                 gstin=(
                     head.get('business_location_gstin', '')
                     if 'business_location' in head
                     else data.get('gstin') or (getattr(user_org, 'gstin', '') if user_org else '')
                 ),
-                series=series_name, series_id=series_id, user=user,
+                series=series_name, series_id=series_id, user=user, party=party,
             )
         obj = self.Model(number=num, status='draft')
         if hasattr(self.Model, 'organization'):
@@ -14369,7 +14370,11 @@ def settings_number_series_view(request):
             series_item.padding = pad_val
         counter.next_number = next_seq
         counter.save(update_fields=['next_number', 'updated_at'])
-        series_item.save(update_fields=['prefix', 'next_number', 'padding', 'updated_at'])
+        if 'format_pattern' in data and data['format_pattern'] is not None:
+            series_item.format_pattern = str(data['format_pattern']).strip()[:160]
+        if 'separator' in data and data['separator'] is not None:
+            series_item.separator = str(data['separator']).strip()[:5] or '/'
+        series_item.save(update_fields=['prefix', 'format_pattern', 'separator', 'next_number', 'padding', 'updated_at'])
 
         ns = org.number_series or {}
         ns[mod_key] = {'prefix': prefix, 'next_sequence': next_seq}
@@ -14449,6 +14454,7 @@ def settings_transaction_series_view(request, series_id=None):
                     'module': t['pfx'],
                     'label': t['label'],
                     'prefix': s_item.prefix,
+                    'format_pattern': s_item.format_pattern or '',
                     'next_number': prev.get('next_sequence', s_item.next_number),
                     'padding': s_item.padding,
                     'formatted': prev.get('formatted', ''),
@@ -14457,7 +14463,7 @@ def settings_transaction_series_view(request, series_id=None):
                     'org_code': org.get_code(),
                     'branch': current_series.branch,
                     'location': current_series.location,
-                    'separator': s_item.separator,
+                    'separator': s_item.separator or '/',
                     'current_year': timezone.localdate().year,
                 })
 
@@ -14532,9 +14538,13 @@ def settings_transaction_series_view(request, series_id=None):
                 doc_key = t['key']
                 cfg = item_dict.get(doc_key, {})
                 prefix = str(cfg.get('prefix') if cfg.get('prefix') is not None else t['default_prefix']).strip()
+                format_pattern = str(cfg.get('format_pattern') or '').strip()
+                separator = str(cfg.get('separator') or '/').strip()[:5] or '/'
                 raw_next = str(cfg.get('next_number', t['default_next'])).strip()
                 if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
                     raise ApiError(400, f'A valid prefix is required for {t["label"]}.')
+                if len(format_pattern) > 160:
+                    raise ApiError(400, f'Format pattern for {t["label"]} cannot exceed 160 characters.')
                 if not raw_next.isdigit() or int(raw_next) < 1:
                     raise ApiError(400, f'Next number for {t["label"]} must be a positive whole number.')
                 try:
@@ -14551,6 +14561,8 @@ def settings_transaction_series_view(request, series_id=None):
                     name=grp.name,
                     document_type=doc_key,
                     prefix=prefix,
+                    format_pattern=format_pattern,
+                    separator=separator,
                     starting_number=1,
                     next_number=next_val,
                     padding=padding,
@@ -14633,6 +14645,14 @@ def settings_transaction_series_view(request, series_id=None):
                     if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
                         raise ApiError(400, 'Prefix must be 1-100 printable characters.')
                     s_item.prefix = prefix
+                if 'format_pattern' in item_data and item_data['format_pattern'] is not None:
+                    fmt = str(item_data['format_pattern']).strip()
+                    if len(fmt) > 160:
+                        raise ApiError(400, 'Format pattern cannot exceed 160 characters.')
+                    s_item.format_pattern = fmt
+                if 'separator' in item_data and item_data['separator'] is not None:
+                    sep = str(item_data['separator']).strip()[:5] or '/'
+                    s_item.separator = sep
                 if 'next_number' in item_data:
                     raw_next = str(item_data['next_number']).strip()
                     if not raw_next.isdigit() or int(raw_next) < 1:

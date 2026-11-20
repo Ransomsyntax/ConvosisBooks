@@ -457,6 +457,24 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
     entity = 'unit';
   } else if (val === '__new_tax__' || (val === '__add_new__' && (selName.includes('tax') || selName.includes('gst'))) || optText.includes('add new tax rate')) {
     entity = 'tax';
+  } else if (val === '__new_bank_account__' || (val === '__add_new__' && (selName.includes('bank') || selName.includes('trfrom') || selName.includes('trto'))) || optText.includes('add new bank') || optText.includes('add bank account')) {
+    entity = 'bank_account';
+  }
+
+  if (!entity) {
+    if (selName.includes('vendor')) entity = 'vendor';
+    else if (selName.includes('customer')) entity = 'customer';
+    else if (selName.includes('item') || selName.includes('product')) entity = 'item';
+    else if (selName.includes('warehouse')) entity = 'warehouse';
+    else if (selName.includes('salesperson')) entity = 'salesperson';
+    else if (selName.includes('employee')) entity = 'employee';
+    else if (selName.includes('category')) entity = 'category';
+    else if (selName.includes('price') || selName.includes('scheme')) entity = 'pricelist';
+    else if (selName.includes('account')) entity = 'account';
+    else if (selName.includes('bank') || selName.includes('trfrom') || selName.includes('trto')) entity = 'bank_account';
+    else if (selName.includes('project')) entity = 'project';
+    else if (selName.includes('unit')) entity = 'unit';
+    else if (selName.includes('tax') || selName.includes('gst')) entity = 'tax';
   }
 
   if (!entity) return false;
@@ -508,6 +526,9 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
     } else if (entity === 'tax') {
       idVal = String(newRecord.rate != null ? newRecord.rate : newRecord.id);
       labelVal = newRecord.name || `${newRecord.rate}%`;
+    } else if (entity === 'bank_account') {
+      idVal = newRecord.id;
+      labelVal = newRecord.display_name || newRecord.name || `${newRecord.bank_name || ''} ${newRecord.account_number || ''}`.trim();
     }
 
     const formContainer = selectEl.closest('form') || selectEl.closest('.zb-form-wrap') || selectEl.closest('.invoice-form-page') || selectEl.closest('#pg') || document;
@@ -525,6 +546,8 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
       targetSelects = Array.from(formContainer.querySelectorAll('select[name="warehouse"], select[name="warehouse_id"], select[name="source_warehouse"], select[name="destination_warehouse"], #st-src-wh, #st-dst-wh, #st_source_warehouse, #st_dest_warehouse, #adj_warehouse, #item_warehouse'));
     } else if (entity === 'account') {
       targetSelects = Array.from(formContainer.querySelectorAll('select[name*="account"], #item_sales_account, #item_purchase_account, #item_inventory_account, #adj_account, #adj-account'));
+    } else if (entity === 'bank_account') {
+      targetSelects = Array.from(formContainer.querySelectorAll('select[name*="bank_account"], select[name*="paid_through"], #bnkTrFrom, #bnkTrTo, #pay-bank-account, #paym-bank-account'));
     }
 
     if (!targetSelects.includes(selectEl)) targetSelects.push(selectEl);
@@ -623,6 +646,8 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
       unitModal(onCreated);
     } else if (entity === 'tax') {
       taxRateModal(onCreated);
+    } else if (entity === 'bank_account') {
+      bankAccountForm(null, onCreated);
     }
     return true;
   } catch (err) {
@@ -7427,6 +7452,7 @@ async function adjustForm(preItem, targetEl, onDone) {
               <select class="in" id="adj-warehouse" name="warehouse" style="flex:1;height:34px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:12px;background:#fff;">
                 <option value="">Default Warehouse (All Locations)</option>
                 ${warehouses.map((w, idx) => `<option value="${w.id}" ${idx === 0 ? 'selected' : ''}>${esc(w.code)} - ${esc(w.name)}${w.is_sub_warehouse ? ' (Sub)' : ''}</option>`).join('')}
+                <option value="__new_warehouse__" style="color:var(--accent,#2563eb);font-weight:600;">+ Add New Warehouse…</option>
               </select>
             </div>
             <div style="display:flex;align-items:center;gap:16px;">
@@ -7519,6 +7545,50 @@ async function adjustForm(preItem, targetEl, onDone) {
     if (firstTr) updateRow(firstTr);
   } else {
     tbody.insertAdjacentHTML('beforeend', rowHtml());
+  }
+
+  const adjWhSelect = $('#adj-warehouse', target);
+  if (adjWhSelect) {
+    adjWhSelect.addEventListener('change', () => {
+      if (adjWhSelect.value === '__new_warehouse__') {
+        warehouseModal(null, newWh => {
+          if (newWh && newWh.id) {
+            warehouses.push(newWh);
+            const opt = document.createElement('option');
+            opt.value = newWh.id;
+            opt.textContent = `${newWh.code || ''} - ${newWh.name || ''}`;
+            const addOpt = adjWhSelect.querySelector('option[value="__new_warehouse__"]');
+            if (addOpt) adjWhSelect.insertBefore(opt, addOpt);
+            else adjWhSelect.appendChild(opt);
+            adjWhSelect.value = newWh.id;
+          } else {
+            adjWhSelect.value = warehouses[0]?.id || '';
+          }
+        });
+      }
+    });
+  }
+
+  const adjAcctSelect = $('#adj-account', target);
+  if (adjAcctSelect) {
+    adjAcctSelect.addEventListener('change', () => {
+      if (adjAcctSelect.value === '__new_account__') {
+        accountForm(null, newAcc => {
+          if (newAcc && newAcc.id) {
+            accounts.push(newAcc);
+            const opt = document.createElement('option');
+            opt.value = newAcc.id;
+            opt.textContent = `${newAcc.code ? newAcc.code + ' - ' : ''}${newAcc.name}`;
+            const addOpt = adjAcctSelect.querySelector('option[value="__new_account__"]');
+            if (addOpt) adjAcctSelect.insertBefore(opt, addOpt);
+            else adjAcctSelect.appendChild(opt);
+            adjAcctSelect.value = newAcc.id;
+          } else {
+            adjAcctSelect.value = accounts[0]?.id || '';
+          }
+        });
+      }
+    });
   }
 
   tbody.addEventListener('change', e => {
@@ -7977,7 +8047,7 @@ async function journalForm(id) {
   function renderLines() {
     return lines.map((l, i) => `
       <div class="journal-line-row" data-idx="${i}" style="display:grid;grid-template-columns:3fr 1.5fr 1.5fr 3fr 36px;gap:8px;margin-bottom:8px;align-items:center;">
-        <select class="in line-acc" name="line_acc_${i}">${opts(accounts.map(a => [a.id, `${a.code} - ${a.name}`]), l.account)}</select>
+        <select class="in line-acc" name="line_acc_${i}">${opts([...accounts.map(a => [a.id, `${a.code} - ${a.name}`]), ['__new_account__', '+ Add New Account…']], l.account)}</select>
         <input class="in line-deb r" type="number" step="0.01" min="0" placeholder="Debit ₹" value="${esc(l.debit)}" data-idx="${i}">
         <input class="in line-cred r" type="number" step="0.01" min="0" placeholder="Credit ₹" value="${esc(l.credit)}" data-idx="${i}">
         <input class="in line-desc" type="text" placeholder="Description" value="${esc(l.description)}">
@@ -8033,6 +8103,26 @@ async function journalForm(id) {
   }
 
   form.addEventListener('input', updateTotals);
+  form.addEventListener('change', e => {
+    if (e.target.classList.contains('line-acc') && e.target.value === '__new_account__') {
+      accountForm(null, newAcc => {
+        if (newAcc && newAcc.id) {
+          accounts.push(newAcc);
+          $$('.line-acc', form).forEach(sel => {
+            const opt = document.createElement('option');
+            opt.value = newAcc.id;
+            opt.textContent = `${newAcc.code ? newAcc.code + ' - ' : ''}${newAcc.name}`;
+            const addOpt = sel.querySelector('option[value="__new_account__"]');
+            if (addOpt) sel.insertBefore(opt, addOpt);
+            else sel.appendChild(opt);
+          });
+          e.target.value = newAcc.id;
+        } else {
+          e.target.value = accounts[0]?.id || '';
+        }
+      });
+    }
+  });
   $('#add-jrn-line', form).addEventListener('click', () => {
     lines.push({ account: accounts[0]?.id || '', debit: '', credit: '', description: '' });
     $('#jrn-lines', form).innerHTML = renderLines();
@@ -8249,6 +8339,7 @@ async function expenseForm(id) {
             <select class="in" id="exp-project" name="project_id" style="width:100%;box-sizing:border-box;padding:0 10px;">
               <option value="">Select Project…</option>
               ${projects.map(p => `<option value="${p.id}" ${String(o.project_id || o.project) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              <option value="__new_project__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Project…</option>
             </select>
           </div>
 
@@ -8268,6 +8359,7 @@ async function expenseForm(id) {
             <label class="exp-card-label required" for="exp-account">Expense Account</label>
             <select class="in" id="exp-account" name="expense_account" required style="width:100%;box-sizing:border-box;padding:0 10px;">
               ${expAccounts.map(a => `<option value="${a.id}" ${String(o.expense_account || o.expense_account_id) === String(a.id) ? 'selected' : ''}>${esc(a.code)} - ${esc(a.name)}</option>`).join('')}
+              <option value="__new_account__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Account…</option>
             </select>
           </div>
 
@@ -8396,6 +8488,46 @@ async function expenseForm(id) {
               sel.value = newVen.id;
             } else {
               $('#exp-vendor', form).value = '';
+            }
+          });
+        }
+      });
+
+      $('#exp-project', form)?.addEventListener('change', async e => {
+        if (e.target.value === '__new_project__') {
+          await projectModal(null, newProj => {
+            if (newProj && newProj.id) {
+              projects.push(newProj);
+              const sel = $('#exp-project', form);
+              const opt = document.createElement('option');
+              opt.value = newProj.id;
+              opt.textContent = newProj.name;
+              const addOpt = sel.querySelector('option[value="__new_project__"]');
+              if (addOpt) sel.insertBefore(opt, addOpt);
+              else sel.appendChild(opt);
+              sel.value = newProj.id;
+            } else {
+              $('#exp-project', form).value = '';
+            }
+          });
+        }
+      });
+
+      $('#exp-account', form)?.addEventListener('change', () => {
+        if ($('#exp-account', form).value === '__new_account__') {
+          accountForm(null, newAcc => {
+            if (newAcc && newAcc.id) {
+              expAccounts.push(newAcc);
+              const sel = $('#exp-account', form);
+              const opt = document.createElement('option');
+              opt.value = newAcc.id;
+              opt.textContent = `${newAcc.code ? newAcc.code + ' - ' : ''}${newAcc.name}`;
+              const addOpt = sel.querySelector('option[value="__new_account__"]');
+              if (addOpt) sel.insertBefore(opt, addOpt);
+              else sel.appendChild(opt);
+              sel.value = newAcc.id;
+            } else {
+              $('#exp-account', form).value = expAccounts[0]?.id || '';
             }
           });
         }
@@ -9095,23 +9227,46 @@ async function transferForm() {
   const bankAccs = await api('lookup/bank-accounts/');
   if (bankAccs.length < 2) {
     toast('You need at least 2 bank accounts to record a transfer.', 'err');
-    return bankAccountForm();
+    return bankAccountForm(null, () => transferForm());
   }
+  const bankOpts = [['', 'Select Account'], ...bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`]), ['__new_bank_account__', '+ Add New Bank Account…']];
   formModal({
     title: 'Record Bank Transfer',
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'date', label: 'Transfer Date', type: 'date', req: true, value: APP.today })}
-      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: [['', 'Select Account'], ...bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`])], req: true, value: '' })}
-      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: [['', 'Select Account'], ...bankAccs.map(a => [a.id, `${a.name} (₹${a.balance})`])], req: true, value: '' })}
+      ${fld({ name: 'from_account', label: 'From Account', type: 'select', opts: bankOpts, req: true, value: '' })}
+      ${fld({ name: 'to_account', label: 'To Account', type: 'select', opts: bankOpts, req: true, value: '' })}
       ${fld({ name: 'amount', label: 'Amount (₹)', type: 'number', req: true, ph: 'Enter Amount' })}
       ${fld({ name: 'reference', label: 'Reference / Cheque #', ph: 'e.g. IMPS-89210' })}
     </div>`,
+    onReady: form => {
+      ['from_account', 'to_account'].forEach(fldName => {
+        const sel = form.elements[fldName];
+        if (sel) {
+          sel.addEventListener('change', () => {
+            if (sel.value === '__new_bank_account__') {
+              bankAccountForm(null, async newAcc => {
+                const fresh = await api('lookup/bank-accounts/').catch(() => []);
+                const updatedOpts = [['', 'Select Account'], ...fresh.map(a => [a.id, `${a.name} (₹${a.balance})`]), ['__new_bank_account__', '+ Add New Bank Account…']];
+                ['from_account', 'to_account'].forEach(fn => {
+                  const s = form.elements[fn];
+                  if (s) {
+                    const prev = s === sel ? (newAcc?.id || '') : s.value;
+                    s.innerHTML = updatedOpts.map(([v, l]) => `<option value="${v}" ${String(v) === String(prev) ? 'selected' : ''}>${esc(l)}</option>`).join('');
+                  }
+                });
+              });
+            }
+          });
+        }
+      });
+    },
     onSubmit: async d => {
-      if (!d.from_account) {
+      if (!d.from_account || d.from_account === '__new_bank_account__') {
         toast('Please select a From Account.', 'err');
         return;
       }
-      if (!d.to_account) {
+      if (!d.to_account || d.to_account === '__new_bank_account__') {
         toast('Please select a To Account.', 'err');
         return;
       }
@@ -15102,17 +15257,24 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   });
 
   $('#btn-bill-vendor-lookup', form)?.addEventListener('click', () => {
-    handleQuickCreateSelect($('#bill-vendor', form), newVen => {
-      parties.push(newVen);
-      const opt = document.createElement('option');
-      opt.value = newVen.id;
-      opt.textContent = newVen.name;
-      opt.selected = true;
-      $('#bill-vendor', form).appendChild(opt);
-      $('#bill-vendor', form).value = newVen.id;
-      billAddrMgr.setPartyId(newVen.id);
-      if (newVen.state) $('#bill-pos', form).value = newVen.state;
-      calcBill();
+    partyForm('vendors', null, newVen => {
+      if (newVen && newVen.id) {
+        parties.push(newVen);
+        const sel = $('#bill-vendor', form);
+        let opt = Array.from(sel.options).find(o => String(o.value) === String(newVen.id));
+        if (!opt) {
+          opt = document.createElement('option');
+          opt.value = newVen.id;
+          opt.textContent = newVen.name;
+          sel.appendChild(opt);
+        }
+        sel.value = newVen.id;
+        billAddrMgr.setPartyId(newVen.id);
+        if (newVen.state) $('#bill-pos', form).value = newVen.state;
+        const gstinEl = $('#bill-vendor-gstin', form);
+        if (gstinEl) gstinEl.textContent = newVen.gstin || 'Not provided';
+        calcBill();
+      }
     });
   });
 
@@ -17922,14 +18084,14 @@ async function stockTransferModal(id = null, onDone = null) {
 
   const whList = warehouses.filter(w => w.active !== false);
   if (whList.length < 2) {
-    toast('At least two active warehouses are required to perform a stock transfer.', 'err');
-    return;
+    toast('At least two active warehouses are required. Opening warehouse creation...', 'info');
+    return warehouseModal(null, () => stockTransferModal(id, onDone));
   }
 
   const goodsItems = items.filter(i => i.type === 'goods' || i.track_inventory);
   if (!goodsItems.length) {
-    toast('No goods items with inventory tracking available to transfer.', 'err');
-    return;
+    toast('No goods items with inventory tracking available. Opening item creation...', 'info');
+    return itemForm(null, () => stockTransferModal(id, onDone));
   }
 
   const itemsById = Object.fromEntries(goodsItems.map(i => [String(i.id), i]));
@@ -18128,6 +18290,25 @@ async function stockTransferModal(id = null, onDone = null) {
   refreshAllRowStocks();
 
   srcWhEl.addEventListener('change', () => {
+    if (srcWhEl.value === '__new_warehouse__') {
+      warehouseModal(null, newWh => {
+        if (newWh && newWh.id) {
+          whList.push(newWh);
+          [srcWhEl, dstWhEl].forEach(sel => {
+            const opt = document.createElement('option');
+            opt.value = newWh.id;
+            opt.textContent = `${newWh.code || ''} - ${newWh.name || ''}`;
+            const addOpt = sel.querySelector('option[value="__new_warehouse__"]');
+            if (addOpt) sel.insertBefore(opt, addOpt);
+            else sel.appendChild(opt);
+          });
+          srcWhEl.value = newWh.id;
+        } else {
+          srcWhEl.value = whList[0]?.id || '';
+        }
+      });
+      return;
+    }
     // Clear cache on warehouse switch
     for (const k in stockCache) delete stockCache[k];
     if (srcWhEl.value === dstWhEl.value) {
@@ -18140,6 +18321,25 @@ async function stockTransferModal(id = null, onDone = null) {
   });
 
   dstWhEl.addEventListener('change', () => {
+    if (dstWhEl.value === '__new_warehouse__') {
+      warehouseModal(null, newWh => {
+        if (newWh && newWh.id) {
+          whList.push(newWh);
+          [srcWhEl, dstWhEl].forEach(sel => {
+            const opt = document.createElement('option');
+            opt.value = newWh.id;
+            opt.textContent = `${newWh.code || ''} - ${newWh.name || ''}`;
+            const addOpt = sel.querySelector('option[value="__new_warehouse__"]');
+            if (addOpt) sel.insertBefore(opt, addOpt);
+            else sel.appendChild(opt);
+          });
+          dstWhEl.value = newWh.id;
+        } else {
+          dstWhEl.value = whList[1]?.id || whList[0]?.id || '';
+        }
+      });
+      return;
+    }
     if (srcWhEl.value === dstWhEl.value) {
       errBox.textContent = 'Source and destination warehouses must be different.';
       errBox.style.display = 'block';
@@ -18172,6 +18372,28 @@ async function stockTransferModal(id = null, onDone = null) {
   tbody.addEventListener('change', e => {
     const tr = e.target.closest('.st-line-row');
     if (tr && e.target.matches('.st-item')) {
+      if (e.target.value === '__new_item__') {
+        itemForm(null, newItem => {
+          if (newItem && newItem.id) {
+            goodsItems.push(newItem);
+            itemsById[String(newItem.id)] = newItem;
+            tbody.querySelectorAll('.st-item').forEach(sel => {
+              const opt = document.createElement('option');
+              opt.value = newItem.id;
+              opt.textContent = `${newItem.name}${newItem.sku ? ' (' + newItem.sku + ')' : ''}`;
+              const addOpt = sel.querySelector('option[value="__new_item__"]');
+              if (addOpt) sel.insertBefore(opt, addOpt);
+              else sel.appendChild(opt);
+            });
+            e.target.value = newItem.id;
+            updateStockBadge(tr);
+          } else {
+            e.target.value = '';
+            updateStockBadge(tr);
+          }
+        });
+        return;
+      }
       updateStockBadge(tr);
     }
   });

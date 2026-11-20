@@ -6351,6 +6351,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
             <select id="bnkTrFrom" class="in" style="width:100%;">
               <option value="" selected>Select Account</option>
               ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+              <option value="__new_bank_account__" style="color:var(--accent,#2563eb);font-weight:600;">+ Add Bank Account…</option>
             </select>
             <div id="bnkTrFromErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
@@ -6359,6 +6360,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
             <select id="bnkTrTo" class="in" style="width:100%;">
               <option value="" selected>Select Account</option>
               ${bankAccounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+              <option value="__new_bank_account__" style="color:var(--accent,#2563eb);font-weight:600;">+ Add Bank Account…</option>
             </select>
             <div id="bnkTrToErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;"></div>
           </div>
@@ -7574,6 +7576,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
 
     if (fromSelect) {
       fromSelect.addEventListener('change', () => {
+        if (fromSelect.value === '__new_bank_account__') {
+          fromSelect.value = '';
+          openModal('bnkAddAccountModal');
+          return;
+        }
         setTransferFieldError(fromSelect, fromErr, '');
         if (toSelect && toSelect.value && fromSelect.value && fromSelect.value !== toSelect.value) {
           if (toErr && toErr.textContent.includes('different')) {
@@ -7584,6 +7591,11 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
     }
     if (toSelect) {
       toSelect.addEventListener('change', () => {
+        if (toSelect.value === '__new_bank_account__') {
+          toSelect.value = '';
+          openModal('bnkAddAccountModal');
+          return;
+        }
         setTransferFieldError(toSelect, toErr, '');
         if (fromSelect && fromSelect.value && toSelect.value && fromSelect.value !== toSelect.value) {
           if (toErr && toErr.textContent.includes('different')) {
@@ -7607,14 +7619,14 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       const amtVal = amtInput ? amtInput.value.trim() : '';
       const amt = parseFloat(amtVal);
 
-      if (!fromId) {
+      if (!fromId || fromId === '__new_bank_account__') {
         setTransferFieldError(fromSelect, fromErr, 'Please select a From Account.');
         hasError = true;
       } else {
         setTransferFieldError(fromSelect, fromErr, '');
       }
 
-      if (!toId) {
+      if (!toId || toId === '__new_bank_account__') {
         setTransferFieldError(toSelect, toErr, 'Please select a To Account.');
         hasError = true;
       } else if (fromId && toId && fromId === toId) {

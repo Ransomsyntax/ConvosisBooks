@@ -244,6 +244,56 @@ class ApplicationWideAuditTestCase(TestCase):
         }), content_type='application/json')
         self.assertEqual(resp_pm.status_code, 201)
 
+        # 4. Vendor Credit (with address data & custom fields)
+        resp_vc = self.client.post('/api/vendor-credits/', data=json.dumps({
+            'number': 'VC-AUDIT-001',
+            'vendor': self.vendor.id,
+            'date': today,
+            'reason': 'Damaged Goods Return',
+            'billing_address_data': {
+                'attention': 'Vendor Billing Dept',
+                'street1': '456 Supplier Way',
+                'city': 'Ernakulam',
+                'state': 'Kerala',
+                'pincode': '682001'
+            },
+            'shipping_address_data': {
+                'attention': 'Vendor Warehouse',
+                'street1': '789 Logistics Park',
+                'city': 'Ernakulam',
+                'state': 'Kerala',
+                'pincode': '682001'
+            },
+            'lines': [{
+                'item': self.item.id,
+                'description': 'Router Returned',
+                'quantity': 1,
+                'rate': '9000.00',
+                'gst_rate': 18
+            }]
+        }), content_type='application/json')
+        self.assertEqual(resp_vc.status_code, 201)
+        vc_id = resp_vc.json()['id']
+
+        # Verify Vendor Credit Detail
+        resp_vc_det = self.client.get(f'/api/vendor-credits/{vc_id}/')
+        self.assertEqual(resp_vc_det.status_code, 200)
+
+        # Update Vendor Credit
+        resp_vc_put = self.client.put(f'/api/vendor-credits/{vc_id}/', data=json.dumps({
+            'vendor': self.vendor.id,
+            'date': today,
+            'reason': 'Damaged Goods Return - Partial Credit',
+            'lines': [{
+                'item': self.item.id,
+                'description': 'Router Returned',
+                'quantity': 1,
+                'rate': '9000.00',
+                'gst_rate': 18
+            }]
+        }), content_type='application/json')
+        self.assertEqual(resp_vc_put.status_code, 200)
+
     def test_04_inventory_and_warehousing_workflow(self):
         """Audit Inventory workflow: Stock Adjustments, Warehouses, and Transfers."""
         today = timezone.now().date().isoformat()
@@ -349,3 +399,24 @@ class ApplicationWideAuditTestCase(TestCase):
         self.assertIn('window.partyDetail = partyDetail;', sp)
         self.assertIn('window.stockTransferModal = stockTransferModal;', sf)
         self.assertIn('window.renderBankingModule = renderBankingModule;', sp)
+
+    def test_08_auth_exception_handling_and_services_get_user_org(self):
+        """Verify API auth registration exception handling and services.get_user_org."""
+        from books import services
+
+        # 1. Test services.get_user_org
+        org_res = services.get_user_org(self.user)
+        self.assertEqual(org_res, self.org)
+
+        # 2. Test api_auth_register_view duplicate email handling (catches IntegrityError, ValidationError, OperationalError)
+        reg_client = Client()
+        reg_resp = reg_client.post('/api/auth/register/', data=json.dumps({
+            'username': 'dup_test_user',
+            'email': 'app_audit_admin@example.com',  # already exists
+            'password': 'SecurePassword123!',
+            'confirm_password': 'SecurePassword123!',
+            'organization_name': 'Dup Test Org'
+        }), content_type='application/json')
+        self.assertEqual(reg_resp.status_code, 400)
+        resp_data = reg_resp.json()
+        self.assertIn('already exists', resp_data.get('error', '').lower())

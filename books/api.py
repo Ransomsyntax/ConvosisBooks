@@ -17,8 +17,9 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
+from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Count, F, Max, ProtectedError, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -7705,6 +7706,12 @@ class VendorCreditResource(Resource):
         r['vendor'] = o.vendor_id
         r['party_id'] = o.vendor_id
         r['place_of_supply'] = o.place_of_supply
+        if hasattr(o, 'billing_address_data'):
+            r['billing_address_data'] = o.billing_address_data or {}
+        if hasattr(o, 'shipping_address_data'):
+            r['shipping_address_data'] = o.shipping_address_data or {}
+        if hasattr(o, 'custom_fields_data'):
+            r['custom_fields_data'] = o.custom_fields_data or {}
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
@@ -7724,9 +7731,14 @@ class VendorCreditResource(Resource):
         reason = c.text('reason', max_len=150)
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        user_org = get_user_org(user) if user else None
+        billing_fallback = _party_address_snapshot(ven, 'billing')
+        shipping_fallback = _party_address_snapshot(ven, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        cf_data = _clean_module_custom_fields(c, user_org, user, 'vendor_credits')
         c.done()
 
-        user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
         series_id = data.get('numbering_series_id') or data.get('series_id')
@@ -7743,16 +7755,33 @@ class VendorCreditResource(Resource):
                 gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id, user=user
             )
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
-        vc = VendorCredit.objects.create(
-            organization=user_org,
-            number=num, vendor=ven, date=dt, due_date=dt,
-            place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
-            reason=reason, status='open',
-            tax_pricing_type=tax_pricing, customer_type=cust_type,
-            branch=branch, location=location,
-            billing_address_data=billing_addr, shipping_address_data=shipping_addr,
-            custom_fields_data=cf_data
-        )
+        vc_kwargs = {
+            'organization': user_org,
+            'number': num,
+            'vendor': ven,
+            'date': dt,
+            'due_date': dt,
+            'place_of_supply': ven.state or (user_org.state if user_org else Organization.get().state),
+            'reason': reason,
+            'status': 'open',
+            'tax_pricing_type': tax_pricing,
+            'customer_type': cust_type,
+            'branch': branch,
+            'location': location,
+        }
+        if hasattr(VendorCredit, 'billing_address_data'):
+            vc_kwargs['billing_address_data'] = billing_addr
+        if hasattr(VendorCredit, 'shipping_address_data'):
+            vc_kwargs['shipping_address_data'] = shipping_addr
+        if hasattr(VendorCredit, 'custom_fields_data'):
+            vc_kwargs['custom_fields_data'] = cf_data
+        vc = VendorCredit.objects.create(**vc_kwargs)
+        if not hasattr(VendorCredit, 'billing_address_data'):
+            vc.billing_address_data = billing_addr
+        if not hasattr(VendorCredit, 'shipping_address_data'):
+            vc.shipping_address_data = shipping_addr
+        if not hasattr(VendorCredit, 'custom_fields_data'):
+            vc.custom_fields_data = cf_data
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(vc.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(vc.tax_pricing_type == 'tax_inclusive'))
@@ -7782,6 +7811,14 @@ class VendorCreditResource(Resource):
             raise ApiError(404, 'Vendor not found.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
+        user_org = get_user_org(user) if user else None
+        billing_fallback = getattr(obj, 'billing_address_data', None) or _party_address_snapshot(ven, 'billing')
+        shipping_fallback = getattr(obj, 'shipping_address_data', None) or _party_address_snapshot(ven, 'shipping')
+        billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
+        shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
+        prev_cf = getattr(obj, 'custom_fields_data', {}) or {}
+        data.setdefault('custom_fields_data', prev_cf)
+        cf_data = _clean_module_custom_fields(c, user_org, user, 'vendor_credits', previous_values=prev_cf)
         c.done()
 
         obj.vendor = ven
@@ -7797,6 +7834,12 @@ class VendorCreditResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+        if hasattr(obj, 'billing_address_data'):
+            obj.billing_address_data = billing_addr
+        if hasattr(obj, 'shipping_address_data'):
+            obj.shipping_address_data = shipping_addr
+        if hasattr(obj, 'custom_fields_data'):
+            obj.custom_fields_data = cf_data
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))

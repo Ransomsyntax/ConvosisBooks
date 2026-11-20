@@ -51,6 +51,19 @@ DEC = DecimalField(max_digits=14, decimal_places=2)
 Z = Decimal('0.00')
 logger = logging.getLogger(__name__)
 
+def get_user_org(user, request=None):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None
+    profile = getattr(user, 'profile', None)
+    if profile and getattr(profile, 'organization', None):
+        return profile.organization
+    try:
+        from .api import get_user_org as _api_get_user_org
+        return _api_get_user_org(user, request=request)
+    except Exception:
+        return Organization.get()
+
+
 def paid_expr():
     return Coalesce(Sum('allocations__amount'), Value(Z), output_field=DEC)
 

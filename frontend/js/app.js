@@ -72,7 +72,7 @@ const ROUTES = {
 
   'sales': r => listPage(r, LISTS.customers),
   'sales/customers': r => listPage(r, LISTS.customers),
-  'sales/customers/new': r => { listPage(r, LISTS.customers); partyForm('customers'); },
+  'sales/customers/new': r => { listPage(r, LISTS.customers); ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers'); },
   'sales/quotes': r => docMasterDetail(r, 'quotes'),
   'sales/quotes/new': r => docMasterDetail(r, 'quotes', 'new'),
   'sales/sales-orders': r => docMasterDetail(r, 'sales-orders'),
@@ -97,7 +97,7 @@ const ROUTES = {
 
   'purchases': r => listPage(r, LISTS.vendors),
   'purchases/vendors': r => listPage(r, LISTS.vendors),
-  'purchases/vendors/new': r => { listPage(r, LISTS.vendors); partyForm('vendors'); },
+  'purchases/vendors/new': r => { listPage(r, LISTS.vendors); ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors'); },
   'purchases/expenses': r => listPage(r, LISTS.expenses),
   'purchases/expenses/new': () => expenseForm(),
   'purchases/purchase-orders': r => docMasterDetail(r, 'purchase-orders'),
@@ -273,7 +273,7 @@ const NAV_NEW_ACTIONS = {
   'reports/stock-movement': () => stockMoveModal(),
   'reports/stock-transfer-report': () => stockMoveModal(),
   'inventory/warehouses': () => warehouseModal(),
-  'sales/customers': () => navigateOrRun('sales/customers/new', () => partyForm('customers')),
+  'sales/customers': () => navigateOrRun('sales/customers/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers')),
   'sales/quotes': () => navigateOrRun('sales/quotes/new', () => docMasterDetail($('#pg'), 'quotes', 'new')),
   'sales/sales-orders': () => navigateOrRun('sales/sales-orders/new', () => docMasterDetail($('#pg'), 'sales-orders', 'new')),
   'sales/invoices': () => navigateOrRun('sales/invoices/new', () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); })),
@@ -286,7 +286,7 @@ const NAV_NEW_ACTIONS = {
   'sales/payments-received': () => paymentForm('payments-received'),
   'sales/credit-notes': () => docForm('credit-notes'),
   'sales/e-way-bills': () => ewayBillModal(),
-  'purchases/vendors': () => navigateOrRun('purchases/vendors/new', () => partyForm('vendors')),
+  'purchases/vendors': () => navigateOrRun('purchases/vendors/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors')),
   'purchases/expenses': () => navigateOrRun('purchases/expenses/new', () => expenseForm()),
   'purchases/purchase-orders': () => navigateOrRun('purchases/purchase-orders/new', () => docMasterDetail($('#pg'), 'purchase-orders', 'new')),
   'purchases/bills': () => navigateOrRun('purchases/bills/new', () => docMasterDetail($('#pg'), 'bills', 'new')),
@@ -548,8 +548,8 @@ document.addEventListener('keydown', e => {
   }
 });
 const QC = [
-  ['Customer', () => navigateOrRun('sales/customers/new', () => partyForm('customers'))],
-  ['Vendor', () => navigateOrRun('purchases/vendors/new', () => partyForm('vendors'))],
+  ['Customer', () => navigateOrRun('sales/customers/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers'))],
+  ['Vendor', () => navigateOrRun('purchases/vendors/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors'))],
   ['Invoice', () => navigateOrRun('sales/invoices/new', () => invoiceForm(null, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }))],
   ['Bill', () => navigateOrRun('purchases/bills/new', () => docMasterDetail($('#pg'), 'bills', 'new'))],
   ['Sales Order', () => navigateOrRun('sales/sales-orders/new', () => docMasterDetail($('#pg'), 'sales-orders', 'new'))],

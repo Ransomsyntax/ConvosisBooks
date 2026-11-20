@@ -44,6 +44,15 @@ render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if render_host and render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_host)
 
+import socket
+
+try:
+    _container_ip = socket.gethostbyname(socket.gethostname())
+    if _container_ip not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_container_ip)
+except Exception:
+    pass
+
 raw_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS') or 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com,https://api.convosis.com,https://convosis.com,https://www.convosis.com'
 CSRF_TRUSTED_ORIGINS = []
 for o in raw_origins.replace(';', ',').split(','):

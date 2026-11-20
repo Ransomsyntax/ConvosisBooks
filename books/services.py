@@ -426,7 +426,7 @@ def _series_context_matches(series_obj, context):
     return True
 
 
-def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None):
+def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None, allow_inactive=False):
     from .models import BusinessLocation, Organization, DocumentNumberSeries, TransactionSeries
     if isinstance(module_or_pfx, Organization):
         actual_org = module_or_pfx
@@ -449,16 +449,18 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
                 organization=org, document_type=doc_type, name__iexact=s_name
             ).first()
             if s_obj:
-                if not s_obj.active:
+                if not s_obj.active and not allow_inactive:
                     raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
                 return s_obj
             # Check by series group name
             grp = TransactionSeries.objects.filter(organization=org, name__iexact=s_name).first()
             if grp:
-                if not grp.is_active:
+                if not grp.is_active and not allow_inactive:
                     raise ApiError(400, f'Transaction series "{grp.name}" is inactive.')
                 s_obj = DocumentNumberSeries.objects.filter(organization=org, series_group=grp, document_type=doc_type).first()
                 if s_obj:
+                    if not s_obj.active and not allow_inactive:
+                        raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
                     return s_obj
 
     # 2. By series_id / numbering_series_id
@@ -473,7 +475,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
                     organization=org, series_group_id=s_id, document_type=doc_type
                 ).first()
             if s_obj:
-                if not s_obj.active:
+                if not s_obj.active and not allow_inactive:
                     raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
                 return s_obj
         except (ValueError, TypeError):
@@ -801,7 +803,7 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
             return candidate
 
 
-def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None, allow_inactive=False):
     """
     Preview the next document number without incrementing the sequence counter.
     """
@@ -814,7 +816,8 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
     series_obj = _select_document_number_series(
         module_or_pfx, org, date=date, customer_type=customer_type,
         branch=branch, location=location, gstin=gstin, series_id=series_id,
-        series=series, user=user, business_location_id=business_location_id
+        series=series, user=user, business_location_id=business_location_id,
+        allow_inactive=allow_inactive
     )
     if not series_obj:
         return {'next_number': '', 'formatted': '', 'prefix': '', 'format_pattern': '', 'separator': '/', 'next_sequence': 1}

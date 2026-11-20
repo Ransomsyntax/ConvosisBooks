@@ -1146,6 +1146,18 @@ input[type="file"].in::-webkit-file-upload-button:hover,
 }
 select.in {
   background-color: var(--in-bg, #ffffff) !important;
+  padding-right: 28px !important;
+  line-height: normal;
+  box-sizing: border-box;
+}
+select.btn, .tb select {
+  display: inline-block !important;
+  vertical-align: middle;
+  padding-right: 28px !important;
+  min-width: 140px;
+  line-height: normal;
+  overflow: visible;
+  box-sizing: border-box;
 }
 [data-theme="dark"] select.in option {
   background-color: #0f172a;

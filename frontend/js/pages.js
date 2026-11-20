@@ -2503,18 +2503,20 @@ function renderDocSheet(d, kind, customOpts = {}) {
           <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#475569;margin:0 0 10px;display:flex;align-items:center;gap:6px;">
             <i class="fa-solid fa-diagram-project" style="color:#2563eb;"></i> Connected Documents &amp; Workflow Trace
           </h4>
-          <div style="display:flex;flex-wrap:wrap;gap:10px;">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;">
             ${d.related_documents.map(rel => `
-              <div class="workflow-doc-link-card" data-kind="${esc(rel.kind)}" data-id="${esc(rel.id)}" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:all 0.15s ease;" onmouseover="this.style.background='#eff6ff';this.style.borderColor='#93c5fd'" onmouseout="this.style.background='#f8fafc';this.style.borderColor='#e2e8f0'">
-                <div style="width:28px;height:28px;border-radius:6px;background:#e0e7ff;color:#4338ca;display:flex;align-items:center;justify-content:center;font-size:12px;">
+              <div class="workflow-doc-link-card" data-kind="${esc(rel.kind)}" data-id="${esc(rel.id)}" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;display:inline-flex;align-items:center;gap:12px;min-width:320px;max-width:100%;box-sizing:border-box;cursor:pointer;transition:all 0.15s ease;" onmouseover="this.style.background='#eff6ff';this.style.borderColor='#93c5fd'" onmouseout="this.style.background='#f8fafc';this.style.borderColor='#e2e8f0'">
+                <div style="width:34px;height:34px;border-radius:6px;background:#e0e7ff;color:#4338ca;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;">
                   <i class="fa-solid fa-file-lines"></i>
                 </div>
-                <div>
-                  <div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">${esc(rel.relation || 'Related')}: ${esc(rel.type || rel.kind)}</div>
-                  <div style="font-size:12px;font-weight:700;color:#2563eb;">${esc(rel.number || '—')} <span style="font-size:11px;font-weight:500;color:#64748b;">(${rel.date ? fd(rel.date) : ''}${rel.total != null ? ' · ' + inr(rel.total) : ''})</span></div>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+                  <div style="font-size:10.5px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;">${esc(rel.relation || 'Source PO')}: ${esc(rel.type || rel.kind)}</div>
+                  <div style="font-size:13px;font-weight:700;color:#2563eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(rel.number || '—')} <span style="font-size:11.5px;font-weight:500;color:#64748b;">(${rel.date ? fd(rel.date) : ''}${rel.total != null ? ' · ' + inr(rel.total) : ''})</span></div>
                 </div>
-                <span class="badge ${rel.status && (rel.status.toLowerCase() === 'paid' || rel.status.toLowerCase() === 'accepted' || rel.status.toLowerCase() === 'closed') ? 'ok' : 'in'}" style="margin-left:auto;font-size:10px;">${esc((rel.status || '').toUpperCase())}</span>
-                <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px;color:#94a3b8;"></i>
+                <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;">
+                  <span class="st ${rel.status && ['paid','accepted','closed'].includes(rel.status.toLowerCase()) ? 'ok' : 'gr'}" style="font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 8px;border-radius:12px;line-height:14px;">${esc((rel.status || 'Draft').toUpperCase())}</span>
+                  <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:11px;color:#94a3b8;"></i>
+                </div>
               </div>
             `).join('')}
           </div>

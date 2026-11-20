@@ -59,7 +59,7 @@ from .services import bill_qs, invoice_qs, next_number, paid_expr, retainer_qs
 Z = Decimal('0.00')
 MODE_KEYS = [m[0] for m in MODES]
 MODE_LABEL = dict(MODES)
-REASONS = ['Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Stock write-off', 'Inventory revaluation', 'Other']
+REASONS = ['Production', 'Stock recount', 'Damaged goods', 'Theft / loss', 'Returned to supplier', 'Found stock', 'Stock write-off', 'Inventory revaluation', 'Other']
 
 def format_qty(val):
     if val is None:
@@ -4714,7 +4714,7 @@ class StockAdjustmentResource(StockMovementResource):
 
     def create(self, data, user):
         user_org = get_user_org(user)
-        items_data = data.get('items')
+        items_data = data.get('items') or data.get('lines')
 
         # Date & Time resolution
         on_str = data.get('date')
@@ -14447,7 +14447,7 @@ def settings_transaction_series_view(request, series_id=None):
                         location=current_series.location,
                     )
                 prev = services.preview_document_number(
-                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk
+                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk, allow_inactive=True
                 )
                 items.append({
                     'document_type': doc_key,
@@ -14976,7 +14976,7 @@ def doc_number_preferences_view(request):
                 organization=org, document_type=clean_doc
             ).first()
 
-        prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
+        prev = services.preview_document_number(clean_doc, org=org, series=series, location=location, allow_inactive=True)
         default_pfx = dns.prefix if dns else (prev.get('prefix') or 'INV')
 
         return j({
@@ -15012,7 +15012,7 @@ def doc_number_preferences_view(request):
             Organization.objects.select_for_update().get(pk=org.pk)
             services.ensure_default_transaction_series(org)
             doc_type = services._number_series_doc_type(clean_doc)
-            dns = services._select_document_number_series(doc_type, org=org, series=series, location=location)
+            dns = services._select_document_number_series(doc_type, org=org, series=series, location=location, allow_inactive=True)
             if dns:
                 counter = services._series_counter_for_date(dns, org, module_or_pfx=doc_type)
                 if next_number < counter.next_number:
@@ -15052,7 +15052,7 @@ def doc_number_preferences_view(request):
             seq.value = max(0, next_number - 1)
             seq.save(update_fields=['value'])
 
-            prev = services.preview_document_number(clean_doc, org=org, series=series, location=location)
+            prev = services.preview_document_number(clean_doc, org=org, series=series, location=location, allow_inactive=True)
 
         services.log_audit(
             request.user, 'update', 'DocumentNumberPreference', pref.pk,

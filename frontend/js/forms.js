@@ -97,7 +97,7 @@ window.bindDocumentNumberPreview = bindDocumentNumberPreview;
 const Modal = (() => {
   const stack = [];
 
-  function open({ title, body, footer = '', wide = false, onClose, dialog = false, onScreen = null }) {
+  function open({ title, body, footer = '', wide = false, onClose, dialog = false, onScreen = null, headerActions = '' }) {
     const pg = $('#pg');
     const hasFormElements = Boolean(body && (
       body.includes('<form') ||
@@ -130,6 +130,7 @@ const Modal = (() => {
             </button>
             <h1 class="on-screen-form-title">${esc(title)}</h1>
           </div>
+          ${headerActions ? `<div class="on-screen-header-right" style="display:flex;align-items:center;gap:12px;">${headerActions}</div>` : ''}
         </div>
         <div class="on-screen-form-body-wrap">
           <div class="mb on-screen-form-content ${wide ? 'wide' : ''}">${body}</div>
@@ -202,7 +203,7 @@ const Modal = (() => {
 
     const el = document.createElement('div');
     el.className = 'mo';
-    el.innerHTML = `<div class="md ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div><div class="mb">${body}</div>${footer ? `<div class="mf">${footer}</div>` : ''}</div>`;
+    el.innerHTML = `<div class="md ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="mh"><h2>${esc(title)}</h2><div style="display:flex;align-items:center;gap:10px;margin-left:auto;">${headerActions || ''}<button type="button" class="x" data-close aria-label="Close">✕</button></div></div><div class="mb">${body}</div>${footer ? `<div class="mf">${footer}</div>` : ''}</div>`;
     $('#modal-root').appendChild(el);
     const m = { el, body: $('.mb', el), beforeClose: null, prev: document.activeElement, onScreen: false, closed: false };
     m.close = () => {
@@ -900,11 +901,11 @@ function showErrors(form, errors, msg) {
   if (inp) inp.focus();
 }
 
-function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmit, onReady, onClose, dialog = false }) {
+function formModal({ title, body, submit = 'Save', actions, wide = true, onSubmit, onReady, onClose, dialog = false, headerActions = '' }) {
   const id = 'f' + (++uid);
   const acts = actions || [{ label: submit, value: 'save', primary: true }];
   const m = Modal.open({
-    title, wide, dialog, onClose,
+    title, wide, dialog, onClose, headerActions,
     body: `<form id="${id}" novalidate>${body}<div class="fe" data-err="_" role="alert"></div></form>`,
     footer: acts.map(a => `<button type="submit" form="${id}" name="action" value="${a.value}" class="btn ${a.primary ? 'p' : ''}">${esc(a.label)}</button>`).join('') + `<button type="button" class="btn" data-close>Cancel</button>`,
   });
@@ -4066,6 +4067,16 @@ async function itemForm(id, onDone) {
    ========================================================================= */
 
 async function openDocNumberPreferencesModal({ kind, series = 'Default Transaction Series', location = 'HO Kottayam', currentNumber = '', onSave }) {
+  if (window._docNumberPrefModalOpen || document.getElementById('doc-pref-modal-dialog')) {
+    const existing = document.getElementById('doc-pref-modal-dialog');
+    if (existing) {
+      const inp = existing.querySelector('input');
+      if (inp) inp.focus();
+    }
+    return;
+  }
+  window._docNumberPrefModalOpen = true;
+
   const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : (kind === 'delivery-challans' ? 'delivery_challans' : (kind === 'expenses' ? 'expenses' : (kind === 'payments-made' ? 'payments_made' : (kind === 'payments-received' ? 'payments_received' : 'invoices')))))))));
   const docLabel = kind === 'quotes' ? 'Quote' : (kind === 'sales-orders' ? 'Sales Order' : (kind === 'bills' ? 'Bill' : (kind === 'purchase-orders' ? 'Purchase Order' : (kind === 'retainer-invoices' ? 'Retainer Invoice' : (kind === 'recurring-invoices' ? 'Recurring Invoice' : (kind === 'delivery-challans' ? 'Delivery Challan' : (kind === 'expenses' ? 'Expense' : (kind === 'payments-made' ? 'Payment Made' : (kind === 'payments-received' ? 'Payment Received' : 'Invoice')))))))));
 
@@ -4143,10 +4154,14 @@ async function openDocNumberPreferencesModal({ kind, series = 'Default Transacti
     title: `Configure ${docLabel} Number Preferences`,
     body: bodyHtml,
     footer: footerHtml,
-    dialog: true
+    dialog: true,
+    onClose: () => {
+      window._docNumberPrefModalOpen = false;
+    }
   });
 
   const mEl = modal.el;
+  mEl.id = 'doc-pref-modal-dialog';
   const autoFields = mEl.querySelector('#doc-pref-auto-fields');
   const radios = mEl.querySelectorAll('input[name="doc_pref_mode"]');
   radios.forEach(r => {
@@ -7012,6 +7027,7 @@ async function paymentMadeForm(pre = {}) {
   formModal({
     title: payId ? `Edit Payment Made ${dataObj.number || ''}` : 'Record Payment Made',
     wide: true,
+    headerActions: `<button type="button" class="btn ic" id="btn-paym-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>`,
     body: `
       <!-- Vendor Name & Addresses Row -->
       <div class="transaction-party-row">
@@ -7189,7 +7205,7 @@ async function paymentMadeForm(pre = {}) {
         } catch (err) {}
       });
 
-      $('#btn-paym-num-pref', form)?.addEventListener('click', () => {
+      const openPaymPrefModal = () => {
         openDocNumberPreferencesModal({
           kind: 'payments-made',
           series: $('#paym-series', form)?.value || 'Default Transaction Series',
@@ -7198,7 +7214,9 @@ async function paymentMadeForm(pre = {}) {
             if (next) $('#paym-number', form).value = next;
           }
         });
-      });
+      };
+      $('#btn-paym-num-pref', form)?.addEventListener('click', openPaymPrefModal);
+      $('#btn-paym-top-pref', m.el)?.addEventListener('click', openPaymPrefModal);
 
       form.addEventListener('input', totals);
       const bankEl = form.elements.bank_account_id;
@@ -7300,7 +7318,7 @@ async function adjustForm(preItem, targetEl, onDone) {
               ${items.map(it => `<option value="${it.id}" ${String(l.item || l.id || preItem) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
             </select>
             <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
-              <select class="in adj-row-project" style="font-size:12px;height:28px;padding:2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;max-width:180px;">
+              <select class="in adj-row-project" style="font-size:12px;height:28px;padding:2px 24px 2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;min-width:160px;max-width:240px;width:auto;box-sizing:border-box;">
                 <option value="">💼 Select a project ▾</option>
                 ${projects.map(p => `<option value="${p.id}" ${String(l.project) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
                 <option value="__new_project__">+ Add New Project…</option>
@@ -7378,8 +7396,9 @@ async function adjustForm(preItem, targetEl, onDone) {
         <!-- Reason* -->
         <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
           <label style="width:160px;font-weight:500;font-size:13px;color:#ef4444;">Reason*</label>
-          <select class="in" id="adj-reason" name="reason" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#fff;">
+          <select class="in" id="adj-reason" name="reason" required style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 28px 0 12px;font-size:13px;background:#fff;box-sizing:border-box;">
             <option value="">Select a reason</option>
+            <option value="Production">Production</option>
             <option value="Stock recount">Stock recount</option>
             <option value="Damaged goods">Damaged goods</option>
             <option value="Theft / loss">Theft / loss</option>
@@ -8083,6 +8102,7 @@ async function expenseForm(id) {
   formModal({
     title: id ? 'Edit Expense' : 'New Expense',
     wide: true,
+    headerActions: `<button type="button" class="btn ic" id="btn-exp-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>`,
     body: `
       <style>
         .exp-three-cards-grid {
@@ -8159,25 +8179,28 @@ async function expenseForm(id) {
           color: #f8fafc !important;
         }
         .customer-select-outer {
-          margin-bottom: 24px;
-          width: 50%;
-          min-width: 320px;
+          margin-bottom: 20px;
+          width: calc(33.333% - 13.333px);
+          min-width: 300px;
           max-width: 100%;
           box-sizing: border-box;
         }
-        @media (max-width: 768px) {
+        @media (max-width: 1024px) {
           .customer-select-outer {
             width: 100% !important;
             max-width: 100% !important;
           }
         }
         .customer-select-outer-label {
-          font-size: 13px;
+          font-size: 12.5px;
           font-weight: 600;
-          color: var(--tx, #1e293b);
-          display: block;
-          margin-bottom: 8px;
+          color: #334155;
+          margin-bottom: 6px;
           line-height: 1.2;
+          display: block;
+        }
+        [data-theme="dark"] .customer-select-outer-label {
+          color: #cbd5e1;
         }
         .customer-select-outer .in {
           border-radius: 8px !important;
@@ -8387,7 +8410,7 @@ async function expenseForm(id) {
         } catch (err) {}
       });
 
-      $('#btn-exp-num-pref', form)?.addEventListener('click', () => {
+      const openExpPrefModal = () => {
         openDocNumberPreferencesModal({
           kind: 'expenses',
           series: $('#exp-series', form)?.value || 'Default Transaction Series',
@@ -8396,7 +8419,9 @@ async function expenseForm(id) {
             if (next) $('#exp-number', form).value = next;
           }
         });
-      });
+      };
+      $('#btn-exp-num-pref', form)?.addEventListener('click', openExpPrefModal);
+      $('#btn-exp-top-pref', m.el)?.addEventListener('click', openExpPrefModal);
 
       const input = $('[name="reference"]', form);
       if (input) {
@@ -15429,7 +15454,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <h1 style="font-size:20px;font-weight:700;margin:0;color:#0f172a;">${id ? 'Edit Purchase Order' : 'New Purchase Order'}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
-          <button type="button" class="btn ic" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
+          <button type="button" class="btn ic" id="btn-po-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>
           <button type="button" class="btn ic" id="btn-po-close-x" title="Close" style="border:none;background:transparent;color:#64748b;font-size:18px;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
         </div>
       </div>
@@ -15665,7 +15690,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
     setupProjectSelectorForCustomer($('#po-project', form), e.target.value);
   });
 
-  $('#btn-po-num-pref', form)?.addEventListener('click', () => {
+  const openPoPrefModal = () => {
     openDocNumberPreferencesModal({
       kind: 'purchase-orders',
       series: $('#po-series', form)?.value || 'Default Transaction Series',
@@ -15675,7 +15700,9 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         if (next) $('#po-number', form).value = next;
       }
     });
-  });
+  };
+  $('#btn-po-num-pref', form)?.addEventListener('click', openPoPrefModal);
+  $('#btn-po-top-pref', target)?.addEventListener('click', openPoPrefModal);
 
   function calcPo() {
     const isTaxInclusive = ($('#po-tax-pricing', form)?.value === 'tax_inclusive');
@@ -15762,7 +15789,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
     else history.back();
   });
 
-  $('#btn-po-num-pref', form)?.addEventListener('click', () => {
+  const openPoPrefModal = () => {
     openDocNumberPreferencesModal({
       kind: 'purchase-orders',
       series: $('#po-series', form)?.value || 'Default Transaction Series',
@@ -15772,7 +15799,9 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         if (next) $('#po-number', form).value = next;
       }
     });
-  });
+  };
+  $('#btn-po-num-pref', form)?.addEventListener('click', openPoPrefModal);
+  $('#btn-po-top-pref', target)?.addEventListener('click', openPoPrefModal);
 
   $('#po-series', form)?.addEventListener('change', async (e) => {
     try {

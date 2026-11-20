@@ -4760,6 +4760,8 @@ async function renderEnterpriseSettingsPage(container) {
     'digital-signature': '#/settings/digital-signature',
     'opening-bal-import': '#/accountant/transaction-locking',
     'payment-gateways': '#/pay/payment-settings',
+    'purchases-bills': '#/purchases/bills',
+    'purchases-expenses': '#/purchases/expenses',
   };
   if (!categories.length) {
     container.innerHTML = '<div class="error-msg-card">The Settings registry is empty.</div>';

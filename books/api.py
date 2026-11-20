@@ -11560,7 +11560,7 @@ def reports_view(request, name):
     elif name == 'general-ledger':
         acc_id = request.GET.get('account')
         return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org))
-    elif name in ('profit-loss', 'pnl'):
+    elif name in ('profit-loss', 'pnl', 'profit-and-loss'):
         return j(services.profit_and_loss_report(start, end, org=user_org))
     elif name == 'balance-sheet':
         as_of = request.GET.get('as_of')

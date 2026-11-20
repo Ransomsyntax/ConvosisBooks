@@ -15952,20 +15952,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
     else history.back();
   });
 
-  const openPoPrefModal = () => {
-    openDocNumberPreferencesModal({
-      kind: 'purchase-orders',
-      series: $('#po-series', form)?.value || 'Default Transaction Series',
-      location: $('#po-location', form)?.value || 'HO Kottayam',
-      branch: $('#po-branch', form)?.value || '',
-      onSave: (pfx, next) => {
-        if (next) $('#po-number', form).value = next;
-      }
-    });
-  };
-  $('#btn-po-num-pref', form)?.addEventListener('click', openPoPrefModal);
-  $('#btn-po-top-pref', target)?.addEventListener('click', openPoPrefModal);
-
   $('#po-series', form)?.addEventListener('change', async (e) => {
     try {
       const res = await api('lookup/next-po-number/?' + qs({ series: e.target.value }));

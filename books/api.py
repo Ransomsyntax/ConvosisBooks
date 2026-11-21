@@ -35,6 +35,7 @@ from .calc import GST_SLABS, compute, is_intra_state, q2
 from .cleaning import EXPENSE_REFERENCE_RE, GSTIN_RE, PAN_RE, ApiError, Cleaner
 from .features.module_gating import (
     get_organization_enabled_modules,
+    get_organization_module_preferences,
     is_module_enabled,
     validate_module_dependencies,
 )
@@ -13669,10 +13670,13 @@ def settings_enterprise_preferences_view(request, group_key):
         if not isinstance(current, dict):
             raise ApiError(409, 'Stored enterprise preference values are invalid.')
         fields = {field['key']: field for field in group_schema.get('fields', [])}
-        current = {
-            key: value for key, value in current.items()
-            if key in fields and not fields[key].get('readOnly')
-        }
+        if group_key == 'generalModules':
+            current = get_organization_module_preferences(org)
+        else:
+            current = {
+                key: value for key, value in current.items()
+                if key in fields and not fields[key].get('readOnly')
+            }
         return j({
             'group': group_key,
             'values': current,

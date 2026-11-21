@@ -299,6 +299,6 @@ class AddNewFunctionalitiesTestCase(TestCase):
         with open(front_app, 'r', encoding='utf-8') as f:
             fa_content = f.read()
         self.assertEqual(sa_content, fa_content, "app.js is not synchronized between static and frontend!")
-        self.assertIn("((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers')", sa_content)
-        self.assertIn("((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors')", sa_content)
+        self.assertIn("typeof window._partyFormImpl === 'function'", sa_content)
+        self.assertIn("return window._partyFormImpl(kind, id, onDone, onCancel);", sa_content)
 

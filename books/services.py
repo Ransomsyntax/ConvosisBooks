@@ -419,25 +419,36 @@ def ensure_default_transaction_series(org):
                     configured_next = int(pref.next_number)
                     configured_pad = max(configured_pad, len(str(configured_next)))
 
-            # If default_group is default, clear existing is_default on other series for this doc_key
+            # If default_group is default, clear existing is_default on other series for this doc_key.
             if default_group.is_default:
-                DocumentNumberSeries.objects.filter(organization=org, document_type=doc_key, is_default=True).update(is_default=False)
+                DocumentNumberSeries.objects.filter(
+                    organization=org,
+                    document_type=doc_key,
+                    is_default=True,
+                ).exclude(series_group=default_group).update(is_default=False)
 
-            DocumentNumberSeries.objects.create(
+            doc_series, created = DocumentNumberSeries.objects.get_or_create(
                 organization=org,
-                series_group=default_group,
-                name=default_group.name,
                 document_type=doc_key,
-                prefix=configured_pfx,
-                starting_number=1,
-                next_number=configured_next,
-                padding=configured_pad,
-                separator='',
-                active=default_group.is_active,
-                is_default=default_group.is_default,
-                branch=default_group.branch,
-                location=default_group.location,
+                name=default_group.name,
+                defaults={
+                    'series_group': default_group,
+                    'prefix': configured_pfx,
+                    'starting_number': 1,
+                    'next_number': configured_next,
+                    'padding': configured_pad,
+                    'separator': '',
+                    'active': default_group.is_active,
+                    'is_default': default_group.is_default,
+                    'branch': default_group.branch,
+                    'location': default_group.location,
+                },
             )
+            if not created and doc_series.series_group_id != default_group.pk:
+                doc_series.series_group = default_group
+                doc_series.is_default = default_group.is_default
+                doc_series.active = default_group.is_active
+                doc_series.save(update_fields=['series_group', 'is_default', 'active', 'updated_at'])
     return default_group
 
 

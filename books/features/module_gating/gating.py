@@ -48,6 +48,21 @@ MODULE_DISPLAY_NAMES: Dict[str, str] = {
 }
 
 
+def _setting_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ('1', 'true', 'yes', 'on'):
+            return True
+        if normalized in ('0', 'false', 'no', 'off', ''):
+            return False
+        return default
+    if value is None:
+        return default
+    return bool(value)
+
+
 def get_organization_module_preferences(org) -> Dict[str, bool]:
     """
     Returns the raw enterprise preferences dictionary for generalModules for this organisation.
@@ -61,7 +76,7 @@ def get_organization_module_preferences(org) -> Dict[str, bool]:
     if isinstance(gm, dict):
         for k in DEFAULT_MODULE_SETTINGS:
             if k in gm:
-                prefs[k] = bool(gm[k])
+                prefs[k] = _setting_bool(gm[k], DEFAULT_MODULE_SETTINGS[k])
     return prefs
 
 
@@ -105,8 +120,8 @@ def validate_module_dependencies(org, proposed_prefs: Dict[str, Any]) -> Tuple[b
     if not isinstance(proposed_prefs, dict):
         return False, "Invalid preferences payload format."
 
-    enable_so = bool(proposed_prefs.get('enableSalesOrders', True))
-    enable_dc = bool(proposed_prefs.get('enableDeliveryChallans', True))
+    enable_so = _setting_bool(proposed_prefs.get('enableSalesOrders'), True)
+    enable_dc = _setting_bool(proposed_prefs.get('enableDeliveryChallans'), True)
 
     # Dependency Rule 1: Delivery Challans requires Sales Orders to be enabled
     if enable_dc and not enable_so:

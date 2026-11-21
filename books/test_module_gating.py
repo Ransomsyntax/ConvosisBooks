@@ -75,6 +75,31 @@ class ModuleGatingTestCase(TestCase):
         self.assertTrue(is_module_enabled(self.org, 'sales_orders'))
         self.assertFalse(is_module_enabled(self.org, 'bills-of-entry'))
 
+    def test_string_false_module_setting_is_disabled(self):
+        self.org.general_settings['enterprise_preferences']['generalModules']['enableQuotes'] = 'false'
+        self.org.save(update_fields=['general_settings'])
+
+        self.assertFalse(is_module_enabled(self.org, 'quotes'))
+        self.assertFalse(get_organization_enabled_modules(self.org)['quotes'])
+        response = self.client.get('/api/settings/enterprise/preferences/generalModules/')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['values']['enableQuotes'])
+
+        valid, message = validate_module_dependencies(self.org, {
+            'enableSalesOrders': 'false',
+            'enableDeliveryChallans': 'false',
+        })
+        self.assertTrue(valid, message)
+
+    def test_general_module_preferences_api_returns_effective_defaults(self):
+        self.org.general_settings = {}
+        self.org.save(update_fields=['general_settings'])
+
+        response = self.client.get('/api/settings/enterprise/preferences/generalModules/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['values'], DEFAULT_MODULE_SETTINGS)
+
     def test_validate_module_dependencies(self):
         # Delivery Challans enabled without Sales Orders should fail
         valid, msg = validate_module_dependencies(self.org, {

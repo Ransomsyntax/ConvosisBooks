@@ -627,9 +627,9 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
 
   try {
     if (entity === 'customer') {
-      partyForm('customers', null, onCreated);
+      partyForm('customers', null, onCreated, () => { selectEl._quickCreating = false; });
     } else if (entity === 'vendor') {
-      partyForm('vendors', null, onCreated);
+      partyForm('vendors', null, onCreated, () => { selectEl._quickCreating = false; });
     } else if (entity === 'item') {
       itemForm(null, onCreated);
     } else if (entity === 'salesperson') {
@@ -2054,7 +2054,7 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
 
 window.openSignatureModal = openSignatureModal;
 
-async function partyForm(kind, id, onDone) {
+async function partyForm(kind, id, onDone, onCancel) {
   const isCust = kind === 'customers';
   const entityLabel = isCust ? 'Customer' : 'Vendor';
   const r = id ? await api(`${kind}/${id}/`) : {
@@ -2531,13 +2531,17 @@ async function partyForm(kind, id, onDone) {
   `;
 
   let modalInstance = null;
+  let saveCompleted = false;
   formModal({
     title: (id ? 'Edit ' : 'New ') + entityLabel,
     wide: true,
     dialog: Boolean(onDone || Modal.count() > 0),
     body: formHtml,
     onClose: () => {
-      if (onDone) return;
+      if (!saveCompleted && onCancel) onCancel();
+      if (onDone) {
+        return;
+      }
       const targetHash = isCust ? '#/sales/customers' : '#/purchases/vendors';
       if (location.hash.includes('/new') || location.hash !== targetHash) {
         location.hash = targetHash;
@@ -3164,6 +3168,7 @@ async function partyForm(kind, id, onDone) {
 
       if (!id) d.active = true;
       const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
+      saveCompleted = true;
       toast(`${entityLabel} ${id ? 'updated' : 'created'} successfully!`, 'ok');
       if (onDone) {
         onDone(saved || d);
@@ -7135,6 +7140,10 @@ function initTransactionAddressManager({ form, addressesContainerId, partySelect
       addressRequestId++;
       addressData = { billing: normalizeTransactionAddress({}), shipping: normalizeTransactionAddress({}) };
       renderAddresses();
+      return;
+    }
+    if (String(partyId).startsWith('__')) {
+      addressRequestId++;
       return;
     }
     const party = parties.find(p => String(p.id) === String(partyId));

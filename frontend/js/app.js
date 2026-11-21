@@ -1,8 +1,8 @@
 'use strict';
 
-function partyForm(kind, id, onDone) {
-  if (typeof window.partyForm === 'function' && window.partyForm !== partyForm) {
-    return window.partyForm(kind, id, onDone);
+function partyForm(kind, id, onDone, onCancel) {
+  if (typeof window._partyFormImpl === 'function' && window._partyFormImpl !== partyForm) {
+    return window._partyFormImpl(kind, id, onDone, onCancel);
   }
   console.warn('partyForm not loaded');
 }

@@ -127,7 +127,7 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             self.assertIn('Reset to Default', content)
 
             # Dynamic field dropdown change listener
-            self.assertIn("dynamicSelect.addEventListener('change', insertSelectedDynamicField)", content)
+            self.assertIn("dynamicSelect.addEventListener('change'", content)
             self.assertIn("insertBtn.addEventListener('click', insertSelectedDynamicField)", content)
 
             # Button disabling while saving/loading
@@ -260,6 +260,43 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
         self.assertEqual(inv_item.format_pattern, 'INV-CORP/{CUSTOMERTYPE}/{FY}/{SEQUENCE}')
         self.assertEqual(inv_item.next_number, 105)
         self.assertEqual(inv_item.padding, 6)
+
+    def test_preview_endpoint_uses_saved_numbering_engine(self):
+        payload = {
+            'document_type': 'invoice',
+            'prefix': 'INV',
+            'format_pattern': 'INV/{CUSTOMERTYPE}/{FY}/{SEQUENCE}',
+            'separator': '/',
+            'next_number': 20,
+            'padding': 3,
+        }
+        res = self.client.post(
+            f'/api/settings/transaction-series/{self.default_series.pk}/preview/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 200)
+        preview = res.json()['preview']['formatted']
+        self.assertTrue(preview.startswith('INV/B2B/'))
+        self.assertTrue(preview.endswith('/020'))
+
+    def test_unsupported_placeholder_is_rejected(self):
+        payload = {
+            'items': [{
+                'document_type': 'invoice',
+                'format_pattern': 'INV/{NOTSUPPORTED}/{SEQUENCE}',
+                'prefix': 'INV',
+                'next_number': 1,
+                'padding': 3,
+            }]
+        }
+        res = self.client.put(
+            f'/api/settings/transaction-series/{self.default_series.pk}/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('NOTSUPPORTED', res.json().get('error', ''))
 
     def test_create_new_series_via_post(self):
         """Creating a new series generates group and all child document number series."""

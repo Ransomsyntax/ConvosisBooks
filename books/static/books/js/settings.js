@@ -2948,7 +2948,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}" data-edit-item-default-prefix="${esc(item.default_prefix || item.prefix || '')}" data-edit-item-default-next="${item.default_next || 1}" data-edit-item-default-pad="${item.default_padding || 5}" data-edit-item-default-sep="${esc(item.default_separator || '/')}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}" data-edit-item-default-prefix="${esc(item.default_prefix || item.prefix || '')}" data-edit-item-default-format="${esc(item.default_format_pattern || '')}" data-edit-item-default-next="${item.default_next || 1}" data-edit-item-default-pad="${item.default_padding || 5}" data-edit-item-default-sep="${esc(item.default_separator || '/')}">
                     Configure
                   </button>
                 </td>
@@ -3050,6 +3050,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         location: btn.dataset.editItemLocation,
         separator: btn.dataset.editItemSeparator,
         default_prefix: btn.dataset.editItemDefaultPrefix,
+        default_format_pattern: btn.dataset.editItemDefaultFormat,
         default_next: btn.dataset.editItemDefaultNext,
         default_padding: btn.dataset.editItemDefaultPad,
         default_separator: btn.dataset.editItemDefaultSep
@@ -3235,12 +3236,14 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       const defaultSep = item.default_separator || '/';
       const defaultPad = Number(item.default_padding || 5);
       const defaultNext = Number(item.default_next || 1);
+      const defaultFormat = item.default_format_pattern || '';
 
       prefixInp.value = defaultPfx;
-      formatInp.value = '';
-      sepSelect.value = defaultSep;
+      formatInp.value = defaultFormat;
+      sepSelect.value = ['/', '-', '_'].includes(defaultSep) ? defaultSep : 'custom';
       customSepInp.value = '';
-      customSepInp.disabled = true;
+      customSepInp.disabled = sepSelect.value !== 'custom';
+      if (sepSelect.value === 'custom') customSepInp.value = defaultSep;
       nextInp.value = String(defaultNext).padStart(defaultPad, '0');
       paddingInp.value = defaultPad;
       lastFocusedInput = formatInp;
@@ -3258,10 +3261,10 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       dynamicSelect.focus();
       return;
     }
-    const target = lastFocusedInput || formatInp;
+    const target = formatInp;
     const currentVal = target.value;
-    const startPos = (typeof lastStart === 'number' && lastStart <= currentVal.length) ? lastStart : currentVal.length;
-    const endPos = (typeof lastEnd === 'number' && lastEnd <= currentVal.length) ? lastEnd : currentVal.length;
+    const startPos = typeof target.selectionStart === 'number' ? target.selectionStart : currentVal.length;
+    const endPos = typeof target.selectionEnd === 'number' ? target.selectionEnd : startPos;
     
     target.value = currentVal.substring(0, startPos) + val + currentVal.substring(endPos);
     const newCursor = startPos + val.length;
@@ -3276,74 +3279,56 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
   insertBtn.addEventListener('click', insertSelectedDynamicField);
   dynamicSelect.addEventListener('change', () => {
-    if (dynamicSelect.value) {
-      insertSelectedDynamicField();
-    }
+    if (dynamicSelect.value) formatInp.focus();
   });
 
+  let previewRequestSequence = 0;
   const updatePreview = () => {
     const raw = nextInp.value.trim();
     if (!/^\d{1,12}$/.test(raw) || Number(raw) < 1) {
       prevEl.textContent = 'Enter a positive sequence number';
       return;
     }
-    const pad = Math.max(1, Math.min(12, parseInt(paddingInp.value, 10) || raw.length || 5));
-    const seqStr = String(Number(raw)).padStart(pad, '0');
+    const pad = parseInt(paddingInp.value, 10);
+    if (!Number.isFinite(pad) || pad < 1 || pad > 12) {
+      prevEl.textContent = 'Padding must be between 1 and 12';
+      return;
+    }
     const sep = sepSelect.value === 'custom' ? customSepInp.value : sepSelect.value;
-    
-    let pattern = formatInp.value.trim() || prefixInp.value.trim();
-    const fy = item.financial_year || '26-27';
-    const startYY = fy.split('-')[0] || '';
-    const endYY = fy.split('-')[1] || '';
-    const yr = String(item.current_year || (startYY ? 2000 + Number(startYY) : 2026));
-    const now = new Date();
-    const mo = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
+    const pattern = formatInp.value.trim();
+    const allowed = new Set(['CUSTOMERTYPE','LOCATION','FY','ORG','BRANCH','YEAR','MONTH','SEQUENCE','FYS_YY','FYE_YY']);
+    const tokens = [...pattern.matchAll(/\{([A-Za-z0-9_-]+)\}/g)].map(match => match[1].toUpperCase());
+    const unsupported = [...new Set(tokens.filter(token => !allowed.has(token)))];
+    if (unsupported.length) {
+      prevEl.textContent = `Unsupported placeholder: {${unsupported[0]}}`;
+      return;
+    }
 
-    const sampleReplacements = {
-      'CUSTOMERTYPE': 'B2B',
-      'CUSTOMER_TYPE': 'B2B',
-      'CUSTOMER-TYPE': 'B2B',
-      'LOCATION': (item.location || 'KOTTAYAM').toUpperCase(),
-      'FY': fy,
-      'FINANCIAL_YEAR': fy,
-      'FINANCIAL-YEAR': fy,
-      'ORG': item.org_code || 'CONVO',
-      'ORGANIZATION': item.org_code || 'CONVO',
-      'BRANCH': (item.branch || 'TVM').toUpperCase(),
-      'YEAR': yr,
-      'YYYY': yr,
-      'YY': startYY,
-      'MONTH': mo,
-      'MM': mo,
-      'DAY': day,
-      'DD': day,
-      'FYS_YY': startYY,
-      'FYE_YY': endYY
-    };
-
-    let result = pattern;
-    Object.entries(sampleReplacements).forEach(([token, value]) => {
-      const rx = new RegExp(`(?:\\$?\\s*\\{\\s*${token}\\s*\\}|%\\s*${token}\\s*%|%${token}%)`, 'gi');
-      result = result.replace(rx, value);
-    });
-
-    const seqRe = /(?:\$?\s*\{\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\}|%\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*%|%(?:SEQUENCE|SEQ|NUMBER|NUM)%)/gi;
-    if (seqRe.test(result)) {
-      result = result.replace(seqRe, seqStr);
-    } else {
-      if (sep && result && !result.endsWith(sep) && !result.endsWith('-') && !result.endsWith('/')) {
-        result += sep;
+    const requestId = ++previewRequestSequence;
+    prevEl.textContent = 'Updating preview...';
+    window.clearTimeout(updatePreview._timer);
+    updatePreview._timer = window.setTimeout(async () => {
+      try {
+        const result = await api(`/settings/transaction-series/${currentSeries.id}/preview/`, {
+          method: 'POST',
+          body: JSON.stringify({
+            document_type: item.document_type,
+            prefix: prefixInp.value.trim(),
+            format_pattern: pattern,
+            separator: sep || '/',
+            next_number: Number(raw),
+            padding: pad
+          })
+        });
+        if (requestId === previewRequestSequence) {
+          prevEl.textContent = result.preview?.formatted || 'Preview unavailable';
+        }
+      } catch (error) {
+        if (requestId === previewRequestSequence) {
+          prevEl.textContent = error.message || 'Invalid numbering configuration';
+        }
       }
-      result += seqStr;
-    }
-
-    if (sep && sep.length === 1) {
-      const sepEsc = sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      result = result.replace(new RegExp(`${sepEsc}{2,}`, 'g'), sep);
-    }
-
-    prevEl.textContent = result;
+    }, 120);
   };
 
   ['input', 'change', 'keyup', 'paste'].forEach(ev => {
@@ -3374,6 +3359,14 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     if (!/^\d{1,12}$/.test(rawNext) || Number(rawNext) < 1) {
       toast('Next number must be a positive whole number of at most 12 digits.', 'error');
       nextInp.focus();
+      return;
+    }
+    const unsupportedTokens = [...formatPattern.matchAll(/\{([A-Za-z0-9_-]+)\}/g)]
+      .map(match => match[1].toUpperCase())
+      .filter(token => !['CUSTOMERTYPE','LOCATION','FY','ORG','BRANCH','YEAR','MONTH','SEQUENCE','FYS_YY','FYE_YY'].includes(token));
+    if (formatPattern.length > 160 || [...new Set(unsupportedTokens)].length) {
+      toast(formatPattern.length > 160 ? 'Format pattern cannot exceed 160 characters.' : `Unsupported placeholder: {${[...new Set(unsupportedTokens)][0]}}`, 'error');
+      formatInp.focus();
       return;
     }
     const next_number = Number(rawNext);

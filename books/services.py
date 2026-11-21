@@ -260,6 +260,36 @@ SUPPORTED_TRANSACTION_TYPES = [
 ]
 
 
+SUPPORTED_NUMBER_PATTERN_PLACEHOLDERS = {
+    'CUSTOMERTYPE',
+    'LOCATION',
+    'FY',
+    'ORG',
+    'BRANCH',
+    'YEAR',
+    'MONTH',
+    'SEQUENCE',
+    'FYS_YY',
+    'FYE_YY',
+}
+
+
+def validate_document_number_format_pattern(pattern):
+    """Reject placeholders that the shared numbering formatter cannot resolve."""
+    import re
+    raw = str(pattern or '').strip()
+    if len(raw) > 160:
+        raise ApiError(400, 'Format pattern cannot exceed 160 characters.')
+    unsupported = sorted({
+        token.upper()
+        for token in re.findall(r'\{([A-Za-z0-9_-]+)\}', raw)
+        if token.upper() not in SUPPORTED_NUMBER_PATTERN_PLACEHOLDERS
+    })
+    if unsupported:
+        raise ApiError(400, 'Unsupported placeholder(s): {' + '}, {'.join(unsupported) + '}.')
+    return raw
+
+
 def _number_series_doc_type(module_or_pfx):
     raw = str(module_or_pfx or '').strip().lower().replace('-', '_')
     canonical = {
@@ -663,32 +693,23 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     # Token mappings (case-insensitive keys handled below)
     token_map = {
         'CUSTOMERTYPE': clean_cust_type,
-        'CUSTOMER_TYPE': clean_cust_type,
-        'CUSTOMER-TYPE': clean_cust_type,
         'LOCATION': clean_location,
         'FY': fy,
-        'FINANCIAL_YEAR': fy,
-        'FINANCIAL-YEAR': fy,
         'ORG': org_code,
-        'ORGANIZATION': org_code,
         'BRANCH': branch_val or 'HQ',
         'YEAR': str(yr),
-        'YYYY': str(yr),
-        'YY': start_yy,
         'MONTH': mo,
-        'MM': mo,
-        'DAY': f"{date_val.day:02d}",
-        'DD': f"{date_val.day:02d}",
         'FYS_YY': start_yy,
         'FYE_YY': end_yy,
     }
 
     result = raw_pattern
     for key, val in token_map.items():
-        rx = re.compile(rf'(?:\$?\s*\{{\s*{key}\s*\}}|\%\s*{key}\s*\%|\%{key}\%)', re.IGNORECASE)
+        result = result.replace(f"%{key}%", val).replace(f"${{{key}}}", val)
+        rx = re.compile(rf'\{{{key}\}}', re.IGNORECASE)
         result = rx.sub(val, result)
 
-    seq_rx = re.compile(r'(?:\$?\s*\{\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\}|\%\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\%|\%(?:SEQUENCE|SEQ|NUMBER|NUM)\%)', re.IGNORECASE)
+    seq_rx = re.compile(r'\{SEQUENCE\}', re.IGNORECASE)
     if seq_rx.search(result):
         candidate = seq_rx.sub(num_str, result)
     else:

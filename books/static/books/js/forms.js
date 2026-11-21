@@ -1,5 +1,15 @@
 'use strict';
 
+if (typeof window !== 'undefined') {
+  try {
+    if (typeof partyForm === 'function') {
+      window._partyFormImpl = partyForm;
+      window._partyFormImpl = partyForm;
+window.partyForm = partyForm;
+    }
+  } catch (e) {}
+}
+
 function bindDocumentNumberPreview(form, options) {
   const numberInput = form.querySelector(options.number);
   if (!numberInput) return;
@@ -3168,6 +3178,7 @@ async function partyForm(kind, id, onDone) {
     }
   });
 }
+window._partyFormImpl = partyForm;
 window.partyForm = partyForm;
 
 function formatReorderPoint(val) {
@@ -18846,7 +18857,8 @@ async function stockTransferModal(id = null, onDone = null) {
 
 if (typeof window !== 'undefined') {
   window.formModal = formModal;
-  window.partyForm = partyForm;
+  window._partyFormImpl = partyForm;
+window.partyForm = partyForm;
   window.itemForm = itemForm;
   window.accountForm = accountForm;
   window.journalForm = journalForm;

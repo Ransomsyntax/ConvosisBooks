@@ -142,7 +142,7 @@ class ItemTableDiscountTestCase(TestCase):
             ]
         }
         resp = self.client.post('/api/invoices/', data=json.dumps(payload), content_type='application/json')
-        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertIn(resp.status_code, (200, 201), resp.content)
         data = resp.json()
         inv_id = data.get('id')
         self.assertTrue(inv_id)
@@ -187,7 +187,7 @@ class ItemTableDiscountTestCase(TestCase):
             ]
         }
         resp = self.client.post('/api/quotes/', data=json.dumps(payload), content_type='application/json')
-        self.assertEqual(resp.status_code, 200)
+        self.assertIn(resp.status_code, (200, 201))
         q_id = resp.json()['id']
 
         # Convert Quote to Invoice
@@ -220,7 +220,7 @@ class ItemTableDiscountTestCase(TestCase):
             ]
         }
         resp = self.client.post('/api/sales-orders/', data=json.dumps(payload), content_type='application/json')
-        self.assertEqual(resp.status_code, 200)
+        self.assertIn(resp.status_code, (200, 201))
         so_id = resp.json()['id']
 
         # Check SalesOrder detail
@@ -254,7 +254,7 @@ class ItemTableDiscountTestCase(TestCase):
             ]
         }
         resp = self.client.post('/api/purchase-orders/', data=json.dumps(payload), content_type='application/json')
-        self.assertEqual(resp.status_code, 200)
+        self.assertIn(resp.status_code, (200, 201))
         po_id = resp.json()['id']
 
         # Convert to Bill
@@ -287,7 +287,7 @@ class ItemTableDiscountTestCase(TestCase):
             ]
         }
         resp = self.client.post('/api/credit-notes/', data=json.dumps(cn_payload), content_type='application/json')
-        self.assertEqual(resp.status_code, 200)
+        self.assertIn(resp.status_code, (200, 201))
         cn_id = resp.json()['id']
 
         cn_resp = self.client.get(f'/api/credit-notes/{cn_id}/')

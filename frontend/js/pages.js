@@ -1,5 +1,12 @@
 'use strict';
 
+function partyForm(kind, id, onDone) {
+  if (typeof window.partyForm === 'function' && window.partyForm !== partyForm) {
+    return window.partyForm(kind, id, onDone);
+  }
+  console.warn('partyForm not loaded');
+}
+
 var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
 const PAGE = { reload: null };
 
@@ -1401,13 +1408,13 @@ window.getOverdueDays = getOverdueDays;
 const docStatusFilters = (posted) => [{ name: 'status', label: 'Status', opts: [['', 'All statuses'], ['draft', 'Draft'], ['unpaid', posted], ['partial', 'Partially Paid'], ['overdue', 'Overdue'], ['paid', 'Paid'], ['void', 'Void']] }];
 const LISTS = {
   customers: {
-    api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('sales/customers/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers')) : ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers'), empty: 'No customers yet.',
+    api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('sales/customers/new', () => partyForm('customers')) : partyForm('customers'), empty: 'No customers yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
     actions: r => [['edit', 'Edit'], [r.active ? 'deactivate' : 'activate', r.active ? 'Deactivate' : 'Activate'], ['delete', 'Delete', 'dn']],
     onAction: async (a, r) => {
-      if (a === 'view') return ((typeof window !== 'undefined' && window.partyDetail) || partyDetail)('customers', r.id);
-      if (a === 'edit') return ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers', r.id);
+      if (a === 'view') return partyDetail('customers', r.id);
+      if (a === 'edit') return partyForm('customers', r.id);
       if (a === 'delete') return deleteRecord('customers', r, 'Customer');
       if (a === 'deactivate' || a === 'activate') {
         try {
@@ -1420,11 +1427,11 @@ const LISTS = {
     },
   },
   vendors: {
-    api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('purchases/vendors/new', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors')) : ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors'), empty: 'No vendors yet.',
+    api: 'vendors', title: 'Vendors', bc: 'Purchases', newLabel: 'New vendor', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('purchases/vendors/new', () => partyForm('vendors')) : partyForm('vendors'), empty: 'No vendors yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
     cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Payable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
     actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
-    onAction: (a, r) => a === 'view' ? ((typeof window !== 'undefined' && window.partyDetail) || partyDetail)('vendors', r.id) : a === 'edit' ? ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors', r.id) : a === 'delete' ? deleteRecord('vendors', r, 'Vendor') : null,
+    onAction: (a, r) => a === 'view' ? partyDetail('vendors', r.id) : a === 'edit' ? partyForm('vendors', r.id) : a === 'delete' ? deleteRecord('vendors', r, 'Vendor') : null,
   },
   items: {
     api: 'items', title: 'Items & Services', bc: 'Items', newLabel: 'New item', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('items/items/new', () => itemForm()) : itemForm(), empty: 'No items yet.',
@@ -5347,15 +5354,23 @@ async function partyDetail(kind, id) {
   m.el.addEventListener('click', e => {
     const o = e.target.closest('[data-open]'), a = e.target.closest('[data-do]');
     if (o) { m.close(); docDetail(docs, o.dataset.open).catch(err => toast(err.message, 'err')); }
-    if (a && a.dataset.do === 'edit') { m.close(); ((typeof window !== 'undefined' && window.partyForm) || partyForm)(kind, id); }
-    if (a && a.dataset.do === 'pay') { m.close(); ((typeof window !== 'undefined' && window.paymentForm) || paymentForm)(pay, { party: id }); }
+    if (a && a.dataset.do === 'edit') { m.close(); partyForm(kind, id); }
+    if (a && a.dataset.do === 'pay') { m.close(); (typeof window.paymentForm === 'function' ? window.paymentForm : paymentForm)(pay, { party: id }); }
   });
 }
+window._partyDetailImpl = partyDetail;
 window.partyDetail = partyDetail;
 
 function gettingStarted(root) {
   const c = APP.counts;
-  const steps = [['Set your organization’s home state and opening balance', !!APP.org.gstin || APP.org.opening_cash != 0, 'Open settings', () => orgForm()], ['Add your first customer', c.customers > 0, 'Add customer', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('customers')], ['Add a vendor', c.vendors > 0, 'Add vendor', () => ((typeof window !== 'undefined' && window.partyForm) || partyForm)('vendors')], ['Add items or services', c.items > 0, 'Add item', () => ((typeof window !== 'undefined' && window.itemForm) || itemForm)()], ['Create and send your first invoice', c.invoices > 0, 'New invoice', () => ((typeof window !== 'undefined' && window.docForm) || docForm)('invoices')], ['Record a payment', c.payments > 0, 'Record payment', () => ((typeof window !== 'undefined' && window.paymentForm) || paymentForm)('payments-received')]];
+  const steps = [
+    ['Set your organization’s home state and opening balance', !!APP.org.gstin || APP.org.opening_cash != 0, 'Open settings', () => orgForm()],
+    ['Add your first customer', c.customers > 0, 'Add customer', () => partyForm('customers')],
+    ['Add a vendor', c.vendors > 0, 'Add vendor', () => partyForm('vendors')],
+    ['Add items or services', c.items > 0, 'Add item', () => (typeof window.itemForm === 'function' ? window.itemForm() : (typeof itemForm === 'function' ? itemForm() : null))],
+    ['Create and send your first invoice', c.invoices > 0, 'New invoice', () => (typeof window.docForm === 'function' ? window.docForm('invoices') : (typeof docForm === 'function' ? docForm('invoices') : null))],
+    ['Record a payment', c.payments > 0, 'Record payment', () => (typeof window.paymentForm === 'function' ? window.paymentForm('payments-received') : (typeof paymentForm === 'function' ? paymentForm('payments-received') : null))]
+  ];
   root.innerHTML = `<h1>Hello, ${esc(APP.user.name || 'admin')}</h1><div class="sub">${esc(APP.org.name)}</div><div class="tabs"><a href="#/home/dashboard">Dashboard</a><a class="on" href="#/home/getting-started">Getting Started</a><a href="#/home/recent-updates">Recent Updates</a></div>
 <div class="card"><h3>Set up Convosis Books</h3><div class="cb"><ul class="chk">${steps.map((s, i) => `<li class="${s[1] ? 'done' : ''}"><span class="tick">${s[1] ? '✓' : ''}</span><span style="flex:1">${esc(s[0])}</span>${s[1] ? '' : `<button class="btn" type="button" data-step="${i}">${esc(s[2])}</button>`}</li>`).join('')}</ul></div></div>`;
   root.addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) steps[b.dataset.step][3](); });

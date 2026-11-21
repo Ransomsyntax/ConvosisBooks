@@ -227,5 +227,17 @@ window.APP = APP;
 window.csrf = csrf;
 window.qty = qty;
 window.r2 = r2;
+window.partyForm = function(kind, id, onDone) {
+  if (typeof window._partyFormImpl === 'function') {
+    return window._partyFormImpl(kind, id, onDone);
+  }
+  console.warn('partyForm implementation not yet ready');
+};
+window.partyDetail = function(kind, id) {
+  if (typeof window._partyDetailImpl === 'function') {
+    return window._partyDetailImpl(kind, id);
+  }
+  console.warn('partyDetail implementation not yet ready');
+};
 
 

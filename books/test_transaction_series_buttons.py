@@ -126,9 +126,14 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             self.assertIn('btnResetFormatPattern', content)
             self.assertIn('Reset to Default', content)
 
-            # Dynamic field dropdown change listener
-            self.assertIn("dynamicSelect.addEventListener('change'", content)
+            # Selection does not auto-insert; the button owns insertion.
+            self.assertNotIn("dynamicSelect.addEventListener('change', insertSelectedDynamicField)", content)
             self.assertIn("insertBtn.addEventListener('click', insertSelectedDynamicField)", content)
+            self.assertIn("dynamicSelect.value = '';", content)
+            self.assertIn("updatePreview();", content)
+            self.assertIn("document.body.classList.add('modal-open')", content)
+            self.assertIn("document.body.classList.remove('modal-open')", content)
+            self.assertIn("// Calculate live preview immediately upon modal open", content)
 
             # Button disabling while saving/loading
             self.assertIn("saveItemBtn.disabled = true", content)
@@ -260,6 +265,98 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
         self.assertEqual(inv_item.format_pattern, 'INV-CORP/{CUSTOMERTYPE}/{FY}/{SEQUENCE}')
         self.assertEqual(inv_item.next_number, 105)
         self.assertEqual(inv_item.padding, 6)
+
+    def test_preview_matches_saved_and_generated_number(self):
+        payload = {
+            'items': [{
+                'document_type': 'invoice',
+                'prefix': 'INV',
+                'format_pattern': 'INV/{CUSTOMERTYPE}/${FY}/{SEQUENCE}',
+                'separator': '/',
+                'next_number': 20,
+                'padding': 3,
+            }]
+        }
+        saved = self.client.put(
+            f'/api/settings/transaction-series/{self.default_series.pk}/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(saved.status_code, 200, saved.content.decode())
+
+        preview_res = self.client.post(
+            f'/api/settings/transaction-series/{self.default_series.pk}/preview/',
+            data=json.dumps({
+                'document_type': 'invoices',
+                'prefix': 'INV',
+                'format_pattern': 'INV/{CUSTOMERTYPE}/${FY}/{SEQUENCE}',
+                'separator': '/',
+                'next_number': 20,
+                'padding': 3,
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(preview_res.status_code, 200, preview_res.content.decode())
+        expected = f"INV/B2B/{services.get_financial_year(org=self.org)}/020"
+        self.assertEqual(preview_res.json()['preview']['formatted'], expected)
+
+        generated = services.next_document_number(
+            'invoices', org=self.org, series_id=self.default_series.pk, customer_type='b2b'
+        )
+        self.assertEqual(generated, expected)
+
+    def test_string_false_does_not_activate_series(self):
+        response = self.client.put(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/',
+            data=json.dumps({'is_active': 'false'}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        self.secondary_series.refresh_from_db()
+        self.assertFalse(self.secondary_series.is_active)
+
+    def test_update_repairs_legacy_orphan_item_relationship(self):
+        item = DocumentNumberSeries.objects.get(
+            organization=self.org,
+            series_group=self.default_series,
+            document_type='invoices'
+        )
+        item.series_group = None
+        item.save(update_fields=['series_group'])
+
+        response = self.client.put(
+            f'/api/settings/transaction-series/{self.default_series.pk}/',
+            data=json.dumps({'items': [{'document_type': 'invoices', 'prefix': 'INV-REL'}]}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        item.refresh_from_db()
+        self.assertEqual(item.series_group_id, self.default_series.pk)
+        self.assertEqual(item.prefix, 'INV-REL')
+
+    def test_reset_defaults_keep_current_sequence_high_water_mark(self):
+        item = DocumentNumberSeries.objects.get(
+            organization=self.org,
+            series_group=self.default_series,
+            document_type='invoices'
+        )
+        counter = services._series_counter_for_date(item, self.org, module_or_pfx='invoices')
+        counter.next_number = 37
+        counter.save(update_fields=['next_number'])
+
+        response = self.client.get(
+            f'/api/settings/transaction-series/?series_id={self.default_series.pk}'
+        )
+        self.assertEqual(response.status_code, 200)
+        config = next(
+            configured for configured in response.json()['items']
+            if configured['document_type'] == 'invoices'
+        )
+        self.assertEqual(config['default_next'], 37)
+        self.assertEqual(
+            config['default_prefix'],
+            services.default_document_number_prefix(self.org, 'INV')
+        )
 
     def test_preview_endpoint_uses_saved_numbering_engine(self):
         payload = {

@@ -14516,6 +14516,7 @@ def settings_number_series_view(request):
 @api_view
 def settings_transaction_series_preview_view(request, series_id):
     """Preview an unsaved numbering configuration using the backend numbering engine."""
+    from copy import copy
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     from .models import TransactionSeries, DocumentNumberSeries
@@ -14542,7 +14543,9 @@ def settings_transaction_series_preview_view(request, series_id):
     else:
         prefix = s_item.prefix
     separator = str(data.get('separator') if 'separator' in data else s_item.separator or '/').strip()[:5] or '/'
-    raw_next = str(data.get('next_number') or s_item.next_number).strip()
+    current_date = timezone.localdate()
+    counter = services._series_counter_for_date(s_item, org, date=current_date, module_or_pfx=doc_type)
+    raw_next = str(data.get('next_number', counter.next_number)).strip()
     padding = data.get('padding', s_item.padding)
     if not raw_next.isdigit() or int(raw_next) < 1:
         raise ApiError(400, 'Next number must be a positive whole number.')
@@ -14553,51 +14556,56 @@ def settings_transaction_series_preview_view(request, series_id):
     if padding < 1 or padding > 12:
         raise ApiError(400, 'Padding must be between 1 and 12.')
 
-    prev = services.preview_document_number(
-        doc_type,
-        org=org,
-        series=grp.name,
-        series_id=grp.pk,
-        customer_type='b2b',
-        allow_inactive=True,
-        format_pattern=format_pattern,
-        separator=separator,
-    )
     seq = int(raw_next)
+    if seq < counter.next_number:
+        raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
+    preview_series = copy(s_item)
+    preview_series.prefix = prefix
+    preview_series.padding = padding
+    preview_series.format_pattern = format_pattern
+    preview_series.separator = separator
+    preview_series.branch = grp.branch
+    preview_series.location = grp.location
     formatted = services._format_series_number(
-        s_item,
+        preview_series,
         seq,
         org,
+        date=current_date,
         branch=grp.branch,
         location=grp.location,
         customer_type='b2b',
-        format_pattern=format_pattern,
+        format_pattern=format_pattern or prefix,
         separator=separator,
     )
-    # Apply requested preview padding without modifying the persisted counter.
-    original_prefix = s_item.prefix
-    original_padding = s_item.padding
-    s_item.prefix = prefix
-    s_item.padding = padding
-    try:
-        formatted = services._format_series_number(
-            s_item,
-            seq,
-            org,
-            branch=grp.branch,
-            location=grp.location,
-            customer_type='b2b',
-            format_pattern=format_pattern,
-            separator=separator,
-        )
-    finally:
-        s_item.prefix = original_prefix
-        s_item.padding = original_padding
-    prev['formatted'] = formatted
-    prev['next_sequence'] = seq
-    prev['padding'] = padding
-    prev['financial_year'] = prev.get('financial_year') or services.get_financial_year(org=org)
-    return j({'status': 'ok', 'preview': prev})
+    return j({'status': 'ok', 'preview': {
+        'formatted': formatted,
+        'prefix': prefix,
+        'format_pattern': format_pattern,
+        'separator': separator,
+        'next_sequence': seq,
+        'padding': padding,
+        'financial_year': services.get_financial_year(current_date, org=org),
+        'org_code': org.get_code(),
+        'branch': grp.branch,
+        'location': grp.location,
+    }})
+
+
+def _transaction_series_boolean(data, key, default):
+    if key not in data:
+        return default
+    value = data[key]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ('1', 'true', 'yes', 'on'):
+            return True
+        if normalized in ('0', 'false', 'no', 'off', ''):
+            return False
+    elif isinstance(value, (int, float)):
+        return bool(value)
+    raise ApiError(400, f'{key} must be a boolean value.')
 
 
 @api_view
@@ -14663,6 +14671,7 @@ def settings_transaction_series_view(request, series_id=None):
                 prev = services.preview_document_number(
                     t['pfx'], org=org, series=current_series.name, series_id=current_series.pk, allow_inactive=True
                 )
+                current_next = max(int(t['default_next']), int(prev.get('next_sequence') or s_item.next_number))
                 items.append({
                     'document_type': doc_key,
                     'module': t['pfx'],
@@ -14679,10 +14688,10 @@ def settings_transaction_series_view(request, series_id=None):
                     'location': current_series.location,
                     'separator': s_item.separator or '/',
                     'current_year': timezone.localdate().year,
-                    'default_prefix': t['default_prefix'],
+                    'default_prefix': services.default_document_number_prefix(org, t['pfx']),
                     'default_format_pattern': '',
                     'default_padding': t['padding'],
-                    'default_next': t['default_next'],
+                    'default_next': current_next,
                     'default_separator': '/',
                 })
 
@@ -14718,8 +14727,8 @@ def settings_transaction_series_view(request, series_id=None):
 
         branch = str(data.get('branch') or '').strip()
         location = str(data.get('location') or '').strip()
-        is_default = bool(data.get('is_default', False))
-        is_active = bool(data.get('is_active', True))
+        is_default = _transaction_series_boolean(data, 'is_default', False)
+        is_active = _transaction_series_boolean(data, 'is_active', True)
         if is_default and not is_active:
             raise ApiError(400, 'An inactive series cannot be set as the default series.')
 
@@ -14819,8 +14828,8 @@ def settings_transaction_series_view(request, series_id=None):
             if 'location' in data:
                 grp.location = str(data['location']).strip()
             if 'is_default' in data:
-                is_def = bool(data['is_default'])
-                active_flag = bool(data['is_active']) if 'is_active' in data else grp.is_active
+                is_def = _transaction_series_boolean(data, 'is_default', grp.is_default)
+                active_flag = _transaction_series_boolean(data, 'is_active', grp.is_active)
                 if is_def and not active_flag:
                     raise ApiError(400, 'An inactive series cannot be set as the default series.')
                 grp.is_default = is_def
@@ -14831,7 +14840,7 @@ def settings_transaction_series_view(request, series_id=None):
                 else:
                     DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(is_default=False)
             if 'is_active' in data:
-                new_active = bool(data['is_active'])
+                new_active = _transaction_series_boolean(data, 'is_active', grp.is_active)
                 if not new_active and grp.is_default:
                     raise ApiError(400, 'Cannot deactivate the default transaction series. Please designate another series as default first.')
                 grp.is_active = new_active
@@ -14869,11 +14878,30 @@ def settings_transaction_series_view(request, series_id=None):
                     organization=org, series_group=grp, document_type=doc_type
                 ).first()
                 if not s_item:
-                    s_item = DocumentNumberSeries.objects.filter(
+                    legacy_item = DocumentNumberSeries.objects.filter(
                         organization=org, name=grp.name, document_type=doc_type
                     ).first()
+                    if legacy_item and legacy_item.series_group_id not in (None, grp.pk):
+                        raise ApiError(409, f'Numbering configuration for {doc_type} is linked to another transaction series.')
+                    if legacy_item:
+                        legacy_item.series_group = grp
+                        s_item = legacy_item
                 if not s_item:
-                    raise ApiError(404, f'Numbering configuration for {doc_type} was not found.')
+                    type_config = next(item for item in services.SUPPORTED_TRANSACTION_TYPES if item['key'] == doc_type)
+                    s_item = DocumentNumberSeries.objects.create(
+                        organization=org,
+                        series_group=grp,
+                        name=grp.name,
+                        document_type=doc_type,
+                        prefix=services.default_document_number_prefix(org, type_config['pfx']),
+                        starting_number=type_config['default_next'],
+                        next_number=type_config['default_next'],
+                        padding=type_config['padding'],
+                        active=grp.is_active,
+                        is_default=grp.is_default,
+                        branch=grp.branch,
+                        location=grp.location,
+                    )
                 if 'prefix' in item_data and item_data['prefix'] is not None:
                     prefix = str(item_data['prefix']).strip()
                     if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
@@ -14891,6 +14919,7 @@ def settings_transaction_series_view(request, series_id=None):
                         raise ApiError(400, 'Next number must be a positive whole number.')
                     requested_next = int(raw_next)
                     counter = services._series_counter_for_date(s_item, org, module_or_pfx=doc_type)
+                    counter = type(counter).objects.select_for_update().get(pk=counter.pk)
                     if requested_next < counter.next_number:
                         raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
                     counter.next_number = requested_next

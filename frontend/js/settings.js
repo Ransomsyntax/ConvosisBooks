@@ -3192,31 +3192,28 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   const closeModal = () => {
     document.removeEventListener('keydown', onKeyDown);
     modal.remove();
+    document.body.classList.remove('modal-open');
   };
   const onKeyDown = (e) => {
     if (e.key === 'Escape') closeModal();
   };
   document.addEventListener('keydown', onKeyDown);
+  document.body.classList.add('modal-open');
   modal.addEventListener('click', e => {
     if (e.target === modal) closeModal();
   });
   modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', closeModal));
 
-  // Track active input and cursor position for inserting dynamic placeholders
-  let lastFocusedInput = formatInp;
+  // Keep selection when focus moves from the pattern field to the field picker.
   let lastStart = formatInp.selectionStart ?? formatInp.value.length;
   let lastEnd = formatInp.selectionEnd ?? formatInp.value.length;
 
-  const trackInput = (inp) => {
-    lastFocusedInput = inp;
-    lastStart = inp.selectionStart ?? inp.value.length;
-    lastEnd = inp.selectionEnd ?? inp.value.length;
+  const trackPatternSelection = () => {
+    lastStart = formatInp.selectionStart ?? formatInp.value.length;
+    lastEnd = formatInp.selectionEnd ?? lastStart;
   };
-
-  [prefixInp, formatInp].forEach(inp => {
-    ['click', 'keyup', 'select', 'focus'].forEach(ev => {
-      inp.addEventListener(ev, () => trackInput(inp));
-    });
+  ['click', 'keyup', 'select', 'focus', 'input', 'mouseup'].forEach(ev => {
+    formatInp.addEventListener(ev, trackPatternSelection);
   });
 
   sepSelect.addEventListener('change', () => {
@@ -3228,7 +3225,6 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     }
     updatePreview();
   });
-  customSepInp.addEventListener('input', updatePreview);
 
   if (resetFormatBtn) {
     resetFormatBtn.addEventListener('click', () => {
@@ -3241,14 +3237,12 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       prefixInp.value = defaultPfx;
       formatInp.value = defaultFormat;
       sepSelect.value = ['/', '-', '_'].includes(defaultSep) ? defaultSep : 'custom';
-      customSepInp.value = '';
+      customSepInp.value = sepSelect.value === 'custom' ? defaultSep : '';
       customSepInp.disabled = sepSelect.value !== 'custom';
-      if (sepSelect.value === 'custom') customSepInp.value = defaultSep;
       nextInp.value = String(defaultNext).padStart(defaultPad, '0');
       paddingInp.value = defaultPad;
-      lastFocusedInput = formatInp;
-      lastStart = 0;
-      lastEnd = 0;
+      dynamicSelect.value = '';
+      lastStart = lastEnd = formatInp.value.length;
       updatePreview();
       toast('Reset to default values. Click Save to apply.', 'info');
     });
@@ -3263,27 +3257,37 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     }
     const target = formatInp;
     const currentVal = target.value;
-    const startPos = typeof target.selectionStart === 'number' ? target.selectionStart : currentVal.length;
-    const endPos = typeof target.selectionEnd === 'number' ? target.selectionEnd : startPos;
-    
-    target.value = currentVal.substring(0, startPos) + val + currentVal.substring(endPos);
-    const newCursor = startPos + val.length;
+    const startPos = document.activeElement === target && typeof target.selectionStart === 'number'
+      ? target.selectionStart
+      : Math.min(lastStart, currentVal.length);
+    const endPos = document.activeElement === target && typeof target.selectionEnd === 'number'
+      ? target.selectionEnd
+      : Math.min(lastEnd, currentVal.length);
+    let left = currentVal.slice(0, startPos);
+    const right = currentVal.slice(endPos);
+    const separator = (sepSelect.value === 'custom' ? customSepInp.value : sepSelect.value) || '/';
+    const hasSeparatorAtEnd = text => !separator || text.endsWith(separator) || /[\/_-]$/.test(text);
+    const hasSeparatorAtStart = text => !separator || text.startsWith(separator) || /^[\/_-]/.test(text);
+    if (!currentVal && prefixInp.value.trim()) left = prefixInp.value.trim();
+    const before = left && !hasSeparatorAtEnd(left) ? left + (separator || '/') : left;
+    const after = right && !hasSeparatorAtStart(right) ? (separator || '/') + right : right;
+    target.value = before + val + after;
+    const newCursor = before.length + val.length;
     target.focus();
     if (typeof target.setSelectionRange === 'function') {
       target.setSelectionRange(newCursor, newCursor);
     }
     lastStart = newCursor;
     lastEnd = newCursor;
+    dynamicSelect.value = '';
     updatePreview();
   };
 
   insertBtn.addEventListener('click', insertSelectedDynamicField);
-  dynamicSelect.addEventListener('change', () => {
-    if (dynamicSelect.value) formatInp.focus();
-  });
 
   let previewRequestSequence = 0;
   const updatePreview = () => {
+    const requestId = ++previewRequestSequence;
     const raw = nextInp.value.trim();
     if (!/^\d{1,12}$/.test(raw) || Number(raw) < 1) {
       prevEl.textContent = 'Enter a positive sequence number';
@@ -3296,15 +3300,19 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     }
     const sep = sepSelect.value === 'custom' ? customSepInp.value : sepSelect.value;
     const pattern = formatInp.value.trim();
-    const allowed = new Set(['CUSTOMERTYPE','LOCATION','FY','ORG','BRANCH','YEAR','MONTH','SEQUENCE','FYS_YY','FYE_YY']);
-    const tokens = [...pattern.matchAll(/\{([A-Za-z0-9_-]+)\}/g)].map(match => match[1].toUpperCase());
+    const allowed = new Set([
+      'CUSTOMERTYPE','CUSTOMER_TYPE','CUSTOMER-TYPE','LOCATION','FY','FINANCIAL_YEAR','FINANCIAL-YEAR',
+      'ORG','ORGANIZATION','BRANCH','YEAR','YYYY','YY','MONTH','MM','DAY','DD',
+      'SEQUENCE','SEQ','NUMBER','NUM','FYS_YY','FYE_YY'
+    ]);
+    const tokens = [...pattern.matchAll(/(?:\$\s*)?\{\s*([A-Za-z0-9_-]+)\s*\}|%\s*([A-Za-z0-9_-]+)\s*%/g)]
+      .map(match => (match[1] || match[2]).toUpperCase());
     const unsupported = [...new Set(tokens.filter(token => !allowed.has(token)))];
     if (unsupported.length) {
       prevEl.textContent = `Unsupported placeholder: {${unsupported[0]}}`;
       return;
     }
 
-    const requestId = ++previewRequestSequence;
     prevEl.textContent = 'Updating preview...';
     window.clearTimeout(updatePreview._timer);
     updatePreview._timer = window.setTimeout(async () => {
@@ -3349,7 +3357,12 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     const formatPattern = formatInp.value.trim();
     const rawNext = nextInp.value.trim();
     const sep = sepSelect.value === 'custom' ? customSepInp.value.trim() : sepSelect.value;
-    const padding = Math.max(1, Math.min(12, parseInt(paddingInp.value, 10) || rawNext.length || 5));
+    const padding = parseInt(paddingInp.value, 10);
+    if (!Number.isInteger(padding) || padding < 1 || padding > 12) {
+      toast('Padding must be between 1 and 12.', 'error');
+      paddingInp.focus();
+      return;
+    }
 
     if (!prefix) {
       toast('Prefix is required.', 'error');
@@ -3361,9 +3374,14 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       nextInp.focus();
       return;
     }
-    const unsupportedTokens = [...formatPattern.matchAll(/\{([A-Za-z0-9_-]+)\}/g)]
-      .map(match => match[1].toUpperCase())
-      .filter(token => !['CUSTOMERTYPE','LOCATION','FY','ORG','BRANCH','YEAR','MONTH','SEQUENCE','FYS_YY','FYE_YY'].includes(token));
+    const supportedTokens = new Set([
+      'CUSTOMERTYPE','CUSTOMER_TYPE','CUSTOMER-TYPE','LOCATION','FY','FINANCIAL_YEAR','FINANCIAL-YEAR',
+      'ORG','ORGANIZATION','BRANCH','YEAR','YYYY','YY','MONTH','MM','DAY','DD',
+      'SEQUENCE','SEQ','NUMBER','NUM','FYS_YY','FYE_YY'
+    ]);
+    const unsupportedTokens = [...formatPattern.matchAll(/(?:\$\s*)?\{\s*([A-Za-z0-9_-]+)\s*\}|%\s*([A-Za-z0-9_-]+)\s*%/g)]
+      .map(match => (match[1] || match[2]).toUpperCase())
+      .filter(token => !supportedTokens.has(token));
     if (formatPattern.length > 160 || [...new Set(unsupportedTokens)].length) {
       toast(formatPattern.length > 160 ? 'Format pattern cannot exceed 160 characters.' : `Unsupported placeholder: {${[...new Set(unsupportedTokens)][0]}}`, 'error');
       formatInp.focus();
@@ -3387,9 +3405,19 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           }]
         })
       });
-      toast(`Number series for ${item.label} updated successfully.`, 'success');
+      const saved = await api(`/settings/transaction-series/${currentSeries.id}/`);
+      const savedItem = saved.items?.find(savedConfig => savedConfig.document_type === item.document_type);
+      if (!savedItem ||
+          savedItem.prefix !== prefix ||
+          (savedItem.format_pattern || '') !== formatPattern ||
+          (savedItem.separator || '/') !== (sep || '/') ||
+          Number(savedItem.next_number) !== next_number ||
+          Number(savedItem.padding) !== padding) {
+        throw new Error('The saved numbering configuration could not be verified. Please retry.');
+      }
       closeModal();
       await renderNumberSeriesPage(container, currentSeries.id);
+      toast(`Number series for ${item.label} updated successfully.`, 'success');
     } catch (err) {
       saveItemBtn.disabled = false;
       saveItemBtn.textContent = 'Save';
@@ -3509,11 +3537,13 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
   const closeModal = () => {
     document.removeEventListener('keydown', onKeyDown);
     modal.remove();
+    document.body.classList.remove('modal-open');
   };
   const onKeyDown = (e) => {
     if (e.key === 'Escape') closeModal();
   };
   document.addEventListener('keydown', onKeyDown);
+  document.body.classList.add('modal-open');
   modal.addEventListener('click', e => {
     if (e.target === modal) closeModal();
   });
@@ -3624,11 +3654,13 @@ function openEditSeriesMetaModal(container, currentSeries) {
   const closeModal = () => {
     document.removeEventListener('keydown', onKeyDown);
     modal.remove();
+    document.body.classList.remove('modal-open');
   };
   const onKeyDown = (e) => {
     if (e.key === 'Escape') closeModal();
   };
   document.addEventListener('keydown', onKeyDown);
+  document.body.classList.add('modal-open');
   modal.addEventListener('click', e => {
     if (e.target === modal) closeModal();
   });

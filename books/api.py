@@ -14424,7 +14424,7 @@ def settings_number_series_view(request):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_transaction_series(org)
-    from .models import TransactionSeries, DocumentNumberSeries
+    from .models import TransactionSeries, DocumentNumberSeries, DocumentNumberPreference
     modules = [(item['pfx'], item['label']) for item in services.SUPPORTED_TRANSACTION_TYPES]
 
     if request.method == 'GET':
@@ -14489,8 +14489,6 @@ def settings_number_series_view(request):
         Organization.objects.select_for_update().get(pk=org.pk)
         series_item = DocumentNumberSeries.objects.select_for_update().get(pk=series_item.pk, organization=org)
         counter = services._series_counter_for_date(series_item, org, module_or_pfx=mod_key)
-        if next_seq < counter.next_number:
-            raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
         series_item.prefix = prefix
         series_item.next_number = next_seq
         if pad_val is not None:
@@ -14519,7 +14517,7 @@ def settings_transaction_series_view(request, series_id=None):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_transaction_series(org)
-    from .models import TransactionSeries, DocumentNumberSeries
+    from .models import TransactionSeries, DocumentNumberSeries, DocumentNumberPreference
     supported_type_keys = {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}
 
     if request.method == 'GET':
@@ -14592,6 +14590,12 @@ def settings_transaction_series_view(request, series_id=None):
                     'location': current_series.location,
                     'separator': s_item.separator or '/',
                     'current_year': timezone.localdate().year,
+                    'default_prefix': t['default_prefix'],
+                    'default_padding': t['padding'],
+                    'default_next': t['default_next'],
+                    'default_separator': '/',
+                    'starting_number': s_item.starting_number,
+                    'reset_annually': s_item.reset_annually,
                 })
 
         return j({
@@ -14779,8 +14783,24 @@ def settings_transaction_series_view(request, series_id=None):
                     s_item = DocumentNumberSeries.objects.filter(
                         organization=org, name=grp.name, document_type=doc_type
                     ).first()
+                    if s_item:
+                        s_item.series_group = grp
                 if not s_item:
-                    raise ApiError(404, f'Numbering configuration for {doc_type} was not found.')
+                    t_cfg = next((item for item in services.SUPPORTED_TRANSACTION_TYPES if item['key'] == doc_type), None)
+                    s_item = DocumentNumberSeries.objects.create(
+                        organization=org,
+                        series_group=grp,
+                        name=grp.name,
+                        document_type=doc_type,
+                        prefix=t_cfg['default_prefix'] if t_cfg else 'DOC-',
+                        starting_number=1,
+                        next_number=t_cfg['default_next'] if t_cfg else 1,
+                        padding=t_cfg['padding'] if t_cfg else 5,
+                        active=grp.is_active,
+                        is_default=grp.is_default,
+                        branch=grp.branch,
+                        location=grp.location,
+                    )
                 if 'prefix' in item_data and item_data['prefix'] is not None:
                     prefix = str(item_data['prefix']).strip()
                     if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
@@ -14800,13 +14820,18 @@ def settings_transaction_series_view(request, series_id=None):
                         raise ApiError(400, 'Next number must be a positive whole number.')
                     requested_next = int(raw_next)
                     counter = services._series_counter_for_date(s_item, org, module_or_pfx=doc_type)
-                    if requested_next < counter.next_number:
-                        raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
                     counter.next_number = requested_next
                     counter.save(update_fields=['next_number', 'updated_at'])
                     s_item.next_number = requested_next
                     if 'padding' not in item_data and len(raw_next) > 1:
                         s_item.padding = len(raw_next)
+                if 'starting_number' in item_data:
+                    try:
+                        s_item.starting_number = max(1, int(item_data['starting_number']))
+                    except (TypeError, ValueError):
+                        pass
+                if 'reset_annually' in item_data:
+                    s_item.reset_annually = bool(item_data['reset_annually'])
                 if 'padding' in item_data:
                     try:
                         padding = int(item_data['padding'])
@@ -14821,6 +14846,11 @@ def settings_transaction_series_view(request, series_id=None):
                 s_item.active = grp.is_active
                 s_item.is_default = grp.is_default
                 s_item.save()
+
+                if grp.is_default:
+                    DocumentNumberPreference.objects.filter(
+                        organization=org, document_type=doc_type
+                    ).update(prefix=s_item.prefix, next_number=s_item.next_number)
 
             services.log_audit(request.user, 'update', 'TransactionSeries', grp.pk, f"Updated transaction series {grp.name}", org=org)
             return j({'status': 'ok', 'id': grp.pk, 'message': f'Series "{grp.name}" updated successfully.'})
@@ -15156,10 +15186,6 @@ def doc_number_preferences_view(request):
             dns = services._select_document_number_series(doc_type, org=org, series=series, location=location, allow_inactive=True)
             if dns:
                 counter = services._series_counter_for_date(dns, org, module_or_pfx=doc_type)
-                if next_number < counter.next_number:
-                    if auto_generate:
-                        raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
-                    next_number = counter.next_number
                 dns.prefix = prefix
                 dns.next_number = next_number
                 dns.reset_annually = restart_yearly

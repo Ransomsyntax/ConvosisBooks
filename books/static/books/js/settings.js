@@ -2948,7 +2948,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}" data-edit-item-default-prefix="${esc(item.default_prefix || item.prefix || '')}" data-edit-item-default-next="${item.default_next || 1}" data-edit-item-default-pad="${item.default_padding || 5}" data-edit-item-default-sep="${esc(item.default_separator || '/')}">
                     Configure
                   </button>
                 </td>
@@ -3048,7 +3048,11 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         org_code: btn.dataset.editItemOrg,
         branch: btn.dataset.editItemBranch,
         location: btn.dataset.editItemLocation,
-        separator: btn.dataset.editItemSeparator
+        separator: btn.dataset.editItemSeparator,
+        default_prefix: btn.dataset.editItemDefaultPrefix,
+        default_next: btn.dataset.editItemDefaultNext,
+        default_padding: btn.dataset.editItemDefaultPad,
+        default_separator: btn.dataset.editItemDefaultSep
       });
     });
   });
@@ -3197,6 +3201,23 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   });
   modal.querySelectorAll('[data-close-item]').forEach(b => b.addEventListener('click', closeModal));
 
+  // Track active input and cursor position for inserting dynamic placeholders
+  let lastFocusedInput = formatInp;
+  let lastStart = formatInp.selectionStart ?? formatInp.value.length;
+  let lastEnd = formatInp.selectionEnd ?? formatInp.value.length;
+
+  const trackInput = (inp) => {
+    lastFocusedInput = inp;
+    lastStart = inp.selectionStart ?? inp.value.length;
+    lastEnd = inp.selectionEnd ?? inp.value.length;
+  };
+
+  [prefixInp, formatInp].forEach(inp => {
+    ['click', 'keyup', 'select', 'focus'].forEach(ev => {
+      inp.addEventListener(ev, () => trackInput(inp));
+    });
+  });
+
   sepSelect.addEventListener('change', () => {
     if (sepSelect.value === 'custom') {
       customSepInp.disabled = false;
@@ -3210,37 +3231,55 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
   if (resetFormatBtn) {
     resetFormatBtn.addEventListener('click', () => {
-      const pfx = prefixInp.value.trim() || item.prefix || '';
-      const sep = sepSelect.value === 'custom' ? (customSepInp.value || '/') : (sepSelect.value || '/');
-      formatInp.value = pfx ? `${pfx}${sep}{SEQUENCE}` : '{SEQUENCE}';
+      const defaultPfx = item.default_prefix || item.prefix || '';
+      const defaultSep = item.default_separator || '/';
+      const defaultPad = Number(item.default_padding || 5);
+      const defaultNext = Number(item.default_next || 1);
+
+      prefixInp.value = defaultPfx;
+      formatInp.value = '';
+      sepSelect.value = defaultSep;
+      customSepInp.value = '';
+      customSepInp.disabled = true;
+      nextInp.value = String(defaultNext).padStart(defaultPad, '0');
+      paddingInp.value = defaultPad;
+      lastFocusedInput = formatInp;
+      lastStart = 0;
+      lastEnd = 0;
       updatePreview();
-      toast('Format pattern reset to default.', 'info');
+      toast('Reset to default values. Click Save to apply.', 'info');
     });
   }
 
   const insertSelectedDynamicField = () => {
     const val = dynamicSelect.value;
-    if (!val) return;
-    const startPos = formatInp.selectionStart ?? formatInp.value.length;
-    const endPos = formatInp.selectionEnd ?? formatInp.value.length;
-    const currentVal = formatInp.value;
-    const sep = sepSelect.value === 'custom' ? (customSepInp.value || '') : (sepSelect.value || '');
-    let insertStr = val;
-    if (!currentVal) {
-      const pfx = prefixInp.value.trim();
-      insertStr = (pfx ? pfx + sep : '') + val;
-      formatInp.value = insertStr;
-    } else {
-      const needsLeadingSep = startPos > 0 && sep && !currentVal.substring(0, startPos).endsWith(sep) && currentVal[startPos-1] !== '/' && currentVal[startPos-1] !== '-';
-      formatInp.value = currentVal.substring(0, startPos) + (needsLeadingSep ? sep : '') + val + currentVal.substring(endPos);
+    if (!val) {
+      toast('Please select a dynamic field from the dropdown first.', 'info');
+      dynamicSelect.focus();
+      return;
     }
-    formatInp.focus();
-    dynamicSelect.value = '';
+    const target = lastFocusedInput || formatInp;
+    const currentVal = target.value;
+    const startPos = (typeof lastStart === 'number' && lastStart <= currentVal.length) ? lastStart : currentVal.length;
+    const endPos = (typeof lastEnd === 'number' && lastEnd <= currentVal.length) ? lastEnd : currentVal.length;
+    
+    target.value = currentVal.substring(0, startPos) + val + currentVal.substring(endPos);
+    const newCursor = startPos + val.length;
+    target.focus();
+    if (typeof target.setSelectionRange === 'function') {
+      target.setSelectionRange(newCursor, newCursor);
+    }
+    lastStart = newCursor;
+    lastEnd = newCursor;
     updatePreview();
   };
 
   insertBtn.addEventListener('click', insertSelectedDynamicField);
-  dynamicSelect.addEventListener('change', insertSelectedDynamicField);
+  dynamicSelect.addEventListener('change', () => {
+    if (dynamicSelect.value) {
+      insertSelectedDynamicField();
+    }
+  });
 
   const updatePreview = () => {
     const raw = nextInp.value.trim();
@@ -3259,28 +3298,37 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     const yr = String(item.current_year || (startYY ? 2000 + Number(startYY) : 2026));
     const now = new Date();
     const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
 
     const sampleReplacements = {
       'CUSTOMERTYPE': 'B2B',
+      'CUSTOMER_TYPE': 'B2B',
+      'CUSTOMER-TYPE': 'B2B',
       'LOCATION': (item.location || 'KOTTAYAM').toUpperCase(),
       'FY': fy,
+      'FINANCIAL_YEAR': fy,
+      'FINANCIAL-YEAR': fy,
       'ORG': item.org_code || 'CONVO',
+      'ORGANIZATION': item.org_code || 'CONVO',
       'BRANCH': (item.branch || 'TVM').toUpperCase(),
       'YEAR': yr,
+      'YYYY': yr,
+      'YY': startYY,
       'MONTH': mo,
+      'MM': mo,
+      'DAY': day,
+      'DD': day,
       'FYS_YY': startYY,
       'FYE_YY': endYY
     };
 
     let result = pattern;
     Object.entries(sampleReplacements).forEach(([token, value]) => {
-      result = result.split(`%${token}%`).join(value);
-      result = result.split(`\${${token}}`).join(value);
-      const re = new RegExp(`\\{${token}\\}`, 'gi');
-      result = result.replace(re, value);
+      const rx = new RegExp(`(?:\\$?\\s*\\{\\s*${token}\\s*\\}|%\\s*${token}\\s*%|%${token}%)`, 'gi');
+      result = result.replace(rx, value);
     });
 
-    const seqRe = /\{SEQUENCE\}/gi;
+    const seqRe = /(?:\$?\s*\{\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\}|%\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*%|%(?:SEQUENCE|SEQ|NUMBER|NUM)%)/gi;
     if (seqRe.test(result)) {
       result = result.replace(seqRe, seqStr);
     } else {
@@ -3297,10 +3345,17 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
     prevEl.textContent = result;
   };
-  prefixInp.addEventListener('input', updatePreview);
-  formatInp.addEventListener('input', updatePreview);
-  nextInp.addEventListener('input', updatePreview);
-  paddingInp.addEventListener('input', updatePreview);
+
+  ['input', 'change', 'keyup', 'paste'].forEach(ev => {
+    prefixInp.addEventListener(ev, updatePreview);
+    formatInp.addEventListener(ev, updatePreview);
+    nextInp.addEventListener(ev, updatePreview);
+    paddingInp.addEventListener(ev, updatePreview);
+    customSepInp.addEventListener(ev, updatePreview);
+  });
+
+  // Calculate live preview immediately upon modal open
+  updatePreview();
 
   const saveItemBtn = modal.querySelector('#btnSaveSeriesItem');
   saveItemBtn.addEventListener('click', async () => {

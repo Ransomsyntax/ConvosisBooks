@@ -4365,7 +4365,12 @@ async function openDocNumberPreferencesModal({ kind, series = 'Default Transacti
           }
         });
         toast(`${docLabel} number preferences saved.`);
-        if (onSave) onSave(res);
+        const formattedVal = (res && (res.preview_formatted || res.formatted)) || (pfx + nextNum);
+        if (res && typeof res === 'object') {
+          res.preview_formatted = formattedVal;
+          res.formatted = formattedVal;
+        }
+        if (onSave) onSave(res, formattedVal, pfx, nextNum);
         modal.close();
       } catch (err) {
         saveBtn.disabled = false;
@@ -6434,8 +6439,9 @@ async function paymentReceivedForm(pre = {}) {
           series: $('#pay-series', form)?.value || 'Default Transaction Series',
           location: form.elements.business_location_id?.value || 'HO Kottayam',
           branch: form.elements.branch?.value || '',
-          onSave: (pfx, next) => {
-            if (next) form.elements.number.value = next;
+          onSave: (resOrPfx, next) => {
+            const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+            if (val) form.elements.number.value = val;
           }
         });
       });
@@ -7489,8 +7495,9 @@ async function paymentMadeForm(pre = {}) {
           kind: 'payments-made',
           series: $('#paym-series', form)?.value || 'Default Transaction Series',
           location: 'HO Kottayam',
-          onSave: (pfx, next) => {
-            if (next) $('#paym-number', form).value = next;
+          onSave: (resOrPfx, next) => {
+            const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+            if (val) $('#paym-number', form).value = val;
           }
         });
       };
@@ -8801,8 +8808,9 @@ async function expenseForm(id) {
           kind: 'expenses',
           series: $('#exp-series', form)?.value || 'Default Transaction Series',
           location: $('#exp-location', form)?.value || 'HO Kottayam',
-          onSave: (pfx, next) => {
-            if (next) $('#exp-number', form).value = next;
+          onSave: (resOrPfx, next) => {
+            const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+            if (val) $('#exp-number', form).value = val;
           }
         });
       };
@@ -10613,8 +10621,9 @@ async function challanModal(id) {
           series: $('#dc-series', form)?.value || 'Default Transaction Series',
           location: form.elements.business_location_id?.value || 'HO Kottayam',
           branch: form.elements.branch?.value || '',
-          onSave: (pfx, next) => {
-            if (next) $('#dc-number-preview', form).value = next;
+          onSave: (resOrPfx, next) => {
+            const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+            if (val) $('#dc-number-preview', form).value = val;
           }
         });
       });
@@ -13820,8 +13829,9 @@ ${renderStockQuantityCell(l, items, whList)}
       series: $('#q-series', form)?.value || 'Default Transaction Series',
       location: $('#q-location', form)?.value || 'HO Kottayam',
       branch: $('#q-branch', form)?.value || '',
-      onSave: (pfx, next) => {
-        if (next) $('#q-number', form).value = next;
+      onSave: (resOrPfx, next) => {
+        const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+        if (val) $('#q-number', form).value = val;
       }
     });
   });
@@ -14671,8 +14681,9 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       series: $('#so-series', form)?.value || 'Default Transaction Series',
       location: $('#so-location', form)?.value || 'HO Kottayam',
       branch: $('#so-branch', form)?.value || '',
-      onSave: (pfx, next) => {
-        if (next) $('#so-number', form).value = next;
+      onSave: (resOrPfx, next) => {
+        const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+        if (val) $('#so-number', form).value = val;
       }
     });
   });
@@ -15422,8 +15433,9 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       series: $('#bill-series', form)?.value || 'Default Transaction Series',
       location: $('#bill-location', form)?.value || 'HO Kottayam',
       branch: $('#bill-branch', form)?.value || '',
-      onSave: (pfx, next) => {
-        if (next) $('#bill-number', form).value = next;
+      onSave: (resOrPfx, next) => {
+        const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+        if (val) $('#bill-number', form).value = val;
       }
     });
   });
@@ -16145,8 +16157,9 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       series: $('#po-series', form)?.value || 'Default Transaction Series',
       location: $('#po-location', form)?.value || 'HO Kottayam',
       branch: $('#po-branch', form)?.value || '',
-      onSave: (pfx, next) => {
-        if (next) $('#po-number', form).value = next;
+      onSave: (resOrPfx, next) => {
+        const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
+        if (val) $('#po-number', form).value = val;
       }
     });
   };

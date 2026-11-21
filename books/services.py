@@ -663,23 +663,32 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     # Token mappings (case-insensitive keys handled below)
     token_map = {
         'CUSTOMERTYPE': clean_cust_type,
+        'CUSTOMER_TYPE': clean_cust_type,
+        'CUSTOMER-TYPE': clean_cust_type,
         'LOCATION': clean_location,
         'FY': fy,
+        'FINANCIAL_YEAR': fy,
+        'FINANCIAL-YEAR': fy,
         'ORG': org_code,
+        'ORGANIZATION': org_code,
         'BRANCH': branch_val or 'HQ',
         'YEAR': str(yr),
+        'YYYY': str(yr),
+        'YY': start_yy,
         'MONTH': mo,
+        'MM': mo,
+        'DAY': f"{date_val.day:02d}",
+        'DD': f"{date_val.day:02d}",
         'FYS_YY': start_yy,
         'FYE_YY': end_yy,
     }
 
     result = raw_pattern
     for key, val in token_map.items():
-        result = result.replace(f"%{key}%", val).replace(f"${{{key}}}", val)
-        rx = re.compile(rf'\{{{key}\}}', re.IGNORECASE)
+        rx = re.compile(rf'(?:\$?\s*\{{\s*{key}\s*\}}|\%\s*{key}\s*\%|\%{key}\%)', re.IGNORECASE)
         result = rx.sub(val, result)
 
-    seq_rx = re.compile(r'\{SEQUENCE\}', re.IGNORECASE)
+    seq_rx = re.compile(r'(?:\$?\s*\{\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\}|\%\s*(?:SEQUENCE|SEQ|NUMBER|NUM)\s*\%|\%(?:SEQUENCE|SEQ|NUMBER|NUM)\%)', re.IGNORECASE)
     if seq_rx.search(result):
         candidate = seq_rx.sub(num_str, result)
     else:

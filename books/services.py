@@ -2171,7 +2171,13 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
             hsn = rl.get('hsn_sac') or (item_obj.hsn_sac if item_obj else '')
             qty_val = Decimal(str(rl.get('quantity') or 1))
             rate_val = Decimal(str(rl.get('rate') or (item_obj.selling_price if item_obj else profile.total)))
+            disc_type = rl.get('discount_type')
+            disc_amt = Decimal(str(rl.get('discount_amount') or 0))
             disc_val = Decimal(str(rl.get('discount_percent') or 0))
+            if disc_type in ('amount', 'rupee', '₹') or (disc_amt > 0 and disc_val == 0):
+                disc_val = Decimal('0.00')
+            else:
+                disc_amt = Decimal('0.00')
             gst_val = Decimal(str(rl.get('gst_rate') or (item_obj.gst_rate if item_obj else 0)))
             parsed_lines.append({
                 'item': item_obj,
@@ -2180,6 +2186,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
                 'quantity': qty_val,
                 'rate': rate_val,
                 'discount_percent': disc_val,
+                'discount_amount': disc_amt,
                 'gst_rate': gst_val,
                 'position': idx
             })
@@ -2242,6 +2249,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
             quantity=l['quantity'],
             rate=l['rate'],
             discount_percent=l['discount_percent'],
+            discount_amount=l.get('discount_amount', Decimal('0.00')),
             gst_rate=l['gst_rate'],
             taxable=l['taxable'],
             tax_amount=l['tax_amount'],

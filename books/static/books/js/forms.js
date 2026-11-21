@@ -1574,6 +1574,113 @@ document.addEventListener('click', e => {
   }
 });
 
+function renderDiscountCell(l = {}, extraClasses = '') {
+  if (typeof ensureTransactionCardStyles === 'function') {
+    ensureTransactionCardStyles();
+  }
+  const isAmt = (l.discount_type === 'amount' || (l.discount_amount != null && Number(l.discount_amount) > 0));
+  const dType = isAmt ? 'amount' : 'percent';
+  const dVal = isAmt
+    ? (l.discount_amount != null ? l.discount_amount : (l.discount || 0))
+    : (l.discount_percent != null ? l.discount_percent : (l.discount || 0));
+  const sym = isAmt ? '₹' : '%';
+  const extraDiscCls = extraClasses ? ' ' + extraClasses + '-discount' : '';
+  const extraTypeCls = extraClasses ? ' ' + extraClasses + '-discount-type' : '';
+  return `
+    <td style="width:125px;padding:10px 8px;vertical-align:top;position:relative;">
+      <div class="disc-cell-wrap" style="display:flex;align-items:center;gap:4px;position:relative;">
+        <input class="in l-disc${extraDiscCls}" type="number" step="0.01" min="0" value="${esc(dVal)}" style="text-align:right;flex:1;min-width:45px;height:34px;box-sizing:border-box;" aria-label="Discount">
+        <input type="hidden" class="l-disc-type${extraTypeCls}" value="${dType}">
+        <div class="disc-dropdown-container" style="position:relative;display:inline-block;">
+          <button type="button" class="btn-disc-toggle" style="height:34px;min-width:42px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;gap:3px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:#0f172a;" title="Switch discount type (% or ₹)">
+            <span class="disc-current-symbol">${sym}</span>
+            <span style="font-size:10px;color:#475569;margin-left:2px;">▾</span>
+          </button>
+          <div class="disc-dropdown-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.12);padding:4px;z-index:9999;min-width:48px;flex-direction:column;gap:3px;box-sizing:border-box;">
+            <button type="button" class="disc-opt-btn ${!isAmt ? 'active' : ''}" data-type="percent" style="width:100%;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:${!isAmt ? '#2563eb' : 'transparent'};color:${!isAmt ? '#ffffff' : '#334155'};border-radius:6px;font-size:13.5px;font-weight:600;cursor:pointer;">%</button>
+            <button type="button" class="disc-opt-btn ${isAmt ? 'active' : ''}" data-type="amount" style="width:100%;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:${isAmt ? '#2563eb' : 'transparent'};color:${isAmt ? '#ffffff' : '#334155'};border-radius:6px;font-size:13.5px;font-weight:600;cursor:pointer;">₹</button>
+          </div>
+        </div>
+      </div>
+    </td>
+  `;
+}
+window.renderDiscountCell = renderDiscountCell;
+
+// Global dropdown toggle & option selector for Discount cell (% or ₹)
+document.addEventListener('click', e => {
+  const toggleBtn = e.target.closest('.btn-disc-toggle');
+  if (toggleBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const container = toggleBtn.closest('.disc-dropdown-container');
+    const menu = container ? container.querySelector('.disc-dropdown-menu') : null;
+    const isAlreadyOpen = menu && (menu.style.display === 'flex' || menu.classList.contains('show'));
+
+    document.querySelectorAll('.disc-dropdown-menu').forEach(m => {
+      m.style.display = 'none';
+      m.classList.remove('show');
+    });
+
+    if (menu && !isAlreadyOpen) {
+      menu.style.display = 'flex';
+      menu.classList.add('show');
+    }
+    return;
+  }
+
+  const optBtn = e.target.closest('.disc-opt-btn');
+  if (optBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const newType = optBtn.dataset.type;
+    const cellWrap = optBtn.closest('.disc-cell-wrap') || optBtn.closest('td');
+    const container = optBtn.closest('.disc-dropdown-container');
+    const menu = optBtn.closest('.disc-dropdown-menu');
+
+    if (cellWrap && container) {
+      const typeInp = cellWrap.querySelector('.l-disc-type') || cellWrap.querySelector('.dc-discount-type');
+      const symSpan = container.querySelector('.disc-current-symbol');
+      const discInp = cellWrap.querySelector('.l-disc') || cellWrap.querySelector('.dc-discount');
+
+      if (typeInp) {
+        typeInp.value = newType;
+      }
+      if (symSpan) {
+        symSpan.textContent = newType === 'amount' ? '₹' : '%';
+      }
+
+      if (menu) {
+        menu.querySelectorAll('.disc-opt-btn').forEach(btn => {
+          const isActive = btn.dataset.type === newType;
+          btn.classList.toggle('active', isActive);
+          btn.style.background = isActive ? '#2563eb' : 'transparent';
+          btn.style.color = isActive ? '#ffffff' : '#334155';
+        });
+        menu.style.display = 'none';
+        menu.classList.remove('show');
+      }
+
+      if (discInp) {
+        discInp.dispatchEvent(new Event('input', { bubbles: true }));
+        discInp.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (typeInp) {
+        typeInp.dispatchEvent(new Event('input', { bubbles: true }));
+        typeInp.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    return;
+  }
+
+  if (!e.target.closest('.disc-dropdown-container')) {
+    document.querySelectorAll('.disc-dropdown-menu').forEach(m => {
+      m.style.display = 'none';
+      m.classList.remove('show');
+    });
+  }
+});
+
 
 function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
   const currentSig = doc.signature_data || '';
@@ -4712,7 +4819,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: defaultDocNotes, terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
-  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td><td><input class="in l-disc" type="number" step="0.01" min="0" max="100" aria-label="Discount %" value="${esc(l.discount_percent || 0)}"></td><td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
+  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td>${renderDiscountCell(l)}<td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
   const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
   const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
@@ -4806,7 +4913,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
                   <th>HSN/SAC</th>
                   <th>Qty</th>
                   <th>Rate (₹)</th>
-                  <th>Disc %</th>
+                  <th>Discount</th>
                   <th class="th-tax-explainer" data-doc-kind="${kind}" style="cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">GST <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
                   <th class="r">Amount</th>
                   <th></th>
@@ -4881,10 +4988,18 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         const qtyVal = num($('.l-qty', tr).value) || 0;
         const rateVal = num($('.l-rate', tr).value) || 0;
         const discVal = num($('.l-disc', tr).value) || 0;
+        const discType = $('.l-disc-type', tr)?.value || 'percent';
         const gstVal = num($('.l-gst', tr).value) || 0;
 
         const gross = qtyVal * rateVal;
-        const net = Math.max(0, gross * (1 - discVal / 100));
+        let disc = 0;
+        if (discType === 'amount') {
+          disc = Math.min(gross, Math.max(0, discVal));
+        } else {
+          const clampedPct = Math.min(100, Math.max(0, discVal));
+          disc = gross * (clampedPct / 100);
+        }
+        const net = Math.max(0, gross - disc);
         let taxable = net;
         let taxAmt = 0;
         let lineTot = net;
@@ -5105,15 +5220,22 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         d.tax_pricing_type = (form.elements.tax_pricing_type ? form.elements.tax_pricing_type.value : 'tax_exclusive') || 'tax_exclusive';
         d.customer_type = (form.elements.customer_type ? form.elements.customer_type.value : (inv ? 'b2b' : 'registered')) || (inv ? 'b2b' : 'registered');
         d.is_tax_inclusive = (d.tax_pricing_type === 'tax_inclusive');
-        d.lines = $$('tr.ln', form).map(tr => ({
-          item: $('.l-item', tr).value || null,
-          description: $('.l-desc', tr).value,
-          hsn_sac: $('.l-hsn', tr).value,
-          quantity: $('.l-qty', tr).value,
-          rate: $('.l-rate', tr).value,
-          discount_percent: $('.l-disc', tr).value || 0,
-          gst_rate: $('.l-gst', tr).value
-        }));
+        d.lines = $$('tr.ln', form).map(tr => {
+          const discVal = num($('.l-disc', tr).value) || 0;
+          const discType = $('.l-disc-type', tr)?.value || 'percent';
+          return {
+            item: $('.l-item', tr).value || null,
+            description: $('.l-desc', tr).value,
+            hsn_sac: $('.l-hsn', tr).value,
+            quantity: $('.l-qty', tr).value,
+            rate: $('.l-rate', tr).value,
+            discount_percent: discType === 'percent' ? discVal : 0,
+            discount_amount: discType === 'amount' ? discVal : 0,
+            discount_type: discType,
+            discount: discVal,
+            gst_rate: $('.l-gst', tr).value
+          };
+        });
 
         const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
 
@@ -5361,7 +5483,22 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
     },
     onSubmit: async (d, action, form) => {
       d.force = true;
-      d.lines = $$('tr.ln', form).map(tr => ({ item: $('.l-item', tr).value || null, description: $('.l-desc', tr).value, hsn_sac: $('.l-hsn', tr).value, quantity: $('.l-qty', tr).value, rate: $('.l-rate', tr).value, discount_percent: $('.l-disc', tr).value || 0, gst_rate: $('.l-gst', tr).value }));
+      d.lines = $$('tr.ln', form).map(tr => {
+        const discVal = num($('.l-disc', tr).value) || 0;
+        const discType = $('.l-disc-type', tr)?.value || 'percent';
+        return {
+          item: $('.l-item', tr).value || null,
+          description: $('.l-desc', tr).value,
+          hsn_sac: $('.l-hsn', tr).value,
+          quantity: $('.l-qty', tr).value,
+          rate: $('.l-rate', tr).value,
+          discount_percent: discType === 'percent' ? discVal : 0,
+          discount_amount: discType === 'amount' ? discVal : 0,
+          discount_type: discType,
+          discount: discVal,
+          gst_rate: $('.l-gst', tr).value
+        };
+      });
       const saved = await api(id ? `${kind}/${id}/` : `${kind}/`, { method: id ? 'PUT' : 'POST', body: d });
 
       for (const pf of pendingFiles) {
@@ -6800,6 +6937,111 @@ function ensureTransactionCardStyles() {
     }
     .btn-tax-pricing-info {
       display: inline-flex !important;
+    }
+    .disc-cell-wrap {
+      display: flex !important;
+      align-items: center !important;
+      gap: 4px !important;
+      position: relative !important;
+    }
+    .btn-disc-toggle {
+      height: 34px !important;
+      min-width: 42px !important;
+      padding: 0 6px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 3px !important;
+      border: 1px solid #cbd5e1 !important;
+      background: #ffffff !important;
+      border-radius: 6px !important;
+      cursor: pointer !important;
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      color: #0f172a !important;
+      user-select: none !important;
+      box-sizing: border-box !important;
+      transition: border-color 0.15s, background-color 0.15s !important;
+    }
+    .btn-disc-toggle:hover {
+      border-color: #94a3b8 !important;
+      background: #f8fafc !important;
+    }
+    .disc-dropdown-container {
+      position: relative !important;
+      display: inline-block !important;
+    }
+    .disc-dropdown-menu {
+      display: none;
+      position: absolute !important;
+      top: calc(100% + 4px) !important;
+      right: 0 !important;
+      background: #ffffff !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 10px !important;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 2px 4px rgba(15, 23, 42, 0.06) !important;
+      padding: 4px !important;
+      z-index: 99999 !important;
+      min-width: 48px !important;
+      flex-direction: column !important;
+      gap: 3px !important;
+      box-sizing: border-box !important;
+    }
+    .disc-dropdown-menu.show {
+      display: flex !important;
+    }
+    .disc-opt-btn {
+      width: 100% !important;
+      height: 32px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border: none !important;
+      background: transparent !important;
+      color: #334155 !important;
+      border-radius: 6px !important;
+      font-size: 13.5px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      user-select: none !important;
+      transition: background-color 0.15s, color 0.15s !important;
+    }
+    .disc-opt-btn:hover {
+      background: #f1f5f9 !important;
+      color: #0f172a !important;
+    }
+    .disc-opt-btn.active {
+      background: #2563eb !important;
+      color: #ffffff !important;
+    }
+    .disc-opt-btn.active:hover {
+      background: #1d4ed8 !important;
+      color: #ffffff !important;
+    }
+    [data-theme="dark"] .btn-disc-toggle {
+      background: #1e293b !important;
+      border-color: #334155 !important;
+      color: #f8fafc !important;
+    }
+    [data-theme="dark"] .btn-disc-toggle:hover {
+      border-color: #475569 !important;
+      background: #334155 !important;
+    }
+    [data-theme="dark"] .disc-dropdown-menu {
+      background: #1e293b !important;
+      border-color: #334155 !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+    }
+    [data-theme="dark"] .disc-opt-btn {
+      color: #cbd5e1 !important;
+    }
+    [data-theme="dark"] .disc-opt-btn:hover {
+      background: #334155 !important;
+      color: #f8fafc !important;
+    }
+    [data-theme="dark"] .disc-opt-btn.active {
+      background: #2563eb !important;
+      color: #ffffff !important;
     }
   `;
   document.head.appendChild(style);
@@ -9995,12 +10237,7 @@ async function challanModal(id) {
       <td><select class="in dc-item" aria-label="Item details">${opts(itemOptions, line.item_id || line.item || '')}</select></td>
       <td><input class="in dc-quantity" type="number" min="0.001" step="0.001" value="${esc(line.quantity || '')}" aria-label="Quantity"></td>
       <td><input class="in dc-rate" type="number" min="0" step="0.01" value="${esc(line.rate || '')}" aria-label="Rate"></td>
-      <td style="display:flex;gap:4px;align-items:center">
-        <input class="in dc-discount" type="number" min="0" step="0.01" value="${esc(line.discount_amount ? line.discount_amount : line.discount_percent || 0)}" aria-label="Discount">
-        <select class="in dc-discount-type" aria-label="Discount type">
-          ${opts([['percentage', '%'], ['amount', '₹']], line.discount_amount ? 'amount' : 'percentage')}
-        </select>
-      </td>
+      ${renderDiscountCell(line, 'dc')}
       <td><select class="in dc-tax" aria-label="Tax rate">${opts([['0', '0%'], ['0.25', '0.25%'], ['3', '3%'], ['5', '5%'], ['12', '12%'], ['18', '18%'], ['28', '28%'], ['40', '40%']], line.gst_rate || 0)}</select></td>
       <td class="dc-amount" style="text-align:right;font-weight:600">0.00</td>
       <td><button type="button" class="btn dc-remove-row" aria-label="Remove row" title="Remove row">×</button></td>
@@ -10384,11 +10621,14 @@ async function challanModal(id) {
         $$('.dc-line', tbody).forEach(row => {
           const quantity = Number($('.dc-quantity', row).value) || 0;
           const rate = Number($('.dc-rate', row).value) || 0;
-          const discount = Number($('.dc-discount', row).value) || 0;
-          const discountType = $('.dc-discount-type', row).value;
+          const discount = Number($('.dc-discount, .l-disc', row)?.value) || 0;
+          const rawDiscountType = $('.dc-discount-type, .l-disc-type', row)?.value || 'percentage';
+          const discountType = (rawDiscountType === 'amount' || rawDiscountType === '₹') ? 'amount' : 'percentage';
           const taxRate = Number($('.dc-tax', row).value) || 0;
           const gross = quantity * rate;
-          const discountAmount = discountType === 'percentage' ? gross * discount / 100 : discount;
+          const discountAmount = discountType === 'amount'
+            ? Math.min(gross, Math.max(0, discount))
+            : (gross * Math.min(100, Math.max(0, discount)) / 100);
           const net = Math.max(0, gross - discountAmount);
           let taxable = net;
           let taxAmt = 0;
@@ -10523,15 +10763,17 @@ async function challanModal(id) {
       const lines = $$('.dc-line', form).map(row => {
         const quantity = Number($('.dc-quantity', row).value);
         const rate = Number($('.dc-rate', row).value);
-        const discount = Number($('.dc-discount', row).value) || 0;
-        const discountType = $('.dc-discount-type', row).value;
+        const discount = Number($('.dc-discount, .l-disc', row)?.value) || 0;
+        const rawDiscountType = $('.dc-discount-type, .l-disc-type', row)?.value || 'percentage';
+        const discountType = (rawDiscountType === 'amount' || rawDiscountType === '₹') ? 'amount' : 'percentage';
         const line = {
           item: Number($('.dc-item', row).value),
           quantity, rate,
           discount, discount_type: discountType,
+          discount_amount: discountType === 'amount' ? discount : 0,
+          discount_percent: discountType === 'percentage' ? discount : 0,
           gst_rate: Number($('.dc-tax', row).value) || 0
         };
-        if (discountType === 'percentage') line.discount_percent = discount;
         return line;
       });
       const invalid = lines.find(line => !line.item || !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.rate) || line.rate < 0);
@@ -11027,6 +11269,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       <td style="width:130px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
+      ${renderDiscountCell(l)}
       <td style="width:160px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="TDS" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -11207,6 +11450,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                   <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">
                     RATE <i class="fa-solid fa-calculator" style="font-size:11px;color:#64748b;margin-left:2px;"></i>
                   </th>
+                  <th style="width:125px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
                   <th style="width:160px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TDS</th>
                   <th style="width:120px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
@@ -11422,26 +11666,41 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     let subtotal = 0;
     let totalLineTax = 0;
     let totalQty = 0;
+    let grossTotal = 0;
+    let totalRowDiscount = 0;
     const discPct = num($('#rec-discount-pct', form)?.value) || 0;
 
     $$('.ln-rec', tbody).forEach(tr => {
       const q = num($('.l-qty', tr).value) || 0;
       const r = num($('.l-rate', tr).value) || 0;
       const gst = num($('.l-gst', tr).value) || 0;
+      const lineDiscVal = num($('.l-disc', tr)?.value) || 0;
+      const lineDiscType = $('.l-disc-type', tr)?.value || 'percent';
 
       totalQty += q;
       const gross = q * r;
-      const net = gross * (100 - discPct) / 100;
-      let taxable = net;
+      grossTotal += gross;
+
+      let lineDiscAmt = 0;
+      if (lineDiscType === 'amount') {
+        lineDiscAmt = Math.min(gross, Math.max(0, lineDiscVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, lineDiscVal));
+        lineDiscAmt = gross * (clampedPct / 100);
+      }
+      totalRowDiscount += lineDiscAmt;
+      const net = Math.max(0, gross - lineDiscAmt);
+      const discountedLine = discPct > 0 ? (net * (100 - discPct) / 100) : net;
+      let taxable = discountedLine;
       let taxAmt = 0;
-      let lineTot = net;
+      let lineTot = discountedLine;
 
       if (isTaxInclusive && gst > 0) {
-        taxable = r2(net / (1 + gst / 100));
-        taxAmt = r2(net - taxable);
-        lineTot = net;
+        taxable = r2(discountedLine / (1 + gst / 100));
+        taxAmt = r2(discountedLine - taxable);
+        lineTot = discountedLine;
       } else {
-        taxable = r2(net);
+        taxable = r2(discountedLine);
         taxAmt = r2(taxable * (gst / 100));
         lineTot = r2(taxable + taxAmt);
       }
@@ -11453,13 +11712,12 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       if (amtEl) amtEl.textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
-    const discAmt = subtotal * discPct / 100;
-    const taxableSubtotal = Math.max(0, subtotal - discAmt);
+    const totalDiscount = totalRowDiscount + (discPct > 0 ? ((grossTotal - totalRowDiscount) * discPct / 100) : 0);
     const adj = num($('#rec-adj-val', form)?.value) || 0;
     const tcsRate = num($('#rec-tcs-tax', form)?.value) || 0;
-    const tcsAmt = taxableSubtotal * tcsRate / 100;
+    const tcsAmt = subtotal * tcsRate / 100;
 
-    let grand = taxableSubtotal + totalLineTax + tcsAmt + adj;
+    let grand = subtotal + totalLineTax + tcsAmt + adj;
     grand = Math.max(0, grand);
 
     const subEl = $('#rec-subtotal-val', form);
@@ -11471,18 +11729,18 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     const barQty = $('#rec-bar-total-qty', form);
 
     if (subEl) subEl.textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    if (discEl) discEl.textContent = discAmt.toFixed(2);
+    if (discEl) discEl.textContent = totalDiscount.toFixed(2);
     if (adjEl) adjEl.textContent = adj.toFixed(2);
     if (tcsEl) tcsEl.textContent = tcsAmt.toFixed(2);
     if (grandEl) grandEl.textContent = grand.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     if (barTot) barTot.textContent = inr(grand);
     if (barQty) barQty.textContent = totalQty.toFixed(2);
 
-    return { subtotal, discAmt, totalLineTax, tcsAmt, adj, totalGrand: grand, totalQty };
+    return { subtotal, discAmt: totalDiscount, totalLineTax, tcsAmt, adj, totalGrand: grand, totalQty };
   }
 
   tbody.addEventListener('input', e => {
-    if (e.target.matches('.l-qty, .l-rate')) calcRecTotals();
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcRecTotals();
   });
 
   tbody.addEventListener('change', e => {
@@ -11507,7 +11765,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       }
       calcRecTotals();
     }
-    if (e.target.matches('.l-gst')) calcRecTotals();
+    if (e.target.matches('.l-gst, .l-disc-type')) calcRecTotals();
   });
 
   tbody.addEventListener('click', e => {
@@ -11718,20 +11976,33 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       const gVal = num($('.l-gst', tr).value) || 0;
 
       const isTaxInclusive = ($('#rec-tax-pricing', form)?.value === 'tax_inclusive');
+      const lineDiscVal = num($('.l-disc', tr)?.value) || 0;
+      const lineDiscType = $('.l-disc-type', tr)?.value || 'percent';
       const gross = qVal * rVal;
-      const net = gross * (100 - discPct) / 100;
-      let taxable = net;
-      let taxAmt = 0;
-      let lTot = net;
-      if (isTaxInclusive && gVal > 0) {
-        taxable = r2(net / (1 + gVal / 100));
-        taxAmt = r2(net - taxable);
-        lTot = net;
+      let lineDiscAmt = 0;
+      if (lineDiscType === 'amount') {
+        lineDiscAmt = Math.min(gross, Math.max(0, lineDiscVal));
       } else {
-        taxable = r2(net);
+        const clampedPct = Math.min(100, Math.max(0, lineDiscVal));
+        lineDiscAmt = gross * (clampedPct / 100);
+      }
+      const net = Math.max(0, gross - lineDiscAmt);
+      const discountedLine = discPct > 0 ? (net * (100 - discPct) / 100) : net;
+      let taxable = discountedLine;
+      let taxAmt = 0;
+      let lTot = discountedLine;
+      if (isTaxInclusive && gVal > 0) {
+        taxable = r2(discountedLine / (1 + gVal / 100));
+        taxAmt = r2(discountedLine - taxable);
+        lTot = discountedLine;
+      } else {
+        taxable = r2(discountedLine);
         taxAmt = r2(taxable * (gVal / 100));
         lTot = r2(taxable + taxAmt);
       }
+
+      const effectiveDiscVal = lineDiscVal > 0 ? lineDiscVal : discPct;
+      const effectiveDiscType = lineDiscVal > 0 ? lineDiscType : 'percent';
 
       lines.push({
         item: (itVal && itVal !== '__new_item__') ? Number(itVal) : null,
@@ -11741,7 +12012,10 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qVal,
         rate: rVal,
-        discount_percent: discPct,
+        discount_percent: effectiveDiscType === 'percent' ? effectiveDiscVal : 0,
+        discount_amount: effectiveDiscType === 'amount' ? effectiveDiscVal : 0,
+        discount_type: effectiveDiscType,
+        discount: effectiveDiscVal,
         gst_rate: gVal,
         line_total: lTot,
         position: idx
@@ -12771,15 +13045,7 @@ ${renderStockQuantityCell(l, items, whList)}
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
+      ${renderDiscountCell(l)}
       <td style="width:140px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -13564,7 +13830,13 @@ ${renderStockQuantityCell(l, items, whList)}
 
       totalQty += q;
       const gross = q * r;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      let disc = 0;
+      if (discType === 'amount') {
+        disc = Math.min(gross, Math.max(0, discVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, discVal));
+        disc = gross * clampedPct / 100;
+      }
       const net = Math.max(0, gross - disc);
       let taxable = net;
       let taxAmt = 0;
@@ -13904,12 +14176,14 @@ ${renderStockQuantityCell(l, items, whList)}
       const discType = $('.l-disc-type', tr).value || 'percent';
 
       let taxable = qVal * rVal;
-      if (discType === 'percent') {
-        taxable = taxable * (100 - dVal) / 100;
+      let discAmt = 0;
+      if (discType === 'amount') {
+        discAmt = Math.min(taxable, Math.max(0, dVal));
       } else {
-        taxable = Math.max(0, taxable - dVal);
+        const clampedPct = Math.min(100, Math.max(0, dVal));
+        discAmt = taxable * (clampedPct / 100);
       }
-      taxable = r2(taxable);
+      taxable = r2(Math.max(0, taxable - discAmt));
       const lTot = r2(taxable * (1 + gVal / 100));
 
       lines.push({
@@ -13921,7 +14195,10 @@ ${renderStockQuantityCell(l, items, whList)}
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qVal,
         rate: rVal,
-        discount_percent: dVal,
+        discount_percent: discType === 'percent' ? dVal : 0,
+        discount_amount: discType === 'amount' ? dVal : 0,
+        discount_type: discType,
+        discount: dVal,
         gst_rate: gVal,
         line_total: lTot,
         position: idx
@@ -14116,15 +14393,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
+      ${renderDiscountCell(l)}
       <td style="width:140px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -14412,7 +14681,13 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
       totalQty += q;
       const gross = q * r;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      let disc = 0;
+      if (discType === 'amount') {
+        disc = Math.min(gross, Math.max(0, discVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, discVal));
+        disc = gross * clampedPct / 100;
+      }
       const net = Math.max(0, gross - disc);
       let taxable = net;
       let taxAmt = 0;
@@ -14672,6 +14947,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         lineErr = true;
         return;
       }
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
       lines.push({
         item: itVal || null,
         warehouse: $('.l-wh-select', tr)?.value || null,
@@ -14681,7 +14958,10 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
-        discount_percent: num($('.l-disc', tr).value) || 0,
+        discount_percent: discType === 'percent' ? discVal : 0,
+        discount_amount: discType === 'amount' ? discVal : 0,
+        discount_type: discType,
+        discount: discVal,
         gst_rate: num($('.l-gst', tr).value) || 0
       });
     });
@@ -14841,15 +15121,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
+      ${renderDiscountCell(l)}
       <td style="width:140px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -15187,7 +15459,13 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
 
       totalQty += q;
       const gross = q * r;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      let disc = 0;
+      if (discType === 'amount') {
+        disc = Math.min(gross, Math.max(0, discVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, discVal));
+        disc = gross * clampedPct / 100;
+      }
       const net = Math.max(0, gross - disc);
       let taxable = net;
       let taxAmt = 0;
@@ -15423,6 +15701,8 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
         lineErr = true;
         return;
       }
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
       lines.push({
         item: itVal || null,
         warehouse: $('.l-wh-select', tr)?.value || null,
@@ -15432,7 +15712,10 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
-        discount_percent: num($('.l-disc', tr).value) || 0,
+        discount_percent: discType === 'percent' ? discVal : 0,
+        discount_amount: discType === 'amount' ? discVal : 0,
+        discount_type: discType,
+        discount: discVal,
         gst_rate: num($('.l-gst', tr).value) || 0
       });
     });
@@ -15581,15 +15864,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <td style="width:110px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
-      <td style="width:120px;padding:10px 8px;vertical-align:top;">
-        <div style="display:flex;gap:4px;">
-          <input class="in l-disc" type="number" step="0.01" min="0" max="100" value="${esc(l.discount_percent || 0)}" style="text-align:right;flex:1;min-width:45px;">
-          <select class="in l-disc-type" style="width:48px;padding:4px;">
-            <option value="percent">%</option>
-            <option value="amount">₹</option>
-          </select>
-        </div>
-      </td>
+      ${renderDiscountCell(l)}
       <td style="width:140px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="Tax rate" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -15882,7 +16157,13 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
       totalQty += q;
       const gross = q * r;
-      const disc = discType === 'percent' ? (gross * discVal / 100) : discVal;
+      let disc = 0;
+      if (discType === 'amount') {
+        disc = Math.min(gross, Math.max(0, discVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, discVal));
+        disc = gross * clampedPct / 100;
+      }
       const net = Math.max(0, gross - disc);
       let taxable = net;
       let taxAmt = 0;
@@ -16139,6 +16420,8 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         lineErr = true;
         return;
       }
+      const discVal = num($('.l-disc', tr).value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
       lines.push({
         item: itVal || null,
         warehouse: $('.l-wh-select', tr)?.value || null,
@@ -16148,7 +16431,10 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
-        discount_percent: num($('.l-disc', tr).value) || 0,
+        discount_percent: discType === 'percent' ? discVal : 0,
+        discount_amount: discType === 'amount' ? discVal : 0,
+        discount_type: discType,
+        discount: discVal,
         gst_rate: num($('.l-gst', tr).value) || 0
       });
     });
@@ -16309,6 +16595,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       <td style="width:130px;padding:10px 8px;vertical-align:top;">
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
+      ${renderDiscountCell(l)}
       <td style="width:160px;padding:10px 8px;vertical-align:top;">
         <select class="in l-gst" aria-label="TDS" style="width:100%;">
           <option value="0">Select a Tax</option>
@@ -16473,6 +16760,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
                   <th style="width:130px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">
                     RATE <i class="fa-solid fa-calculator" style="font-size:11px;color:#64748b;margin-left:2px;"></i>
                   </th>
+                  <th style="width:125px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
                   <th style="width:160px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TDS</th>
                   <th style="width:120px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
@@ -16683,6 +16971,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     let totalLineTax = 0;
     let totalQty = 0;
     let grossTotal = 0;
+    let totalRowDiscount = 0;
     const discPct = num($('#inv-discount-pct', form)?.value) || 0;
 
     $$('.ln-invoice', tbody).forEach(tr => {
@@ -16690,11 +16979,22 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       const rate = num($('.l-rate', tr).value) || 0;
       const lineAmt = qty * rate;
       const gstRate = num($('.l-gst', tr).value) || 0;
+      const lineDiscVal = num($('.l-disc', tr)?.value) || 0;
+      const lineDiscType = $('.l-disc-type', tr)?.value || 'percent';
 
       totalQty += qty;
       grossTotal += lineAmt;
 
-      const discountedLine = lineAmt * (100 - discPct) / 100;
+      let lineDiscAmt = 0;
+      if (lineDiscType === 'amount') {
+        lineDiscAmt = Math.min(lineAmt, Math.max(0, lineDiscVal));
+      } else {
+        const clampedPct = Math.min(100, Math.max(0, lineDiscVal));
+        lineDiscAmt = lineAmt * (clampedPct / 100);
+      }
+      totalRowDiscount += lineDiscAmt;
+      const netLine = Math.max(0, lineAmt - lineDiscAmt);
+      const discountedLine = discPct > 0 ? (netLine * (100 - discPct) / 100) : netLine;
       let lineTaxable = 0;
       let lineTax = 0;
       let lineTot = 0;
@@ -16714,7 +17014,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       $('.l-amt', tr).textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
-    const discAmt = r2(grossTotal * discPct / 100);
+    const discAmt = totalRowDiscount + (discPct > 0 ? r2((grossTotal - totalRowDiscount) * discPct / 100) : 0);
     const adj = num($('#inv-adj-val', form)?.value) || 0;
     const tcsRate = num($('#inv-tcs-tax', form)?.value) || 0;
     const tcsAmt = r2(subtotal * tcsRate / 100);
@@ -16841,7 +17141,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#inv-tax-pricing', form)?.addEventListener('change', calcInvoice);
 
   tbody.addEventListener('input', e => {
-    if (e.target.matches('.l-qty, .l-rate')) calcInvoice();
+    if (e.target.matches('.l-qty, .l-rate, .l-disc')) calcInvoice();
   });
 
   tbody.addEventListener('change', e => {
@@ -16866,7 +17166,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       }
       calcInvoice();
     }
-    if (e.target.matches('.l-gst')) calcInvoice();
+    if (e.target.matches('.l-gst, .l-disc-type')) calcInvoice();
   });
 
   $('#btn-inv-add-row', form)?.addEventListener('click', () => {
@@ -17016,10 +17316,14 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       const descVal = $('.l-desc', tr).value.trim();
       const qtyVal = num($('.l-qty', tr).value) || 0;
       const rateVal = num($('.l-rate', tr).value) || 0;
+      const lineDiscVal = num($('.l-disc', tr)?.value) || 0;
+      const lineDiscType = $('.l-disc-type', tr)?.value || 'percent';
       if (!descVal && !itVal) {
         lineErr = true;
         return;
       }
+      const effectiveDiscVal = lineDiscVal > 0 ? lineDiscVal : discPct;
+      const effectiveDiscType = lineDiscVal > 0 ? lineDiscType : 'percent';
       lines.push({
         item: itVal || null,
         warehouse: $('.l-wh-select', tr)?.value || null,
@@ -17029,7 +17333,10 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
         hsn_sac: $('.l-hsn', tr).value.trim(),
         quantity: qtyVal || 1,
         rate: rateVal,
-        discount_percent: discPct,
+        discount_percent: effectiveDiscType === 'percent' ? effectiveDiscVal : 0,
+        discount_amount: effectiveDiscType === 'amount' ? effectiveDiscVal : 0,
+        discount_type: effectiveDiscType,
+        discount: effectiveDiscVal,
         gst_rate: num($('.l-gst', tr).value) || 0
       });
     });

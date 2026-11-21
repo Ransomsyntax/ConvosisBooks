@@ -1813,13 +1813,33 @@ def parse_lines(raw, org=None):
         hsn = c.text('hsn_sac', max_len=10) or (item.hsn_sac if item else '')
         qty = c.number('quantity', True, lo=Decimal('0.001'), hi=Decimal('99999999'), places=3)
         rate = c.number('rate', True, lo=Decimal('0'), hi=Decimal('999999999'))
-        disc = c.number('discount_percent', lo=Decimal('0'), hi=Decimal('100'))
-        if disc == Decimal('0') and 'discount' in r:
-            disc = c.number('discount', lo=Decimal('0'), hi=Decimal('100'))
-        discount_amount = c.number('discount_amount', lo=Decimal('0'), hi=Decimal('999999999'))
+        disc_type = r.get('discount_type')
+        if disc_type in ('amount', 'fixed', 'rupee', '₹', 'inr'):
+            disc_type = 'amount'
+        elif disc_type in ('percentage', 'percent', '%'):
+            disc_type = 'percentage'
+        else:
+            disc_type = None
+
+        raw_disc = c.number('discount', lo=Decimal('0'), hi=Decimal('999999999'))
+        raw_disc_pct = c.number('discount_percent', lo=Decimal('0'), hi=Decimal('100'))
+        raw_disc_amt = c.number('discount_amount', lo=Decimal('0'), hi=Decimal('999999999'))
+
+        if disc_type == 'amount':
+            discount_amount = raw_disc_amt if (raw_disc_amt is not None and raw_disc_amt > Decimal('0')) else (raw_disc or Decimal('0'))
+            disc = Decimal('0')
+        elif disc_type == 'percentage':
+            disc = raw_disc_pct if (raw_disc_pct is not None and raw_disc_pct > Decimal('0')) else (raw_disc or Decimal('0'))
+            discount_amount = Decimal('0')
+        else:
+            discount_amount = raw_disc_amt or Decimal('0')
+            disc = raw_disc_pct or Decimal('0')
+            if disc == Decimal('0') and discount_amount == Decimal('0') and 'discount' in r:
+                disc = c.number('discount', lo=Decimal('0'), hi=Decimal('100'))
+
         if discount_amount and disc:
             c.err('discount', 'Enter a discount as either a percentage or an amount, not both.')
-        if discount_amount > qty * rate:
+        if discount_amount and qty is not None and rate is not None and discount_amount > qty * rate:
             c.err('discount_amount', 'Discount cannot exceed the line amount.')
         gst = c.number('gst_rate', default=Decimal('0'))
         if gst == Decimal('0') and 'tax_rate' in r:
@@ -2480,6 +2500,8 @@ class DocResource(Resource):
                   'lines': [{'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
                              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
                              'discount_amount': l.discount_amount,
+                             'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
+                             'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
                              'source_delivery_challan_line_id': getattr(l, 'source_delivery_challan_line_id', None),
                              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
                              'line_total': l.line_total,
@@ -3449,6 +3471,7 @@ class QuoteResource(DocResource):
                     quantity=l.quantity,
                     rate=l.rate,
                     discount_percent=l.discount_percent,
+                    discount_amount=getattr(l, 'discount_amount', Z),
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
@@ -3519,6 +3542,7 @@ class QuoteResource(DocResource):
                     quantity=l.quantity,
                     rate=l.rate,
                     discount_percent=l.discount_percent,
+                    discount_amount=getattr(l, 'discount_amount', Z),
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
@@ -6324,6 +6348,9 @@ class SalesOrderResource(Resource):
                     'quantity': l.quantity,
                     'rate': l.rate,
                     'discount_percent': l.discount_percent,
+                    'discount_amount': l.discount_amount,
+                    'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
+                    'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
                     'gst_rate': l.gst_rate,
                     'taxable': l.taxable,
                     'tax_amount': l.tax_amount,
@@ -6407,7 +6434,7 @@ class SalesOrderResource(Resource):
             SalesOrderLine.objects.create(
                 order=so, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                 taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'create', 'SalesOrder', so.number, f"Created sales order {so.number} for {cust.name} (₹{so.total})")
@@ -6479,7 +6506,7 @@ class SalesOrderResource(Resource):
                 SalesOrderLine.objects.create(
                     order=obj, item=l['item'], description=l['description'],
                     hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                    discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                    discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                     taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
                 )
         else:
@@ -6556,6 +6583,7 @@ class SalesOrderResource(Resource):
                     quantity=l.quantity,
                     rate=l.rate,
                     discount_percent=l.discount_percent,
+                    discount_amount=getattr(l, 'discount_amount', Z),
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
@@ -6854,6 +6882,9 @@ class PurchaseOrderResource(Resource):
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+             'discount_amount': l.discount_amount,
+             'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
+             'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
              'line_total': l.line_total}
             for l in o.lines.all()
@@ -6920,7 +6951,7 @@ class PurchaseOrderResource(Resource):
         for l in comp:
             PurchaseOrderLine.objects.create(order=po, item=l['item'], description=l['description'],
                                             hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                            discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                                            discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                                             taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'PurchaseOrder', po.number, f"Created purchase order {po.number} for {ven.name} (₹{po.total})")
         return po
@@ -6975,7 +7006,7 @@ class PurchaseOrderResource(Resource):
             PurchaseOrderLine.objects.create(
                 order=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                 taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'PurchaseOrder', obj.number, f"Updated purchase order {obj.number}")
@@ -7038,6 +7069,7 @@ class PurchaseOrderResource(Resource):
                     quantity=l.quantity,
                     rate=l.rate,
                     discount_percent=l.discount_percent,
+                    discount_amount=getattr(l, 'discount_amount', Z),
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
@@ -7374,6 +7406,9 @@ class CreditNoteResource(Resource):
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+             'discount_amount': l.discount_amount,
+             'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
+             'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
              'line_total': l.line_total}
             for l in o.lines.all()
@@ -7425,7 +7460,7 @@ class CreditNoteResource(Resource):
         for l in comp:
             CreditNoteLine.objects.create(credit_note=cn, item=l['item'], description=l['description'],
                                          hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                         discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                                         discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                                          taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'CreditNote', cn.number, f"Created credit note {cn.number} for {cust.name} (₹{cn.total})")
         return cn
@@ -7471,7 +7506,7 @@ class CreditNoteResource(Resource):
             CreditNoteLine.objects.create(
                 credit_note=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                 taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'CreditNote', obj.number, f"Updated credit note {obj.number}")
@@ -7715,6 +7750,9 @@ class VendorCreditResource(Resource):
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
+             'discount_amount': l.discount_amount,
+             'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
+             'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
              'line_total': l.line_total}
             for l in o.lines.all()
@@ -7791,7 +7829,7 @@ class VendorCreditResource(Resource):
         for l in comp:
             VendorCreditLine.objects.create(vendor_credit=vc, item=l['item'], description=l['description'],
                                            hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                           discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                                           discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                                            taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'VendorCredit', vc.number, f"Created vendor credit {vc.number} for {ven.name} (₹{vc.total})")
         return vc
@@ -7851,7 +7889,7 @@ class VendorCreditResource(Resource):
             VendorCreditLine.objects.create(
                 vendor_credit=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                discount_percent=l['discount_percent'], gst_rate=l['gst_rate'],
+                discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
                 taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'VendorCredit', obj.number, f"Updated vendor credit {obj.number}")
@@ -8046,18 +8084,40 @@ class RecurringInvoiceResource(Resource):
         if raw_lines and isinstance(raw_lines, list):
             for rl in raw_lines:
                 if isinstance(rl, dict) and (rl.get('description') or rl.get('item') or rl.get('rate')):
+                    d_type = rl.get('discount_type')
+                    d_amt = float(rl.get('discount_amount') or 0)
+                    d_pct = float(rl.get('discount_percent') or 0)
+                    raw_d = float(rl.get('discount') or 0)
+                    if d_type in ('amount', 'rupee', '₹') or (d_amt > 0 and d_pct == 0):
+                        d_type = 'amount'
+                        if d_amt == 0 and raw_d > 0:
+                            d_amt = raw_d
+                        d_pct = 0.0
+                    else:
+                        d_type = 'percentage'
+                        if d_pct == 0 and raw_d > 0 and d_amt == 0:
+                            d_pct = raw_d
+                        d_amt = 0.0
                     lines_data_clean.append({
                         'item': rl.get('item') or rl.get('item_id') or None,
                         'description': str(rl.get('description') or '').strip() or 'Line item',
                         'hsn_sac': str(rl.get('hsn_sac') or '').strip(),
                         'quantity': float(rl.get('quantity') or 1),
                         'rate': float(rl.get('rate') or 0),
-                        'discount_percent': float(rl.get('discount_percent') or 0),
+                        'discount_type': d_type,
+                        'discount_percent': d_pct,
+                        'discount_amount': d_amt,
+                        'discount': d_amt if d_type == 'amount' else d_pct,
                         'gst_rate': float(rl.get('gst_rate') or 0),
                         'line_total': float(rl.get('line_total') or 0)
                     })
             if lines_data_clean:
-                computed_tot = sum((Decimal(str(l['quantity'])) * Decimal(str(l['rate'])) * (100 - Decimal(str(l['discount_percent']))) / 100 for l in lines_data_clean), Decimal('0.00'))
+                computed_tot = sum((
+                    max(Decimal('0.00'), (Decimal(str(l['quantity'])) * Decimal(str(l['rate']))) - Decimal(str(l['discount_amount'])))
+                    if l['discount_type'] == 'amount' else
+                    (Decimal(str(l['quantity'])) * Decimal(str(l['rate'])) * (100 - Decimal(str(l['discount_percent']))) / 100)
+                    for l in lines_data_clean
+                ), Decimal('0.00'))
                 if tot <= Decimal('0.00'):
                     tot = computed_tot
 
@@ -8208,7 +8268,30 @@ class RecurringInvoiceResource(Resource):
         if 'max_occurrences' in data:
             meta['max_occurrences'] = int(data.get('max_occurrences')) if data.get('max_occurrences') else None
         if 'lines' in data and isinstance(data['lines'], list):
-            meta['lines'] = data['lines']
+            clean_lines = []
+            for rl in data['lines']:
+                if isinstance(rl, dict):
+                    d_type = rl.get('discount_type')
+                    d_amt = float(rl.get('discount_amount') or 0)
+                    d_pct = float(rl.get('discount_percent') or 0)
+                    raw_d = float(rl.get('discount') or 0)
+                    if d_type in ('amount', 'rupee', '₹') or (d_amt > 0 and d_pct == 0):
+                        d_type = 'amount'
+                        if d_amt == 0 and raw_d > 0:
+                            d_amt = raw_d
+                        d_pct = 0.0
+                    else:
+                        d_type = 'percentage'
+                        if d_pct == 0 and raw_d > 0 and d_amt == 0:
+                            d_pct = raw_d
+                        d_amt = 0.0
+                    rl_copy = dict(rl)
+                    rl_copy['discount_type'] = d_type
+                    rl_copy['discount_percent'] = d_pct
+                    rl_copy['discount_amount'] = d_amt
+                    rl_copy['discount'] = d_amt if d_type == 'amount' else d_pct
+                    clean_lines.append(rl_copy)
+            meta['lines'] = clean_lines
 
         obj.lines_data = meta
         obj.save()
@@ -8391,6 +8474,7 @@ class DeliveryChallanResource(Resource):
                 'discount_type': line.discount_type,
                 'discount_percent': line.discount_percent,
                 'discount_amount': line.discount_amount,
+                'discount': line.discount_amount if (line.discount_amount and line.discount_amount > 0) else line.discount_percent,
                 'gst_rate': line.gst_rate,
                 'taxable': line.taxable,
                 'tax_amount': line.tax_amount,

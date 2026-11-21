@@ -5147,7 +5147,7 @@ async function viewRecurringInvoiceModal(id) {
                   </td>
                   <td class="r">${ln.quantity}</td>
                   <td class="r">${inr(ln.rate)}</td>
-                  <td class="r">${ln.discount_percent || 0}%</td>
+                  <td class="r">${(ln.discount_type === 'amount' || (ln.discount_amount && num(ln.discount_amount) > 0)) ? inr(ln.discount_amount || ln.discount || 0) : ((num(ln.discount_percent) > 0 || num(ln.discount) > 0) ? (ln.discount_percent || ln.discount) + '%' : '0%')}</td>
                   <td class="r">${ln.gst_rate || 0}%</td>
                   <td class="r">${inr(ln.line_total)}</td>
                 </tr>
@@ -10734,7 +10734,7 @@ async function viewQuoteDetail(id) {
                   <td style="padding:10px 12px;"><b>${esc(l.description || 'Item')}</b>${l.hsn_sac ? ` <small style="color:#64748b;">(HSN ${esc(l.hsn_sac)})</small>` : ''}</td>
                   <td style="padding:10px 12px;text-align:right;">${qty(l.quantity)}</td>
                   <td style="padding:10px 12px;text-align:right;">${inr(l.rate)}</td>
-                  <td style="padding:10px 12px;text-align:right;">${num(l.discount_percent) > 0 ? l.discount_percent + '%' : '—'}</td>
+                  <td style="padding:10px 12px;text-align:right;">${(l.discount_type === 'amount' || (l.discount_amount && num(l.discount_amount) > 0)) ? inr(l.discount_amount || l.discount || 0) : ((num(l.discount_percent) > 0 || num(l.discount) > 0) ? (l.discount_percent || l.discount) + '%' : '—')}</td>
                   <td style="padding:10px 12px;text-align:right;">${l.gst_rate}%</td>
                   <td style="padding:10px 12px;text-align:right;font-weight:600;">${inr(l.line_total)}</td>
                 </tr>
@@ -10959,7 +10959,7 @@ async function viewSalesOrderDetail(id) {
                   <td style="padding:10px 12px;"><b>${esc(l.description || 'Item')}</b>${l.hsn_sac ? ` <small style="color:#64748b;">(HSN ${esc(l.hsn_sac)})</small>` : ''}</td>
                   <td style="padding:10px 12px;text-align:right;">${qty(l.quantity)}</td>
                   <td style="padding:10px 12px;text-align:right;">${inr(l.rate)}</td>
-                  <td style="padding:10px 12px;text-align:right;">${num(l.discount_percent) > 0 ? l.discount_percent + '%' : '—'}</td>
+                  <td style="padding:10px 12px;text-align:right;">${(l.discount_type === 'amount' || (l.discount_amount && num(l.discount_amount) > 0)) ? inr(l.discount_amount || l.discount || 0) : ((num(l.discount_percent) > 0 || num(l.discount) > 0) ? (l.discount_percent || l.discount) + '%' : '—')}</td>
                   <td style="padding:10px 12px;text-align:right;">${l.gst_rate}%</td>
                   <td style="padding:10px 12px;text-align:right;font-weight:600;">${inr(l.line_total)}</td>
                 </tr>

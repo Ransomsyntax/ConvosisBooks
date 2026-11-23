@@ -1489,6 +1489,64 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         res = self.client.get('/api/settings/all/')
         self.assertEqual(res.status_code, 403)
 
+    def test_location_custom_fields_are_saved_validated_and_preserved(self):
+        self.client.force_login(self.admin_user)
+        CustomField.objects.create(
+            organization=self.org,
+            module='locations',
+            name='site_code',
+            label='Site Code',
+            field_type='text',
+            required=True,
+        )
+
+        missing_value = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({'name': 'Missing Site Code'}),
+            content_type='application/json',
+        )
+        self.assertEqual(missing_value.status_code, 400)
+
+        created = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({
+                'name': 'Custom Field Location',
+                'custom_fields_data': {'site_code': 'NORTH-01'},
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        location_id = created.json()['location']['id']
+        self.assertEqual(created.json()['location']['custom_fields_data']['site_code'], 'NORTH-01')
+
+        updated = self.client.put(
+            f'/api/settings/locations/{location_id}/',
+            data=json.dumps({'name': 'Renamed Custom Field Location'}),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.assertEqual(updated.json()['location']['custom_fields_data']['site_code'], 'NORTH-01')
+
+    def test_warehouse_only_locations_reject_transaction_series(self):
+        self.client.force_login(self.admin_user)
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Business-only Invoice Series',
+            document_type='invoices',
+            prefix='INV',
+        )
+
+        response = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({
+                'name': 'Warehouse-only Location',
+                'location_type': 'warehouse',
+                'transaction_series_ids': [series.pk],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_enterprise_settings_registry_and_preference_persistence(self):
         self.login_as_tenant_admin()
         registry_response = self.client.get('/api/settings/enterprise/registry/')

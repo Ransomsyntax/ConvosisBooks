@@ -1330,6 +1330,7 @@ class BusinessLocation(models.Model):
     location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES, default=LOCATION_TYPE_BUSINESS)
     name = models.CharField(max_length=120)
     logo_data = models.TextField(blank=True, default='')
+    custom_fields_data = models.JSONField(default=dict, blank=True)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='child_locations')
     gstin = models.CharField(max_length=15, blank=True, default='')
     address = models.TextField(blank=True, default='')

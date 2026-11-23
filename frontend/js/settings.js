@@ -14,6 +14,7 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'profile', label: 'Profile', hash: '#/settings/profile' },
           { key: 'branding', label: 'Branding', hash: '#/settings/branding' },
+          { key: 'locations', label: 'Locations', hash: '#/settings/business-locations' },
           { key: 'ai', label: 'AI Control Center', hash: '#/settings/ai' },
           { key: 'subscription-billing', label: 'Manage Subscription', hash: '#/settings/subscription-billing' },
         ]
@@ -59,6 +60,7 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'number-series', label: 'Transaction Number Series', hash: '#/settings/number-series' },
           { key: 'custom-fields', label: 'Custom Fields', hash: '#/settings/custom-fields' },
+          { key: 'location-customization', label: 'Locations', hash: '#/settings/location-customization' },
           { key: 'pdf-templates', label: 'PDF Templates', hash: '#/settings/pdf-templates' },
           { key: 'email-notifications', label: 'Email Notifications', hash: '#/settings/email-notifications' },
           { key: 'sms-notifications', label: 'SMS Notifications', hash: '#/settings/sms-notifications' },
@@ -469,7 +471,7 @@ function getSettingsPageRenderer(key) {
   return map[key] || null;
 }
 
-async function renderCustomFieldsSettingsPage(container) {
+async function renderCustomFieldsSettingsPage(container, initialModule = '', pageTitle = 'Custom Fields') {
   const modules = [
     { key: 'quotes', label: 'Quotes' },
     { key: 'sales_orders', label: 'Sales Orders' },
@@ -480,6 +482,7 @@ async function renderCustomFieldsSettingsPage(container) {
     { key: 'bills', label: 'Bills' },
     { key: 'payments_made', label: 'Payments Made' },
     { key: 'payments_received', label: 'Payments Received' },
+    { key: 'locations', label: 'Locations' },
   ];
   const fieldTypes = [
     ['text', 'Text'],
@@ -489,7 +492,7 @@ async function renderCustomFieldsSettingsPage(container) {
     ['checkbox', 'Checkbox'],
   ];
   let customFields = [];
-  let selectedModule = '';
+  let selectedModule = initialModule;
 
   const moduleLabel = module => modules.find(item => item.key === module)?.label
     || String(module || '').replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
@@ -508,19 +511,21 @@ async function renderCustomFieldsSettingsPage(container) {
       <div class="settings-panel-card">
         <div class="settings-panel-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
           <div>
-            <h2>Custom Fields</h2>
-            <div class="sub">Create organization-level fields for supported modules.</div>
+            <h2>${esc(pageTitle)}</h2>
+            <div class="sub">${initialModule ? 'Configure organization-level custom fields for locations.' : 'Create organization-level fields for supported modules.'}</div>
           </div>
           <button type="button" class="btn p" data-custom-field-add>Add Custom Field</button>
         </div>
         <div style="padding:0 20px 20px;">
-          <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;margin:8px 0 16px;">
-            Module
-            <select class="in" data-custom-field-module style="max-width:260px;">
-              <option value="">All modules</option>
-              ${filterModules().map(item => `<option value="${item.key}" ${selectedModule === item.key ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
-            </select>
-          </label>
+          ${initialModule
+            ? '<div style="font-size:13px;font-weight:600;margin:8px 0 16px;">Module: Locations</div>'
+            : `<label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;margin:8px 0 16px;">
+              Module
+              <select class="in" data-custom-field-module style="max-width:260px;">
+                <option value="">All modules</option>
+                ${filterModules().map(item => `<option value="${item.key}" ${selectedModule === item.key ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+              </select>
+            </label>`}
           ${filteredFields.length ? `
             <div style="overflow-x:auto;">
               <table class="tbl" style="width:100%;">
@@ -573,10 +578,12 @@ async function renderCustomFieldsSettingsPage(container) {
 
   const openFieldForm = field => {
     const editing = Boolean(field);
-    const quoteModule = editing ? field.module === 'quotes' : true;
+    const quoteModule = editing ? field.module === 'quotes' : !initialModule;
     const moduleControl = editing
       ? `<div class="s12"><b>Module:</b> ${esc(moduleLabel(field.module))}</div>`
-      : fld({
+      : initialModule
+        ? `<div class="s12"><b>Module:</b> ${esc(moduleLabel(initialModule))}</div>`
+        : fld({
         name: 'module',
         label: 'Module',
         type: 'select',
@@ -629,7 +636,7 @@ async function renderCustomFieldsSettingsPage(container) {
           active: form.querySelector('[name="active"]').checked,
         };
         if (!editing) {
-          payload.module = form.querySelector('[name="module"]').value;
+          payload.module = initialModule || form.querySelector('[name="module"]').value;
           payload.pdf_visible = payload.module === 'quotes' && form.querySelector('[name="pdf_visible"]').checked;
         } else if (field.module === 'quotes') {
           payload.pdf_visible = form.querySelector('[name="pdf_visible"]').checked;
@@ -714,6 +721,10 @@ async function renderCustomFieldsSettingsPage(container) {
   });
 
   await loadFields().catch(showLoadError);
+}
+
+async function renderLocationCustomizationPage(container) {
+  return renderCustomFieldsSettingsPage(container, 'locations', 'Location Customization');
 }
 
 function toggleSettingsNavGroup(btn) {
@@ -5156,22 +5167,41 @@ async function renderEnterpriseSettingsPage(container) {
 }
 
 // Global window registration
+function renderBusinessLocationCustomField(field, value) {
+  const required = field.required ? ' required' : '';
+  const readOnly = field.read_only ? ' readonly' : '';
+  const label = `${esc(field.label)}${field.required ? '*' : ''}`;
+  if (field.field_type === 'checkbox') {
+    const checked = value === true || value === 'true' || value === '1' ? ' checked' : '';
+    return `<label class="form-group"><input type="checkbox" data-location-custom-field="${esc(field.name)}"${checked}${field.read_only ? ' disabled' : ''}> ${label}</label>`;
+  }
+  if (field.field_type === 'select') {
+    const options = String(field.options || '').split(',').map(option => option.trim()).filter(Boolean);
+    return `<label class="form-group">${label}<select class="form-control" data-location-custom-field="${esc(field.name)}"${required}${field.read_only ? ' disabled' : ''}><option value="">Select ${esc(field.label)}</option>${options.map(option => `<option value="${esc(option)}"${String(value ?? '') === option ? ' selected' : ''}>${esc(option)}</option>`).join('')}</select></label>`;
+  }
+  const type = ['number', 'date'].includes(field.field_type) ? field.field_type : 'text';
+  return `<label class="form-group">${label}<input class="form-control" type="${type}" data-location-custom-field="${esc(field.name)}" value="${esc(value ?? '')}"${required}${readOnly}></label>`;
+}
+
 async function renderBusinessLocationsPage(container) {
   container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading locations…</div>`;
   let locations = [];
   let users = [];
   let series = [];
+  let customFields = [];
   let organization = null;
   try {
-    const [locationData, userData, seriesData, organizationData] = await Promise.all([
+    const [locationData, userData, seriesData, organizationData, customFieldData] = await Promise.all([
       api('/settings/locations/'),
       api('/settings/users/'),
       api('/settings/transaction-series/'),
-      api('/settings/organization/')
+      api('/settings/organization/'),
+      api('custom-fields/?module=locations&page_size=100')
     ]);
     locations = locationData.locations || [];
     users = userData.users || [];
     series = Array.isArray(seriesData) ? seriesData : (Array.isArray(seriesData.series) ? seriesData.series : []);
+    customFields = (customFieldData.results || []).filter(field => field.active && !field.hidden && field.form_visible);
     organization = organizationData || null;
   } catch (error) {
     container.innerHTML = `<div class="error-msg-card">${esc(error.message || 'Failed to load locations.')}</div>`;
@@ -5198,9 +5228,17 @@ async function renderBusinessLocationsPage(container) {
         <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Location' : 'Add Location'}</h2></div></div>
         <div class="form-group" style="margin-bottom:14px;">
           <label>Location Type</label>
-          <div style="display:flex;gap:12px;">
-            <label class="custom-radio"><input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}> <b>Business Location</b></label>
-            <label class="custom-radio"><input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}> <b>Warehouse Only Location</b></label>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
+              <input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}>
+              <b>Business Location</b>
+              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">Represents an organization's office or operational location for transactions, reports, and stock.</div>
+            </label>
+            <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
+              <input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}>
+              <b>Warehouse Only Location</b>
+              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A storage location for tracking and monitoring inventory.</div>
+            </label>
           </div>
         </div>
         <label class="form-group"><span id="locationNameLabel">${location.location_type === 'warehouse' ? 'Warehouse Name' : 'Name'}*</span>
@@ -5235,27 +5273,31 @@ async function renderBusinessLocationsPage(container) {
           <label class="form-group">Fax Number<input class="form-control" id="locationFax" value="${esc(location.fax)}"></label>
           <label class="form-group" style="grid-column:1/-1;">Website URL<input class="form-control" id="locationWebsite" value="${esc(location.website)}"></label>
         </div>
-        <label class="form-group">Primary Contact
+        <label class="form-group" data-business-location-only>Primary Contact*
           <select class="form-control" id="locationPrimaryContact">
             <option value="">Select contact</option>
             ${users.map(user => `<option value="${user.id}" ${user.id === location.primary_contact_id ? 'selected' : ''}>${esc(user.name)} &lt;${esc(user.email)}&gt;</option>`).join('')}
           </select>
         </label>
-        <label class="form-group">Transaction Number Series
+        <label class="form-group" data-business-location-only>Transaction Number Series*
           <select class="form-control" id="locationSeries" multiple size="4">
             ${series.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
           </select>
         </label>
-        <button type="button" class="btn btn-outline" id="btnAddLocationSeries">+ Add Transaction Series</button>
-        <label class="form-group">Default Transaction Number Series
+        <button type="button" class="btn btn-outline" id="btnAddLocationSeries" data-business-location-only>+ Add Transaction Series</button>
+        <label class="form-group" data-business-location-only>Default Transaction Number Series*
           <select class="form-control" id="locationDefaultSeries">
             <option value="">Select default series</option>
             ${series.map(item => `<option value="${item.id}" ${item.id === location.default_transaction_series_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
           </select>
         </label>
+        ${customFields.length ? `<div class="form-group"><b>Location Custom Fields</b><div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">${customFields.map(field => renderBusinessLocationCustomField(field, (location.custom_fields_data || {})[field.name] ?? (field.default_value && field.default_value.value) ?? '')).join('')}</div></div>` : ''}
         <div class="form-group"><b>Location Access</b>
-          <div style="max-height:160px;overflow:auto;border:1px solid #e2e8f0;padding:8px;">
-            ${users.map(user => `<label style="display:block;margin:6px;"><input type="checkbox" class="locationUser" value="${user.id}" ${location.assigned_user_ids.includes(user.id) ? 'checked' : ''}> ${esc(user.name)} — ${esc(user.role)}</label>`).join('')}
+          <div style="padding:8px 0;color:#64748b;font-size:12px;" id="locationAccessCount"></div>
+          <div style="max-height:180px;overflow:auto;border:1px solid #e2e8f0;padding:8px;">
+            <table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Access</th></tr></thead>
+              <tbody>${users.map(user => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td>${esc(user.role)}</td><td><input type="checkbox" class="locationUser" value="${user.id}" ${location.assigned_user_ids.includes(user.id) ? 'checked' : ''} aria-label="Grant location access to ${esc(user.name)}"></td></tr>`).join('')}</tbody>
+            </table>
           </div>
         </div>
         <div class="modal-footer">
@@ -5266,11 +5308,41 @@ async function renderBusinessLocationsPage(container) {
       `,
     });
     const root = modal.el || modal.element;
-    root.querySelectorAll('[name="locationType"]').forEach(radio => radio.addEventListener('change', () => {
-      root.querySelector('#locationNameLabel').textContent = radio.value === 'warehouse' ? 'Warehouse Name*' : 'Name*';
-    }));
+    const updateLocationAccessCount = () => {
+      const count = root.querySelectorAll('.locationUser:checked').length;
+      root.querySelector('#locationAccessCount').textContent = `${count} user(s) selected`;
+    };
+    const updateLocationTypeFields = () => {
+      const isBusinessLocation = root.querySelector('[name="locationType"]:checked').value === 'business';
+      root.querySelector('#locationNameLabel').textContent = isBusinessLocation ? 'Name*' : 'Warehouse Name*';
+      root.querySelectorAll('[data-business-location-only]').forEach(field => { field.hidden = !isBusinessLocation; });
+      root.querySelectorAll('[data-location-type-card]').forEach(card => {
+        const selected = card.querySelector('[name="locationType"]').checked;
+        card.style.borderColor = selected ? '#38bdf8' : '#cbd5e1';
+        card.style.background = selected ? '#f0f9ff' : '#fff';
+      });
+      if (!isBusinessLocation) {
+        root.querySelector('#locationPrimaryContact').value = '';
+        root.querySelector('#locationSeries').selectedIndex = -1;
+        root.querySelector('#locationDefaultSeries').value = '';
+      }
+    };
+    root.querySelectorAll('[name="locationType"]').forEach(radio => radio.addEventListener('change', updateLocationTypeFields));
+    root.querySelectorAll('.locationUser').forEach(input => input.addEventListener('change', updateLocationAccessCount));
+    updateLocationTypeFields();
+    updateLocationAccessCount();
     root.querySelector('#locationChild').addEventListener('change', event => {
       root.querySelector('#parentLocationWrap').style.display = event.target.checked ? '' : 'none';
+    });
+    root.querySelector('#locationSeries').addEventListener('change', event => {
+      const selectedIds = new Set(Array.from(event.target.selectedOptions).map(option => Number(option.value)));
+      const defaultSelect = root.querySelector('#locationDefaultSeries');
+      if (defaultSelect.value && !selectedIds.has(Number(defaultSelect.value))) {
+        defaultSelect.value = '';
+      }
+      Array.from(defaultSelect.options).forEach(option => {
+        if (option.value) option.disabled = !selectedIds.has(Number(option.value));
+      });
     });
     let selectedLogoData = location.logo_data || '';
     const logoSelect = root.querySelector('#locationLogo');
@@ -5315,6 +5387,27 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#btnAddLocationSeries').addEventListener('click', () => location.hash = '#/settings/number-series');
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
       const locationType = root.querySelector('[name="locationType"]:checked').value;
+      const primaryContactId = root.querySelector('#locationPrimaryContact').value;
+      const selectedSeriesIds = Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value));
+      const defaultSeriesId = root.querySelector('#locationDefaultSeries').value;
+      if (locationType === 'business' && !primaryContactId) {
+        toast('Choose a primary contact for this business location.', 'error');
+        return;
+      }
+      if (locationType === 'business' && (!defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
+        toast('Choose a default series from the transaction series assigned to this location.', 'error');
+        return;
+      }
+      for (const field of customFields) {
+        const input = Array.from(root.querySelectorAll('[data-location-custom-field]')).find(
+          item => item.dataset.locationCustomField === field.name,
+        );
+        if (field.required && input && !input.disabled && (input.type === 'checkbox' ? !input.checked : !input.value.trim())) {
+          toast(`${field.label} is required.`, 'error');
+          input.focus();
+          return;
+        }
+      }
       const payload = {
         location_type: locationType,
         name: root.querySelector('#locationName').value.trim(),
@@ -5332,9 +5425,13 @@ async function renderBusinessLocationsPage(container) {
         phone: root.querySelector('#locationPhone').value.trim(),
         fax: root.querySelector('#locationFax').value.trim(),
         website: root.querySelector('#locationWebsite').value.trim(),
-        primary_contact_id: root.querySelector('#locationPrimaryContact').value || null,
-        transaction_series_ids: Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value)),
-        default_transaction_series_id: root.querySelector('#locationDefaultSeries').value || null,
+        primary_contact_id: locationType === 'business' ? (primaryContactId || null) : null,
+        transaction_series_ids: locationType === 'business' ? selectedSeriesIds : [],
+        default_transaction_series_id: locationType === 'business' ? (defaultSeriesId || null) : null,
+        custom_fields_data: Array.from(root.querySelectorAll('[data-location-custom-field]')).reduce((values, input) => {
+          values[input.dataset.locationCustomField] = input.type === 'checkbox' ? input.checked : input.value;
+          return values;
+        }, {}),
         assigned_user_ids: Array.from(root.querySelectorAll('.locationUser:checked')).map(input => Number(input.value)),
         warehouse_ids: location.warehouse_ids || [],
         is_default: location.is_default,

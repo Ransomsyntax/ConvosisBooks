@@ -14258,6 +14258,7 @@ def _business_location_payload(location):
         'location_type': location.location_type,
         'name': location.name,
         'logo_data': location.logo_data,
+        'custom_fields_data': location.custom_fields_data or {},
         'parent_id': location.parent_id,
         'parent_name': location.parent.name if location.parent else '',
         'attention': location.attention,
@@ -14274,11 +14275,13 @@ def _business_location_payload(location):
         'website': location.website,
         'primary_contact_id': location.primary_contact_id,
         'primary_contact': location.primary_contact.get_full_name() or location.primary_contact.email if location.primary_contact else '',
+        'primary_contact_email': location.primary_contact.email if location.primary_contact else '',
         'assigned_user_ids': list(location.assigned_users.values_list('pk', flat=True)),
         'transaction_series_ids': list(location.transaction_series.values_list('pk', flat=True)),
         'default_transaction_series_id': location.default_transaction_series_id,
         'is_default': location.is_default,
         'active': location.active,
+        'warehouse_ids': list(location.warehouses.values_list('pk', flat=True)),
         'warehouses': [{
             'id': warehouse.pk,
             'name': warehouse.name,
@@ -14425,23 +14428,41 @@ def settings_locations_view(request, location_id=None):
     series_ids = data.get('transaction_series_ids', [])
     if not isinstance(series_ids, list):
         raise ApiError(400, 'Transaction series must be a list of series IDs.')
-    series_ids = list(dict.fromkeys(int(value) for value in series_ids if str(value).isdigit()))
+    if any(not str(value).isdigit() for value in series_ids):
+        raise ApiError(400, 'Transaction series must contain valid series IDs.')
+    series_ids = list(dict.fromkeys(int(value) for value in series_ids))
     series = list(DocumentNumberSeries.objects.filter(organization=org, pk__in=series_ids, active=True))
     if len(series) != len(series_ids):
         raise ApiError(400, 'Choose only active transaction series belonging to this organization.')
     default_series_id = data.get('default_transaction_series_id')
     default_series = None
     if default_series_id not in (None, '', 0):
+        if not str(default_series_id).isdigit():
+            raise ApiError(400, 'Choose a valid default transaction series.')
         default_series = DocumentNumberSeries.objects.filter(
             organization=org, pk=int(default_series_id), active=True
         ).first()
-        if not default_series or (series_ids and default_series.pk not in series_ids):
+        if not default_series or default_series.pk not in series_ids:
             raise ApiError(400, 'The default series must be active and selected for this location.')
+    if location_type == BusinessLocation.LOCATION_TYPE_WAREHOUSE and (
+        series_ids or default_series is not None
+    ):
+        raise ApiError(400, 'Warehouse-only locations cannot be assigned transaction number series.')
 
     with transaction.atomic():
         location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
         if location_id and not location:
             raise ApiError(404, 'Business location not found.')
+        previous_values = _business_location_payload(location) if location else {}
+        custom_fields_cleaner = Cleaner(data)
+        custom_fields_data = _clean_module_custom_fields(
+            custom_fields_cleaner,
+            org,
+            request.user,
+            'locations',
+            previous_values=location.custom_fields_data if location else {},
+        )
+        custom_fields_cleaner.done()
         duplicate = queryset.filter(name__iexact=name)
         if location:
             duplicate = duplicate.exclude(pk=location.pk)
@@ -14472,6 +14493,7 @@ def settings_locations_view(request, location_id=None):
         location.location_type = location_type
         location.name = name
         location.logo_data = logo_data
+        location.custom_fields_data = custom_fields_data
         location.parent = parent
         location.gstin = gstin
         location.address = address
@@ -14504,7 +14526,7 @@ def settings_locations_view(request, location_id=None):
             request.user, 'update' if location_id else 'create', 'BusinessLocation', location.pk,
             f"{'Updated' if location_id else 'Created'} business location {location.name}.",
             org=org, module='settings', submodule='locations',
-            new_values=current,
+            previous_values=previous_values, new_values=current,
         )
     return j({'status': 'ok', 'location': current}, status=200 if location_id else 201)
 

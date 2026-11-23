@@ -508,6 +508,11 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
     ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
 
+    def validate_explicit_series_location(series_obj):
+        if series_obj.business_location_id and str(series_obj.business_location_id) != str(business_location_id or ''):
+            raise ApiError(400, 'The selected transaction series belongs to a different business location.')
+        return series_obj
+
     # 1. Resolve the named series first; its document type disambiguates group IDs
     # from DocumentNumberSeries IDs, which may have the same integer value.
     if series:
@@ -519,7 +524,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
             if s_obj:
                 if not s_obj.active and not allow_inactive:
                     raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
-                return s_obj
+                return validate_explicit_series_location(s_obj)
             # Check by series group name
             grp = TransactionSeries.objects.filter(organization=org, name__iexact=s_name).first()
             if grp:
@@ -529,7 +534,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
                 if s_obj:
                     if not s_obj.active and not allow_inactive:
                         raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
-                    return s_obj
+                    return validate_explicit_series_location(s_obj)
 
     # 2. By series_id / numbering_series_id
     if series_id:
@@ -545,7 +550,7 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
             if s_obj:
                 if not s_obj.active and not allow_inactive:
                     raise ApiError(400, f'Transaction series "{s_obj.name}" is inactive.')
-                return s_obj
+                return validate_explicit_series_location(s_obj)
         except (ValueError, TypeError):
             pass
 
@@ -587,6 +592,19 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
         matching = matching.filter(Q(financial_year='') | Q(financial_year=year))
         candidates = list(matching)
         if candidates:
+            if business_location_id:
+                default_series_id = BusinessLocation.objects.filter(
+                    organization=org,
+                    pk=business_location_id,
+                    active=True,
+                ).values_list('default_transaction_series_id', flat=True).first()
+                if default_series_id:
+                    default_candidate = next(
+                        (candidate for candidate in candidates if candidate.pk == default_series_id),
+                        None,
+                    )
+                    if default_candidate:
+                        return default_candidate
             candidates.sort(key=lambda candidate: (
                 bool(candidate.business_location_id),
                 candidate.customer_type == customer_type and bool(customer_type),

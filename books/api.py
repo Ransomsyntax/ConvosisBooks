@@ -1,6 +1,7 @@
 """JSON API (session-authenticated, CSRF-protected). One Resource class per entity."""
 import csv
 import base64
+import binascii
 import datetime
 from datetime import timedelta
 import hashlib
@@ -157,6 +158,25 @@ def get_user_org(user, request=None):
                     return sub_match
             # If context switch is unauthorized, strictly clamp to base_org
     return base_org
+
+
+def _user_can_access_business_location(user, location):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    profile = getattr(user, 'profile', None)
+    if not profile:
+        return False
+    if profile.role == UserProfile.ADMIN:
+        return True
+    if location.assigned_users.filter(pk=user.pk).exists():
+        return True
+    return bool(
+        location.parent_id
+        and location.parent.assigned_users.filter(pk=user.pk).exists()
+    )
+
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -2583,14 +2603,7 @@ class DocResource(Resource):
                 if not business_location:
                     c.err('business_location_id', 'Select an active business location in your organization.')
                 else:
-                    profile = getattr(user, 'profile', None)
-                    if (
-                        user and not user.is_superuser
-                        and profile
-                        and profile.role != UserProfile.ADMIN
-                        and not business_location.assigned_users.filter(pk=user.pk).exists()
-                        and not business_location.parent_id
-                    ):
+                    if not _user_can_access_business_location(user, business_location):
                         c.err('business_location_id', 'You are not assigned to this business location.')
                     head['business_location'] = business_location
                     head['location'] = business_location.name
@@ -3029,20 +3042,31 @@ class RetainerInvoiceResource(DocResource):
         if location_id is None and c.d.get('business_location') not in (None, ''):
             location_id = c.integer('business_location', lo=1)
         location_name = str(c.d.get('location') or '').strip()
-        location_qs = BusinessLocation.objects.filter(organization=user_org) if user_org else BusinessLocation.objects.none()
+        location_qs = BusinessLocation.objects.filter(organization=user_org, active=True) if user_org else BusinessLocation.objects.none()
         location = location_qs.filter(pk=location_id).first() if location_id else None
         if not location and location_name:
             location = location_qs.filter(name__iexact=location_name).first()
         if location:
-            res.update({
-                'business_location': location,
-                'location': location.name,
-                'business_location_gstin': location.gstin,
-            })
+            if not _user_can_access_business_location(user, location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
+            else:
+                res.update({
+                    'business_location': location,
+                    'location': location.name,
+                    'business_location_gstin': location.gstin,
+                })
         elif user_org and location_qs.filter(active=True).exists() and (location_id or location_name or 'business_location_id' in c.d or 'business_location' in c.d):
             c.err('business_location_id', 'Select an active business location belonging to your organization.')
         elif user_org and location_qs.filter(active=True).exists() and 'retainer-invoices' in getattr(self, 'name', ''):
-            def_loc = location_qs.filter(active=True, is_default=True).first() or location_qs.filter(active=True).first()
+            accessible_locations = location_qs
+            if not (
+                getattr(user, 'is_superuser', False)
+                or getattr(getattr(user, 'profile', None), 'role', None) == UserProfile.ADMIN
+            ):
+                accessible_locations = accessible_locations.filter(
+                    Q(assigned_users=user) | Q(parent__assigned_users=user)
+                ).distinct()
+            def_loc = accessible_locations.filter(is_default=True).first() or accessible_locations.first()
             if def_loc:
                 res.update({
                     'business_location': def_loc,
@@ -3137,6 +3161,8 @@ class RetainerInvoiceResource(DocResource):
         location = BusinessLocation.objects.filter(organization=org, pk=location_id).first() if org else None
         if location and not location.active and (current is None or location.pk != current.business_location_id):
             raise ApiError(400, 'Choose an active business location.')
+        if location and not _user_can_access_business_location(user, location):
+            raise ApiError(403, 'You are not assigned to this business location.')
 
     def create(self, data, user):
         self._validate_business_location(data, user)
@@ -4121,6 +4147,8 @@ class PaymentReceivedResource(PaymentResource):
         ).first() if business_location_id else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
 
         reference = c.text('reference', max_len=80)
         notes = c.text('notes', max_len=2000)
@@ -5156,6 +5184,8 @@ class JournalResource(Resource):
         ).first() if business_location_id else None
         if business_location_id and not business_location:
             raise ApiError(400, 'Select an active business location in your organization.')
+        if business_location and not _user_can_access_business_location(user, business_location):
+            raise ApiError(403, 'You are not assigned to this business location.')
         jrn = services.post_journal_entry(dt, 'manual', ref, notes, items, user, org=user_org, business_location=business_location)
         tot_deb = sum((it.debit for it in jrn.items.all()), Z)
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
@@ -5886,6 +5916,8 @@ class BankTransactionResource(Resource):
         ).first() if business_location_id and ba.organization else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
         st = c.choice('status', ['unmatched', 'unreconciled', 'matched', 'categorized', 'manually_added'], default='unreconciled')
         notes = c.text('notes', max_len=1000)
         c.done()
@@ -7214,6 +7246,8 @@ class ExpenseResource(Resource):
         ).first() if business_location_id else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
         acc_id = c.integer('expense_account', required=True, lo=1)
         acc = Account.objects.filter(pk=acc_id, organization=user_org).first()
         if not acc:
@@ -8121,6 +8155,8 @@ class RecurringInvoiceResource(Resource):
         ).first() if business_location_id else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
         notes = c.text('notes', max_len=2000)
         terms = c.text('terms', max_len=2000)
         max_occ = c.integer('max_occurrences', lo=1)
@@ -8675,6 +8711,8 @@ class DeliveryChallanResource(Resource):
         business_location = BusinessLocation.objects.filter(pk=business_location_id, organization=user_org, active=True).first() if business_location_id and user_org else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
         source_warehouse_id = c.integer('source_warehouse_id', lo=1)
         destination_warehouse_id = c.integer('destination_warehouse_id', lo=1)
         source_warehouse = Warehouse.objects.filter(pk=source_warehouse_id, organization=user_org, active=True).first() if source_warehouse_id and user_org else None
@@ -8779,6 +8817,8 @@ class DeliveryChallanResource(Resource):
             ).first() if business_location_id and user_org else None
             if business_location_id and not obj.business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif obj.business_location and not _user_can_access_business_location(user, obj.business_location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
         for field in ('source_warehouse_id', 'destination_warehouse_id'):
             if field in data:
                 warehouse_id = c.integer(field, lo=1)
@@ -11409,6 +11449,10 @@ def lookup(request, name):
         business_location = BusinessLocation.objects.filter(
             organization=org, pk=location_id, active=True
         ).first() if location_id and org else None
+        if location_id and not business_location:
+            raise ApiError(400, 'Choose an active business location in your organization.')
+        if business_location and not _user_can_access_business_location(request.user, business_location):
+            raise ApiError(403, 'You are not assigned to this business location.')
         data = services.preview_document_number(
             'DC', org=org, date=request.GET.get('date'),
             customer_type=(
@@ -11431,6 +11475,10 @@ def lookup(request, name):
             business_location = BusinessLocation.objects.filter(
                 organization=org, pk=location_id, active=True
             ).first()
+            if not business_location:
+                raise ApiError(400, 'Choose an active business location in your organization.')
+            if not _user_can_access_business_location(request.user, business_location):
+                raise ApiError(403, 'You are not assigned to this business location.')
         customer_id = request.GET.get('customer_id')
         customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first() if customer_id and org else None
         customer_type = (
@@ -11749,6 +11797,8 @@ def reports_view(request, name):
         ).first() if location_id and user_org else None
         if location_id and not business_location:
             raise ApiError(400, 'Choose a valid business location in your organization.')
+        if business_location and not _user_can_access_business_location(request.user, business_location):
+            raise ApiError(403, 'You are not assigned to this business location.')
         return j(services.trial_balance_report(as_of_date, org=user_org, business_location=business_location))
     elif name == 'general-ledger':
         acc_id = request.GET.get('account')
@@ -11758,6 +11808,8 @@ def reports_view(request, name):
         ).first() if location_id and user_org else None
         if location_id and not business_location:
             raise ApiError(400, 'Choose a valid business location in your organization.')
+        if business_location and not _user_can_access_business_location(request.user, business_location):
+            raise ApiError(403, 'You are not assigned to this business location.')
         return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org, business_location=business_location))
     elif name in ('profit-loss', 'pnl', 'profit-and-loss'):
         return j(services.profit_and_loss_report(start, end, org=user_org))
@@ -14290,6 +14342,27 @@ def _business_location_payload(location):
     }
 
 
+def _business_location_series_options(org):
+    type_labels = {
+        item['key']: item['label']
+        for item in services.SUPPORTED_TRANSACTION_TYPES
+    }
+    return [{
+        'id': series.pk,
+        'name': series.name,
+        'label': f"{series.name} - {type_labels.get(series.document_type, series.document_type.replace('_', ' ').title())}",
+        'document_type': series.document_type,
+        'business_location_id': series.business_location_id,
+        'series_group_id': series.series_group_id,
+        'is_default': series.is_default,
+    } for series in DocumentNumberSeries.objects.filter(
+        organization=org,
+        active=True,
+    ).filter(
+        Q(series_group__isnull=True) | Q(series_group__is_active=True)
+    ).select_related('series_group').order_by('name', 'document_type')]
+
+
 @api_view
 def settings_locations_view(request, location_id=None):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
@@ -14303,8 +14376,13 @@ def settings_locations_view(request, location_id=None):
             location = queryset.filter(pk=location_id).first()
             if not location:
                 raise ApiError(404, 'Business location not found.')
-            return j(_business_location_payload(location))
-        return j({'locations': [_business_location_payload(item) for item in queryset]})
+            result = _business_location_payload(location)
+            result['transaction_series_options'] = _business_location_series_options(org)
+            return j(result)
+        return j({
+            'locations': [_business_location_payload(item) for item in queryset],
+            'transaction_series_options': _business_location_series_options(org),
+        })
 
     if request.method == 'DELETE':
         location = queryset.filter(pk=location_id).first() if location_id else None
@@ -14344,7 +14422,7 @@ def settings_locations_view(request, location_id=None):
 
     data = body(request)
     name = str(data.get('name') or '').strip()
-    if not name or len(name) > 120:
+    if not name or len(name) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in name):
         raise ApiError(400, 'Location name must be between 1 and 120 characters.')
     gstin = str(data.get('gstin') or '').strip().upper()
     if gstin and not GSTIN_RE.fullmatch(gstin):
@@ -14369,18 +14447,60 @@ def settings_locations_view(request, location_id=None):
     website = str(data.get('website') or '').strip()
     logo_data = str(data.get('logo_data') or '').strip()
     if logo_data:
-        if not logo_data.startswith('data:image/'):
-            raise ApiError(400, 'Location logo must be an uploaded PNG, JPEG, WebP, or GIF image.')
-        if len(logo_data) > 2 * 1024 * 1024:
-            raise ApiError(400, 'Location logo must be 2 MB or smaller.')
+        max_logo_bytes = 2 * 1024 * 1024
         mime_match = re.match(r'^data:(image/(?:png|jpeg|webp|gif));base64,', logo_data)
         if not mime_match:
             raise ApiError(400, 'Location logo must be a PNG, JPEG, WebP, or GIF image.')
+        encoded_image = logo_data[mime_match.end():]
+        if len(encoded_image) > 4 * ((max_logo_bytes + 2) // 3):
+            raise ApiError(400, 'Location logo must be 2 MB or smaller.')
+        try:
+            image_bytes = base64.b64decode(encoded_image, validate=True)
+        except (binascii.Error, ValueError):
+            raise ApiError(400, 'Location logo must contain valid base64 image data.')
+        if not image_bytes or len(image_bytes) > max_logo_bytes:
+            raise ApiError(400, 'Location logo must be 2 MB or smaller.')
+        image_signatures = {
+            'image/png': image_bytes.startswith(b'\x89PNG\r\n\x1a\n'),
+            'image/jpeg': image_bytes.startswith(b'\xff\xd8\xff'),
+            'image/webp': len(image_bytes) >= 12 and image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP',
+            'image/gif': image_bytes.startswith((b'GIF87a', b'GIF89a')),
+        }
+        if not image_signatures[mime_match.group(1)]:
+            raise ApiError(400, 'Location logo content does not match its image type.')
     location_type = str(data.get('location_type') or 'business').strip()
     if location_type not in ('business', 'warehouse'):
         raise ApiError(400, 'Choose a valid location type.')
-    if len(address) > 4000 or len(city) > 100 or len(state) > 60 or len(pincode) > 20:
+    if (
+        len(address) > 4000 or len(attention) > 120 or len(street1) > 200
+        or len(street2) > 200 or len(city) > 100 or len(state) > 60
+        or len(pincode) > 20 or len(country) > 100 or len(phone) > 50
+        or len(fax) > 50 or len(website) > 200
+    ):
         raise ApiError(400, 'Location address details exceed the allowed length.')
+    if pincode:
+        if country.casefold() == 'india':
+            if not re.fullmatch(r'\d{6}', pincode):
+                raise ApiError(400, 'Enter a valid 6-digit Indian PIN code.')
+        elif not re.fullmatch(r'[A-Za-z0-9]+(?:[ -][A-Za-z0-9]+)*', pincode) or not 2 <= len(pincode) <= 12:
+            raise ApiError(400, 'Enter a valid postal code.')
+    for label, value in (('Phone', phone), ('Fax number', fax)):
+        if value:
+            digits = re.sub(r'\D', '', value)
+            if not re.fullmatch(r'\+?[0-9 ().-]+', value) or not 7 <= len(digits) <= 15:
+                raise ApiError(400, f'Enter a valid international {label.lower()}.')
+    if website:
+        try:
+            parsed_website = urlsplit(website)
+        except ValueError:
+            raise ApiError(400, 'Enter a valid website URL using http or https.')
+        if (
+            parsed_website.scheme.lower() not in ('http', 'https')
+            or not parsed_website.hostname
+            or parsed_website.username
+            or parsed_website.password
+        ):
+            raise ApiError(400, 'Enter a valid website URL using http or https.')
     active = bool(data.get('active', True))
     is_default = bool(data.get('is_default', False))
     if is_default and not active:
@@ -14405,7 +14525,8 @@ def settings_locations_view(request, location_id=None):
         from django.contrib.auth import get_user_model
         UserModel = get_user_model()
         primary_contact = UserModel.objects.filter(
-            pk=int(primary_contact_id), profile__organization=org
+            pk=int(primary_contact_id), is_active=True,
+            profile__organization=org, profile__status=UserProfile.STATUS_ACTIVE,
         ).first()
         if not primary_contact:
             raise ApiError(400, 'Choose a valid primary contact in your organization.')
@@ -14420,10 +14541,12 @@ def settings_locations_view(request, location_id=None):
     UserModel = get_user_model()
     assigned_users = list(UserModel.objects.filter(
         pk__in=normalized_assigned_ids,
+        is_active=True,
         profile__organization=org,
+        profile__status=UserProfile.STATUS_ACTIVE,
     ))
     if len({u.pk for u in assigned_users}) != len(set(int(value) for value in assigned_user_ids if str(value).isdigit())):
-        raise ApiError(400, 'One or more assigned users do not belong to this organization.')
+        raise ApiError(400, 'Assigned users must be active members of this organization.')
 
     series_ids = data.get('transaction_series_ids', [])
     if not isinstance(series_ids, list):
@@ -14431,8 +14554,7 @@ def settings_locations_view(request, location_id=None):
     if any(not str(value).isdigit() for value in series_ids):
         raise ApiError(400, 'Transaction series must contain valid series IDs.')
     series_ids = list(dict.fromkeys(int(value) for value in series_ids))
-    series = list(DocumentNumberSeries.objects.filter(organization=org, pk__in=series_ids, active=True))
-    if len(series) != len(series_ids):
+    if DocumentNumberSeries.objects.filter(organization=org, pk__in=series_ids, active=True).count() != len(series_ids):
         raise ApiError(400, 'Choose only active transaction series belonging to this organization.')
     default_series_id = data.get('default_transaction_series_id')
     default_series = None
@@ -14453,6 +14575,22 @@ def settings_locations_view(request, location_id=None):
         location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
         if location_id and not location:
             raise ApiError(404, 'Business location not found.')
+        series = list(DocumentNumberSeries.objects.select_for_update().filter(
+            organization=org, pk__in=series_ids, active=True
+        ).order_by('pk'))
+        if len(series) != len(series_ids):
+            raise ApiError(400, 'Choose only active transaction series belonging to this organization.')
+        default_series = next((item for item in series if item.pk == int(default_series_id)), None) if default_series_id not in (None, '') else None
+        if default_series_id not in (None, '', 0) and default_series is None:
+            raise ApiError(400, 'The default series must be active and selected for this location.')
+        previous_series_ids = set(location.transaction_series.values_list('pk', flat=True)) if location else set()
+        for series_item in series:
+            if series_item.business_location_id not in (None, location.pk if location else None):
+                raise ApiError(409, f'Transaction series "{series_item.name}" is assigned to another business location.')
+            if not series_item.business_location_id and BusinessLocation.objects.filter(
+                transaction_series=series_item
+            ).exclude(pk=location.pk if location else None).exists():
+                raise ApiError(409, f'Transaction series "{series_item.name}" is already assigned to another business location.')
         previous_values = _business_location_payload(location) if location else {}
         custom_fields_cleaner = Cleaner(data)
         custom_fields_data = _clean_module_custom_fields(
@@ -14512,12 +14650,37 @@ def settings_locations_view(request, location_id=None):
         location.active = active
         location.default_transaction_series = default_series
         try:
-            location.save()
+            with transaction.atomic():
+                location.save()
         except IntegrityError:
-            raise ApiError(409, 'The business location conflicts with another location or default setting.')
+            conflicting_name = queryset.filter(name__iexact=name)
+            conflicting_gstin = queryset.filter(gstin=gstin) if gstin else None
+            conflicting_default = queryset.filter(is_default=True) if is_default else None
+            if location.pk:
+                conflicting_name = conflicting_name.exclude(pk=location.pk)
+                if conflicting_gstin is not None:
+                    conflicting_gstin = conflicting_gstin.exclude(pk=location.pk)
+                if conflicting_default is not None:
+                    conflicting_default = conflicting_default.exclude(pk=location.pk)
+            if (
+                conflicting_name.exists()
+                or (conflicting_gstin is not None and conflicting_gstin.exists())
+                or (conflicting_default is not None and conflicting_default.exists())
+            ):
+                raise ApiError(409, 'The business location conflicts with another location or default setting.')
+            raise
 
         location.assigned_users.set(assigned_users)
         location.transaction_series.set(series)
+        removed_series_ids = previous_series_ids - set(series_ids)
+        if removed_series_ids:
+            DocumentNumberSeries.objects.filter(
+                pk__in=removed_series_ids, business_location=location
+            ).update(business_location=None)
+        for series_item in series:
+            if series_item.business_location_id is None:
+                series_item.business_location = location
+                series_item.save(update_fields=['business_location', 'updated_at'])
 
         Warehouse.objects.filter(organization=org, business_location=location).exclude(pk__in=warehouse_ids).update(business_location=None)
         Warehouse.objects.filter(organization=org, pk__in=warehouse_ids).update(business_location=location)

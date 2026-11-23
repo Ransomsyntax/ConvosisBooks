@@ -1547,6 +1547,91 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_location_series_options_use_document_series_and_number_by_location(self):
+        self.client.force_login(self.admin_user)
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='North Invoice Series',
+            document_type='invoices',
+            prefix='NORTH',
+        )
+
+        options_response = self.client.get('/api/settings/locations/')
+        self.assertEqual(options_response.status_code, 200, options_response.content)
+        options = options_response.json()['transaction_series_options']
+        self.assertTrue(any(option['id'] == series.pk and option['document_type'] == 'invoices' for option in options))
+
+        response = self.client.post(
+            '/api/settings/locations/',
+            data=json.dumps({
+                'name': 'North Office',
+                'transaction_series_ids': [series.pk],
+                'default_transaction_series_id': series.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        location_id = response.json()['location']['id']
+        series.refresh_from_db()
+        self.assertEqual(series.business_location_id, location_id)
+        self.assertEqual(
+            services.next_document_number(
+                'invoices',
+                org=self.org,
+                business_location_id=location_id,
+            ).split('/')[0],
+            'NORTH',
+        )
+
+    def test_location_api_validates_postal_contact_and_logo_data(self):
+        self.client.force_login(self.admin_user)
+        invalid_payloads = [
+            {'name': 'Bad PIN', 'country': 'India', 'pincode': '12345'},
+            {'name': 'Bad Phone', 'phone': 'abc1234567'},
+            {'name': 'Bad URL', 'website': 'javascript:alert(1)'},
+            {'name': 'Bad Logo', 'logo_data': 'data:image/png;base64,Zm9v'},
+        ]
+        for payload in invalid_payloads:
+            response = self.client.post(
+                '/api/settings/locations/',
+                data=json.dumps(payload),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 400, (payload, response.content))
+
+    def test_child_location_requires_user_access_to_location_or_parent(self):
+        parent = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Assigned Parent',
+        )
+        child = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Restricted Child',
+            parent=parent,
+        )
+        self.client.force_login(self.accountant_user)
+        payload = {
+            'customer_id': self.customer.pk,
+            'date': date.today().isoformat(),
+            'business_location_id': child.pk,
+            'lines': [],
+        }
+
+        denied = self.client.post(
+            '/api/invoices/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertIn(b'not assigned to this business location', denied.content.lower())
+
+        parent.assigned_users.add(self.accountant_user)
+        allowed = self.client.post(
+            '/api/invoices/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertNotIn(b'not assigned to this business location', allowed.content.lower())
+
     def test_enterprise_settings_registry_and_preference_persistence(self):
         self.login_as_tenant_admin()
         registry_response = self.client.get('/api/settings/enterprise/registry/')

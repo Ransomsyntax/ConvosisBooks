@@ -3437,7 +3437,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   });
 }
 
-function openAddTransactionSeriesModal(container, supportedTypes) {
+function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null) {
   document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
 
   // Deep clone supportedTypes to guarantee independent, immutable base prefixes
@@ -3611,8 +3611,9 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
 
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
+    let res;
     try {
-      const res = await api('/settings/transaction-series/', {
+      res = await api('/settings/transaction-series/', {
         method: 'POST',
         body: JSON.stringify({
           name: name,
@@ -3623,14 +3624,30 @@ function openAddTransactionSeriesModal(container, supportedTypes) {
           items: items
         })
       });
-      toast(`Series "${name}" created successfully.`, 'success');
-      closeModal();
-      await renderNumberSeriesPage(container, res.id);
     } catch (err) {
       saveBtn.disabled = false;
       saveBtn.textContent = 'Save Series';
       toast(err.message || 'Failed to create series.', 'error');
+      return;
     }
+
+    closeModal();
+    if (typeof onSaved === 'function') {
+      try {
+        await onSaved(res.id);
+      } catch (err) {
+        toast(`Series "${name}" was created, but the location form could not refresh its options: ${err.message || 'refresh failed.'}`, 'error');
+        return;
+      }
+    } else {
+      try {
+        await renderNumberSeriesPage(container, res.id);
+      } catch (err) {
+        toast(`Series "${name}" was created, but the series page could not be refreshed: ${err.message || 'refresh failed.'}`, 'error');
+        return;
+      }
+    }
+    toast(`Series "${name}" created successfully.`, 'success');
   });
 }
 
@@ -5183,6 +5200,51 @@ function renderBusinessLocationCustomField(field, value) {
   return `<label class="form-group">${label}<input class="form-control" type="${type}" data-location-custom-field="${esc(field.name)}" value="${esc(value ?? '')}"${required}${readOnly}></label>`;
 }
 
+function getLocationCountryOptions(selectedCountry) {
+  const names = new Set();
+  if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+    try {
+      const displayNames = new Intl.DisplayNames(['en'], { type: 'region' });
+      for (let first = 65; first <= 90; first += 1) {
+        for (let second = 65; second <= 90; second += 1) {
+          const code = String.fromCharCode(first, second);
+          if (['EU', 'EZ', 'UN', 'XA', 'XB', 'ZZ'].includes(code)) continue;
+          const name = displayNames.of(code);
+          if (name && name !== code) names.add(name);
+        }
+      }
+    } catch (error) {
+      console.warn('Country names are unavailable in this browser.', error);
+    }
+  }
+  names.add('India');
+  if (selectedCountry) names.add(selectedCountry);
+  return Array.from(names).sort((left, right) => left.localeCompare(right));
+}
+
+function getLocationIndiaStates(selectedState) {
+  const normalizedSelectedState = String(selectedState || '').replace(/^\[\d+\]\s*/, '').trim();
+  const stateOptions = typeof GST_STATE_OPTIONS !== 'undefined' ? GST_STATE_OPTIONS : [];
+  const states = stateOptions
+    .map(([value]) => String(value || '').replace(/^\[\d+\]\s*/, '').trim())
+    .filter(Boolean);
+  if (normalizedSelectedState && !states.some(state => state.toLowerCase() === normalizedSelectedState.toLowerCase())) {
+    states.push(normalizedSelectedState);
+  }
+  return states.sort((left, right) => left.localeCompare(right));
+}
+
+function renderLocationStateControl(country, selectedState) {
+  const normalizedSelectedState = String(selectedState || '').replace(/^\[\d+\]\s*/, '').trim();
+  if (String(country || '').toLowerCase() !== 'india') {
+    return `<input class="form-control" id="locationState" value="${esc(normalizedSelectedState)}" maxlength="60">`;
+  }
+  return `<select class="form-control" id="locationState">
+    <option value="">Select State/Union Territory</option>
+    ${getLocationIndiaStates(normalizedSelectedState).map(state => `<option value="${esc(state)}" ${state.toLowerCase() === normalizedSelectedState.toLowerCase() ? 'selected' : ''}>${esc(state)}</option>`).join('')}
+  </select>`;
+}
+
 async function renderBusinessLocationsPage(container) {
   container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading locations…</div>`;
   let locations = [];
@@ -5191,16 +5253,15 @@ async function renderBusinessLocationsPage(container) {
   let customFields = [];
   let organization = null;
   try {
-    const [locationData, userData, seriesData, organizationData, customFieldData] = await Promise.all([
+    const [locationData, userData, organizationData, customFieldData] = await Promise.all([
       api('/settings/locations/'),
       api('/settings/users/'),
-      api('/settings/transaction-series/'),
       api('/settings/organization/'),
       api('custom-fields/?module=locations&page_size=100')
     ]);
     locations = locationData.locations || [];
-    users = userData.users || [];
-    series = Array.isArray(seriesData) ? seriesData : (Array.isArray(seriesData.series) ? seriesData.series : []);
+    users = (userData.users || []).filter(user => user.is_active !== false && (!user.status || user.status === 'active'));
+    series = locationData.transaction_series_options || [];
     customFields = (customFieldData.results || []).filter(field => field.active && !field.hidden && field.form_visible);
     organization = organizationData || null;
   } catch (error) {
@@ -5220,6 +5281,10 @@ async function renderBusinessLocationsPage(container) {
       try { location = await api(`/settings/locations/${locationId}/`); }
       catch (error) { toast(error.message || 'Failed to load location.', 'error'); return; }
     }
+    let availableSeries = series.filter(item =>
+      !item.business_location_id || String(item.business_location_id) === String(location.id || '')
+    );
+    const countryOptions = getLocationCountryOptions(location.country || 'India');
     const modal = Modal.open({
       title: locationId ? 'Edit Location' : 'Add Location',
       wide: true,
@@ -5232,23 +5297,25 @@ async function renderBusinessLocationsPage(container) {
             <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
               <input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}>
               <b>Business Location</b>
-              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">Represents an organization's office or operational location for transactions, reports, and stock.</div>
+              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A Business Location represents your organization's office or operational location. It is used to record transactions, assess regional performance, and monitor stock levels for items stored at this location.</div>
             </label>
             <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
               <input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}>
               <b>Warehouse Only Location</b>
-              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A storage location for tracking and monitoring inventory.</div>
+              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A Warehouse Only Location refers to where your items are stored. It helps track and monitor stock levels for items stored at this location.</div>
             </label>
           </div>
         </div>
         <label class="form-group"><span id="locationNameLabel">${location.location_type === 'warehouse' ? 'Warehouse Name' : 'Name'}*</span>
           <input class="form-control" id="locationName" value="${esc(location.name)}" required>
         </label>
+        <label class="form-group"><input type="checkbox" id="locationActive" ${location.active ? 'checked' : ''}> Active</label>
+        <label class="form-group"><input type="checkbox" id="locationIsDefault" ${location.is_default ? 'checked' : ''}> Set as default location</label>
         <label class="form-group">Logo
           <select class="form-control" id="locationLogo">
             <option value="">Same as Organization Logo</option>
             ${location.logo_data ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
-            <option value="__upload_new_logo__">Upload New Logo</option>
+            <option value="__upload_new_logo__">Upload a New Logo</option>
           </select>
           <input type="file" id="locationLogoFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
           <div id="locationLogoPreview" style="margin-top:8px;">${location.logo_data ? `<img src="${esc(location.logo_data)}" alt="Location logo" style="max-height:60px;max-width:180px;">` : ''}</div>
@@ -5267,11 +5334,17 @@ async function renderBusinessLocationsPage(container) {
           <label class="form-group">Street 2<input class="form-control" id="locationStreet2" value="${esc(location.street2)}"></label>
           <label class="form-group">City<input class="form-control" id="locationCity" value="${esc(location.city)}"></label>
           <label class="form-group">Pin Code<input class="form-control" id="locationPincode" value="${esc(location.pincode)}"></label>
-          <label class="form-group">Country<input class="form-control" id="locationCountry" value="${esc(location.country || 'India')}"></label>
-          <label class="form-group">State / Union Territory<input class="form-control" id="locationState" value="${esc(location.state)}"></label>
-          <label class="form-group">Phone<input class="form-control" id="locationPhone" value="${esc(location.phone)}"></label>
-          <label class="form-group">Fax Number<input class="form-control" id="locationFax" value="${esc(location.fax)}"></label>
-          <label class="form-group" style="grid-column:1/-1;">Website URL<input class="form-control" id="locationWebsite" value="${esc(location.website)}"></label>
+          <label class="form-group">Country
+            <select class="form-control" id="locationCountry">
+              ${countryOptions.map(country => `<option value="${esc(country)}" ${country.toLowerCase() === String(location.country || 'India').toLowerCase() ? 'selected' : ''}>${esc(country)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="form-group">State / Union Territory
+            <span id="locationStateControl">${renderLocationStateControl(location.country || 'India', location.state)}</span>
+          </label>
+          <label class="form-group">Phone<input class="form-control" id="locationPhone" type="tel" value="${esc(location.phone)}" maxlength="50" autocomplete="tel"></label>
+          <label class="form-group">Fax Number<input class="form-control" id="locationFax" type="tel" value="${esc(location.fax)}" maxlength="50"></label>
+          <label class="form-group" style="grid-column:1/-1;">Website URL<input class="form-control" id="locationWebsite" type="url" value="${esc(location.website)}" maxlength="200" placeholder="https://example.com"></label>
         </div>
         <label class="form-group" data-business-location-only>Primary Contact*
           <select class="form-control" id="locationPrimaryContact">
@@ -5280,18 +5353,24 @@ async function renderBusinessLocationsPage(container) {
           </select>
         </label>
         <label class="form-group" data-business-location-only>Transaction Number Series*
-          <select class="form-control" id="locationSeries" multiple size="4">
-            ${series.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          <input class="form-control" id="locationSeriesSearch" type="search" placeholder="Search transaction series" aria-label="Search transaction series">
+          <select class="form-control" id="locationSeries" multiple size="5" aria-label="Transaction Number Series">
+            ${availableSeries.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
           </select>
         </label>
         <button type="button" class="btn btn-outline" id="btnAddLocationSeries" data-business-location-only>+ Add Transaction Series</button>
         <label class="form-group" data-business-location-only>Default Transaction Number Series*
           <select class="form-control" id="locationDefaultSeries">
             <option value="">Select default series</option>
-            ${series.map(item => `<option value="${item.id}" ${item.id === location.default_transaction_series_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+            ${availableSeries.map(item => `<option value="${item.id}" ${item.id === location.default_transaction_series_id ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
           </select>
         </label>
-        ${customFields.length ? `<div class="form-group"><b>Location Custom Fields</b><div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">${customFields.map(field => renderBusinessLocationCustomField(field, (location.custom_fields_data || {})[field.name] ?? (field.default_value && field.default_value.value) ?? '')).join('')}</div></div>` : ''}
+        ${customFields.length ? `<div class="form-group"><b>Location Custom Fields</b><div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">${customFields.map(field => {
+          const defaultValue = field.default_value && typeof field.default_value === 'object' && 'value' in field.default_value
+            ? field.default_value.value
+            : field.default_value;
+          return renderBusinessLocationCustomField(field, (location.custom_fields_data || {})[field.name] ?? defaultValue ?? '');
+        }).join('')}</div></div>` : ''}
         <div class="form-group"><b>Location Access</b>
           <div style="padding:8px 0;color:#64748b;font-size:12px;" id="locationAccessCount"></div>
           <div style="max-height:180px;overflow:auto;border:1px solid #e2e8f0;padding:8px;">
@@ -5334,45 +5413,84 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#locationChild').addEventListener('change', event => {
       root.querySelector('#parentLocationWrap').style.display = event.target.checked ? '' : 'none';
     });
-    root.querySelector('#locationSeries').addEventListener('change', event => {
-      const selectedIds = new Set(Array.from(event.target.selectedOptions).map(option => Number(option.value)));
-      const defaultSelect = root.querySelector('#locationDefaultSeries');
-      if (defaultSelect.value && !selectedIds.has(Number(defaultSelect.value))) {
-        defaultSelect.value = '';
+    const seriesSelect = root.querySelector('#locationSeries');
+    const defaultSeriesSelect = root.querySelector('#locationDefaultSeries');
+    const updateDefaultSeriesOptions = () => {
+      const selectedIds = new Set(Array.from(seriesSelect.selectedOptions).map(option => Number(option.value)));
+      const selectedOptions = Array.from(seriesSelect.selectedOptions);
+      if (!defaultSeriesSelect.value && selectedOptions.length === 1) {
+        defaultSeriesSelect.value = selectedOptions[0].value;
       }
-      Array.from(defaultSelect.options).forEach(option => {
+      if (defaultSeriesSelect.value && !selectedIds.has(Number(defaultSeriesSelect.value))) {
+        defaultSeriesSelect.value = '';
+      }
+      Array.from(defaultSeriesSelect.options).forEach(option => {
         if (option.value) option.disabled = !selectedIds.has(Number(option.value));
       });
+    };
+    seriesSelect.addEventListener('change', updateDefaultSeriesOptions);
+    root.querySelectorAll('[name="locationType"]').forEach(radio => {
+      radio.addEventListener('change', updateDefaultSeriesOptions);
     });
+    root.querySelector('#locationSeriesSearch').addEventListener('input', event => {
+      const search = event.target.value.trim().toLowerCase();
+      Array.from(seriesSelect.options).forEach(option => {
+        option.hidden = Boolean(search) && !option.textContent.toLowerCase().includes(search);
+      });
+    });
+    root.querySelector('#locationCountry').addEventListener('change', event => {
+      const stateControl = root.querySelector('#locationStateControl');
+      const currentState = root.querySelector('#locationState').value;
+      stateControl.innerHTML = renderLocationStateControl(event.target.value, currentState);
+    });
+    root.querySelector('#locationPincode').setAttribute('inputmode', String(location.country || 'India').toLowerCase() === 'india' ? 'numeric' : 'text');
+    root.querySelector('#locationCountry').addEventListener('change', event => {
+      root.querySelector('#locationPincode').setAttribute('inputmode', event.target.value.toLowerCase() === 'india' ? 'numeric' : 'text');
+    });
+    updateDefaultSeriesOptions();
     let selectedLogoData = location.logo_data || '';
     const logoSelect = root.querySelector('#locationLogo');
     const logoFile = root.querySelector('#locationLogoFile');
     const logoPreview = root.querySelector('#locationLogoPreview');
+    let priorLogoData = selectedLogoData;
+    const restoreLogoSelection = () => {
+      selectedLogoData = priorLogoData;
+      logoSelect.value = priorLogoData || '';
+      logoPreview.innerHTML = priorLogoData
+        ? `<img src="${esc(priorLogoData)}" alt="Location logo" style="max-height:60px;max-width:180px;">`
+        : (organization && organization.logo_data
+          ? `<img src="${esc(organization.logo_data)}" alt="Organization logo" style="max-height:60px;max-width:180px;">`
+          : '');
+    };
     logoSelect.addEventListener('change', () => {
       if (logoSelect.value === '__upload_new_logo__') {
+        priorLogoData = selectedLogoData;
         logoFile.click();
       } else if (!logoSelect.value) {
         selectedLogoData = '';
+        priorLogoData = '';
         logoPreview.innerHTML = organization && organization.logo_data
           ? `<img src="${esc(organization.logo_data)}" alt="Organization logo" style="max-height:60px;max-width:180px;">`
           : '';
       } else {
         selectedLogoData = logoSelect.value;
+        priorLogoData = selectedLogoData;
         logoPreview.innerHTML = `<img src="${esc(selectedLogoData)}" alt="Location logo" style="max-height:60px;max-width:180px;">`;
       }
     });
+    logoFile.addEventListener('cancel', restoreLogoSelection);
     logoFile.addEventListener('change', () => {
       const file = logoFile.files && logoFile.files[0];
       if (!file) return;
       if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
         toast('Choose a PNG, JPEG, WebP, or GIF image.', 'error');
-        logoSelect.value = '';
+        restoreLogoSelection();
         logoFile.value = '';
         return;
       }
       if (file.size > 2 * 1024 * 1024) {
         toast('Location logo must be 2 MB or smaller.', 'error');
-        logoSelect.value = '';
+        restoreLogoSelection();
         logoFile.value = '';
         return;
       }
@@ -5380,13 +5498,44 @@ async function renderBusinessLocationsPage(container) {
       reader.onload = () => {
         selectedLogoData = String(reader.result || '');
         logoSelect.add(new Option('Uploaded Location Logo', selectedLogoData, true, true));
+        priorLogoData = selectedLogoData;
         logoPreview.innerHTML = `<img src="${esc(selectedLogoData)}" alt="Uploaded location logo" style="max-height:60px;max-width:180px;">`;
+      };
+      reader.onerror = () => {
+        restoreLogoSelection();
+        logoFile.value = '';
+        toast('The location logo could not be read.', 'error');
       };
       reader.readAsDataURL(file);
     });
-    root.querySelector('#btnAddLocationSeries').addEventListener('click', () => location.hash = '#/settings/number-series');
+    root.querySelector('#btnAddLocationSeries').addEventListener('click', async () => {
+      try {
+        const seriesConfig = await api('/settings/transaction-series/');
+        openAddTransactionSeriesModal(container, seriesConfig.supported_types || [], async () => {
+          const previousSeriesIds = new Set(Array.from(seriesSelect.selectedOptions).map(option => Number(option.value)));
+          const previousDefaultId = defaultSeriesSelect.value;
+          const locationData = await api('/settings/locations/');
+          series = locationData.transaction_series_options || [];
+          availableSeries = series.filter(item =>
+            !item.business_location_id || String(item.business_location_id) === String(location.id || '')
+          );
+          seriesSelect.innerHTML = availableSeries.map(item =>
+            `<option value="${item.id}" ${previousSeriesIds.has(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`
+          ).join('');
+          defaultSeriesSelect.innerHTML = `<option value="">Select default series</option>${availableSeries.map(item =>
+            `<option value="${item.id}" ${String(item.id) === previousDefaultId ? 'selected' : ''}>${esc(item.label || item.name)}</option>`
+          ).join('')}`;
+          updateDefaultSeriesOptions();
+        });
+      } catch (error) {
+        toast(error.message || 'Could not open transaction series configuration.', 'error');
+      }
+    });
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
+      const saveButton = root.querySelector('#btnSaveLocation');
+      if (saveButton.disabled) return;
       const locationType = root.querySelector('[name="locationType"]:checked').value;
+      const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
       const selectedSeriesIds = Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value));
       const defaultSeriesId = root.querySelector('#locationDefaultSeries').value;
@@ -5397,6 +5546,50 @@ async function renderBusinessLocationsPage(container) {
       if (locationType === 'business' && (!defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
         toast('Choose a default series from the transaction series assigned to this location.', 'error');
         return;
+      }
+      if (!active && root.querySelector('#locationIsDefault').checked) {
+        toast('Clear the default location setting before deactivating this location.', 'error');
+        return;
+      }
+      if (location.active && !active && !window.confirm(`Deactivate "${location.name}"?`)) {
+        return;
+      }
+      if (!root.querySelector('#locationName').value.trim()) {
+        toast('Location name is required.', 'error');
+        root.querySelector('#locationName').focus();
+        return;
+      }
+      if (root.querySelector('#locationChild').checked && !root.querySelector('#locationParent').value) {
+        toast('Choose a parent location for this child location.', 'error');
+        root.querySelector('#locationParent').focus();
+        return;
+      }
+      const country = root.querySelector('#locationCountry').value;
+      const pincode = root.querySelector('#locationPincode').value.trim();
+      if (pincode && country.toLowerCase() === 'india' && !/^\d{6}$/.test(pincode)) {
+        toast('Enter a valid 6-digit Indian PIN code.', 'error');
+        root.querySelector('#locationPincode').focus();
+        return;
+      }
+      for (const [label, value] of [['Phone', root.querySelector('#locationPhone').value], ['Fax number', root.querySelector('#locationFax').value]]) {
+        const digits = value.replace(/\D/g, '');
+        if (value && (!/^\+?[0-9 ().-]+$/.test(value) || digits.length < 7 || digits.length > 15)) {
+          toast(`Enter a valid international ${label.toLowerCase()}.`, 'error');
+          return;
+        }
+      }
+      const website = root.querySelector('#locationWebsite').value.trim();
+      if (website) {
+        try {
+          const parsed = new URL(website);
+          if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) {
+            throw new Error('Invalid URL');
+          }
+        } catch (error) {
+          toast('Enter a valid website URL using http or https.', 'error');
+          root.querySelector('#locationWebsite').focus();
+          return;
+        }
       }
       for (const field of customFields) {
         const input = Array.from(root.querySelectorAll('[data-location-custom-field]')).find(
@@ -5420,7 +5613,7 @@ async function renderBusinessLocationsPage(container) {
         address: [root.querySelector('#locationAttention').value.trim(), root.querySelector('#locationStreet1').value.trim(), root.querySelector('#locationStreet2').value.trim()].filter(Boolean).join(', '),
         city: root.querySelector('#locationCity').value.trim(),
         pincode: root.querySelector('#locationPincode').value.trim(),
-        country: root.querySelector('#locationCountry').value.trim(),
+        country,
         state: root.querySelector('#locationState').value.trim(),
         phone: root.querySelector('#locationPhone').value.trim(),
         fax: root.querySelector('#locationFax').value.trim(),
@@ -5434,9 +5627,11 @@ async function renderBusinessLocationsPage(container) {
         }, {}),
         assigned_user_ids: Array.from(root.querySelectorAll('.locationUser:checked')).map(input => Number(input.value)),
         warehouse_ids: location.warehouse_ids || [],
-        is_default: location.is_default,
-        active: location.active
+        is_default: root.querySelector('#locationIsDefault').checked,
+        active
       };
+      saveButton.disabled = true;
+      saveButton.textContent = 'Saving...';
       try {
         await api(locationId ? `/settings/locations/${locationId}/` : '/settings/locations/', { method: locationId ? 'PUT' : 'POST', body: payload });
         modal.close();
@@ -5444,6 +5639,11 @@ async function renderBusinessLocationsPage(container) {
         renderBusinessLocationsPage(container);
       } catch (error) {
         toast(error.message || 'Failed to save location.', 'error');
+      } finally {
+        if (saveButton.isConnected) {
+          saveButton.disabled = false;
+          saveButton.textContent = 'Save';
+        }
       }
     });
   }
@@ -5452,12 +5652,68 @@ async function renderBusinessLocationsPage(container) {
     <div class="settings-page-header"><div class="settings-page-header-left"><h1>Locations</h1></div>
       <div class="settings-page-header-right"><button type="button" class="btn-primary" id="btnAddLocation">+ Add Location</button></div>
     </div>
-    <table class="table"><thead><tr><th>Name</th><th>Type</th><th>Parent</th><th>Status</th><th></th></tr></thead>
-      <tbody>${locations.map(location => `<tr><td><b>${esc(location.name)}</b></td><td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Business Location'}</td><td>${esc(location.parent_name || '')}</td><td>${location.active ? 'Active' : 'Inactive'}</td><td><button type="button" class="btn-table-action" data-location-id="${location.id}">Edit</button></td></tr>`).join('')}</tbody>
+    <div style="display:flex;gap:10px;align-items:center;margin:12px 0;">
+      <input class="form-control" id="locationListSearch" type="search" placeholder="Search locations" aria-label="Search locations" style="max-width:320px;">
+      <select class="form-control" id="locationListStatus" aria-label="Filter by status" style="max-width:180px;">
+        <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
+      </select>
+    </div>
+    <table class="table"><thead><tr><th>Name</th><th>Type</th><th>Parent</th><th>Default</th><th>Status</th><th></th></tr></thead>
+      <tbody id="locationRows"></tbody>
     </table>
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px;">
+      <span id="locationPageInfo" style="color:#64748b;font-size:12px;"></span>
+      <button type="button" class="btn-secondary" id="locationPrevPage">Previous</button>
+      <button type="button" class="btn-secondary" id="locationNextPage">Next</button>
+    </div>
   `;
+  const pageSize = 25;
+  let currentPage = 0;
+  const renderLocationRows = () => {
+    const search = container.querySelector('#locationListSearch').value.trim().toLowerCase();
+    const status = container.querySelector('#locationListStatus').value;
+    const filtered = locations.filter(location => {
+      const matchesSearch = [location.name, location.location_type, location.parent_name]
+        .some(value => String(value || '').toLowerCase().includes(search));
+      const matchesStatus = status === 'all' || (location.active ? 'active' : 'inactive') === status;
+      return matchesSearch && matchesStatus;
+    });
+    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    currentPage = Math.min(currentPage, pageCount - 1);
+    const pageLocations = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+    container.querySelector('#locationRows').innerHTML = pageLocations.map(location => `
+      <tr><td><b>${esc(location.name)}</b></td>
+        <td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Business Location'}</td>
+        <td>${esc(location.parent_name || '')}</td>
+        <td>${location.is_default ? 'Default' : ''}</td>
+        <td>${location.active ? 'Active' : 'Inactive'}</td>
+        <td><button type="button" class="btn-table-action" data-location-id="${location.id}">Edit</button></td>
+      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No locations found.</td></tr>';
+    container.querySelector('#locationPageInfo').textContent = `Page ${currentPage + 1} of ${pageCount} (${filtered.length} locations)`;
+    container.querySelector('#locationPrevPage').disabled = currentPage === 0;
+    container.querySelector('#locationNextPage').disabled = currentPage >= pageCount - 1;
+    container.querySelectorAll('[data-location-id]').forEach(button =>
+      button.addEventListener('click', () => openLocation(Number(button.dataset.locationId)))
+    );
+  };
   container.querySelector('#btnAddLocation').addEventListener('click', () => openLocation());
-  container.querySelectorAll('[data-location-id]').forEach(button => button.addEventListener('click', () => openLocation(Number(button.dataset.locationId))));
+  container.querySelector('#locationListSearch').addEventListener('input', () => {
+    currentPage = 0;
+    renderLocationRows();
+  });
+  container.querySelector('#locationListStatus').addEventListener('change', () => {
+    currentPage = 0;
+    renderLocationRows();
+  });
+  container.querySelector('#locationPrevPage').addEventListener('click', () => {
+    currentPage -= 1;
+    renderLocationRows();
+  });
+  container.querySelector('#locationNextPage').addEventListener('click', () => {
+    currentPage += 1;
+    renderLocationRows();
+  });
+  renderLocationRows();
 }
 
 window.renderEwayBillsPage = renderEwayBillsPage;

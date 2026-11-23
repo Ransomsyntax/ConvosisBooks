@@ -6,9 +6,24 @@ def reconcile_location_columns(apps, schema_editor):
     table_name = BusinessLocation._meta.db_table
     connection = schema_editor.connection
 
+    if connection.vendor not in ('postgresql', 'sqlite'):
+        raise RuntimeError(
+            'Location schema reconciliation supports PostgreSQL and SQLite, '
+            'not %s.' % connection.vendor
+        )
+
     with connection.cursor() as cursor:
-        cursor.execute('PRAGMA table_info(%s)' % table_name)
-        existing_columns = {row[1] for row in cursor.fetchall()}
+        existing_tables = set(connection.introspection.table_names(cursor))
+        if table_name not in existing_tables:
+            raise RuntimeError(
+                'Cannot reconcile location columns: table %s does not exist.'
+                % table_name
+            )
+        table_description = connection.introspection.get_table_description(
+            cursor,
+            table_name,
+        )
+        existing_columns = {column.name for column in table_description}
 
     for field_name in (
         'uuid',
@@ -34,12 +49,8 @@ def reconcile_location_columns(apps, schema_editor):
         field = BusinessLocation._meta.get_field(field_name)
         through_table = field.remote_field.through._meta.db_table
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=%s",
-                [through_table],
-            )
-            exists = cursor.fetchone() is not None
-        if not exists:
+            existing_tables = set(connection.introspection.table_names(cursor))
+        if through_table not in existing_tables:
             schema_editor.create_model(field.remote_field.through)
 
 

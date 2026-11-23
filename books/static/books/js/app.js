@@ -191,6 +191,7 @@ const ROUTES = {
   'settings/reminders': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'reminders', 'Reminders', renderRemindersPage) : null,
   'settings/customer-portal': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'customer-portal', 'Customer Portal', renderCustomerPortalPage) : null,
   'settings/number-series': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'number-series', 'Transaction Number Series', renderNumberSeriesPage) : null,
+  'settings/business-locations': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'locations', 'Locations', renderBusinessLocationsPage) : null,
   'settings/pdf-templates': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'pdf-templates', 'PDF Templates', renderPdfTemplatesPage) : null,
   'settings/email-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'email-notifications', 'Email Notifications', renderNotificationsPage) : null,
   'settings/sms-notifications': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'sms-notifications', 'SMS Notifications', renderNotificationsPage) : null,

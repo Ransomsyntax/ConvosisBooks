@@ -14183,12 +14183,29 @@ def settings_organization_view(request):
 def _business_location_payload(location):
     return {
         'id': location.pk,
+        'uuid': str(location.uuid),
+        'location_type': location.location_type,
         'name': location.name,
+        'logo_data': location.logo_data,
+        'parent_id': location.parent_id,
+        'parent_name': location.parent.name if location.parent else '',
+        'attention': location.attention,
+        'street1': location.street1,
+        'street2': location.street2,
         'gstin': location.gstin,
         'address': location.address,
         'city': location.city,
         'state': location.state,
         'pincode': location.pincode,
+        'country': location.country,
+        'phone': location.phone,
+        'fax': location.fax,
+        'website': location.website,
+        'primary_contact_id': location.primary_contact_id,
+        'primary_contact': location.primary_contact.get_full_name() or location.primary_contact.email if location.primary_contact else '',
+        'assigned_user_ids': list(location.assigned_users.values_list('pk', flat=True)),
+        'transaction_series_ids': list(location.transaction_series.values_list('pk', flat=True)),
+        'default_transaction_series_id': location.default_transaction_series_id,
         'is_default': location.is_default,
         'active': location.active,
         'warehouses': [{
@@ -14253,12 +14270,76 @@ def settings_locations_view(request, location_id=None):
     city = str(data.get('city') or '').strip()
     state = str(data.get('state') or '').strip()
     pincode = str(data.get('pincode') or '').strip()
+    country = str(data.get('country') or 'India').strip()
+    attention = str(data.get('attention') or '').strip()
+    street1 = str(data.get('street1') or '').strip()
+    street2 = str(data.get('street2') or '').strip()
+    phone = str(data.get('phone') or '').strip()
+    fax = str(data.get('fax') or '').strip()
+    website = str(data.get('website') or '').strip()
+    logo_data = str(data.get('logo_data') or '').strip()
+    location_type = str(data.get('location_type') or 'business').strip()
+    if location_type not in ('business', 'warehouse'):
+        raise ApiError(400, 'Choose a valid location type.')
     if len(address) > 4000 or len(city) > 100 or len(state) > 60 or len(pincode) > 20:
         raise ApiError(400, 'Location address details exceed the allowed length.')
     active = bool(data.get('active', True))
     is_default = bool(data.get('is_default', False))
     if is_default and not active:
         raise ApiError(400, 'An inactive business location cannot be the default location.')
+
+    parent_id = data.get('parent_id')
+    parent = None
+    if parent_id not in (None, '', 0):
+        try:
+            parent_id = int(parent_id)
+        except (TypeError, ValueError):
+            raise ApiError(400, 'Choose a valid parent location.')
+        parent = queryset.filter(pk=parent_id, active=True, location_type=BusinessLocation.LOCATION_TYPE_BUSINESS).first()
+        if not parent:
+            raise ApiError(400, 'Choose a valid active business location as the parent.')
+
+    primary_contact = None
+    primary_contact_id = data.get('primary_contact_id')
+    if primary_contact_id not in (None, '', 0):
+        if not str(primary_contact_id).isdigit():
+            raise ApiError(400, 'Choose a valid primary contact in your organization.')
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+        primary_contact = UserModel.objects.filter(
+            pk=int(primary_contact_id), profile__organization=org
+        ).first()
+        if not primary_contact:
+            raise ApiError(400, 'Choose a valid primary contact in your organization.')
+
+    assigned_user_ids = data.get('assigned_user_ids', [])
+    if not isinstance(assigned_user_ids, list):
+        raise ApiError(400, 'Assigned users must be a list of user IDs.')
+    normalized_assigned_ids = list(dict.fromkeys(int(value) for value in assigned_user_ids if str(value).isdigit()))
+    from django.contrib.auth import get_user_model
+    UserModel = get_user_model()
+    assigned_users = list(UserModel.objects.filter(
+        pk__in=normalized_assigned_ids,
+        profile__organization=org,
+    ))
+    if len({u.pk for u in assigned_users}) != len(set(int(value) for value in assigned_user_ids if str(value).isdigit())):
+        raise ApiError(400, 'One or more assigned users do not belong to this organization.')
+
+    series_ids = data.get('transaction_series_ids', [])
+    if not isinstance(series_ids, list):
+        raise ApiError(400, 'Transaction series must be a list of series IDs.')
+    series_ids = list(dict.fromkeys(int(value) for value in series_ids if str(value).isdigit()))
+    series = list(DocumentNumberSeries.objects.filter(organization=org, pk__in=series_ids, active=True))
+    if len(series) != len(series_ids):
+        raise ApiError(400, 'Choose only active transaction series belonging to this organization.')
+    default_series_id = data.get('default_transaction_series_id')
+    default_series = None
+    if default_series_id not in (None, '', 0):
+        default_series = DocumentNumberSeries.objects.filter(
+            organization=org, pk=int(default_series_id), active=True
+        ).first()
+        if not default_series or (series_ids and default_series.pk not in series_ids):
+            raise ApiError(400, 'The default series must be active and selected for this location.')
 
     with transaction.atomic():
         location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
@@ -14283,18 +14364,41 @@ def settings_locations_view(request, location_id=None):
             queryset.exclude(pk=location.pk if location else None).filter(is_default=True).update(is_default=False)
         if location is None:
             location = BusinessLocation(organization=org)
+        if parent and location.pk == parent.pk:
+            raise ApiError(400, 'A location cannot be assigned as its own parent.')
+        if parent:
+            cursor = parent
+            while cursor.parent_id:
+                if cursor.parent_id == location.pk:
+                    raise ApiError(400, 'Circular parent-child location relationships are not allowed.')
+                cursor = cursor.parent
+        location.location_type = location_type
         location.name = name
+        location.logo_data = logo_data
+        location.parent = parent
         location.gstin = gstin
         location.address = address
+        location.attention = attention
+        location.street1 = street1
+        location.street2 = street2
         location.city = city
         location.state = state
         location.pincode = pincode
+        location.country = country
+        location.phone = phone
+        location.fax = fax
+        location.website = website
+        location.primary_contact = primary_contact
         location.is_default = is_default
         location.active = active
+        location.default_transaction_series = default_series
         try:
             location.save()
         except IntegrityError:
             raise ApiError(409, 'The business location conflicts with another location or default setting.')
+
+        location.assigned_users.set(assigned_users)
+        location.transaction_series.set(series)
 
         Warehouse.objects.filter(organization=org, business_location=location).exclude(pk__in=warehouse_ids).update(business_location=None)
         Warehouse.objects.filter(organization=org, pk__in=warehouse_ids).update(business_location=location)

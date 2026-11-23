@@ -1315,13 +1315,35 @@ class PriceList(models.Model):
         return self.name
 
 class BusinessLocation(models.Model):
+    LOCATION_TYPE_BUSINESS = 'business'
+    LOCATION_TYPE_WAREHOUSE = 'warehouse'
+    LOCATION_TYPE_CHOICES = [
+        (LOCATION_TYPE_BUSINESS, 'Business Location'),
+        (LOCATION_TYPE_WAREHOUSE, 'Warehouse Only Location'),
+    ]
+
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='business_locations')
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
+    location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES, default=LOCATION_TYPE_BUSINESS)
     name = models.CharField(max_length=120)
+    logo_data = models.TextField(blank=True, default='')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='child_locations')
     gstin = models.CharField(max_length=15, blank=True, default='')
     address = models.TextField(blank=True, default='')
+    attention = models.CharField(max_length=120, blank=True, default='')
+    street1 = models.CharField(max_length=200, blank=True, default='')
+    street2 = models.CharField(max_length=200, blank=True, default='')
     city = models.CharField(max_length=100, blank=True, default='')
     state = models.CharField(max_length=60, blank=True, default='')
     pincode = models.CharField(max_length=20, blank=True, default='')
+    country = models.CharField(max_length=100, blank=True, default='India')
+    phone = models.CharField(max_length=50, blank=True, default='')
+    fax = models.CharField(max_length=50, blank=True, default='')
+    website = models.CharField(max_length=200, blank=True, default='')
+    primary_contact = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='primary_business_locations')
+    assigned_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='assigned_business_locations')
+    transaction_series = models.ManyToManyField('DocumentNumberSeries', blank=True, related_name='locations')
+    default_transaction_series = models.ForeignKey('DocumentNumberSeries', null=True, blank=True, on_delete=models.SET_NULL, related_name='default_for_locations')
     is_default = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1330,6 +1352,10 @@ class BusinessLocation(models.Model):
     class Meta:
         ordering = ['name', 'id']
         constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(parent=models.F('pk')),
+                name='check_location_not_own_parent',
+            ),
             models.UniqueConstraint(fields=['organization', 'name'], name='uniq_org_business_location_name'),
             models.UniqueConstraint(
                 fields=['organization', 'gstin'],

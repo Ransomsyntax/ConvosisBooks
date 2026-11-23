@@ -5156,6 +5156,163 @@ async function renderEnterpriseSettingsPage(container) {
 }
 
 // Global window registration
+async function renderBusinessLocationsPage(container) {
+  container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading locations…</div>`;
+  let locations = [];
+  let users = [];
+  let series = [];
+  try {
+    const [locationData, userData, seriesData] = await Promise.all([
+      api('/settings/locations/'),
+      api('/settings/users/'),
+      api('/settings/transaction-series/')
+    ]);
+    locations = locationData.locations || [];
+    users = userData.users || [];
+    series = seriesData.series || seriesData || [];
+  } catch (error) {
+    container.innerHTML = `<div class="error-msg-card">${esc(error.message || 'Failed to load locations.')}</div>`;
+    return;
+  }
+
+  async function openLocation(locationId = null) {
+    let location = {
+      id: null, location_type: 'business', name: '', logo_data: '', parent_id: null,
+      gstin: '', attention: '', address: '', street1: '', street2: '', city: '', pincode: '',
+      country: 'India', state: '', phone: '', fax: '', website: '',
+      primary_contact_id: null, assigned_user_ids: [], transaction_series_ids: [],
+      default_transaction_series_id: null, is_default: false, active: true, warehouse_ids: []
+    };
+    if (locationId) {
+      try { location = await api(`/settings/locations/${locationId}/`); }
+      catch (error) { toast(error.message || 'Failed to load location.', 'error'); return; }
+    }
+    const modal = new Modal('Add Location');
+    modal.open(`
+      <div class="settings-location-form">
+        <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Location' : 'Add Location'}</h2></div></div>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label>Location Type</label>
+          <div style="display:flex;gap:12px;">
+            <label class="custom-radio"><input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}> <b>Business Location</b></label>
+            <label class="custom-radio"><input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}> <b>Warehouse Only Location</b></label>
+          </div>
+        </div>
+        <label class="form-group"><span id="locationNameLabel">${location.location_type === 'warehouse' ? 'Warehouse Name' : 'Name'}*</span>
+          <input class="form-control" id="locationName" value="${esc(location.name)}" required>
+        </label>
+        <label class="form-group">Logo
+          <select class="form-control" id="locationLogo">
+            <option value="">Same as Organization Logo</option>
+          </select>
+        </label>
+        <label class="form-group"><input type="checkbox" id="locationChild" ${location.parent_id ? 'checked' : ''}> This is a Child Location</label>
+        <label class="form-group" id="parentLocationWrap" style="${location.parent_id ? '' : 'display:none'}">Parent Location
+          <select class="form-control" id="locationParent">
+            <option value="">Select parent location</option>
+            ${locations.filter(item => item.location_type === 'business' && item.id !== location.id).map(item => `<option value="${item.id}" ${item.id === location.parent_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <label class="form-group">Attention<input class="form-control" id="locationAttention" value="${esc(location.attention)}"></label>
+          <label class="form-group">GSTIN<input class="form-control" id="locationGstin" value="${esc(location.gstin)}"></label>
+          <label class="form-group">Street 1<input class="form-control" id="locationStreet1" value="${esc(location.street1)}"></label>
+          <label class="form-group">Street 2<input class="form-control" id="locationStreet2" value="${esc(location.street2)}"></label>
+          <label class="form-group">City<input class="form-control" id="locationCity" value="${esc(location.city)}"></label>
+          <label class="form-group">Pin Code<input class="form-control" id="locationPincode" value="${esc(location.pincode)}"></label>
+          <label class="form-group">Country<input class="form-control" id="locationCountry" value="${esc(location.country || 'India')}"></label>
+          <label class="form-group">State / Union Territory<input class="form-control" id="locationState" value="${esc(location.state)}"></label>
+          <label class="form-group">Phone<input class="form-control" id="locationPhone" value="${esc(location.phone)}"></label>
+          <label class="form-group">Fax Number<input class="form-control" id="locationFax" value="${esc(location.fax)}"></label>
+          <label class="form-group" style="grid-column:1/-1;">Website URL<input class="form-control" id="locationWebsite" value="${esc(location.website)}"></label>
+        </div>
+        <label class="form-group">Primary Contact
+          <select class="form-control" id="locationPrimaryContact">
+            <option value="">Select contact</option>
+            ${users.map(user => `<option value="${user.id}" ${user.id === location.primary_contact_id ? 'selected' : ''}>${esc(user.name)} &lt;${esc(user.email)}&gt;</option>`).join('')}
+          </select>
+        </label>
+        <label class="form-group">Transaction Number Series
+          <select class="form-control" id="locationSeries" multiple size="4">
+            ${series.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" class="btn btn-outline" id="btnAddLocationSeries">+ Add Transaction Series</button>
+        <label class="form-group">Default Transaction Number Series
+          <select class="form-control" id="locationDefaultSeries">
+            <option value="">Select default series</option>
+            ${series.map(item => `<option value="${item.id}" ${item.id === location.default_transaction_series_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="form-group"><b>Location Access</b>
+          <div style="max-height:160px;overflow:auto;border:1px solid #e2e8f0;padding:8px;">
+            ${users.map(user => `<label style="display:block;margin:6px;"><input type="checkbox" class="locationUser" value="${user.id}" ${location.assigned_user_ids.includes(user.id) ? 'checked' : ''}> ${esc(user.name)} — ${esc(user.role)}</label>`).join('')}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-primary" id="btnSaveLocation">Save</button>
+          <button type="button" class="btn-secondary" data-close>Cancel</button>
+        </div>
+      </div>
+    `);
+    const root = modal.el || modal.element;
+    root.querySelectorAll('[name="locationType"]').forEach(radio => radio.addEventListener('change', () => {
+      root.querySelector('#locationNameLabel').textContent = radio.value === 'warehouse' ? 'Warehouse Name*' : 'Name*';
+    }));
+    root.querySelector('#locationChild').addEventListener('change', event => {
+      root.querySelector('#parentLocationWrap').style.display = event.target.checked ? '' : 'none';
+    });
+    root.querySelector('#btnAddLocationSeries').addEventListener('click', () => location.hash = '#/settings/number-series');
+    root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
+      const locationType = root.querySelector('[name="locationType"]:checked').value;
+      const payload = {
+        location_type: locationType,
+        name: root.querySelector('#locationName').value.trim(),
+        gstin: root.querySelector('#locationGstin').value.trim(),
+        logo_data: root.querySelector('#locationLogo').value,
+        parent_id: root.querySelector('#locationChild').checked ? (root.querySelector('#locationParent').value || null) : null,
+        attention: root.querySelector('#locationAttention').value.trim(),
+        street1: root.querySelector('#locationStreet1').value.trim(),
+        street2: root.querySelector('#locationStreet2').value.trim(),
+        address: [root.querySelector('#locationAttention').value.trim(), root.querySelector('#locationStreet1').value.trim(), root.querySelector('#locationStreet2').value.trim()].filter(Boolean).join(', '),
+        city: root.querySelector('#locationCity').value.trim(),
+        pincode: root.querySelector('#locationPincode').value.trim(),
+        country: root.querySelector('#locationCountry').value.trim(),
+        state: root.querySelector('#locationState').value.trim(),
+        phone: root.querySelector('#locationPhone').value.trim(),
+        fax: root.querySelector('#locationFax').value.trim(),
+        website: root.querySelector('#locationWebsite').value.trim(),
+        primary_contact_id: root.querySelector('#locationPrimaryContact').value || null,
+        transaction_series_ids: Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value)),
+        default_transaction_series_id: root.querySelector('#locationDefaultSeries').value || null,
+        assigned_user_ids: Array.from(root.querySelectorAll('.locationUser:checked')).map(input => Number(input.value)),
+        warehouse_ids: location.warehouse_ids || [],
+        is_default: location.is_default,
+        active: location.active
+      };
+      try {
+        await api(locationId ? `/settings/locations/${locationId}/` : '/settings/locations/', { method: locationId ? 'PUT' : 'POST', body: payload });
+        modal.close();
+        toast(locationId ? 'Location updated successfully.' : 'Location created successfully.', 'success');
+        renderBusinessLocationsPage(container);
+      } catch (error) {
+        toast(error.message || 'Failed to save location.', 'error');
+      }
+    });
+  }
+
+  container.innerHTML = `
+    <div class="settings-page-header"><div class="settings-page-header-left"><h1>Locations</h1></div>
+      <div class="settings-page-header-right"><button type="button" class="btn-primary" id="btnAddLocation">+ Add Location</button></div>
+    </div>
+    <table class="table"><thead><tr><th>Name</th><th>Type</th><th>Parent</th><th>Status</th><th></th></tr></thead>
+      <tbody>${locations.map(location => `<tr><td><b>${esc(location.name)}</b></td><td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Business Location'}</td><td>${esc(location.parent_name || '')}</td><td>${location.active ? 'Active' : 'Inactive'}</td><td><button type="button" class="btn-table-action" data-location-id="${location.id}">Edit</button></td></tr>`).join('')}</tbody>
+    </table>
+  `;
+  container.querySelector('#btnAddLocation').addEventListener('click', () => openLocation());
+  container.querySelectorAll('[data-location-id]').forEach(button => button.addEventListener('click', () => openLocation(Number(button.dataset.locationId))));
+}
+
 window.renderEwayBillsPage = renderEwayBillsPage;
 window.renderEinvoicingPage = renderEinvoicingPage;
 window.renderMsmePage = renderMsmePage;
@@ -5168,6 +5325,7 @@ window.openAddCurrencyModal = openAddCurrencyModal;
 window.getSettingsPageRenderer = getSettingsPageRenderer;
 window.renderEnterpriseSettingsPage = renderEnterpriseSettingsPage;
 window.renderSettingsDashboard = renderSettingsDashboard;
+window.renderBusinessLocationsPage = renderBusinessLocationsPage;
 window.renderSettingsShell = renderSettingsShell;
 window.renderRoleEditorPage = renderRoleEditorPage;
 

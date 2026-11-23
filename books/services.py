@@ -19,7 +19,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage
 from django.core.validators import validate_email
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, connection, transaction
 from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -33,6 +33,7 @@ from .features.module_gating import (
     validate_module_dependencies,
 )
 from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
+                     BusinessLocation,
                      StockTransfer, StockTransferLine,
                      BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
                      Bill, BillAllocation, BillLine, CreditNote, CreditNoteLine, Customer, CustomerPortalAccess, DeveloperApiKey, DocumentFolder,
@@ -62,6 +63,21 @@ def get_user_org(user, request=None):
         return _api_get_user_org(user, request=request)
     except Exception:
         return Organization.get()
+
+def user_can_access_business_location(user, location):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+    profile = getattr(user, 'profile', None)
+    if not profile:
+        return False
+    if profile.role == UserProfile.ADMIN or location.assigned_users.filter(pk=user.pk).exists():
+        return True
+    return bool(
+        location.parent_id
+        and location.parent.assigned_users.filter(pk=user.pk).exists()
+    )
 
 
 def paid_expr():
@@ -811,7 +827,7 @@ def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
     return counter
 
 
-def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None, party=None, format_pattern=None, separator=None):
+def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None, party=None, format_pattern=None, separator=None):
     """
     Generate an atomic, collision-free organization-wise document number.
     Format: Document Number = Prefix + Next Number
@@ -898,6 +914,26 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
             ).update(next_number=counter.next_number)
 
             return candidate
+
+
+def next_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, business_location_id=None, party=None, format_pattern=None, separator=None):
+    for attempt in range(8):
+        try:
+            return _next_document_number_once(
+                module_or_pfx, org=org, date=date, series=series,
+                customer_type=customer_type, branch=branch, location=location,
+                gstin=gstin, series_id=series_id, user=user,
+                business_location_id=business_location_id, party=party,
+                format_pattern=format_pattern, separator=separator
+            )
+        except OperationalError as error:
+            retryable_sqlite_lock = (
+                connection.vendor == 'sqlite'
+                and ('locked' in str(error).lower() or 'busy' in str(error).lower())
+            )
+            if not retryable_sqlite_lock or attempt == 7:
+                raise
+            time.sleep(0.01 * (2 ** attempt))
 
 
 def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None, allow_inactive=False):
@@ -1186,7 +1222,11 @@ def apply_stock(doc, sign, kind, user):
         it = Item.objects.filter(pk=item_id).first()
         wh = Warehouse.objects.filter(pk=wh_id).first() if wh_id else (it.warehouse if it else None)
         wcode = wh_code or (wh.code if wh else (it.warehouse_code if it else ''))
-        move_stock(item_id, sign * qty, kind, doc.number, doc.date, user, warehouse=wh, warehouse_code=wcode)
+        move_stock(
+            item_id, sign * qty, kind, doc.number, doc.date, user,
+            warehouse=wh, warehouse_code=wcode,
+            business_location=getattr(doc, 'business_location', None),
+        )
 
 def sync_delivery_challan_invoice_status(challan):
     from .models import InvoiceLine
@@ -1390,8 +1430,11 @@ def post_retainer_payment_journal(ret_pay, user):
         (acc_code, ret_pay.amount, Decimal('0.00'), f'Retainer payment {ret_pay.retainer.number} from {ret_pay.retainer.customer.name}'),
         ('2100', Decimal('0.00'), ret_pay.amount, f'Customer Advance / Retainer liability on {ret_pay.retainer.number}')
     ]
-    return post_journal_entry(ret_pay.date, 'retainer_payment', ret_pay.retainer.number,
-                              f'Payment received for retainer {ret_pay.retainer.number}', items, user, org=org)
+    return post_journal_entry(
+        ret_pay.date, 'retainer_payment', ret_pay.retainer.number,
+        f'Payment received for retainer {ret_pay.retainer.number}', items, user,
+        org=org, business_location=ret_pay.retainer.business_location,
+    )
 
 @transaction.atomic
 def apply_retainer_to_invoices(retainer, allocations, user, date_=None):
@@ -1460,8 +1503,11 @@ def post_retainer_apply_journal(alloc, user):
         ('2100', alloc.amount, Decimal('0.00'), f'Application of Retainer {alloc.retainer.number} to {alloc.invoice.number}'),
         ('1200', Decimal('0.00'), alloc.amount, f'AR credit from Retainer {alloc.retainer.number} on {alloc.invoice.number}')
     ]
-    return post_journal_entry(alloc.date, 'retainer_applied', alloc.retainer.number,
-                              f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user, org=org)
+    return post_journal_entry(
+        alloc.date, 'retainer_applied', alloc.retainer.number,
+        f'Retainer credit {alloc.retainer.number} applied to {alloc.invoice.number}', items, user,
+        org=org, business_location=alloc.retainer.business_location,
+    )
 
 @transaction.atomic
 def refund_retainer_payment(retainer, amount, date_=None, mode='bank_transfer', account='Bank Account', reference='', notes='', user=None):
@@ -1534,8 +1580,11 @@ def refund_retainer_payment(retainer, amount, date_=None, mode='bank_transfer', 
         ('2100', amount, Decimal('0.00'), f'Refund of advance retainer {retainer.number} to {retainer.customer.name}'),
         (acc_code, Decimal('0.00'), amount, f'Refund payout on {retainer.number}')
     ]
-    post_journal_entry(date_, 'retainer_refund', retainer.number,
-                       f'Refund of retainer {retainer.number}', items, user, org=user_org)
+    post_journal_entry(
+        date_, 'retainer_refund', retainer.number,
+        f'Refund of retainer {retainer.number}', items, user,
+        org=user_org, business_location=retainer.business_location,
+    )
 
     log_audit(user, 'refund', 'RetainerInvoice', retainer.pk,
               f'Processed refund of ₹{amount} on retainer {retainer.number} ({retainer.customer.name})',
@@ -1566,8 +1615,11 @@ def delete_retainer_payment(ret_pay, user):
             ('2100', amt, Decimal('0.00'), f'Reversal of retainer payment liability on {retainer.number}'),
             (acc_code, Decimal('0.00'), amt, f'Reversal of retainer payment receipt on {retainer.number}')
         ]
-        post_journal_entry(timezone.localdate(), 'retainer_payment_void', retainer.number,
-                           f'Reversal of payment on retainer {retainer.number}', items, user, org=org)
+        post_journal_entry(
+            timezone.localdate(), 'retainer_payment_void', retainer.number,
+            f'Reversal of payment on retainer {retainer.number}', items, user,
+            org=org, business_location=retainer.business_location,
+        )
 
     if ret_pay.payment_received:
         ret_pay.payment_received.delete()
@@ -1587,8 +1639,11 @@ def delete_retainer_allocation(alloc, user):
         ('1200', amt, Decimal('0.00'), f'Reversal of retainer allocation on {inv.number}'),
         ('2100', Decimal('0.00'), amt, f'Restoration of advance liability on {retainer.number}')
     ]
-    post_journal_entry(timezone.localdate(), 'retainer_unapplied', retainer.number,
-                       f'Unapplied retainer credit {retainer.number} from {inv.number}', items, user, org=org)
+    post_journal_entry(
+        timezone.localdate(), 'retainer_unapplied', retainer.number,
+        f'Unapplied retainer credit {retainer.number} from {inv.number}', items, user,
+        org=org, business_location=retainer.business_location,
+    )
     alloc.delete()
     retainer.applied_amount = sum((a.amount for a in retainer.allocations.all()), Decimal('0.00'))
     retainer.save(update_fields=['applied_amount'])
@@ -1625,8 +1680,11 @@ def write_off_invoice(inv, reason='Bad Debt', notes='', user=None):
         ('5050', bal, Decimal('0.00'), f'Bad debt write-off for invoice {inv.number} - Reason: {reason}'),
         ('1200', Decimal('0.00'), bal, f'AR write-off reduction for {inv.number}')
     ]
-    post_journal_entry(today, 'invoice_write_off', inv.number,
-                       f'Write-off of invoice {inv.number} (₹{bal}) - {reason}', items, user, org=org)
+    post_journal_entry(
+        today, 'invoice_write_off', inv.number,
+        f'Write-off of invoice {inv.number} (₹{bal}) - {reason}', items, user,
+        org=org, business_location=inv.business_location,
+    )
 
     pay_num = next_document_number('PR', org=org, date=today)
     pmt = PaymentReceived.objects.create(
@@ -2195,7 +2253,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
     from .models import Invoice, InvoiceLine, Item, Organization
 
     profile = RecurringInvoice.objects.select_for_update().select_related(
-        'customer', 'organization'
+        'customer', 'organization', 'business_location'
     ).get(pk=profile.pk)
     org = profile.organization or Organization.get()
     target_date = scheduled_date or kwargs.get('date') or kwargs.get('invoice_date') or profile.next_date
@@ -2293,13 +2351,16 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         'REC', org=org, date=target_date,
         customer_type=getattr(profile, 'customer_type', 'b2b') or 'b2b',
         branch=getattr(profile, 'branch', ''), location=getattr(profile, 'location', ''),
-        gstin=getattr(org, 'gstin', ''), user=user
+        gstin=profile.business_location.gstin if profile.business_location_id else getattr(org, 'gstin', ''),
+        business_location_id=profile.business_location_id,
+        user=user
     )
 
     inv = Invoice.objects.create(
         organization=org,
         customer=profile.customer,
         recurring_invoice=profile,
+        business_location=profile.business_location,
         number=inv_num,
         date=target_date,
         due_date=due_date,
@@ -2998,7 +3059,10 @@ def post_invoice_journal(inv, user):
         items.append(('4900', Decimal('0.00'), diff, f'Adjustment / TCS on {inv.number}'))
     elif diff < 0:
         items.append(('4900', abs(diff), Decimal('0.00'), f'Adjustment discount on {inv.number}'))
-    return post_journal_entry(inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}', items, user, org=org)
+    return post_journal_entry(
+        inv.date, 'invoice', inv.number, f'Auto-posted invoice {inv.number}',
+        items, user, org=org, business_location=inv.business_location,
+    )
 
 def post_invoice_void_journal(inv, user):
     """Reversing journal entry on invoice void."""
@@ -3019,7 +3083,10 @@ def post_invoice_void_journal(inv, user):
         items.append(('4900', diff, Decimal('0.00'), f'Reversal of Adjustment / TCS on {inv.number}'))
     elif diff < 0:
         items.append(('4900', Decimal('0.00'), abs(diff), f'Reversal of Adjustment discount on {inv.number}'))
-    return post_journal_entry(inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}', items, user, org=org)
+    return post_journal_entry(
+        inv.date, 'invoice_void', inv.number, f'Reversal of voided invoice {inv.number}',
+        items, user, org=org, business_location=inv.business_location,
+    )
 
 def post_credit_note_journal(cn, user):
     """Debit Sales Revenue (4000) and Output Tax (2210/2220/2230), Credit AR (1200)."""
@@ -3041,7 +3108,10 @@ def post_credit_note_journal(cn, user):
             items.insert(-1, ('4900', diff, Decimal('0.00'), f'Adjustment on {cn.number}'))
         else:
             items.insert(-1, ('4900', Decimal('0.00'), abs(diff), f'Adjustment on {cn.number}'))
-    return post_journal_entry(cn.date, 'credit_note', cn.number, f'Credit Note {cn.number}', items, user, org=org)
+    return post_journal_entry(
+        cn.date, 'credit_note', cn.number, f'Credit Note {cn.number}',
+        items, user, org=org, business_location=cn.business_location,
+    )
 
 def post_credit_note_refund_journal(cn, amount, date_, acc_code='1010', user=None, org=None):
     """Debit Accounts Receivable / Customer Credit (1200), Credit Bank/Cash (1010/1000)."""
@@ -3049,7 +3119,11 @@ def post_credit_note_refund_journal(cn, amount, date_, acc_code='1010', user=Non
         ('1200', amount, Decimal('0.00'), f'Credit Note refund {cn.number} - {cn.customer.name}'),
         (acc_code, Decimal('0.00'), amount, f'Refund payout on {cn.number}')
     ]
-    return post_journal_entry(date_, 'credit_note_refund', f'{cn.number}_REF_{amount}', f'Refund of Credit Note {cn.number}', items, user, org=org)
+    return post_journal_entry(
+        date_, 'credit_note_refund', f'{cn.number}_REF_{amount}',
+        f'Refund of Credit Note {cn.number}', items, user, org=org,
+        business_location=cn.business_location,
+    )
 
 def post_credit_note_apply_journal(cn, invoice, amount, date_, user=None, org=None):
     """Debit Customer Credit (1200), Credit target Invoice AR (1200)."""
@@ -3057,7 +3131,11 @@ def post_credit_note_apply_journal(cn, invoice, amount, date_, user=None, org=No
         ('1200', amount, Decimal('0.00'), f'Credit Note {cn.number} applied from customer balance'),
         ('1200', Decimal('0.00'), amount, f'Credit applied to Invoice {invoice.number}')
     ]
-    return post_journal_entry(date_, 'credit_note_apply', f'{cn.number}->{invoice.number}_{amount}', f'Credit Note {cn.number} applied to {invoice.number}', items, user, org=org)
+    return post_journal_entry(
+        date_, 'credit_note_apply', f'{cn.number}->{invoice.number}_{amount}',
+        f'Credit Note {cn.number} applied to {invoice.number}', items, user, org=org,
+        business_location=cn.business_location or invoice.business_location,
+    )
 
 def post_bill_journal(bill, user):
     """Debit COGS/Expense, Debit Input Taxes, Credit AP."""
@@ -3072,7 +3150,10 @@ def post_bill_journal(bill, user):
         items.append(('2250', bill.sgst, Decimal('0.00'), f'Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', bill.igst, Decimal('0.00'), f'Input IGST ITC on {bill.number}'))
-    return post_journal_entry(bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}', items, user, org=org)
+    return post_journal_entry(
+        bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}',
+        items, user, org=org, business_location=bill.business_location,
+    )
 
 def post_bill_void_journal(bill, user):
     """Reversing journal entry on bill void."""
@@ -3087,7 +3168,10 @@ def post_bill_void_journal(bill, user):
         items.append(('2250', Decimal('0.00'), bill.sgst, f'Reversal of Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', Decimal('0.00'), bill.igst, f'Reversal of Input IGST ITC on {bill.number}'))
-    return post_journal_entry(bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}', items, user, org=org)
+    return post_journal_entry(
+        bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}',
+        items, user, org=org, business_location=bill.business_location,
+    )
 
 def post_payment_received_journal(pay, user):
     """Post the accounting entry for a paid receipt."""
@@ -3116,7 +3200,10 @@ def post_payment_received_journal(pay, user):
         items.append(
             ('1200', Decimal('0.00'), q2(pay.amount + tds), f'Payment {pay.number} applied to AR')
         )
-    return post_journal_entry(pay.date, 'payment_in', pay.number, f'Payment received {pay.number}', items, user, org=org)
+    return post_journal_entry(
+        pay.date, 'payment_in', pay.number, f'Payment received {pay.number}',
+        items, user, org=org, business_location=pay.business_location,
+    )
 
 def _append_payment_tax_items(items, tax, pay, debit, description):
     tax = q2(tax or 0)
@@ -3155,7 +3242,7 @@ def post_customer_advance_application_journal(payment, allocation, user, amount=
     return post_journal_entry(
         allocation.payment.date, 'payment_advance_apply', reference,
         f'Customer advance {payment.number} applied to invoice {allocation.invoice.number}',
-        items, user, org=payment.organization,
+        items, user, org=payment.organization, business_location=payment.business_location,
     )
 
 def send_payment_received_email(payment, to_email, message, user=None):
@@ -3184,7 +3271,10 @@ def post_payment_made_journal(pay, user):
         ('2000', pay.amount, Decimal('0.00'), f'Payment {pay.number} to {pay.vendor.name}'),
         (acc_code, Decimal('0.00'), pay.amount, f'Payment {pay.number} disbursed')
     ]
-    return post_journal_entry(pay.date, 'payment_out', pay.number, f'Payment made {pay.number}', items, user, org=org)
+    return post_journal_entry(
+        pay.date, 'payment_out', pay.number, f'Payment made {pay.number}',
+        items, user, org=org, business_location=pay.business_location,
+    )
 
 def post_expense_journal(exp, user):
     """Debit Expense Account, Debit Input Taxes (if any), Credit Bank/Cash."""
@@ -3325,7 +3415,7 @@ def general_ledger_report(account_id=None, start=None, end=None, org=None, busin
 
     return {'start': s, 'end': e, 'accounts': ledger}
 
-def account_transactions_report(start=None, end=None, account_id=None, org=None):
+def account_transactions_report(start=None, end=None, account_id=None, org=None, business_location=None):
     """All journal transactions for an account or the complete chart."""
     today = timezone.localdate()
     s = start or today.replace(day=1)
@@ -3335,6 +3425,8 @@ def account_transactions_report(start=None, end=None, account_id=None, org=None)
     ).order_by('journal__date', 'journal__id', 'id')
     if account_id:
         items = items.filter(account_id=account_id)
+    if business_location:
+        items = items.filter(journal__business_location=business_location)
     rows = [{
         'date': item.journal.date,
         'journal_number': item.journal.number,
@@ -3355,7 +3447,7 @@ def account_transactions_report(start=None, end=None, account_id=None, org=None)
         'count': len(rows),
     }
 
-def day_book_report(start=None, end=None, org=None):
+def day_book_report(start=None, end=None, org=None, business_location=None):
     """Journal register grouped as day-book entries."""
     today = timezone.localdate()
     s = start or today.replace(day=1)
@@ -3363,6 +3455,8 @@ def day_book_report(start=None, end=None, org=None):
     journals = Journal.objects.filter(organization=org, date__range=(s, e)).prefetch_related(
         'items', 'items__account'
     ).order_by('date', 'id')
+    if business_location:
+        journals = journals.filter(business_location=business_location)
     rows = []
     for journal in journals:
         items = list(journal.items.all())
@@ -3388,7 +3482,7 @@ def day_book_report(start=None, end=None, org=None):
         'count': len(rows),
     }
 
-def customer_statement_report(customer_id, start=None, end=None, org=None):
+def customer_statement_report(customer_id, start=None, end=None, org=None, business_location=None):
     """Customer statement with opening, invoices, payments, credits and closing balance."""
     customer = Customer.objects.filter(organization=org, pk=customer_id).first()
     if not customer:
@@ -3396,23 +3490,36 @@ def customer_statement_report(customer_id, start=None, end=None, org=None):
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
-    opening = customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
+    opening = Z
+    if not business_location:
+        opening = customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
 
     opening_invoices = invoice_qs(org).filter(customer=customer, date__lt=s).exclude(status='void')
     opening_credits = CreditNote.objects.filter(organization=org, customer=customer, date__lt=s).exclude(status='void')
     opening_payments = PaymentReceived.objects.filter(organization=org, customer=customer, date__lt=s)
+    if business_location:
+        opening_invoices = opening_invoices.filter(business_location=business_location)
+        opening_credits = opening_credits.filter(business_location=business_location)
+        opening_payments = opening_payments.filter(business_location=business_location)
     opening += sum((i.balance_due for i in opening_invoices), Z)
     opening -= sum((c.total for c in opening_credits), Z)
     opening -= sum((p.amount for p in opening_payments), Z)
 
     rows = []
-    for invoice in invoice_qs(org).filter(customer=customer, date__range=(s, e)).exclude(status='void'):
+    invoices = invoice_qs(org).filter(customer=customer, date__range=(s, e)).exclude(status='void')
+    payments = PaymentReceived.objects.filter(organization=org, customer=customer, date__range=(s, e))
+    credits = CreditNote.objects.filter(organization=org, customer=customer, date__range=(s, e)).exclude(status='void')
+    if business_location:
+        invoices = invoices.filter(business_location=business_location)
+        payments = payments.filter(business_location=business_location)
+        credits = credits.filter(business_location=business_location)
+    for invoice in invoices:
         rows.append({'date': invoice.date, 'type': 'Invoice', 'number': invoice.number, 'reference': invoice.order_number,
                      'debit': invoice.total, 'credit': Z, 'balance': Z})
-    for payment in PaymentReceived.objects.filter(organization=org, customer=customer, date__range=(s, e)):
+    for payment in payments:
         rows.append({'date': payment.date, 'type': 'Payment', 'number': payment.number, 'reference': payment.reference,
                      'debit': Z, 'credit': payment.amount, 'balance': Z})
-    for credit in CreditNote.objects.filter(organization=org, customer=customer, date__range=(s, e)).exclude(status='void'):
+    for credit in credits:
         rows.append({'date': credit.date, 'type': 'Credit Note', 'number': credit.number, 'reference': credit.reason,
                      'debit': Z, 'credit': credit.total, 'balance': Z})
     rows.sort(key=lambda row: (row['date'], row['type'], row['number']))
@@ -3423,7 +3530,10 @@ def customer_statement_report(customer_id, start=None, end=None, org=None):
         row['balance'] = balance
 
     outstanding = []
-    for invoice in invoice_qs(org).filter(customer=customer, date__lte=e).exclude(status__in=('draft', 'void')):
+    invoices = invoice_qs(org).filter(customer=customer, date__lte=e).exclude(status__in=('draft', 'void'))
+    if business_location:
+        invoices = invoices.filter(business_location=business_location)
+    for invoice in invoices:
         balance_due = invoice.balance_due
         if balance_due > Z:
             outstanding.append({'number': invoice.number, 'date': invoice.date, 'due_date': invoice.due_date,
@@ -3440,7 +3550,7 @@ def customer_statement_report(customer_id, start=None, end=None, org=None):
         'count': len(rows),
     }
 
-def customer_balances_report(start=None, end=None, org=None):
+def customer_balances_report(start=None, end=None, org=None, business_location=None):
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
@@ -3448,16 +3558,21 @@ def customer_balances_report(start=None, end=None, org=None):
     for customer in Customer.objects.filter(organization=org, active=True).order_by('name'):
         invoices = invoice_qs(org).filter(customer=customer, date__lte=e).exclude(status__in=('draft', 'void'))
         credits = CreditNote.objects.filter(organization=org, customer=customer, date__lte=e).exclude(status='void')
+        if business_location:
+            invoices = invoices.filter(business_location=business_location)
+            credits = credits.filter(business_location=business_location)
         invoice_balance = sum((invoice.balance_due for invoice in invoices), Z)
         credit_balance = sum((credit.total for credit in credits), Z)
-        opening = customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
+        opening = Z if business_location else (
+            customer.opening_balance if customer.opening_balance_type == 'debit' else -customer.opening_balance
+        )
         rows.append({'customer_id': customer.pk, 'customer': customer.name, 'opening_balance': opening,
                      'invoice_balance': invoice_balance, 'credit_notes': credit_balance,
                      'closing_balance': opening + invoice_balance - credit_balance})
     return {'start': s, 'end': e, 'results': rows,
             'total': sum((row['closing_balance'] for row in rows), Z), 'count': len(rows)}
 
-def vendor_balances_report(start=None, end=None, org=None):
+def vendor_balances_report(start=None, end=None, org=None, business_location=None):
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
@@ -3465,16 +3580,21 @@ def vendor_balances_report(start=None, end=None, org=None):
     for vendor in Vendor.objects.filter(organization=org, active=True).order_by('name'):
         bills = bill_qs(org).filter(vendor=vendor, date__lte=e).exclude(status__in=('draft', 'void'))
         credits = VendorCredit.objects.filter(organization=org, vendor=vendor, date__lte=e).exclude(status='void')
+        if business_location:
+            bills = bills.filter(business_location=business_location)
+            credits = credits.filter(business_location=business_location)
         bill_balance = sum((bill.balance_due for bill in bills), Z)
         credit_balance = sum((credit.total for credit in credits), Z)
-        opening = vendor.opening_balance if vendor.opening_balance_type == 'credit' else -vendor.opening_balance
+        opening = Z if business_location else (
+            vendor.opening_balance if vendor.opening_balance_type == 'credit' else -vendor.opening_balance
+        )
         rows.append({'vendor_id': vendor.pk, 'vendor': vendor.name, 'opening_balance': opening,
                      'bill_balance': bill_balance, 'vendor_credits': credit_balance,
                      'closing_balance': opening + bill_balance - credit_balance})
     return {'start': s, 'end': e, 'results': rows,
             'total': sum((row['closing_balance'] for row in rows), Z), 'count': len(rows)}
 
-def expense_report(start=None, end=None, account_id=None, project_id=None, vendor_id=None, org=None):
+def expense_report(start=None, end=None, account_id=None, project_id=None, vendor_id=None, org=None, business_location=None):
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
@@ -3487,6 +3607,8 @@ def expense_report(start=None, end=None, account_id=None, project_id=None, vendo
         qs = qs.filter(project_id=project_id)
     if vendor_id:
         qs = qs.filter(vendor_id=vendor_id)
+    if business_location:
+        qs = qs.filter(business_location=business_location)
     rows = [{
         'date': expense.date,
         'number': expense.number,
@@ -3587,7 +3709,7 @@ def bank_reconciliation_report(start=None, end=None, bank_account_id=None, org=N
             'total_difference': sum((row['difference'] for row in rows), Z),
             'count': len(rows)}
 
-def profit_by_item_report(start=None, end=None, item_id=None, org=None):
+def profit_by_item_report(start=None, end=None, item_id=None, org=None, business_location=None):
     today = timezone.localdate()
     s = start or today.replace(day=1)
     e = end or today
@@ -3597,6 +3719,8 @@ def profit_by_item_report(start=None, end=None, item_id=None, org=None):
     ).exclude(invoice__status='void').select_related('item', 'invoice')
     if item_id:
         qs = qs.filter(item_id=item_id)
+    if business_location:
+        qs = qs.filter(invoice__business_location=business_location)
     grouped = {}
     for line in qs:
         key = line.item_id
@@ -3623,7 +3747,7 @@ def profit_by_item_report(start=None, end=None, item_id=None, org=None):
             'total_profit': sum((row['profit'] for row in rows), Z),
             'count': len(rows)}
 
-def profit_and_loss_report(start, end, org=None):
+def profit_and_loss_report(start, end, org=None, business_location=None):
     """Accrual and cash operating P&L."""
     ensure_default_accounts(org)
     qs = JournalItem.objects.filter(journal__date__range=(start, end))
@@ -3634,6 +3758,8 @@ def profit_and_loss_report(start, end, org=None):
     else:
         qs = qs.none()
         accounts = accounts.none()
+    if business_location:
+        qs = qs.filter(journal__business_location=business_location)
 
     income_rows = []
     cogs_rows = []
@@ -3677,7 +3803,7 @@ def profit_and_loss_report(start, end, org=None):
         'margin_pct': float(net_profit / tot_income * 100) if tot_income > 0 else 0.0
     }
 
-def balance_sheet_report(as_of_date=None, org=None):
+def balance_sheet_report(as_of_date=None, org=None, business_location=None):
     """Assets = Liabilities + Equity (including net current earnings)."""
     ensure_default_accounts(org)
     as_of = as_of_date or timezone.localdate()
@@ -3689,6 +3815,8 @@ def balance_sheet_report(as_of_date=None, org=None):
     else:
         qs = qs.none()
         accounts = accounts.none()
+    if business_location:
+        qs = qs.filter(journal__business_location=business_location)
 
     assets = []
     liabilities = []
@@ -3738,14 +3866,18 @@ def balance_sheet_report(as_of_date=None, org=None):
         'is_balanced': tot_assets == (tot_liab + tot_eq)
     }
 
-def cash_flow_report(start, end, org=None):
+def cash_flow_report(start, end, org=None, business_location=None):
     """Direct and indirect cash flow statement."""
-    pnl = profit_and_loss_report(start, end, org=org)
+    pnl = profit_and_loss_report(start, end, org=org, business_location=business_location)
     net_income = pnl['net_profit']
 
     rec_qs = PaymentReceived.objects.filter(organization=org, date__range=(start, end)) if org else PaymentReceived.objects.none()
     made_qs = PaymentMade.objects.filter(organization=org, date__range=(start, end)) if org else PaymentMade.objects.none()
     exp_qs = Expense.objects.filter(organization=org, date__range=(start, end)) if org else Expense.objects.none()
+    if business_location:
+        rec_qs = rec_qs.filter(business_location=business_location)
+        made_qs = made_qs.filter(business_location=business_location)
+        exp_qs = exp_qs.filter(business_location=business_location)
 
     inflows = rec_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
     outflows_bills = made_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
@@ -9320,6 +9452,35 @@ def get_item_warehouse_stock(item_or_id, warehouse_code_or_id, org=None):
     return summary.get('available_stock', Decimal('0.000'))
 
 
+def _stock_transfer_business_location(user, org, source, destination, requested_id=None, current=None):
+    source_location = source.business_location
+    for warehouse in (source, destination):
+        location = warehouse.business_location
+        if not location:
+            continue
+        if location.organization_id != getattr(org, 'pk', None) or not location.active or location.location_type != 'business':
+            raise ApiError(400, f'Warehouse "{warehouse.name}" is linked to an inactive or invalid business location.')
+        if not user_can_access_business_location(user, location):
+            raise ApiError(403, f'You are not assigned to the business location for warehouse "{warehouse.name}".')
+
+    if requested_id not in (None, ''):
+        if not str(requested_id).isdigit():
+            raise ApiError(400, 'Choose a valid business location.')
+        location = BusinessLocation.objects.filter(
+            pk=int(requested_id), organization=org, active=True, location_type='business'
+        ).first() if org else None
+        if not location:
+            raise ApiError(400, 'Choose an active business location in your organization.')
+    else:
+        location = source_location or current
+
+    if source_location and location and location.pk != source_location.pk:
+        raise ApiError(400, 'A stock transfer business location must match the source warehouse location.')
+    if location and not user_can_access_business_location(user, location):
+        raise ApiError(403, 'You are not assigned to this business location.')
+    return location
+
+
 def create_stock_transfer(data, user):
     """
     Creates a new draft Stock Transfer record with line items.
@@ -9355,6 +9516,9 @@ def create_stock_transfer(data, user):
         raise ApiError(400, 'Source warehouse is invalid or inactive.')
     if not dst_wh:
         raise ApiError(400, 'Destination warehouse is invalid or inactive.')
+    business_location = _stock_transfer_business_location(
+        user, user_org, src_wh, dst_wh, data.get('business_location_id')
+    )
 
     num = (data.get('number') or '').strip()
     series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
@@ -9375,6 +9539,7 @@ def create_stock_transfer(data, user):
         number=num,
         date=transfer_date,
         source_warehouse=src_wh,
+        business_location=business_location,
         source_warehouse_code=src_wh.code,
         destination_warehouse=dst_wh,
         destination_warehouse_code=dst_wh.code,
@@ -9466,6 +9631,15 @@ def update_stock_transfer(transfer, data, user):
         transfer.source_warehouse_code = src_wh.code
         transfer.destination_warehouse = dst_wh
         transfer.destination_warehouse_code = dst_wh.code
+    else:
+        src_wh = transfer.source_warehouse
+        dst_wh = transfer.destination_warehouse
+
+    transfer.business_location = _stock_transfer_business_location(
+        user, user_org, src_wh, dst_wh,
+        data.get('business_location_id') if 'business_location_id' in data else None,
+        current=transfer.business_location,
+    )
 
     if 'notes' in data:
         transfer.notes = data['notes'] or ''
@@ -9535,6 +9709,10 @@ def confirm_stock_transfer(transfer_id_or_obj, user):
     if transfer.status == 'reversed':
         raise ApiError(400, f'Stock Transfer {transfer.number} has been reversed and cannot be confirmed.')
 
+    _stock_transfer_business_location(
+        user, user_org, transfer.source_warehouse, transfer.destination_warehouse,
+        current=transfer.business_location,
+    )
     check_transaction_lock(transfer.date, org=user_org)
 
     src_wh = transfer.source_warehouse
@@ -9573,6 +9751,7 @@ def confirm_stock_transfer(transfer_id_or_obj, user):
 
         StockMovement.objects.create(
             organization=user_org,
+            business_location=transfer.business_location,
             item=item,
             date=transfer.date,
             warehouse=src_wh,
@@ -9640,6 +9819,10 @@ def reverse_stock_transfer(transfer_id_or_obj, user, reason=''):
 
     if transfer.status != 'confirmed':
         raise ApiError(400, f'Only confirmed stock transfers can be reversed. Current status is {transfer.get_status_display()}.')
+    _stock_transfer_business_location(
+        user, user_org, transfer.source_warehouse, transfer.destination_warehouse,
+        current=transfer.business_location,
+    )
 
     if transfer.reversal_transfer_id:
         raise ApiError(400, f'Stock Transfer {transfer.number} has already been reversed.')
@@ -9682,6 +9865,7 @@ def reverse_stock_transfer(transfer_id_or_obj, user, reason=''):
         source_warehouse_code=dst_wh.code,
         destination_warehouse=src_wh,
         destination_warehouse_code=src_wh.code,
+        business_location=transfer.business_location,
         status='reversed',
         notes=f"Reverse entry for {transfer.number}. Reason: {clean_reason}",
         created_by=user,
@@ -9702,6 +9886,7 @@ def reverse_stock_transfer(transfer_id_or_obj, user, reason=''):
 
         StockMovement.objects.create(
             organization=user_org,
+            business_location=transfer.business_location,
             item=item,
             date=timezone.localdate(),
             warehouse=dst_wh,

@@ -7967,6 +7967,26 @@ async function gstFilingPage(root, tab = 'overview') {
   }
 }
 
+function reportBusinessLocationQuery(key) {
+  const filters = APP.reportBusinessLocationFilters || {};
+  const locationId = filters[key] || '';
+  return locationId ? `business_location_id=${encodeURIComponent(locationId)}` : '';
+}
+
+async function populateReportBusinessLocationFilter(select, key, onChange) {
+  const locations = await api('lookup/business-locations/');
+  APP.reportBusinessLocationFilters = APP.reportBusinessLocationFilters || {};
+  const selectedId = APP.reportBusinessLocationFilters[key] || '';
+  select.innerHTML = `<option value="">All business locations</option>${locations.map(location =>
+    `<option value="${location.id}">${esc(location.name)}${location.is_default ? ' (Default)' : ''}</option>`
+  ).join('')}`;
+  select.value = selectedId;
+  select.addEventListener('change', () => {
+    APP.reportBusinessLocationFilters[key] = select.value;
+    onChange();
+  });
+}
+
 async function trialBalancePage(root) {
   PAGE.reload = () => trialBalancePage(root);
   root.innerHTML = `
@@ -7985,6 +8005,8 @@ async function trialBalancePage(root) {
       <div class="tb">
         <span style="font-weight:600;">As of Date:</span>
         <input class="in" type="date" id="tb-date" value="${APP.today}" style="max-width:180px;">
+        <label for="tb-business-location" style="font-weight:600;">Business Location:</label>
+        <select class="in" id="tb-business-location" style="max-width:240px;"><option value="">All business locations</option></select>
         <span class="sub" id="tb-bal-badge"></span>
       </div>
       <div class="tw" id="tb-table">${spinner}</div>
@@ -7995,11 +8017,15 @@ async function trialBalancePage(root) {
   dInp.addEventListener('change', () => loadTB());
   const tbExp = $('#tb-export-csv', root);
   if (tbExp) tbExp.addEventListener('click', () => exportTableToCsv($('#tb-table', root), `trial_balance_${dInp.value}.csv`));
+  const locationFilter = $('#tb-business-location', root);
 
   async function loadTB() {
     $('#tb-table', root).innerHTML = spinner;
     try {
-      const res = await api(`reports/trial-balance/?as_of=${dInp.value}`);
+      const params = new URLSearchParams({ as_of: dInp.value });
+      const locationId = APP.reportBusinessLocationFilters?.['trial-balance'];
+      if (locationId) params.set('business_location_id', locationId);
+      const res = await api(`reports/trial-balance/?${params.toString()}`);
       if (!root.isConnected) return;
       $('#tb-bal-badge', root).innerHTML = res.is_balanced
         ? `<span class="badge up">✓ Double-Entry Balanced</span>`
@@ -8022,6 +8048,11 @@ async function trialBalancePage(root) {
       `;
     } catch (e) { $('#tb-table', root).innerHTML = errBox(e.message, true); }
   }
+  try {
+    await populateReportBusinessLocationFilter(locationFilter, 'trial-balance', loadTB);
+  } catch (error) {
+    $('#tb-table', root).innerHTML = errBox(error.message, true);
+  }
   loadTB();
 }
 
@@ -8039,13 +8070,21 @@ async function profitAndLossPage(root) {
         <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
       </div>
     </div>
+    <div class="card" style="margin-top:14px;padding:12px 16px;">
+      <label for="pl-business-location" style="font-weight:600;">Business Location:</label>
+      <select class="in" id="pl-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+    </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="pl-container">${spinner}</div>
   `;
   const plExp = $('#pl-export-csv', root);
   if (plExp) plExp.addEventListener('click', () => exportTableToCsv($('#pl-container', root), `profit_and_loss_${iso(new Date())}.csv`));
 
   try {
-    const res = await api('reports/profit-loss/');
+    await populateReportBusinessLocationFilter(
+      $('#pl-business-location', root), 'profit-loss', () => PAGE.reload()
+    );
+    const locationQuery = reportBusinessLocationQuery('profit-loss');
+    const res = await api(`reports/profit-loss/${locationQuery ? `?${locationQuery}` : ''}`);
     if (!root.isConnected) return;
     $('#pl-container', root).innerHTML = `
       <div style="display:flex;justify-content:space-between;margin-bottom:20px;border-bottom:1px solid var(--bd);padding-bottom:12px;">
@@ -8089,13 +8128,21 @@ async function balanceSheetPage(root) {
         <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
       </div>
     </div>
+    <div class="card" style="margin-top:14px;padding:12px 16px;">
+      <label for="bs-business-location" style="font-weight:600;">Business Location:</label>
+      <select class="in" id="bs-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+    </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="bs-container">${spinner}</div>
   `;
   const bsExp = $('#bs-export-csv', root);
   if (bsExp) bsExp.addEventListener('click', () => exportTableToCsv($('#bs-container', root), `balance_sheet_${iso(new Date())}.csv`));
 
   try {
-    const res = await api('reports/balance-sheet/');
+    await populateReportBusinessLocationFilter(
+      $('#bs-business-location', root), 'balance-sheet', () => PAGE.reload()
+    );
+    const locationQuery = reportBusinessLocationQuery('balance-sheet');
+    const res = await api(`reports/balance-sheet/${locationQuery ? `?${locationQuery}` : ''}`);
     if (!root.isConnected) return;
     $('#bs-container', root).innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
@@ -8128,12 +8175,20 @@ async function cashFlowPage(root) {
         <button class="btn" onclick="window.print()" type="button">Print / PDF</button>
       </div>
     </div>
+    <div class="card" style="margin-top:14px;padding:12px 16px;">
+      <label for="cf-business-location" style="font-weight:600;">Business Location:</label>
+      <select class="in" id="cf-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+    </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="cf-container">${spinner}</div>
   `;
   const cfExp = $('#cf-export-csv', root);
   if (cfExp) cfExp.addEventListener('click', () => exportTableToCsv($('#cf-container', root), `cash_flow_${iso(new Date())}.csv`));
   try {
-    const res = await api('reports/cash-flow/');
+    await populateReportBusinessLocationFilter(
+      $('#cf-business-location', root), 'cash-flow', () => PAGE.reload()
+    );
+    const locationQuery = reportBusinessLocationQuery('cash-flow');
+    const res = await api(`reports/cash-flow/${locationQuery ? `?${locationQuery}` : ''}`);
     if (!root.isConnected) return;
     $('#cf-container', root).innerHTML = `
       <table style="width:100%;">

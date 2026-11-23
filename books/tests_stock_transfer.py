@@ -6,7 +6,7 @@ from django.db.models import ProtectedError
 
 from books.models import (
     Organization, Warehouse, Item, StockMovement,
-    StockTransfer, StockTransferLine, AuditLog
+    StockTransfer, StockTransferLine, AuditLog, BusinessLocation, UserProfile
 )
 from books import services
 from books.cleaning import ApiError
@@ -108,6 +108,46 @@ class StockTransferTestCase(TestCase):
         
         # Stock should remain unchanged while in draft
         self.assertEqual(services.get_item_warehouse_stock(self.item, self.wh_source.code, org=self.org), Decimal('100.000'))
+
+    def test_transfer_uses_source_location_and_tags_movements(self):
+        UserProfile.objects.create(
+            user=self.user, organization=self.org, role=UserProfile.ACCOUNTANT
+        )
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='Central Office'
+        )
+        location.assigned_users.add(self.user)
+        self.wh_source.business_location = location
+        self.wh_source.save(update_fields=['business_location'])
+        self.wh_dest.business_location = location
+        self.wh_dest.save(update_fields=['business_location'])
+
+        transfer = services.create_stock_transfer({
+            'date': timezone.localdate().isoformat(),
+            'source_warehouse': self.wh_source.pk,
+            'destination_warehouse': self.wh_dest.pk,
+            'lines': [{'item': self.item.pk, 'quantity': '2.000'}],
+        }, self.user)
+        self.assertEqual(transfer.business_location_id, location.pk)
+
+        services.confirm_stock_transfer(transfer, self.user)
+        movement = StockMovement.objects.get(reference=transfer.number)
+        self.assertEqual(movement.business_location_id, location.pk)
+
+    def test_transfer_rejects_unassigned_warehouse_locations(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='Restricted Office'
+        )
+        self.wh_source.business_location = location
+        self.wh_source.save(update_fields=['business_location'])
+
+        with self.assertRaises(ApiError) as cm:
+            services.create_stock_transfer({
+                'source_warehouse': self.wh_source.pk,
+                'destination_warehouse': self.wh_dest.pk,
+                'lines': [{'item': self.item.pk, 'quantity': '2.000'}],
+            }, self.user)
+        self.assertEqual(cm.exception.status, 403)
         self.assertEqual(services.get_item_warehouse_stock(self.item, self.wh_dest.code, org=self.org), Decimal('0.000'))
 
     def test_confirm_transfer_exceeding_stock_fails(self):

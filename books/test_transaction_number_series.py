@@ -258,8 +258,9 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
 
         # Case 13: Concurrency Test
         import time
-        from django.db import connection
+        from django.db import IntegrityError, OperationalError, connection
         concurrent_numbers = []
+        allocation_errors = []
         lock = threading.Lock()
         def allocate_worker():
             from django.db import connection
@@ -270,7 +271,9 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
                     with lock:
                         concurrent_numbers.append(n)
                     break
-                except Exception:
+                except (IntegrityError, OperationalError) as error:
+                    with lock:
+                        allocation_errors.append(f'{type(error).__name__}: {error}')
                     time.sleep(0.05 * (attempt + 1))
                 finally:
                     connection.close()
@@ -281,8 +284,11 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         for t in threads:
             t.join()
 
-        self.assertEqual(len(concurrent_numbers), 10)
-        self.assertEqual(len(set(concurrent_numbers)), 10)
+        self.assertEqual(
+            len(concurrent_numbers), 10,
+            f'Allocated {len(concurrent_numbers)} numbers; database retries: {allocation_errors}'
+        )
+        self.assertEqual(len(set(concurrent_numbers)), 10, concurrent_numbers)
 
         # Case 14: Organization Isolation
         other_org = Organization.objects.filter(name="Other Test Org Automated").first()

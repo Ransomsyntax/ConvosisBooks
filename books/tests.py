@@ -23,7 +23,7 @@ from books.services import advance_recurring_date
 from books.models import (
     Account, AuditLog, BankAccount, BankReconciliation, BankTransaction, BankTransfer,
     Bill, BusinessLocation, Customer, DocumentNumberAllocation, DocumentNumberSeries, Expense, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem,
-    LockDate, Organization, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
+    LockDate, Organization, PaymentMade, PaymentReceived, Quote, QuoteLine, ReceivedAllocation, StockMovement,
     UserProfile, Vendor, Warehouse, RetainerInvoice, RecurringInvoice, Project, ProjectMilestone,
     ProjectTask, TimeLog, CustomField
 )
@@ -3729,6 +3729,180 @@ class TestConfiguredDocumentNumberSeries(BaseAccountingTestCase):
         self.assertEqual(contextual.status_code, 200)
         self.assertTrue(contextual.json()['next_number'].startswith('MAIN-'))
         self.assertTrue(contextual.json()['next_number'].endswith('0012'))
+
+    def test_document_number_preview_uses_and_authorizes_business_location(self):
+        from books.models import DocumentNumberSeries
+
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='North Invoice Office', gstin=self.org.gstin
+        )
+        DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='North Office Invoice',
+            document_type='invoices',
+            customer_type='b2b',
+            location=location.name,
+            business_location=location,
+            gstin=location.gstin,
+            prefix='NORTH-%FY%',
+            starting_number=4,
+            next_number=4,
+            padding=4,
+        )
+
+        preview = self.client.get(
+            f'/api/lookup/next-invoice-number/?business_location_id={location.pk}'
+            '&customer_type=b2b&date=2026-10-15'
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertTrue(preview.json()['next_number'].startswith('NORTH-'))
+        self.assertTrue(preview.json()['next_number'].endswith('0004'))
+
+        staff_user = User.objects.create_user(username='location-preview-staff', password='test')
+        UserProfile.objects.create(
+            user=staff_user, organization=self.org, role=UserProfile.ACCOUNTANT
+        )
+        self.client.force_login(staff_user)
+        denied = self.client.get(
+            f'/api/lookup/next-invoice-number/?business_location_id={location.pk}'
+            '&customer_type=b2b&date=2026-10-15'
+        )
+        self.assertEqual(denied.status_code, 403, denied.content)
+
+    def test_invoice_journal_and_profit_report_keep_business_location(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='North Accounting Office', gstin=self.org.gstin
+        )
+        invoice = Invoice.objects.create(
+            organization=self.org,
+            business_location=location,
+            customer=self.customer,
+            number='NORTH-INV-1',
+            date=date(2026, 10, 15),
+            due_date=date(2026, 11, 14),
+            place_of_supply='Kerala',
+            subtotal=Decimal('100.00'),
+            total=Decimal('100.00'),
+        )
+
+        journal = services.post_invoice_journal(invoice, self.admin_user)
+        self.assertEqual(journal.business_location_id, location.pk)
+
+        report = services.profit_and_loss_report(
+            date(2026, 10, 1), date(2026, 10, 31),
+            org=self.org, business_location=location,
+        )
+        self.assertEqual(report['total_income'], Decimal('100.00'))
+
+    def test_manual_journal_business_location_can_be_created_and_updated(self):
+        first_location = BusinessLocation.objects.create(
+            organization=self.org, name='North Journal Office'
+        )
+        second_location = BusinessLocation.objects.create(
+            organization=self.org, name='South Journal Office'
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            '/api/manual-journals/',
+            data=json.dumps({
+                'date': '2026-10-15',
+                'reference': 'LOCATION-JRN-1',
+                'business_location_id': first_location.pk,
+                'lines': [
+                    {'account': self.gl_exp.pk, 'debit': '100.00', 'credit': '0.00'},
+                    {'account': self.gl_cash.pk, 'debit': '0.00', 'credit': '100.00'},
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        journal = Journal.objects.get(pk=response.json()['id'])
+        self.assertEqual(journal.business_location_id, first_location.pk)
+
+        updated = self.client.put(
+            f'/api/manual-journals/{journal.pk}/',
+            data=json.dumps({'business_location_id': second_location.pk}),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        journal.refresh_from_db()
+        self.assertEqual(journal.business_location_id, second_location.pk)
+
+    def test_expense_business_location_persists_to_journal(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='North Expense Office'
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            '/api/expenses/',
+            data=json.dumps({
+                'date': '2026-10-15',
+                'expense_account': self.gl_exp.pk,
+                'amount': '100.00',
+                'gst_rate': '0',
+                'paid_through': 'Bank Account',
+                'business_location_id': location.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        expense = Expense.objects.get(pk=response.json()['id'])
+        self.assertEqual(expense.business_location_id, location.pk)
+        self.assertEqual(expense.location, location.name)
+        self.assertEqual(
+            Journal.objects.get(reference=expense.number, entry_type='expense').business_location_id,
+            location.pk,
+        )
+
+    def test_payment_made_business_location_persists_to_bank_and_journal(self):
+        location = BusinessLocation.objects.create(
+            organization=self.org, name='North Payment Office'
+        )
+        updated_location = BusinessLocation.objects.create(
+            organization=self.org, name='South Payment Office'
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            '/api/payments-made/',
+            data=json.dumps({
+                'vendor': self.vendor.pk,
+                'date': '2026-10-15',
+                'amount': '100.00',
+                'mode': 'bank_transfer',
+                'bank_account_id': self.bank_hdfc.pk,
+                'business_location_id': location.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        payment = PaymentMade.objects.get(pk=response.json()['id'])
+        self.assertEqual(payment.business_location_id, location.pk)
+        self.assertEqual(
+            BankTransaction.objects.get(
+                matched_entity_type='payment_made',
+                matched_entity_id=payment.pk,
+            ).business_location_id,
+            location.pk,
+        )
+        self.assertEqual(
+            Journal.objects.get(reference=payment.number).business_location_id,
+            location.pk,
+        )
+        update = self.client.put(
+            f'/api/payments-made/{payment.pk}/',
+            data=json.dumps({'business_location_id': updated_location.pk}),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 200, update.content)
+        payment.refresh_from_db()
+        self.assertEqual(payment.business_location_id, updated_location.pk)
+        self.assertEqual(
+            BankTransaction.objects.get(
+                matched_entity_type='payment_made',
+                matched_entity_id=payment.pk,
+            ).business_location_id,
+            updated_location.pk,
+        )
 
     def test_series_selection_counters_and_allocation_audit(self):
         from books.models import DocumentNumberSeries

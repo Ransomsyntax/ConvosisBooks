@@ -1400,6 +1400,13 @@ class Warehouse(models.Model):
         ordering = ['name']
         constraints = [models.UniqueConstraint(fields=['organization', 'code'], name='unique_org_warehouse_code')]
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.code and not re.fullmatch(r'[A-Za-z0-9_-]+', self.code):
+            raise ValidationError({
+                'code': 'Warehouse Code can contain only letters, numbers, hyphens and underscores.'
+            })
+
     def __str__(self):
         if self.parent:
             return f'{self.name} ({self.code}) [Sub-warehouse of {self.parent.code}]'

@@ -44,7 +44,7 @@ from .models import (Account, AuditLog, BackgroundTask, BankAccount, BankFeedCon
                      ReceivedAllocation, RecurringInvoice, RetainerInvoice, RetainerInvoiceAllocation,
                      RetainerInvoiceLine, RetainerPayment, SalesOrder, SecurityBackupRecord, Sequence,
                      StockMovement, SubscriptionInvoice, TenantSubscription, UserProfile, Vendor, VendorCredit, VendorCreditLine, VendorPortalAccess,
-                     Warehouse, WebhookSubscription, Project, TimeLog, FixedAsset, DepreciationEntry,
+                     UserInvitation, Warehouse, WebhookSubscription, Project, TimeLog, FixedAsset, DepreciationEntry,
                      Budget, RecurringBill, RecurringExpense, ExchangeRate, MileageExpenseClaim,
                      BalanceNetting, BillOfEntry)
 
@@ -8028,6 +8028,12 @@ def toggle_subscription_autorenew(org=None, auto_renew=None, user=None):
         log_audit(user, 'update', 'TenantSubscription', sub.pk, f"Set auto-renew to {sub.auto_renew}")
     return {'status': 'success', 'auto_renew': sub.auto_renew}
 
+def lock_user_seat_pool(org):
+    if org is None:
+        return None
+    return Organization.objects.select_for_update().get(pk=org.pk)
+
+
 def check_subscription_limits(org, limit_type='record'):
     if not org:
         org = Organization.get()
@@ -8064,12 +8070,29 @@ def check_subscription_limits(org, limit_type='record'):
             )
 
     elif limit_type == 'user':
-        allowed = sub.user_seat_limit + (sub.purchased_books_users or 0)
-        current_users = UserProfile.objects.filter(organization=org).count()
+        allowed = (
+            sub.user_seat_limit + (sub.purchased_books_users or 0)
+            if sub.user_seat_limit is not None else None
+        )
+        profiles = UserProfile.objects.filter(organization=org)
+        profile_emails = {
+            email.strip().lower()
+            for email in profiles.exclude(normalized_email='').values_list('normalized_email', flat=True)
+        }
+        pending_emails = {
+            email.strip().lower()
+            for email in UserInvitation.objects.filter(
+                organization=org,
+                status='invited'
+            ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+            .values_list('email', flat=True)
+            if email and email.strip()
+        }
+        current_users = profiles.count() + len(pending_emails - profile_emails)
         if allowed is not None and current_users >= allowed:
             raise ApiError(
                 403,
-                f"You have reached the user seat limit ({allowed} users) for your {sub.get_tier_display()}. Please upgrade your plan or purchase Books User Add-ons.",
+                "You have reached your current user limit. Please upgrade your plan or manage existing users to invite another user.",
                 {'code': 'PLAN_USER_LIMIT_REACHED', 'limit': allowed, 'current': current_users}
             )
 
@@ -8138,9 +8161,11 @@ def get_tenant_admin_summary(org=None):
         'members': users
     }
 
+@transaction.atomic
 def invite_tenant_user(username, email, role='accountant', phone='', full_name='', password=None, org=None):
     from django.contrib.auth import get_user_model
     User = get_user_model()
+    org = lock_user_seat_pool(org)
     check_subscription_limits(org, 'user')
     if email:
         norm = email.strip().lower()

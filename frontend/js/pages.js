@@ -1410,7 +1410,7 @@ const LISTS = {
   customers: {
     api: 'customers', title: 'Customers', bc: 'Sales', newLabel: 'New customer', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('sales/customers/new', () => partyForm('customers')) : partyForm('customers'), empty: 'No customers yet.',
     filters: [{ name: 'active', label: 'Status', opts: [['', 'All'], ['1', 'Active'], ['0', 'Inactive']] }],
-    cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>${r.active ? '' : ' ' + badge('Inactive')}` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }],
+    cols: [{ h: 'Name', s: 'name', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.name)}</button>` }, { h: 'Contact', f: r => esc(r.email || r.phone || '—') }, { h: 'State', s: 'state', f: r => esc(r.state || '—') }, { h: 'Billed', ...money(r => inr(r.billed)) }, { h: 'Receivable', ...money(r => inr(r.outstanding)) }, { h: 'Overdue', ...money(r => r.overdue > 0 ? `<span class="dn">${inr(r.overdue)}</span>` : inr(0)) }, { h: 'Status', s: 'active', f: r => r.active ? badge('Active', 'up') : badge('Inactive') }],
     actions: r => [['edit', 'Edit'], [r.active ? 'deactivate' : 'activate', r.active ? 'Deactivate' : 'Activate'], ['delete', 'Delete', 'dn']],
     onAction: async (a, r) => {
       if (a === 'view') return partyDetail('customers', r.id);

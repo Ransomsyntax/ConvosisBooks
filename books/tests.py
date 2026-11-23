@@ -534,6 +534,66 @@ class TestInventoryAndWarehouses(BaseAccountingTestCase):
         self.client = Client()
         self.client.force_login(self.admin_user)
 
+    def test_warehouse_codes_accept_only_supported_characters_on_create_and_update(self):
+        valid_codes = ('WH001', 'WH-001', 'WH_001', 'ABC123', 'wh-low-001')
+        for index, code in enumerate(valid_codes):
+            response = self.client.post('/api/warehouses/', data=json.dumps({
+                'name': f'Valid Warehouse {index}',
+                'code': code,
+            }), content_type='application/json')
+            self.assertEqual(response.status_code, 201, msg=response.content.decode('utf-8'))
+            self.assertRegex(response.json()['code'], r'^[A-Z0-9_-]+$')
+
+        invalid_codes = ('@3354465', 'WH###001', 'WH 001', 'ABC$123')
+        for index, code in enumerate(invalid_codes):
+            response = self.client.post('/api/warehouses/', data=json.dumps({
+                'name': f'Invalid Warehouse {index}',
+                'code': code,
+            }), content_type='application/json')
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.json()['errors']['code'],
+                'Warehouse Code can contain only letters, numbers, hyphens and underscores.'
+            )
+
+        warehouse = Warehouse.objects.get(code='WH001')
+        response = self.client.put(
+            f'/api/warehouses/{warehouse.pk}/',
+            data=json.dumps({'name': warehouse.name, 'code': 'WH 001'}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 400)
+        warehouse.refresh_from_db()
+        self.assertEqual(warehouse.code, 'WH001')
+
+    def test_warehouse_model_validation_rejects_unsupported_code_characters(self):
+        from django.core.exceptions import ValidationError
+
+        warehouse = Warehouse(name='Invalid Code', code='WH#001')
+        with self.assertRaises(ValidationError) as error:
+            warehouse.full_clean()
+        self.assertIn('code', error.exception.message_dict)
+
+    def test_customer_status_is_serialized_and_exported_separately(self):
+        active = Customer.objects.create(organization=self.org, name='Active Customer', active=True)
+        inactive = Customer.objects.create(organization=self.org, name='Inactive Customer', active=False)
+
+        response = self.client.get('/api/customers/?ordering=active')
+        self.assertEqual(response.status_code, 200)
+        rows = {row['id']: row for row in response.json()['results']}
+        self.assertEqual(rows[active.pk]['status'], 'Active')
+        self.assertEqual(rows[inactive.pk]['status'], 'Inactive')
+
+        inactive_response = self.client.get('/api/customers/?active=0')
+        self.assertEqual([row['id'] for row in inactive_response.json()['results']], [inactive.pk])
+
+        export_response = self.client.get('/api/customers/?export=csv')
+        self.assertEqual(export_response.status_code, 200)
+        export_text = export_response.content.decode('utf-8')
+        self.assertIn('Status', export_text.splitlines()[0])
+        self.assertIn('Active', export_text)
+        self.assertIn('Inactive', export_text)
+
     def test_item_sku_optional_and_auto_generated(self):
         """SKU is not mandatory and auto-generated when omitted."""
         payload = {
@@ -3534,7 +3594,61 @@ class TestBooksSubscriptionAndBilling(TestCase):
             content_type='application/json'
         )
         self.assertEqual(res_invite.status_code, 403)
-        self.assertIn('user seat limit', res_invite.json()['error'].lower())
+        self.assertEqual(
+            res_invite.json()['error'],
+            'You have reached your current user limit. Please upgrade your plan or manage existing users to invite another user.'
+        )
+        self.assertEqual(res_invite.json()['errors']['code'], 'PLAN_USER_LIMIT_REACHED')
+
+    def test_pending_invitation_reserves_a_user_seat(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from books.models import TenantSubscription, UserInvitation
+
+        sub = TenantSubscription.objects.get(organization=self.org)
+        sub.user_seat_limit = 2
+        sub.purchased_books_users = 0
+        sub.save()
+        UserInvitation.objects.create(
+            organization=self.org,
+            email='existing-pending@example.com',
+            token='pending-seat-reservation',
+            status='invited',
+            invited_by=self.admin_user,
+            expires_at=timezone.now() + timedelta(days=1)
+        )
+
+        response = self.client.post(
+            '/api/settings/users/invite/',
+            data=json.dumps({'email': 'another-user@example.com', 'name': 'Another User'}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()['errors']['current'], 2)
+        self.assertFalse(UserInvitation.objects.filter(email='another-user@example.com').exists())
+
+    def test_duplicate_active_invitation_is_not_created_twice(self):
+        from books.models import TenantSubscription, UserInvitation
+
+        sub = TenantSubscription.objects.get(organization=self.org)
+        sub.user_seat_limit = 3
+        sub.purchased_books_users = 0
+        sub.save()
+
+        payload = {'email': 'duplicate-invite@example.com', 'name': 'Duplicate Invite'}
+        first = self.client.post(
+            '/api/settings/users/invite/', data=json.dumps(payload), content_type='application/json'
+        )
+        second = self.client.post(
+            '/api/settings/users/invite/', data=json.dumps(payload), content_type='application/json'
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(
+            UserInvitation.objects.filter(organization=self.org, email__iexact=payload['email']).count(),
+            1
+        )
 
     def test_organization_subscription_isolation(self):
         from books.models import TenantSubscription

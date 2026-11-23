@@ -2188,7 +2188,7 @@ async function partyForm(kind, id, onDone, onCancel) {
         <label class="zb-form-label">Primary Contact <span class="zb-info-tip" title="Designated contact person for communications">ⓘ</span></label>
         <div class="zb-form-ctrl">
           <div style="display:flex;gap:8px;">
-            <select class="in" id="primary_salutation" name="primary_salutation" style="width:115px;flex-shrink:0;">
+            <select class="in" id="primary_salutation" name="primary_salutation" style="width:140px;flex-shrink:0;">
               <option value="" disabled ${!r.primary_salutation ? 'selected' : ''}>Salutation</option>
               <option value="Mr." ${r.primary_salutation === 'Mr.' ? 'selected' : ''}>Mr.</option>
               <option value="Mrs." ${r.primary_salutation === 'Mrs.' ? 'selected' : ''}>Mrs.</option>
@@ -10250,7 +10250,7 @@ async function warehouseModal(id, onDone) {
     dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="g">
       ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', value: rec?.name || '', ph: 'e.g. Kottayam Central Warehouse' })}
-      ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', value: rec?.code || '', ph: 'WH-KTY-01' })}
+      ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', value: rec?.code || '', ph: 'WH-KTY-01', attrs: 'maxlength="30" pattern="[A-Za-z0-9_-]+" title="Warehouse Code can contain only letters, numbers, hyphens and underscores."' })}
       ${fld({ name: 'parent_id', label: 'Parent Warehouse (Sub-warehouse of)', type: 'select', value: rec?.parent_id || '', opts: [['', 'None (Main Warehouse)'], ...existingWh.filter(w => String(w.id) !== String(id || '')).map(w => [w.id, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])], col: 's6' })}
       ${fld({ name: 'city', label: 'City', col: 's6', value: rec?.city || '', ph: 'Kottayam' })}
       ${fld({ name: 'state', label: 'State', type: 'select', opts: STATES, value: rec?.state || APP.org.state || 'Kerala', col: 's6' })}
@@ -10277,6 +10277,10 @@ async function warehouseModal(id, onDone) {
       }
     },
     onSubmit: async d => {
+      const warehouseCodeMessage = 'Warehouse Code can contain only letters, numbers, hyphens and underscores.';
+      if (!/^[A-Za-z0-9_-]+$/.test(String(d.code || ''))) {
+        throw new ApiErr(400, { code: warehouseCodeMessage }, warehouseCodeMessage);
+      }
       if (d.is_primary && otherPrimary) {
         const ok = await confirmBox({
           title: 'Warning: Replace Primary Warehouse?',

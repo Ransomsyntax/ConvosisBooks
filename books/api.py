@@ -1173,7 +1173,7 @@ def party_stats(kind, ids):
 class PartyResource(Resource):
     kind = ''
     search_fields = ('name', 'company', 'email', 'phone', 'gstin')
-    orderings = {'name': 'name', 'state': 'state', 'created': 'created_at'}
+    orderings = {'name': 'name', 'state': 'state', 'created': 'created_at', 'active': 'active'}
     default_ordering = ('name',)
 
     def filter_qs(self, qs, request):
@@ -1448,6 +1448,7 @@ class PartyResource(Resource):
             'remarks': getattr(o, 'remarks', ''),
             'documents_data': getattr(o, 'documents_data', []),
             'notes': o.notes, 'active': o.active,
+            'status': 'Active' if o.active else 'Inactive',
             'billed': s['billed'], 'outstanding': s['outstanding'], 'overdue': s['overdue']
         }
         if self.kind == 'customer':
@@ -1487,7 +1488,7 @@ class CustomerResource(PartyResource):
     model = Customer
     kind = 'customer'
     csv_cols = [('Name', 'name'), ('Company', 'company'), ('Email', 'email'), ('Phone', 'phone'), ('State', 'state'),
-                ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Billing Address', 'billing_address'), ('City', 'billing_city'),
+                ('Status', 'status'), ('GSTIN', 'gstin'), ('PAN', 'pan'), ('Billing Address', 'billing_address'), ('City', 'billing_city'),
                 ('Pincode', 'billing_pincode'), ('Payment terms (days)', 'payment_terms'), ('Opening Balance', 'opening_balance')]
 
     def get_template_sample(self):
@@ -10189,7 +10190,12 @@ class WarehouseResource(Resource):
     def clean(self, data, instance=None, user=None):
         c = Cleaner(data)
         name = c.text('name', required=True, max_len=100)
-        code = c.text('code', required=True, max_len=30, upper=True)
+        code_message = 'Warehouse Code can contain only letters, numbers, hyphens and underscores.'
+        raw_code = data.get('code')
+        if isinstance(raw_code, str) and raw_code and not re.fullmatch(r'[A-Za-z0-9_-]+', raw_code):
+            c.err('code', code_message)
+        code = c.text('code', required=True, max_len=30, upper=True,
+                      pattern=re.compile(r'^[A-Za-z0-9_-]+$'), pattern_msg=code_message)
         pid = c.integer('parent_id', required=False)
         if pid is None:
             pid = c.integer('parent', required=False)
@@ -14277,17 +14283,33 @@ def settings_users_view(request, user_id=None):
     raise ApiError(405, 'Method not allowed.')
 
 @api_view
+@transaction.atomic
 def settings_invite_user_view(request):
     """Invite a new user or accountant with role assignment."""
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
-    org = get_user_org(request.user) or Organization.get()
-    services.check_subscription_limits(org, 'user')
 
     data = body(request)
     email = (data.get('email') or '').strip().lower()
     if not email:
         raise ApiError(400, 'Email address is required.', {'email': 'Email is required.'})
 
+    org = get_user_org(request.user) or Organization.get()
+    if org:
+        org = services.lock_user_seat_pool(org)
+    now = timezone.now()
+    pending = UserInvitation.objects.filter(
+        organization=org,
+        email__iexact=email,
+        status='invited'
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now)).first()
+    if pending:
+        raise ApiError(409, 'An active invitation already exists for this email address.')
+    if UserProfile.objects.filter(organization=org).filter(
+        Q(normalized_email__iexact=email) | Q(user__email__iexact=email)
+    ).exists():
+        raise ApiError(409, 'This user already has access to the organization.')
+
+    services.check_subscription_limits(org, 'user')
     name = (data.get('name') or '').strip()
     is_acc = bool(data.get('is_accountant'))
     role_id = data.get('role_id')

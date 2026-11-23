@@ -113,6 +113,97 @@ const SETTINGS_MENU_STRUCTURE = [
 
 let cachedSettingsData = null;
 
+function updateSettingsMenuSearch(input) {
+  const wrapper = input.closest('.settings-topbar-search');
+  const results = wrapper && wrapper.querySelector('.settings-menu-search-results');
+  if (!results) return;
+
+  const query = input.value.trim().toLocaleLowerCase();
+  if (!query) {
+    results.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    return;
+  }
+
+  const matches = [];
+  SETTINGS_MENU_STRUCTURE.forEach(section => {
+    section.groups.forEach(group => {
+      group.items.forEach(item => {
+        const searchable = `${item.label} ${group.label} ${section.category}`.toLocaleLowerCase();
+        if (searchable.includes(query)) matches.push({ item, group, section });
+      });
+    });
+  });
+
+  results.innerHTML = matches.length
+    ? matches.map(({ item, group, section }) => `
+      <a class="settings-menu-search-result" href="${esc(item.hash)}" role="option">
+        <span>${esc(item.label)}</span>
+        <small>${esc(group.label)} · ${esc(section.category)}</small>
+      </a>
+    `).join('')
+    : '<div class="settings-menu-search-empty" role="status">No matching settings found.</div>';
+  results.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+}
+
+function installSettingsMenuSearchEvents() {
+  document.addEventListener('input', event => {
+    if (event.target.matches('.settings-menu-search-input')) updateSettingsMenuSearch(event.target);
+  });
+  document.addEventListener('focusin', event => {
+    if (event.target.matches('.settings-menu-search-input')) updateSettingsMenuSearch(event.target);
+  });
+  document.addEventListener('pointerdown', event => {
+    document.querySelectorAll('.settings-menu-search-results:not([hidden])').forEach(results => {
+      const wrapper = results.closest('.settings-topbar-search');
+      if (wrapper && !wrapper.contains(event.target)) {
+        results.hidden = true;
+        wrapper.querySelector('.settings-menu-search-input')?.setAttribute('aria-expanded', 'false');
+      }
+    });
+  });
+  document.addEventListener('keydown', event => {
+    const input = event.target.closest('.settings-menu-search-input');
+    if (input) {
+      const results = input.closest('.settings-topbar-search')?.querySelector('.settings-menu-search-results');
+      if (!results || results.hidden) return;
+      const links = Array.from(results.querySelectorAll('.settings-menu-search-result'));
+      if (event.key === 'ArrowDown' && links.length) {
+        event.preventDefault();
+        links[0].focus();
+      } else if (event.key === 'Enter' && links.length) {
+        event.preventDefault();
+        links[0].click();
+      } else if (event.key === 'Escape') {
+        results.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+      }
+      return;
+    }
+
+    const link = event.target.closest('.settings-menu-search-result');
+    if (!link || !['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)) return;
+    const results = link.closest('.settings-menu-search-results');
+    const links = Array.from(results.querySelectorAll('.settings-menu-search-result'));
+    const index = links.indexOf(link);
+    if (event.key === 'Escape') {
+      const inputElement = results.closest('.settings-topbar-search')?.querySelector('.settings-menu-search-input');
+      results.hidden = true;
+      inputElement?.setAttribute('aria-expanded', 'false');
+      inputElement?.focus();
+    } else {
+      event.preventDefault();
+      const nextIndex = event.key === 'ArrowDown'
+        ? Math.min(index + 1, links.length - 1)
+        : Math.max(index - 1, 0);
+      links[nextIndex]?.focus();
+    }
+  });
+}
+
+installSettingsMenuSearchEvents();
+
 async function fetchSettingsData(force = false) {
   if (cachedSettingsData && !force) return cachedSettingsData;
   try {
@@ -386,7 +477,8 @@ function renderSettingsShell(root, activeSubKey, title, renderPageContentFn) {
 
         <div class="settings-topbar-search">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search settings (/)" onclick="location.hash='#/settings/dashboard'">
+          <input class="settings-menu-search-input" type="search" placeholder="Search settings (/)" autocomplete="off" aria-label="Search settings" aria-haspopup="listbox" aria-expanded="false">
+          <div class="settings-menu-search-results" role="listbox" aria-label="Matching settings" hidden></div>
         </div>
 
         <div class="settings-topbar-right">
@@ -847,6 +939,10 @@ async function openInviteUserModal(isAccountant = false) {
         <button type="button" class="modal-close-btn" onclick="this.closest('.modal-backdrop').remove()">✕</button>
       </div>
       <div class="modal-body">
+        <div id="inviteUserError" role="alert" aria-live="assertive" style="display:none;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;padding:10px 12px;border:1px solid #fca5a5;border-radius:8px;background:#fef2f2;color:#991b1b;font-size:13px;">
+          <span data-invite-error-message></span>
+          <button type="button" class="modal-close-btn" data-dismiss-invite-error aria-label="Dismiss message">✕</button>
+        </div>
         <div class="form-group">
           <label>Full Name</label>
           <input type="text" id="inviteUserName" placeholder="e.g. John Doe" class="form-control">
@@ -876,16 +972,33 @@ async function openInviteUserModal(isAccountant = false) {
   `;
   document.body.appendChild(modal);
 
-  modal.querySelector('#btnSubmitInvite').addEventListener('click', async () => {
+  const errorBox = modal.querySelector('#inviteUserError');
+  const submitButton = modal.querySelector('#btnSubmitInvite');
+  const showInviteError = message => {
+    errorBox.querySelector('[data-invite-error-message]').textContent = message;
+    errorBox.style.display = 'flex';
+  };
+  errorBox.querySelector('[data-dismiss-invite-error]').addEventListener('click', () => {
+    errorBox.style.display = 'none';
+  });
+  modal.querySelector('#inviteUserEmail').addEventListener('input', () => {
+    errorBox.style.display = 'none';
+  });
+
+  submitButton.addEventListener('click', async () => {
+    if (submitButton.disabled) return;
     const name = modal.querySelector('#inviteUserName').value.trim();
     const email = modal.querySelector('#inviteUserEmail').value.trim();
     const roleId = isAccountant ? null : (modal.querySelector('#inviteUserRole') ? modal.querySelector('#inviteUserRole').value : null);
 
     if (!email) {
-      toast('Please provide a valid email address.', 'error');
+      showInviteError('Please provide a valid email address.');
+      modal.querySelector('#inviteUserEmail').focus();
       return;
     }
 
+    submitButton.disabled = true;
+    submitButton.textContent = 'Sending…';
     try {
       await api('/settings/users/invite/', {
         method: 'POST',
@@ -895,7 +1008,15 @@ async function openInviteUserModal(isAccountant = false) {
       modal.remove();
       renderSettingsUsersPage($('#settingsMainPane'));
     } catch (err) {
-      toast(err.message || 'Failed to send invitation.', 'error');
+      const limitReached = err.status === 403 && err.errors?.code === 'PLAN_USER_LIMIT_REACHED';
+      showInviteError(limitReached
+        ? 'You have reached your current user limit. Please upgrade your plan or manage existing users to invite another user.'
+        : (err.message || 'Failed to send invitation.'));
+    } finally {
+      if (submitButton.isConnected) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Send Invitation';
+      }
     }
   });
 }
@@ -1093,7 +1214,8 @@ async function renderRoleEditorPage(container, roleId) {
 
         <div class="settings-topbar-search">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" placeholder="Search settings (/)" onclick="location.hash='#/settings/dashboard'">
+          <input class="settings-menu-search-input" type="search" placeholder="Search settings (/)" autocomplete="off" aria-label="Search settings" aria-haspopup="listbox" aria-expanded="false">
+          <div class="settings-menu-search-results" role="listbox" aria-label="Matching settings" hidden></div>
         </div>
 
         <div class="settings-topbar-right">

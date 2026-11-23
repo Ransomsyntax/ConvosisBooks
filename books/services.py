@@ -1086,7 +1086,7 @@ def check_transaction_lock(doc_date, org=None):
     if lock and lock.lock_date and doc_date <= lock.lock_date:
         raise ApiError(403, f"Transactions dated on or prior to {lock.lock_date.strftime('%d/%m/%Y')} are locked for accounting compliance ({lock.reason}).")
 
-def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes='', warehouse=None, warehouse_code='', adjusted_at=None, to_warehouse=None, to_warehouse_code=''):
+def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes='', warehouse=None, warehouse_code='', adjusted_at=None, to_warehouse=None, to_warehouse_code='', business_location=None):
     item = Item.objects.select_for_update().get(pk=item_id)
     org = getattr(item, 'organization', None)
     check_transaction_lock(on, org=org)
@@ -1109,6 +1109,7 @@ def move_stock(item_id, change, kind, reference, on, user=None, reason='', notes
 
     return StockMovement.objects.create(
         organization=org,
+        business_location=business_location,
         item=item, date=on, adjusted_at=adjusted_at,
         warehouse=warehouse, warehouse_code=warehouse_code,
         to_warehouse=to_warehouse, to_warehouse_code=to_warehouse_code,
@@ -2606,7 +2607,7 @@ def ensure_default_accounts(org=None):
         )
 
 @transaction.atomic
-def post_journal_entry(date, entry_type, reference, notes, items, user=None, org=None):
+def post_journal_entry(date, entry_type, reference, notes, items, user=None, org=None, business_location=None):
     """
     Post a double-entry journal voucher.
     items: list of (account_code_or_obj, debit, credit, description)
@@ -2666,6 +2667,7 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
         try:
             jrn = Journal.objects.create(
                 organization=org,
+                business_location=business_location,
                 number=num,
                 date=date,
                 entry_type=entry_type,
@@ -3178,7 +3180,7 @@ def post_expense_journal(exp, user):
         half = q2(exp.tax_amount / 2)
         items.append(('2240', half, Decimal('0.00'), f'Input CGST on {exp.number}'))
         items.append(('2250', exp.tax_amount - half, Decimal('0.00'), f'Input SGST on {exp.number}'))
-    return post_journal_entry(exp.date, 'expense', exp.number, f'Operating expense {exp.number}', items, user, org=org)
+    return post_journal_entry(exp.date, 'expense', exp.number, f'Operating expense {exp.number}', items, user, org=org, business_location=exp.business_location)
 
 def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user, org=None):
     """Record a transfer between bank accounts or cash."""
@@ -3193,7 +3195,7 @@ def post_bank_transfer(from_acc, to_acc, amount, on_date, ref, user, org=None):
     log_audit(user, 'transfer', 'BankAccount', 0, f'Transferred ₹{amount} from {from_acc} to {to_acc}')
     return jrn
 
-def trial_balance_report(as_of_date=None, include_zero=True, org=None):
+def trial_balance_report(as_of_date=None, include_zero=True, org=None, business_location=None):
     """Compute real-time Trial Balance ensuring sum(Debits) == sum(Credits)."""
     ensure_default_accounts(org)
     as_of = as_of_date or timezone.localdate()
@@ -3205,6 +3207,8 @@ def trial_balance_report(as_of_date=None, include_zero=True, org=None):
     else:
         qs = qs.none()
         accounts = accounts.none()
+    if business_location:
+        qs = qs.filter(journal__business_location=business_location)
 
     rows = []
     tot_debit = Decimal('0.00')
@@ -3243,7 +3247,7 @@ def trial_balance_report(as_of_date=None, include_zero=True, org=None):
         'difference': abs(tot_debit - tot_credit)
     }
 
-def general_ledger_report(account_id=None, start=None, end=None, org=None):
+def general_ledger_report(account_id=None, start=None, end=None, org=None, business_location=None):
     """Chronological ledger transactions with running balances."""
     ensure_default_accounts(org)
     today = timezone.localdate()
@@ -3263,6 +3267,8 @@ def general_ledger_report(account_id=None, start=None, end=None, org=None):
         pre_items = JournalItem.objects.filter(account=acc, journal__date__lt=s)
         if org:
             pre_items = pre_items.filter(journal__organization=org)
+        if business_location:
+            pre_items = pre_items.filter(journal__business_location=business_location)
         pre_d = pre_items.aggregate(s=Sum('debit'))['s'] or Decimal('0.00')
         pre_c = pre_items.aggregate(s=Sum('credit'))['s'] or Decimal('0.00')
         normal_is_debit = acc.account_type in ('asset', 'expense')

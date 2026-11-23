@@ -5161,15 +5161,18 @@ async function renderBusinessLocationsPage(container) {
   let locations = [];
   let users = [];
   let series = [];
+  let organization = null;
   try {
-    const [locationData, userData, seriesData] = await Promise.all([
+    const [locationData, userData, seriesData, organizationData] = await Promise.all([
       api('/settings/locations/'),
       api('/settings/users/'),
-      api('/settings/transaction-series/')
+      api('/settings/transaction-series/'),
+      api('/settings/organization/')
     ]);
     locations = locationData.locations || [];
     users = userData.users || [];
-    series = seriesData.series || seriesData || [];
+    series = Array.isArray(seriesData) ? seriesData : (Array.isArray(seriesData.series) ? seriesData.series : []);
+    organization = organizationData || null;
   } catch (error) {
     container.innerHTML = `<div class="error-msg-card">${esc(error.message || 'Failed to load locations.')}</div>`;
     return;
@@ -5187,8 +5190,10 @@ async function renderBusinessLocationsPage(container) {
       try { location = await api(`/settings/locations/${locationId}/`); }
       catch (error) { toast(error.message || 'Failed to load location.', 'error'); return; }
     }
-    const modal = new Modal('Add Location');
-    modal.open(`
+    const modal = Modal.open({
+      title: locationId ? 'Edit Location' : 'Add Location',
+      wide: true,
+      body: `
       <div class="settings-location-form">
         <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Location' : 'Add Location'}</h2></div></div>
         <div class="form-group" style="margin-bottom:14px;">
@@ -5204,7 +5209,11 @@ async function renderBusinessLocationsPage(container) {
         <label class="form-group">Logo
           <select class="form-control" id="locationLogo">
             <option value="">Same as Organization Logo</option>
+            ${location.logo_data ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
+            <option value="__upload_new_logo__">Upload New Logo</option>
           </select>
+          <input type="file" id="locationLogoFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
+          <div id="locationLogoPreview" style="margin-top:8px;">${location.logo_data ? `<img src="${esc(location.logo_data)}" alt="Location logo" style="max-height:60px;max-width:180px;">` : ''}</div>
         </label>
         <label class="form-group"><input type="checkbox" id="locationChild" ${location.parent_id ? 'checked' : ''}> This is a Child Location</label>
         <label class="form-group" id="parentLocationWrap" style="${location.parent_id ? '' : 'display:none'}">Parent Location
@@ -5254,13 +5263,54 @@ async function renderBusinessLocationsPage(container) {
           <button type="button" class="btn-secondary" data-close>Cancel</button>
         </div>
       </div>
-    `);
+      `,
+    });
     const root = modal.el || modal.element;
     root.querySelectorAll('[name="locationType"]').forEach(radio => radio.addEventListener('change', () => {
       root.querySelector('#locationNameLabel').textContent = radio.value === 'warehouse' ? 'Warehouse Name*' : 'Name*';
     }));
     root.querySelector('#locationChild').addEventListener('change', event => {
       root.querySelector('#parentLocationWrap').style.display = event.target.checked ? '' : 'none';
+    });
+    let selectedLogoData = location.logo_data || '';
+    const logoSelect = root.querySelector('#locationLogo');
+    const logoFile = root.querySelector('#locationLogoFile');
+    const logoPreview = root.querySelector('#locationLogoPreview');
+    logoSelect.addEventListener('change', () => {
+      if (logoSelect.value === '__upload_new_logo__') {
+        logoFile.click();
+      } else if (!logoSelect.value) {
+        selectedLogoData = '';
+        logoPreview.innerHTML = organization && organization.logo_data
+          ? `<img src="${esc(organization.logo_data)}" alt="Organization logo" style="max-height:60px;max-width:180px;">`
+          : '';
+      } else {
+        selectedLogoData = logoSelect.value;
+        logoPreview.innerHTML = `<img src="${esc(selectedLogoData)}" alt="Location logo" style="max-height:60px;max-width:180px;">`;
+      }
+    });
+    logoFile.addEventListener('change', () => {
+      const file = logoFile.files && logoFile.files[0];
+      if (!file) return;
+      if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+        toast('Choose a PNG, JPEG, WebP, or GIF image.', 'error');
+        logoSelect.value = '';
+        logoFile.value = '';
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        toast('Location logo must be 2 MB or smaller.', 'error');
+        logoSelect.value = '';
+        logoFile.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        selectedLogoData = String(reader.result || '');
+        logoSelect.add(new Option('Uploaded Location Logo', selectedLogoData, true, true));
+        logoPreview.innerHTML = `<img src="${esc(selectedLogoData)}" alt="Uploaded location logo" style="max-height:60px;max-width:180px;">`;
+      };
+      reader.readAsDataURL(file);
     });
     root.querySelector('#btnAddLocationSeries').addEventListener('click', () => location.hash = '#/settings/number-series');
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
@@ -5269,7 +5319,7 @@ async function renderBusinessLocationsPage(container) {
         location_type: locationType,
         name: root.querySelector('#locationName').value.trim(),
         gstin: root.querySelector('#locationGstin').value.trim(),
-        logo_data: root.querySelector('#locationLogo').value,
+        logo_data: selectedLogoData,
         parent_id: root.querySelector('#locationChild').checked ? (root.querySelector('#locationParent').value || null) : null,
         attention: root.querySelector('#locationAttention').value.trim(),
         street1: root.querySelector('#locationStreet1').value.trim(),

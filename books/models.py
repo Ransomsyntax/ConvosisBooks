@@ -294,6 +294,7 @@ class Item(models.Model):
 class Document(models.Model):
     DRAFT, VOID = 'draft', 'void'
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='%(class)s_documents')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
@@ -409,6 +410,7 @@ MODES = [('cash', 'Cash'), ('bank_transfer', 'Bank transfer'), ('upi', 'UPI'),
 
 class Payment(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='%(class)ss')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='%(class)s_payments')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
@@ -445,10 +447,6 @@ class PaymentReceived(Payment):
     tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     place_of_supply = models.CharField(max_length=80, blank=True, default='')
     branch = models.CharField(max_length=120, blank=True, default='')
-    business_location = models.ForeignKey(
-        'BusinessLocation', null=True, blank=True, on_delete=models.PROTECT,
-        related_name='payment_received',
-    )
     custom_fields_data = models.JSONField(default=dict, blank=True)
     draft_allocations = models.JSONField(default=list, blank=True)
     thank_you_enabled = models.BooleanField(default=False)
@@ -481,6 +479,7 @@ class BillAllocation(models.Model):
 
 class StockMovement(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_movements')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='stock_movements')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     KINDS = [('opening', 'Opening stock'), ('sale', 'Sale'), ('sale_void', 'Sale voided'),
              ('purchase', 'Purchase'), ('purchase_void', 'Purchase voided'), ('adjustment', 'Adjustment'),
@@ -557,6 +556,7 @@ class Account(models.Model):
 
 class Journal(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='journals')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='journals')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=60)
     date = models.DateField()
@@ -771,6 +771,7 @@ class BankAccount(models.Model):
 
 class BankTransaction(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='bank_transactions')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='bank_transactions')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.CASCADE, related_name='transactions')
     date = models.DateField()
     description = models.CharField(max_length=300)
@@ -887,6 +888,7 @@ class QuoteLine(Line):
 
 class RecurringInvoice(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='recurring_invoices')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='recurring_invoices')
     FREQUENCIES = [('weekly', 'Weekly'), ('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('yearly', 'Yearly')]
     profile_name = models.CharField(max_length=150)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='recurring_invoices')
@@ -1062,6 +1064,7 @@ class PurchaseOrderLine(Line):
 
 class Expense(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='expenses')
+    business_location = models.ForeignKey('BusinessLocation', null=True, blank=True, on_delete=models.PROTECT, related_name='expenses')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
@@ -1404,6 +1407,7 @@ class Warehouse(models.Model):
 class StockTransfer(models.Model):
     """Transfer of stock between warehouses within the same organization."""
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_transfers')
+    business_location = models.ForeignKey(BusinessLocation, null=True, blank=True, on_delete=models.PROTECT, related_name='stock_transfers')
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     number = models.CharField(max_length=50, db_index=True)
     date = models.DateField()

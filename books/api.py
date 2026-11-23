@@ -2570,6 +2570,30 @@ class DocResource(Resource):
         for fld in ('branch', 'location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
             if fld in data:
                 head[fld] = str(data.get(fld) or '').strip()
+        location_id = data.get('business_location_id') or data.get('business_location')
+        if location_id not in (None, '', 0):
+            try:
+                location_id = int(location_id)
+            except (TypeError, ValueError):
+                c.err('business_location_id', 'Choose a valid business location.')
+            else:
+                business_location = BusinessLocation.objects.filter(
+                    organization=org, pk=location_id, active=True
+                ).first()
+                if not business_location:
+                    c.err('business_location_id', 'Select an active business location in your organization.')
+                else:
+                    profile = getattr(user, 'profile', None)
+                    if (
+                        user and not user.is_superuser
+                        and profile
+                        and profile.role != UserProfile.ADMIN
+                        and not business_location.assigned_users.filter(pk=user.pk).exists()
+                        and not business_location.parent_id
+                    ):
+                        c.err('business_location_id', 'You are not assigned to this business location.')
+                    head['business_location'] = business_location
+                    head['location'] = business_location.name
         for num_fld in ('adjustment', 'tcs_rate', 'tcs_amount', 'discount_percent'):
             if num_fld in data:
                 head[num_fld] = str(data.get(num_fld) or '0').strip()
@@ -2831,6 +2855,7 @@ class InvoiceResource(DocResource):
             'project_name': o.project_name,
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'business_location_id': o.business_location_id,
             'salesperson': getattr(o, 'salesperson', '') or '',
             'subject': getattr(o, 'subject', '') or '',
             'billing_address_data': o.billing_address_data or {},
@@ -5111,6 +5136,7 @@ class JournalResource(Resource):
         dt = c.date('date', required=True)
         ref = c.text('reference', max_len=80)
         notes = c.text('notes', max_len=1000)
+        business_location_id = c.integer('business_location_id', lo=1)
         c.done()
 
         lines_in = data.get('lines', [])
@@ -5125,7 +5151,12 @@ class JournalResource(Resource):
             items.append((acc_id, ln.get('debit', 0), ln.get('credit', 0), ln.get('description', '')))
 
         user_org = get_user_org(user)
-        jrn = services.post_journal_entry(dt, 'manual', ref, notes, items, user, org=user_org)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=user_org, active=True
+        ).first() if business_location_id else None
+        if business_location_id and not business_location:
+            raise ApiError(400, 'Select an active business location in your organization.')
+        jrn = services.post_journal_entry(dt, 'manual', ref, notes, items, user, org=user_org, business_location=business_location)
         tot_deb = sum((it.debit for it in jrn.items.all()), Z)
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
         return jrn
@@ -5849,6 +5880,12 @@ class BankTransactionResource(Resource):
         ttype = c.text('transaction_type', max_len=50, default='Bank Transaction')
         payee = c.text('payee', max_len=150)
         loc = c.text('location', max_len=100, default=ba.branch_name or 'HO Kottayam')
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=ba.organization, active=True
+        ).first() if business_location_id and ba.organization else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
         st = c.choice('status', ['unmatched', 'unreconciled', 'matched', 'categorized', 'manually_added'], default='unreconciled')
         notes = c.text('notes', max_len=1000)
         c.done()
@@ -5859,9 +5896,11 @@ class BankTransactionResource(Resource):
         ba.save(update_fields=['current_balance', 'bank_balance'])
 
         txn = BankTransaction.objects.create(
+            organization=ba.organization,
             bank_account=ba, date=dt, description=desc, reference=ref,
             withdrawal=wd, deposit=dep, balance=new_balance,
             transaction_type=ttype, payee=payee, location=loc,
+            business_location=business_location,
             status=st, notes=notes
         )
         services.log_audit(user, 'create', 'BankTransaction', txn.pk, f"Imported bank transaction {txn.description} ({txn.date})")
@@ -7169,6 +7208,12 @@ class ExpenseResource(Resource):
         dt = c.date('date', required=True)
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=user_org, active=True
+        ).first() if business_location_id else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
         acc_id = c.integer('expense_account', required=True, lo=1)
         acc = Account.objects.filter(pk=acc_id, organization=user_org).first()
         if not acc:
@@ -7211,6 +7256,7 @@ class ExpenseResource(Resource):
             )
         exp = Expense.objects.create(
             organization=user_org,
+            business_location=business_location,
             number=num, date=dt, branch=branch, location=location,
             expense_account=acc, vendor=ven, project=project,
             billable_to_customer=billable,
@@ -8069,6 +8115,12 @@ class RecurringInvoiceResource(Resource):
         payment_terms = c.integer('payment_terms', lo=0, default=getattr(cust, 'payment_terms', 30) or 30)
         auto_send = c.boolean('auto_send', default=False)
         branch = c.text('branch', max_len=120)
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=user_org, active=True
+        ).first() if business_location_id else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
         notes = c.text('notes', max_len=2000)
         terms = c.text('terms', max_len=2000)
         max_occ = c.integer('max_occurrences', lo=1)
@@ -8139,6 +8191,7 @@ class RecurringInvoiceResource(Resource):
 
         rec = RecurringInvoice.objects.create(
             organization=user_org,
+            business_location=business_location,
             profile_name=pname,
             customer=cust,
             frequency=freq,
@@ -11268,7 +11321,13 @@ def lookup(request, name):
                  'shared_database': o.shared_database}
                 for o in wh_qs]
     elif name in ('business-locations', 'retainer-locations'):
-        locations = org_filter(BusinessLocation.objects.filter(active=True)).order_by('name')
+        location_qs = org_filter(BusinessLocation.objects.filter(active=True)).filter(location_type='business')
+        profile = getattr(request.user, 'profile', None)
+        if profile and not request.user.is_superuser and profile.role != UserProfile.ADMIN:
+            location_qs = location_qs.filter(
+                Q(assigned_users=request.user) | Q(parent__assigned_users=request.user)
+            ).distinct()
+        locations = location_qs.order_by('name')
         data = [{
             'id': item.pk,
             'name': item.name,
@@ -11684,10 +11743,22 @@ def reports_view(request, name):
     if name == 'trial-balance':
         as_of = request.GET.get('as_of')
         as_of_date = Cleaner({'as_of': as_of}).date('as_of') if as_of else end
-        return j(services.trial_balance_report(as_of_date, org=user_org))
+        location_id = request.GET.get('business_location_id') or request.GET.get('location_id')
+        business_location = BusinessLocation.objects.filter(
+            organization=user_org, pk=location_id
+        ).first() if location_id and user_org else None
+        if location_id and not business_location:
+            raise ApiError(400, 'Choose a valid business location in your organization.')
+        return j(services.trial_balance_report(as_of_date, org=user_org, business_location=business_location))
     elif name == 'general-ledger':
         acc_id = request.GET.get('account')
-        return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org))
+        location_id = request.GET.get('business_location_id') or request.GET.get('location_id')
+        business_location = BusinessLocation.objects.filter(
+            organization=user_org, pk=location_id
+        ).first() if location_id and user_org else None
+        if location_id and not business_location:
+            raise ApiError(400, 'Choose a valid business location in your organization.')
+        return j(services.general_ledger_report(int(acc_id) if acc_id and acc_id.isdigit() else None, start, end, org=user_org, business_location=business_location))
     elif name in ('profit-loss', 'pnl', 'profit-and-loss'):
         return j(services.profit_and_loss_report(start, end, org=user_org))
     elif name == 'balance-sheet':
@@ -14236,10 +14307,26 @@ def settings_locations_view(request, location_id=None):
         location = queryset.filter(pk=location_id).first() if location_id else None
         if not location:
             raise ApiError(404, 'Business location not found.')
-        if location.retainer_invoices.exists() or location.document_number_series.exists():
-            raise ApiError(409, 'This location is in use by retainer invoices or numbering series. Deactivate it instead.')
-        if location.warehouses.exists():
-            raise ApiError(409, 'Unlink the associated warehouses before deleting this location.')
+        dependent_counts = []
+        for relation in location._meta.get_fields(include_hidden=True):
+            if getattr(relation, 'auto_created', False) and not getattr(relation, 'concrete', False):
+                if getattr(relation, 'many_to_many', False):
+                    continue
+                accessor = relation.get_accessor_name()
+                try:
+                    dependent = getattr(location, accessor)
+                    count = dependent.count() if hasattr(dependent, 'count') else 0
+                except (AttributeError, TypeError):
+                    count = 0
+                if count:
+                    dependent_counts.append(f'{relation.related_model._meta.verbose_name_plural} ({count})')
+        if dependent_counts:
+            raise ApiError(
+                409,
+                'This location cannot be deleted because it is used by: '
+                + ', '.join(dependent_counts)
+                + '. Deactivate it instead.',
+            )
         name = location.name
         location.delete()
         services.log_audit(
@@ -14278,6 +14365,14 @@ def settings_locations_view(request, location_id=None):
     fax = str(data.get('fax') or '').strip()
     website = str(data.get('website') or '').strip()
     logo_data = str(data.get('logo_data') or '').strip()
+    if logo_data:
+        if not logo_data.startswith('data:image/'):
+            raise ApiError(400, 'Location logo must be an uploaded PNG, JPEG, WebP, or GIF image.')
+        if len(logo_data) > 2 * 1024 * 1024:
+            raise ApiError(400, 'Location logo must be 2 MB or smaller.')
+        mime_match = re.match(r'^data:(image/(?:png|jpeg|webp|gif));base64,', logo_data)
+        if not mime_match:
+            raise ApiError(400, 'Location logo must be a PNG, JPEG, WebP, or GIF image.')
     location_type = str(data.get('location_type') or 'business').strip()
     if location_type not in ('business', 'warehouse'):
         raise ApiError(400, 'Choose a valid location type.')
@@ -14315,6 +14410,8 @@ def settings_locations_view(request, location_id=None):
     assigned_user_ids = data.get('assigned_user_ids', [])
     if not isinstance(assigned_user_ids, list):
         raise ApiError(400, 'Assigned users must be a list of user IDs.')
+    if any(not str(value).isdigit() for value in assigned_user_ids):
+        raise ApiError(400, 'Assigned users must contain valid user IDs.')
     normalized_assigned_ids = list(dict.fromkeys(int(value) for value in assigned_user_ids if str(value).isdigit()))
     from django.contrib.auth import get_user_model
     UserModel = get_user_model()

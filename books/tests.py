@@ -1559,6 +1559,12 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
             field_type='text',
             required=True,
         )
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Custom Field Invoice Series',
+            document_type='invoices',
+            prefix='CF',
+        )
 
         missing_value = self.client.post(
             '/api/settings/locations/',
@@ -1572,6 +1578,9 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
             data=json.dumps({
                 'name': 'Custom Field Location',
                 'custom_fields_data': {'site_code': 'NORTH-01'},
+                'primary_contact_id': self.admin_user.id,
+                'transaction_series_ids': [series.id],
+                'default_transaction_series_id': series.id,
             }),
             content_type='application/json',
         )
@@ -1581,7 +1590,13 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
 
         updated = self.client.put(
             f'/api/settings/locations/{location_id}/',
-            data=json.dumps({'name': 'Renamed Custom Field Location'}),
+            data=json.dumps({
+                'name': 'Renamed Custom Field Location',
+                'primary_contact_id': self.admin_user.id,
+                'transaction_series_ids': [series.id],
+                'default_transaction_series_id': series.id,
+                'custom_fields_data': {'site_code': 'NORTH-01'},
+            }),
             content_type='application/json',
         )
         self.assertEqual(updated.status_code, 200, updated.content)
@@ -1589,6 +1604,12 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
 
     def test_warehouse_only_locations_reject_transaction_series(self):
         self.client.force_login(self.admin_user)
+        parent = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Warehouse Parent Location',
+            location_type=BusinessLocation.LOCATION_TYPE_BUSINESS,
+            active=True,
+        )
         series = DocumentNumberSeries.objects.create(
             organization=self.org,
             name='Business-only Invoice Series',
@@ -1601,6 +1622,7 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
             data=json.dumps({
                 'name': 'Warehouse-only Location',
                 'location_type': 'warehouse',
+                'parent_id': parent.pk,
                 'transaction_series_ids': [series.pk],
             }),
             content_type='application/json',
@@ -1627,6 +1649,7 @@ class TestSettingsModuleAndPermissions(BaseAccountingTestCase):
                 'name': 'North Office',
                 'transaction_series_ids': [series.pk],
                 'default_transaction_series_id': series.pk,
+                'primary_contact_id': self.admin_user.id,
             }),
             content_type='application/json',
         )
@@ -2436,6 +2459,12 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
         )
         self.assertEqual(invalid.status_code, 400)
 
+        transaction_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Default Office Invoice Series',
+            document_type='invoices',
+            prefix='DO',
+        )
         created = self.client.post(
             '/api/settings/locations/',
             data=json.dumps({
@@ -2443,6 +2472,9 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
                 'gstin': '32AANCC9298C1ZE',
                 'is_default': True,
                 'warehouse_ids': [],
+                'primary_contact_id': self.admin_user.id,
+                'transaction_series_ids': [transaction_series.id],
+                'default_transaction_series_id': transaction_series.id,
             }),
             content_type='application/json',
         )
@@ -2477,6 +2509,9 @@ class TestRetainerAndRecurringInvoiceModules(BaseAccountingTestCase):
                 'is_default': True,
                 'active': False,
                 'warehouse_ids': [],
+                'primary_contact_id': self.admin_user.id,
+                'transaction_series_ids': [transaction_series.id],
+                'default_transaction_series_id': transaction_series.id,
             }),
             content_type='application/json',
         )

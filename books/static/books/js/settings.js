@@ -3580,7 +3580,7 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <label class="form-group">Series Name*<input class="form-control" id="newSeriesName" placeholder="e.g. Kerala Branch" required></label>
-          <label class="form-group">Branch / Branch
+          <label class="form-group">Branch
             <select class="form-control" id="newSeriesLocation">
               <option value="">All branches</option>
             </select>
@@ -3630,7 +3630,9 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
       `<option value="${location.id}">${esc(location.name)}</option>`
     ).join('');
-  }).catch(() => {});
+  }).catch(error => {
+    toast(error.message || 'Could not load branches for the transaction series.', 'error');
+  });
 
   const nameInput = modal.querySelector('#newSeriesName');
   const pfxInputs = modal.querySelectorAll('.s-pfx');
@@ -3792,7 +3794,7 @@ function openEditSeriesMetaModal(container, currentSeries) {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
         <label class="form-group">Series Name*<input class="form-control" id="editMetaName" value="${esc(currentSeries.name)}" required></label>
-        <label class="form-group">Branch / Branch
+        <label class="form-group">Branch
           <select class="form-control" id="editMetaLocation"><option value="">All branches</option></select>
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -5383,6 +5385,11 @@ function renderLocationStateControl(country, selectedState) {
 }
 
 async function renderBusinessLocationsPage(container) {
+  container.classList.remove('settings-pane-fixed');
+  container.classList.remove('settings-location-pane');
+  container.style.padding = '28px 36px 60px';
+  container.style.overflow = 'auto';
+  container.style.height = '';
   container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading branches…</div>`;
   let locations = [];
   let users = [];
@@ -5422,107 +5429,191 @@ async function renderBusinessLocationsPage(container) {
       !item.business_location_id || String(item.business_location_id) === String(location.id || '')
     );
     const countryOptions = getLocationCountryOptions(location.country || 'India');
-    const modal = Modal.open({
-      title: locationId ? 'Edit Branch' : 'Add Branch',
-      wide: true,
-      body: `
-      <div class="settings-location-form">
-        <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Branch' : 'Add Branch'}</h2></div></div>
-        <label class="form-group"><span id="locationNameLabel">Branch Name*</span>
-          <input class="form-control" id="locationName" value="${esc(location.name)}" required>
-        </label>
-        <label class="form-group"><input type="checkbox" id="locationActive" ${location.active ? 'checked' : ''}> Active</label>
-        <label class="form-group"><input type="checkbox" id="locationIsDefault" ${location.is_default ? 'checked' : ''}> Set as default location</label>
-        <label class="form-group">Logo
-          <select class="form-control" id="locationLogo">
-            <option value="">Same as Organization Logo</option>
-            ${location.logo_data ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
-            <option value="__upload_new_logo__">Upload a New Logo</option>
-          </select>
-          <input type="file" id="locationLogoFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
-          <div id="locationLogoPreview" style="margin-top:8px;">${location.logo_data ? `<img src="${esc(location.logo_data)}" alt="Location logo" style="max-height:60px;max-width:180px;">` : ''}</div>
-        </label>
-        <label class="form-group"><input type="checkbox" id="locationChild" ${location.parent_id ? 'checked' : ''}> This is a Child Location</label>
-        <label class="form-group" id="parentLocationWrap" style="${location.parent_id ? '' : 'display:none'}">Parent Location
-          <select class="form-control" id="locationParent">
-            <option value="">Select parent location</option>
-            ${locations.filter(item => item.location_type === 'business' && item.id !== location.id).map(item => `<option value="${item.id}" ${item.id === location.parent_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
-          </select>
-        </label>
-        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <label class="form-group">Attention<input class="form-control" id="locationAttention" value="${esc(location.attention)}"></label>
-          <label class="form-group">GSTIN<input class="form-control" id="locationGstin" value="${esc(location.gstin)}"></label>
-          <label class="form-group">Street 1<input class="form-control" id="locationStreet1" value="${esc(location.street1)}"></label>
-          <label class="form-group">Street 2<input class="form-control" id="locationStreet2" value="${esc(location.street2)}"></label>
-          <label class="form-group">City<input class="form-control" id="locationCity" value="${esc(location.city)}"></label>
-          <label class="form-group">Pin Code<input class="form-control" id="locationPincode" value="${esc(location.pincode)}"></label>
-          <label class="form-group">Country
-            <select class="form-control" id="locationCountry">
-              ${countryOptions.map(country => `<option value="${esc(country)}" ${country.toLowerCase() === String(location.country || 'India').toLowerCase() ? 'selected' : ''}>${esc(country)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="form-group">State / Union Territory
-            <span id="locationStateControl">${renderLocationStateControl(location.country || 'India', location.state)}</span>
-          </label>
-          <label class="form-group">Phone<input class="form-control" id="locationPhone" type="tel" value="${esc(location.phone)}" maxlength="50" autocomplete="tel"></label>
-          <label class="form-group">Fax Number<input class="form-control" id="locationFax" type="tel" value="${esc(location.fax)}" maxlength="50"></label>
-          <label class="form-group" style="grid-column:1/-1;">Website URL<input class="form-control" id="locationWebsite" type="url" value="${esc(location.website)}" maxlength="200" placeholder="https://example.com"></label>
-        </div>
-        <label class="form-group" data-business-location-only>Primary Contact*
-          <select class="form-control" id="locationPrimaryContact">
-            <option value="">Select contact</option>
-            ${users.map(user => `<option value="${user.id}" ${user.id === location.primary_contact_id ? 'selected' : ''}>${esc(user.name)} &lt;${esc(user.email)}&gt;</option>`).join('')}
-          </select>
-        </label>
-        <label class="form-group" data-business-location-only>Transaction Number Series*
-          <input class="form-control" id="locationSeriesSearch" type="search" placeholder="Search transaction series" aria-label="Search transaction series">
-          <select class="form-control" id="locationSeries" multiple size="5" aria-label="Transaction Number Series">
-            ${availableSeries.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
-          </select>
-        </label>
-        <button type="button" class="btn btn-outline" id="btnAddLocationSeries" data-business-location-only>+ Add Transaction Series</button>
-        <label class="form-group" data-business-location-only>Default Transaction Number Series*
-          <select class="form-control" id="locationDefaultSeries">
-            <option value="">Select default series</option>
-            ${availableSeries.map(item => `<option value="${item.id}" ${item.id === location.default_transaction_series_id ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
-          </select>
-        </label>
-        ${customFields.length ? `<div class="form-group"><b>Location Custom Fields</b><div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">${customFields.map(field => {
-          const defaultValue = field.default_value && typeof field.default_value === 'object' && 'value' in field.default_value
-            ? field.default_value.value
-            : field.default_value;
-          return renderBusinessLocationCustomField(field, (location.custom_fields_data || {})[field.name] ?? defaultValue ?? '');
-        }).join('')}</div></div>` : ''}
-        <div class="form-group"><b>Location Access</b>
-          <div style="padding:8px 0;color:#64748b;font-size:12px;" id="locationAccessCount"></div>
-          <div style="max-height:180px;overflow:auto;border:1px solid #e2e8f0;padding:8px;">
-            <table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Access</th></tr></thead>
-              <tbody>${users.map(user => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td>${esc(user.role)}</td><td><input type="checkbox" class="locationUser" value="${user.id}" ${location.assigned_user_ids.includes(user.id) ? 'checked' : ''} aria-label="Grant location access to ${esc(user.name)}"></td></tr>`).join('')}</tbody>
-            </table>
+    container.classList.add('settings-pane-fixed');
+    container.classList.add('settings-location-pane');
+    container.style.padding = '0';
+    container.style.overflow = 'hidden';
+    container.style.height = '100%';
+    container.innerHTML = `
+      <section class="settings-location-editor" aria-label="${locationId ? 'Edit Branch' : 'Add Branch'}">
+        <header class="settings-location-editor-header">
+          <h1>${locationId ? 'Edit Branch' : 'Add Branch'}</h1>
+        </header>
+        <div class="settings-location-editor-scroll">
+          <div class="settings-location-form">
+            <div class="settings-location-row">
+              <span class="settings-location-label">Location Type</span>
+              <div class="settings-location-type-cards" role="radiogroup" aria-label="Location Type">
+                <label class="settings-location-type-card" data-location-type-card="business">
+                  <input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}>
+                  <span class="settings-location-type-title">Business Location</span>
+                  <span class="settings-location-type-description">A Business Location represents your organisation or office's operational location. It is used to record transactions, assess regional performance, and monitor stock levels for items stored at this location.</span>
+                </label>
+                <label class="settings-location-type-card" data-location-type-card="warehouse">
+                  <input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}>
+                  <span class="settings-location-type-title">Warehouse Only Location</span>
+                  <span class="settings-location-type-description">A Warehouse Only Location refers to where your items are stored. It helps track and monitor stock levels for items stored at this location.</span>
+                </label>
+              </div>
+            </div>
+            <div data-business-location-only>
+              <div class="settings-location-row">
+                <label class="settings-location-label" for="locationLogo">Logo</label>
+                <div class="settings-location-field">
+                  <select class="form-control" id="locationLogo">
+                    <option value="">Same as Organization Logo</option>
+                    ${location.logo_data ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
+                    <option value="__upload_new_logo__">Upload a New Logo</option>
+                  </select>
+                  <input type="file" id="locationLogoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                  <div id="locationLogoPreview" class="settings-location-logo-preview">${location.logo_data ? `<img src="${esc(location.logo_data)}" alt="Location logo">` : (organization && organization.logo_data ? `<img src="${esc(organization.logo_data)}" alt="Organization logo">` : '')}</div>
+                </div>
+              </div>
+            </div>
+            <div class="settings-location-row">
+              <label class="settings-location-label" for="locationName">Name <span class="required">*</span></label>
+              <div class="settings-location-field">
+                <input class="form-control" id="locationName" value="${esc(location.name)}" maxlength="120" required>
+              </div>
+            </div>
+            <div class="settings-location-row" id="locationChildWrap" data-business-location-only>
+              <span class="settings-location-label" aria-hidden="true"></span>
+              <label class="settings-location-field settings-location-checkbox">
+                <input type="checkbox" id="locationChild" ${location.parent_id ? 'checked' : ''}>
+                <span>This is a Child Location</span>
+              </label>
+            </div>
+            <div class="settings-location-row" id="parentLocationWrap" ${location.location_type === 'warehouse' || location.parent_id ? '' : 'hidden'}>
+              <label class="settings-location-label" for="locationParent"><span id="parentLocationLabel">Parent Location</span> <span class="required">*</span></label>
+              <div class="settings-location-field">
+                <select class="form-control" id="locationParent">
+                  <option value="">Select Location</option>
+                  ${locations.filter(item => item.location_type === 'business' && item.id !== location.id && (item.active || item.id === location.parent_id)).map(item => `<option value="${item.id}" ${String(item.id) === String(location.parent_id || '') ? 'selected' : ''}>${esc(item.name)}${item.active ? '' : ' (Inactive)'}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="settings-location-row settings-location-address-heading">
+              <span class="settings-location-label">Address</span>
+            </div>
+            <div class="settings-location-row">
+              <span class="settings-location-label" aria-hidden="true"></span>
+              <div class="settings-location-field settings-location-address-fields">
+                <input class="form-control" id="locationAttention" value="${esc(location.attention)}" maxlength="120" placeholder="Attention">
+                <input class="form-control" id="locationStreet1" value="${esc(location.street1)}" maxlength="200" placeholder="Street 1">
+                <input class="form-control" id="locationStreet2" value="${esc(location.street2)}" maxlength="200" placeholder="Street 2">
+                <div class="settings-location-field-pair">
+                  <input class="form-control" id="locationCity" value="${esc(location.city)}" maxlength="100" placeholder="City">
+                  <input class="form-control" id="locationPincode" value="${esc(location.pincode)}" maxlength="20" placeholder="Pin Code">
+                </div>
+                <select class="form-control" id="locationCountry">
+                  ${countryOptions.map(country => `<option value="${esc(country)}" ${country.toLowerCase() === String(location.country || 'India').toLowerCase() ? 'selected' : ''}>${esc(country)}</option>`).join('')}
+                </select>
+                <div class="settings-location-field-pair">
+                  <span id="locationStateControl">${renderLocationStateControl(location.country || 'India', location.state)}</span>
+                  <input class="form-control" id="locationPhone" type="tel" value="${esc(location.phone)}" maxlength="50" autocomplete="tel" placeholder="Phone">
+                </div>
+                <input class="form-control" id="locationFax" type="tel" value="${esc(location.fax)}" maxlength="50" placeholder="Fax Number">
+              </div>
+            </div>
+            <div class="settings-location-row">
+              <label class="settings-location-label" for="locationWebsite">Website URL</label>
+              <div class="settings-location-field">
+                <input class="form-control" id="locationWebsite" type="url" value="${esc(location.website)}" maxlength="200" placeholder="https://example.com">
+              </div>
+            </div>
+            <div class="settings-location-row">
+              <label class="settings-location-label" for="locationPrimaryContact">Primary Contact <span class="required" id="primaryContactRequired">*</span></label>
+              <div class="settings-location-field">
+                <select class="form-control" id="locationPrimaryContact">
+                  <option value="">Select contact</option>
+                  ${users.map(user => `<option value="${user.id}" ${String(user.id) === String(location.primary_contact_id || '') ? 'selected' : ''}>${esc(user.name)} &lt;${esc(user.email)}&gt;</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="settings-location-row" data-business-location-only>
+              <label class="settings-location-label" for="locationSeries">Transaction Number Series <span class="required">*</span></label>
+              <div class="settings-location-field">
+                <input class="form-control" id="locationSeriesSearch" type="search" placeholder="Search transaction series" aria-label="Search transaction series">
+                <select class="form-control" id="locationSeries" multiple size="5" aria-label="Transaction Number Series">
+                  ${availableSeries.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
+                </select>
+                <button type="button" class="btn-secondary" id="btnAddLocationSeries">+ Add Transaction Series</button>
+                <small class="settings-location-help">Select one or more series, then choose the default series below.</small>
+              </div>
+            </div>
+            <div class="settings-location-row" data-business-location-only>
+              <label class="settings-location-label" for="locationDefaultSeries">Default Transaction Number Series <span class="required">*</span></label>
+              <div class="settings-location-field">
+                <select class="form-control" id="locationDefaultSeries">
+                  <option value="">Select default series</option>
+                  ${availableSeries.map(item => `<option value="${item.id}" ${String(item.id) === String(location.default_transaction_series_id || '') ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <div class="settings-location-row">
+              <div class="settings-location-label">Location Access</div>
+              <div class="settings-location-field">
+                <div class="settings-location-access-summary" id="locationAccessCount"></div>
+                <div class="settings-location-access-table">
+                  <table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Access</th></tr></thead>
+                    <tbody>${users.map(user => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td>${esc(user.role)}</td><td><input type="checkbox" class="locationUser" value="${user.id}" ${location.assigned_user_ids.includes(user.id) ? 'checked' : ''} aria-label="Grant location access to ${esc(user.name)}"></td></tr>`).join('')}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            ${customFields.length ? `<div class="settings-location-row"><div class="settings-location-label">Additional Fields</div><div class="settings-location-field"><div class="settings-location-custom-fields">${customFields.map(field => {
+              const defaultValue = field.default_value && typeof field.default_value === 'object' && 'value' in field.default_value
+                ? field.default_value.value
+                : field.default_value;
+              return renderBusinessLocationCustomField(field, (location.custom_fields_data || {})[field.name] ?? defaultValue ?? '');
+            }).join('')}</div></div></div>` : ''}
+            <div class="settings-location-row">
+              <div class="settings-location-label">Status</div>
+              <div class="settings-location-field settings-location-status">
+                <label><input type="checkbox" id="locationActive" ${location.active ? 'checked' : ''}> Active</label>
+                <label data-business-location-only><input type="checkbox" id="locationIsDefault" ${location.is_default ? 'checked' : ''}> Set as default branch</label>
+              </div>
+            </div>
+            <input type="hidden" id="locationGstin" value="${esc(location.gstin)}">
           </div>
         </div>
-        <div class="modal-footer">
+        <footer class="settings-location-editor-footer">
           <button type="button" class="btn-primary" id="btnSaveLocation">Save</button>
-          <button type="button" class="btn-secondary" data-close>Cancel</button>
-        </div>
-      </div>
-      `,
-    });
-    const root = modal.el || modal.element;
+          <button type="button" class="btn-secondary" id="btnCancelLocation">Cancel</button>
+        </footer>
+      </section>
+    `;
+    const root = container;
     const updateLocationAccessCount = () => {
       const count = root.querySelectorAll('.locationUser:checked').length;
-      root.querySelector('#locationAccessCount').textContent = `${count} user(s) selected`;
+      root.querySelector('#locationAccessCount').innerHTML = `<strong>${count} user(s) selected</strong><span>Selected users can create and access transactions for this location.</span>`;
     };
     const updateLocationTypeFields = () => {
-      root.querySelector('#locationNameLabel').textContent = 'Branch Name*';
-      root.querySelectorAll('[data-business-location-only]').forEach(field => { field.hidden = false; });
+      const locationType = root.querySelector('input[name="locationType"]:checked')?.value || 'business';
+      const isBusiness = locationType === 'business';
+      root.querySelectorAll('[data-business-location-only]').forEach(field => { field.hidden = !isBusiness; });
+      root.querySelectorAll('[data-location-type-card]').forEach(card => {
+        card.classList.toggle('is-selected', card.dataset.locationTypeCard === locationType);
+      });
+      root.querySelector('#parentLocationLabel').textContent = 'Parent Location';
+      root.querySelector('#locationChildWrap').hidden = !isBusiness;
+      root.querySelector('#parentLocationWrap').hidden = isBusiness ? !root.querySelector('#locationChild').checked : false;
+      root.querySelector('#locationParent').required = !isBusiness || root.querySelector('#locationChild').checked;
+      root.querySelector('#primaryContactRequired').hidden = !isBusiness;
+      root.querySelector('#locationPrimaryContact').required = isBusiness;
     };
     root.querySelectorAll('.locationUser').forEach(input => input.addEventListener('change', updateLocationAccessCount));
+    root.querySelectorAll('input[name="locationType"]').forEach(input => input.addEventListener('change', updateLocationTypeFields));
     updateLocationTypeFields();
     updateLocationAccessCount();
     root.querySelector('#locationChild').addEventListener('change', event => {
-      root.querySelector('#parentLocationWrap').style.display = event.target.checked ? '' : 'none';
+      root.querySelector('#parentLocationWrap').hidden = !event.target.checked;
+      root.querySelector('#locationParent').required = event.target.checked;
+      if (!event.target.checked && root.querySelector('input[name="locationType"]:checked')?.value === 'business') {
+        root.querySelector('#locationParent').value = '';
+      }
     });
+    root.querySelector('#btnCancelLocation').addEventListener('click', () => renderBusinessLocationsPage(container));
     const seriesSelect = root.querySelector('#locationSeries');
     const defaultSeriesSelect = root.querySelector('#locationDefaultSeries');
     const updateDefaultSeriesOptions = () => {
@@ -5641,20 +5732,23 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
       const saveButton = root.querySelector('#btnSaveLocation');
       if (saveButton.disabled) return;
-      const locationType = 'business';
+      const cancelButton = root.querySelector('#btnCancelLocation');
+      const locationType = root.querySelector('input[name="locationType"]:checked')?.value || 'business';
       const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
       const selectedSeriesIds = Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value));
       const defaultSeriesId = root.querySelector('#locationDefaultSeries').value;
       if (locationType === 'business' && !primaryContactId) {
         toast('Choose a primary contact for this branch.', 'error');
+        root.querySelector('#locationPrimaryContact').focus();
         return;
       }
-      if (locationType === 'business' && (!defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
-        toast('Choose a default series from the transaction series assigned to this location.', 'error');
+      if (locationType === 'business' && (!selectedSeriesIds.length || !defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
+        toast('Choose at least one transaction series and a default series assigned to this branch.', 'error');
+        root.querySelector('#locationSeries').focus();
         return;
       }
-      if (!active && root.querySelector('#locationIsDefault').checked) {
+      if (!active && locationType === 'business' && root.querySelector('#locationIsDefault').checked) {
         toast('Clear the default location setting before deactivating this location.', 'error');
         return;
       }
@@ -5666,8 +5760,14 @@ async function renderBusinessLocationsPage(container) {
         root.querySelector('#locationName').focus();
         return;
       }
-      if (root.querySelector('#locationChild').checked && !root.querySelector('#locationParent').value) {
-        toast('Choose a parent location for this child location.', 'error');
+      const parentId = root.querySelector('#locationParent').value;
+      if (locationType === 'warehouse' && !parentId) {
+        toast('Choose a parent Business Location for this warehouse-only location.', 'error');
+        root.querySelector('#locationParent').focus();
+        return;
+      }
+      if (locationType === 'business' && root.querySelector('#locationChild').checked && !parentId) {
+        toast('Choose a parent location for this child branch.', 'error');
         root.querySelector('#locationParent').focus();
         return;
       }
@@ -5713,7 +5813,7 @@ async function renderBusinessLocationsPage(container) {
         name: root.querySelector('#locationName').value.trim(),
         gstin: root.querySelector('#locationGstin').value.trim(),
         logo_data: selectedLogoData,
-        parent_id: root.querySelector('#locationChild').checked ? (root.querySelector('#locationParent').value || null) : null,
+        parent_id: locationType === 'warehouse' || root.querySelector('#locationChild').checked ? (parentId || null) : null,
         attention: root.querySelector('#locationAttention').value.trim(),
         street1: root.querySelector('#locationStreet1').value.trim(),
         street2: root.querySelector('#locationStreet2').value.trim(),
@@ -5725,7 +5825,7 @@ async function renderBusinessLocationsPage(container) {
         phone: root.querySelector('#locationPhone').value.trim(),
         fax: root.querySelector('#locationFax').value.trim(),
         website: root.querySelector('#locationWebsite').value.trim(),
-        primary_contact_id: locationType === 'business' ? (primaryContactId || null) : null,
+        primary_contact_id: primaryContactId || null,
         transaction_series_ids: locationType === 'business' ? selectedSeriesIds : [],
         default_transaction_series_id: locationType === 'business' ? (defaultSeriesId || null) : null,
         custom_fields_data: Array.from(root.querySelectorAll('[data-location-custom-field]')).reduce((values, input) => {
@@ -5734,22 +5834,23 @@ async function renderBusinessLocationsPage(container) {
         }, {}),
         assigned_user_ids: Array.from(root.querySelectorAll('.locationUser:checked')).map(input => Number(input.value)),
         warehouse_ids: location.warehouse_ids || [],
-        is_default: root.querySelector('#locationIsDefault').checked,
+        is_default: locationType === 'business' && root.querySelector('#locationIsDefault').checked,
         active
       };
       saveButton.disabled = true;
+      cancelButton.disabled = true;
       saveButton.textContent = 'Saving...';
       try {
         await api(locationId ? `/settings/branches/${locationId}/` : '/settings/branches/', { method: locationId ? 'PUT' : 'POST', body: payload });
-        modal.close();
         toast(locationId ? 'Branch updated successfully.' : 'Branch created successfully.', 'success');
-        renderBusinessLocationsPage(container);
+        await renderBusinessLocationsPage(container);
       } catch (error) {
         toast(error.message || 'Failed to save location.', 'error');
       } finally {
         if (saveButton.isConnected) {
           saveButton.disabled = false;
           saveButton.textContent = 'Save';
+          cancelButton.disabled = false;
         }
       }
     });

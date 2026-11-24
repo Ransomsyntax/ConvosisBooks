@@ -14489,6 +14489,7 @@ def settings_organization_view(request):
     return j(org_json(org))
 
 def _business_location_payload(location):
+    warehouses = [warehouse for warehouse in location.warehouses.all() if warehouse.active]
     return {
         'id': location.pk,
         'uuid': str(location.uuid),
@@ -14514,17 +14515,17 @@ def _business_location_payload(location):
         'primary_contact_id': location.primary_contact_id,
         'primary_contact': (location.primary_contact.get_full_name() or location.primary_contact.email) if location.primary_contact else '',
         'primary_contact_email': location.primary_contact.email if location.primary_contact else '',
-        'assigned_user_ids': list(location.assigned_users.values_list('pk', flat=True)),
-        'transaction_series_ids': list(location.transaction_series.values_list('pk', flat=True)),
+        'assigned_user_ids': [user.pk for user in location.assigned_users.all()],
+        'transaction_series_ids': [series.pk for series in location.transaction_series.all()],
         'default_transaction_series_id': location.default_transaction_series_id,
         'is_default': location.is_default,
         'active': location.active,
-        'warehouse_ids': list(location.warehouses.values_list('pk', flat=True)),
+        'warehouse_ids': [warehouse.pk for warehouse in location.warehouses.all()],
         'warehouses': [{
             'id': warehouse.pk,
             'name': warehouse.name,
             'code': warehouse.code,
-        } for warehouse in location.warehouses.filter(active=True).order_by('name')],
+        } for warehouse in warehouses],
     }
 
 
@@ -14701,9 +14702,15 @@ def settings_locations_view(request, location_id=None):
             parent_id = int(parent_id)
         except (TypeError, ValueError):
             raise ApiError(400, 'Choose a valid parent location.')
-        parent = queryset.filter(pk=parent_id, active=True, location_type=BusinessLocation.LOCATION_TYPE_BUSINESS).first()
+        current_parent_id = queryset.filter(pk=location_id).values_list('parent_id', flat=True).first() if location_id else None
+        parent = queryset.filter(
+            pk=parent_id,
+            location_type=BusinessLocation.LOCATION_TYPE_BUSINESS,
+        ).filter(Q(active=True) | Q(pk=current_parent_id)).first()
         if not parent:
-            raise ApiError(400, 'Choose a valid active business location as the parent.')
+            raise ApiError(400, 'Choose a valid business location as the parent.')
+    if location_type == BusinessLocation.LOCATION_TYPE_WAREHOUSE and parent is None:
+        raise ApiError(400, 'A warehouse-only location must belong to an active business location.')
 
     primary_contact = None
     primary_contact_id = data.get('primary_contact_id')
@@ -14718,6 +14725,8 @@ def settings_locations_view(request, location_id=None):
         ).first()
         if not primary_contact:
             raise ApiError(400, 'Choose a valid primary contact in your organization.')
+    if location_type == BusinessLocation.LOCATION_TYPE_BUSINESS and primary_contact is None:
+        raise ApiError(400, 'Choose a primary contact for this business location.')
 
     assigned_user_ids = data.get('assigned_user_ids', [])
     if not isinstance(assigned_user_ids, list):
@@ -14754,15 +14763,43 @@ def settings_locations_view(request, location_id=None):
         ).first()
         if not default_series or default_series.pk not in series_ids:
             raise ApiError(400, 'The default series must be active and selected for this location.')
+    if location_type == BusinessLocation.LOCATION_TYPE_BUSINESS and not series_ids:
+        raise ApiError(400, 'Assign at least one active transaction series to this business location.')
+    if location_type == BusinessLocation.LOCATION_TYPE_BUSINESS and default_series is None:
+        raise ApiError(400, 'Choose a default transaction series for this business location.')
     if location_type == BusinessLocation.LOCATION_TYPE_WAREHOUSE and (
         series_ids or default_series is not None
     ):
         raise ApiError(400, 'Warehouse-only locations cannot be assigned transaction number series.')
+    if location_type == BusinessLocation.LOCATION_TYPE_WAREHOUSE and is_default:
+        raise ApiError(400, 'A warehouse-only location cannot be the default business location.')
 
     with transaction.atomic():
         location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
         if location_id and not location:
             raise ApiError(404, 'Business location not found.')
+        if location and location.location_type != location_type:
+            dependencies = []
+            for relation in location._meta.get_fields(include_hidden=True):
+                if not getattr(relation, 'auto_created', False) or getattr(relation, 'concrete', False):
+                    continue
+                if getattr(relation, 'many_to_many', False):
+                    continue
+                accessor = relation.get_accessor_name()
+                try:
+                    related = getattr(location, accessor)
+                    if related.count():
+                        dependencies.append(str(relation.related_model._meta.verbose_name_plural))
+                except (AttributeError, TypeError):
+                    continue
+            if location.transaction_series.exists():
+                dependencies.append('transaction series')
+            if dependencies:
+                used_by = ', '.join(dict.fromkeys(dependencies))
+                raise ApiError(
+                    409,
+                    f'The location type cannot be changed because this location is used by: {used_by}.',
+                )
         series = list(DocumentNumberSeries.objects.select_for_update().filter(
             organization=org, pk__in=series_ids, active=True
         ).order_by('pk'))

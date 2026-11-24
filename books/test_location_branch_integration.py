@@ -7,6 +7,7 @@ from .models import (
     Account,
     BusinessLocation,
     Customer,
+    DocumentNumberSeries,
     Invoice,
     Item,
     Organization,
@@ -72,12 +73,21 @@ class LocationBranchIntegrationTests(TestCase):
         )
 
     def test_location_crud_duplicate_validation_and_lookup_isolation(self):
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Trivandrum Invoice Series',
+            document_type='invoices',
+            prefix='TVM',
+        )
         create = self.post_json('/api/settings/branches/', {
             'name': 'Trivandrum Branch',
             'location_type': 'business',
             'city': 'Thiruvananthapuram',
             'state': 'Kerala',
             'country': 'India',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
             'active': True,
         })
         self.assertEqual(create.status_code, 201, create.content)
@@ -86,6 +96,9 @@ class LocationBranchIntegrationTests(TestCase):
         duplicate = self.post_json('/api/settings/branches/', {
             'name': 'trivandrum branch',
             'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
             'active': True,
         })
         self.assertEqual(duplicate.status_code, 409)
@@ -98,6 +111,9 @@ class LocationBranchIntegrationTests(TestCase):
                 'city': 'Thiruvananthapuram',
                 'state': 'Kerala',
                 'country': 'India',
+                'primary_contact_id': self.user.id,
+                'transaction_series_ids': [series.id],
+                'default_transaction_series_id': series.id,
                 'active': False,
             }),
             content_type='application/json',
@@ -113,6 +129,75 @@ class LocationBranchIntegrationTests(TestCase):
         detail = self.client.get(f'/api/settings/branches/{created_id}/')
         self.assertEqual(detail.status_code, 200)
         self.assertFalse(detail.json()['active'])
+
+    def test_warehouse_only_location_requires_business_parent(self):
+        missing_parent = self.post_json('/api/settings/branches/', {
+            'name': 'Unparented Warehouse',
+            'location_type': 'warehouse',
+        })
+        self.assertEqual(missing_parent.status_code, 400)
+
+        warehouse = self.post_json('/api/settings/branches/', {
+            'name': 'Parented Warehouse',
+            'location_type': 'warehouse',
+            'parent_id': self.location.id,
+        })
+        self.assertEqual(warehouse.status_code, 201, warehouse.content)
+        self.assertEqual(warehouse.json()['location']['parent_id'], self.location.id)
+
+    def test_business_location_requires_primary_contact_and_numbering_series(self):
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Required Fields Series',
+            document_type='invoices',
+            prefix='REQ',
+        )
+        missing_contact = self.post_json('/api/settings/branches/', {
+            'name': 'Missing Contact Branch',
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
+        })
+        self.assertEqual(missing_contact.status_code, 400)
+
+        missing_series = self.post_json('/api/settings/branches/', {
+            'name': 'Missing Series Branch',
+            'primary_contact_id': self.user.id,
+        })
+        self.assertEqual(missing_series.status_code, 400)
+
+    def test_location_type_cannot_change_after_transaction_history_exists(self):
+        parent = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Warehouse Parent',
+            location_type=BusinessLocation.LOCATION_TYPE_BUSINESS,
+            active=True,
+        )
+        self.post_json('/api/invoices/', {
+            'customer': self.customer.id,
+            'number': 'LOC-INV-HISTORY',
+            'date': '2026-11-24',
+            'due_date': '2026-11-24',
+            'branch_id': self.location.id,
+            'lines': [{
+                'item': self.item.id,
+                'description': 'Historical branch reference',
+                'quantity': 1,
+                'rate': '100.00',
+                'gst_rate': 18,
+            }],
+        })
+
+        conversion = self.client.put(
+            f'/api/settings/branches/{self.location.id}/',
+            data=json.dumps({
+                'name': self.location.name,
+                'location_type': 'warehouse',
+                'parent_id': parent.id,
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(conversion.status_code, 409, conversion.content)
 
     def test_invoice_uses_location_and_preserves_inactive_location_on_edit(self):
         created = self.post_json('/api/invoices/', {

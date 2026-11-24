@@ -2539,7 +2539,7 @@ class DocResource(Resource):
     def extra_clean(self, c, user_org=None, user=None):
         return {}
 
-    def parse(self, data, user=None, user_org=None):
+    def parse(self, data, user=None, user_org=None, current=None):
         c = Cleaner(data)
         user_org = user_org or (get_user_org(user) if user else None)
         org = user_org or Organization.get()
@@ -2585,10 +2585,14 @@ class DocResource(Resource):
                 c.err('business_location_id', 'Choose a valid business location.')
             else:
                 business_location = BusinessLocation.objects.filter(
-                    organization=org, pk=location_id, active=True
+                    organization=org, pk=location_id
                 ).first()
                 if not business_location:
-                    c.err('business_location_id', 'Select an active business location in your organization.')
+                    c.err('business_location_id', 'Select a business location in your organization.')
+                elif not business_location.active and not (
+                    current is not None and current.business_location_id == business_location.pk
+                ):
+                    c.err('business_location_id', 'Select an active business location.')
                 else:
                     if not _user_can_access_business_location(user, business_location):
                         c.err('business_location_id', 'You are not assigned to this business location.')
@@ -2617,6 +2621,11 @@ class DocResource(Resource):
         for k, v in head.items():
             if k in model_fields:
                 setattr(obj, k, v)
+        if head.get('business_location') is not None:
+            obj.business_location = head['business_location']
+            obj.location = head['business_location'].name
+        elif 'business_location' in head:
+            obj.business_location = None
         for k, v in tot.items():
             setattr(obj, k, v)
         if isinstance(obj, Quote):
@@ -2711,7 +2720,7 @@ class DocResource(Resource):
                 services.apply_stock(obj, +1, 'sale_void', user)
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, -1, 'purchase_void', user)
-            head, lines = self.parse(data, user=user, user_org=user_org)
+            head, lines = self.parse(data, user=user, user_org=user_org, current=obj)
             services.check_transaction_lock(head['date'], org=user_org)
             self.write(obj, head, lines, user=user, user_org=user_org)
             if is_inv and obj.status == 'sent':
@@ -2719,7 +2728,7 @@ class DocResource(Resource):
             elif not is_inv and not is_ret and obj.status == 'open':
                 services.apply_stock(obj, +1, 'purchase', user)
             return
-        head, lines = self.parse(data, user=user, user_org=user_org)
+        head, lines = self.parse(data, user=user, user_org=user_org, current=obj)
         services.check_transaction_lock(head['date'], org=user_org)
         self.write(obj, head, lines, user=user, user_org=user_org)
 
@@ -3094,7 +3103,7 @@ class RetainerInvoiceResource(DocResource):
         })
         return base_extra
 
-    def parse(self, data, user=None, user_org=None):
+    def parse(self, data, user=None, user_org=None, current=None):
         if isinstance(data, dict) and isinstance(data.get('lines'), list):
             normalized = dict(data)
             normalized_lines = []
@@ -3134,7 +3143,7 @@ class RetainerInvoiceResource(DocResource):
                 )
             normalized['lines'] = normalized_lines
             data = normalized
-        return super().parse(data, user=user, user_org=user_org)
+        return super().parse(data, user=user, user_org=user_org, current=current)
 
     def _validate_business_location(self, data, user, current=None):
         location_id = data.get('business_location_id') or data.get('business_location')
@@ -3638,6 +3647,8 @@ class BillResource(DocResource):
             'accounts_payable': getattr(o, 'accounts_payable', 'Accounts Payable'),
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'business_location_id': o.business_location_id,
+            'business_location_name': o.business_location.name if o.business_location_id else '',
             'subject': getattr(o, 'subject', '') or '',
             'billing_address_data': o.billing_address_data or {},
             'shipping_address_data': o.shipping_address_data or {},
@@ -3958,10 +3969,12 @@ class PaymentResource(Resource):
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
             business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org, active=True
+                pk=business_location_id, organization=user_org
             ).first() if business_location_id and user_org else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
+                c.err('business_location_id', 'Select an active business location.')
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             obj.business_location = business_location
@@ -5245,10 +5258,12 @@ class JournalResource(Resource):
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
             business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=obj.organization, active=True
+                pk=business_location_id, organization=obj.organization
             ).first() if business_location_id else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
+                c.err('business_location_id', 'Select an active business location.')
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             obj.business_location = business_location
@@ -7368,10 +7383,12 @@ class ExpenseResource(Resource):
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
             business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org, active=True
+                pk=business_location_id, organization=user_org
             ).first() if business_location_id else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
+                c.err('business_location_id', 'Select an active business location.')
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             obj.business_location = business_location
@@ -8378,10 +8395,12 @@ class RecurringInvoiceResource(Resource):
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
             business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org, active=True, location_type='business'
+                pk=business_location_id, organization=user_org, location_type='business'
             ).first() if business_location_id else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
+                c.err('business_location_id', 'Select an active business location.')
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             else:
@@ -8891,11 +8910,14 @@ class DeliveryChallanResource(Resource):
             )
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
+            previous_business_location_id = obj.business_location_id
             obj.business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org, active=True
+                pk=business_location_id, organization=user_org
             ).first() if business_location_id and user_org else None
             if business_location_id and not obj.business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
+            elif obj.business_location and not obj.business_location.active and obj.business_location.pk != previous_business_location_id:
+                c.err('business_location_id', 'Select an active business location.')
             elif obj.business_location and not _user_can_access_business_location(user, obj.business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
         for field in ('source_warehouse_id', 'destination_warehouse_id'):
@@ -14480,7 +14502,7 @@ def _business_location_payload(location):
         'fax': location.fax,
         'website': location.website,
         'primary_contact_id': location.primary_contact_id,
-        'primary_contact': location.primary_contact.get_full_name() or location.primary_contact.email if location.primary_contact else '',
+        'primary_contact': (location.primary_contact.get_full_name() or location.primary_contact.email) if location.primary_contact else '',
         'primary_contact_email': location.primary_contact.email if location.primary_contact else '',
         'assigned_user_ids': list(location.assigned_users.values_list('pk', flat=True)),
         'transaction_series_ids': list(location.transaction_series.values_list('pk', flat=True)),
@@ -14524,7 +14546,9 @@ def settings_locations_view(request, location_id=None):
     if not org:
         raise ApiError(403, 'An organization is required to manage business locations.')
 
-    queryset = BusinessLocation.objects.filter(organization=org)
+    queryset = BusinessLocation.objects.filter(organization=org).select_related(
+        'parent', 'primary_contact', 'default_transaction_series'
+    ).prefetch_related('assigned_users', 'transaction_series', 'warehouses')
     if request.method == 'GET':
         if location_id:
             location = queryset.filter(pk=location_id).first()

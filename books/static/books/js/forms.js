@@ -7639,6 +7639,12 @@ async function paymentMadeForm(pre = {}) {
 window.paymentMadeForm = paymentMadeForm;
 
 async function adjustForm(preItem, targetEl, onDone) {
+  const preItemSelection = typeof preItem === 'object' && preItem
+    ? (preItem.itemId || preItem.id)
+    : preItem;
+  const preWarehouseSelection = typeof preItem === 'object' && preItem
+    ? (preItem.warehouseId || preItem.warehouseCode)
+    : null;
   const [items, warehouses, accounts, projects, nextAdj] = await Promise.all([
     api('lookup/items/').then(r => r.filter(i => i.track_inventory)).catch(() => []),
     api('lookup/warehouses/').catch(() => []),
@@ -7682,7 +7688,7 @@ async function adjustForm(preItem, targetEl, onDone) {
             <select class="in adj-row-item" style="width:100%;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 10px;font-size:13px;background:#fff;">
               <option value="">Type or click to select an item.</option>
               <option value="__new_item__" style="color:var(--accent);font-weight:600;">+ Add New Item…</option>
-              ${items.map(it => `<option value="${it.id}" ${String(l.item || l.id || preItem) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
+              ${items.map(it => `<option value="${it.id}" ${String(l.item || l.id || preItemSelection) === String(it.id) ? 'selected' : ''}>${esc(it.name)}${it.sku ? ' (' + esc(it.sku) + ')' : ''}</option>`).join('')}
             </select>
             <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
               <select class="in adj-row-project" style="font-size:12px;height:28px;padding:2px 24px 2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#475569;min-width:160px;max-width:240px;width:auto;box-sizing:border-box;">
@@ -7881,8 +7887,8 @@ async function adjustForm(preItem, targetEl, onDone) {
   }
 
   // Populate initial row
-  if (preItem) {
-    tbody.insertAdjacentHTML('beforeend', rowHtml({ item: preItem }));
+  if (preItemSelection) {
+    tbody.insertAdjacentHTML('beforeend', rowHtml({ item: preItemSelection }));
     const firstTr = tbody.firstElementChild;
     if (firstTr) updateRow(firstTr);
   } else {
@@ -7891,6 +7897,13 @@ async function adjustForm(preItem, targetEl, onDone) {
 
   const adjWhSelect = $('#adj-warehouse', target);
   if (adjWhSelect) {
+    if (preWarehouseSelection) {
+      const matchingWarehouse = warehouses.find(w =>
+        String(w.id) === String(preWarehouseSelection)
+        || String(w.code) === String(preWarehouseSelection)
+      );
+      if (matchingWarehouse) adjWhSelect.value = String(matchingWarehouse.id);
+    }
     adjWhSelect.addEventListener('change', () => {
       if (adjWhSelect.value === '__new_warehouse__') {
         warehouseModal(null, newWh => {

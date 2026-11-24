@@ -257,6 +257,28 @@ class InventoryReportingTestCase(TestCase):
         self.assertEqual(resp_rep.status_code, 200)
         self.assertEqual(resp_rep.json()['total_opening_stock'], 0.0)
 
+    def test_inventory_summary_row_api_has_compact_popover_values(self):
+        self.client.force_login(self.user1)
+        services.move_stock(
+            self.item.pk, Decimal('-2.000'), 'sale', 'I-COMPACT',
+            timezone.localdate(), self.user1,
+            warehouse=self.wh_main, warehouse_code=self.wh_main.code,
+        )
+        response = self.client.get('/api/items/?tracked=1&page_size=100')
+        self.assertEqual(response.status_code, 200)
+        row = next(
+            item for item in response.json()['results']
+            if item['id'] == self.item.pk
+        )
+        self.assertEqual(row['warehouse_code'], self.wh_main.code)
+        self.assertEqual(float(row['opening_stock']), 10.0)
+        self.assertEqual(float(row['stock_out']), 2.0)
+        self.assertEqual(float(row['transfer_out']), 0.0)
+        self.assertEqual(float(row['stock_in_hand']), 8.0)
+        self.assertEqual(float(row['closing_stock']), 8.0)
+        self.assertEqual(float(row['purchase_price']), 100.0)
+        self.assertEqual(row['stock_value'], 800.0)
+
     def test_stock_adjustment_multi_item_and_all_fields(self):
         self.client.force_login(self.user1)
         # Create second tracked item

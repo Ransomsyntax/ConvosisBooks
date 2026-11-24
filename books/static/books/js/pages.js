@@ -1195,6 +1195,72 @@ function listPage(root, cfg) {
     }
   }
   const params = () => ({ ...(cfg.params || {}), ...st.f, q: st.q, ordering: st.ordering });
+  const closeInventoryPopovers = () => {
+    document.querySelectorAll('.inventory-summary-popover').forEach(popover => popover.remove());
+  };
+  const positionInventoryPopover = (button, popover) => {
+    document.body.appendChild(popover);
+    const rect = button.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const height = popover.offsetHeight;
+    let left = rect.right - width;
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    let top = rect.bottom + 6;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  };
+  document.addEventListener('pointerdown', event => {
+    if (!event.target.closest('.inventory-summary-popover') && !event.target.closest('[data-inventory-stock-details]') && !event.target.closest('[data-inventory-actions]')) {
+      closeInventoryPopovers();
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeInventoryPopovers();
+  });
+  if (cfg.inventorySummary) {
+    document.addEventListener('click', event => {
+      const inventoryAction = event.target.closest('[data-inventory-action]');
+      if (!inventoryAction || !root.isConnected) return;
+      event.stopPropagation();
+      const action = inventoryAction.dataset.inventoryAction;
+      const rowId = inventoryAction.dataset.id;
+      const warehouse = inventoryAction.dataset.warehouse;
+      closeInventoryPopovers();
+      if (action === 'preview-opening') previewOpeningStockModal(rowId, warehouse);
+      else if (action === 'preview-stock') previewStockInHandModal(rowId, warehouse);
+      else if (action === 'adjust') adjustForm({ itemId: rowId, warehouseCode: warehouse });
+    });
+  }
+  if (cfg.inventorySummary && !document.getElementById('inventory-summary-table-css')) {
+    const style = document.createElement('style');
+    style.id = 'inventory-summary-table-css';
+    style.textContent = `
+      .inventory-summary-wrap { overflow-x: visible !important; }
+      table.inventory-summary-table { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0; }
+      .inventory-summary-table th, .inventory-summary-table td { box-sizing:border-box; padding:8px 6px; overflow:hidden; }
+      .inventory-summary-table .inventory-warehouse, .inventory-summary-table .inventory-item, .inventory-summary-table .inventory-sku {
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      }
+      .inventory-summary-table .inventory-num { white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
+      .inventory-summary-table .inventory-status { width:82px; text-align:center; }
+      .inventory-summary-table .inventory-details-col, .inventory-summary-table .inventory-actions-col { width:40px; text-align:center; }
+      .inventory-summary-action { width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--bd, #cbd5e1);border-radius:6px;background:var(--bg-card,#fff);color:var(--tx,#334155);cursor:pointer; }
+      .inventory-summary-action:hover { color:var(--accent,#2563eb); border-color:var(--accent,#2563eb); }
+      .inventory-summary-popover { position:fixed; z-index:10050; width:230px; background:var(--surface-glass-solid,#fff); border:1px solid var(--bd,#cbd5e1); border-radius:8px; box-shadow:0 10px 28px rgba(15,23,42,.18); padding:8px; }
+      .inventory-summary-popover .inventory-popover-row { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:28px; padding:3px 4px; font-size:12px; }
+      .inventory-summary-popover .inventory-popover-label { display:flex; align-items:center; gap:7px; color:var(--tx,#334155); }
+      .inventory-summary-popover .inventory-popover-value { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+      .inventory-summary-menu { width:190px; }
+      .inventory-summary-menu button { width:100%; height:34px; display:flex; align-items:center; gap:8px; border:none; background:none; color:var(--tx,#334155); border-radius:5px; padding:0 8px; cursor:pointer; text-align:left; font-size:12px; }
+      .inventory-summary-menu button:hover { background:var(--pastel-sky-bg,#eff6ff); color:var(--accent,#2563eb); }
+      @media (max-width:900px) {
+        .inventory-summary-table th, .inventory-summary-table td { padding:7px 4px; }
+        .inventory-summary-table .inventory-status { width:70px; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
   async function load() {
     PAGE.reload = load;
     selectedIds.clear();
@@ -1207,6 +1273,16 @@ function listPage(root, cfg) {
       const sortMark = c => c.s ? (st.ordering === c.s ? ' ▲' : st.ordering === '-' + c.s ? ' ▼' : '') : '';
       const empty = !p.count ? (st.q || Object.values(st.f).some(Boolean) ? 'No matching records.' : esc(cfg.empty || 'No records yet.')) : '';
       const totalCols = cfg.cols.length + (cfg.actions ? 1 : 0) + 1;
+      if (cfg.inventorySummary) {
+        const detailIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>';
+        const moreIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+        $('#lt', root).innerHTML = `<div class="inventory-summary-wrap"><table class="inventory-summary-table"><colgroup><col style="width:36px"><col style="width:13%"><col style="width:20%"><col style="width:14%"><col style="width:11%"><col style="width:10%"><col style="width:12%"><col style="width:82px"><col style="width:40px"><col style="width:40px"></colgroup><thead><tr><th style="width:36px;text-align:center;"><input type="checkbox" id="cb-all" aria-label="Select all" style="cursor:pointer;"></th><th>Warehouse</th><th>Item</th><th>SKU</th><th class="r">Closing Stock</th><th class="r">Unit Cost</th><th class="r">Total Stock Value</th><th class="inventory-status">Status</th><th class="inventory-details-col">Stock Details</th><th class="inventory-actions-col">Actions</th></tr></thead><tbody>${p.results.map(r => `<tr><td style="width:36px;text-align:center;"><input type="checkbox" class="cb-row" data-id="${r.id}" aria-label="Select item" style="cursor:pointer;"></td><td class="inventory-warehouse" title="${esc(r.warehouse_code || 'WH-MAIN')}"><span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || 'WH-MAIN')}</span></td><td class="inventory-item" title="${esc(r.name)}">${esc(r.name)}</td><td class="inventory-sku" title="${esc(r.sku || '—')}">${esc(r.sku || '—')}</td><td class="inventory-num">${qty(r.closing_stock != null ? r.closing_stock : (r.stock || 0))}</td><td class="inventory-num">${inr(r.purchase_price)}</td><td class="inventory-num">${inr(r.stock_value != null ? r.stock_value : r.valuation)}</td><td class="inventory-status">${badge(r.status)}</td><td class="inventory-details-col"><button type="button" class="inventory-summary-action" data-inventory-stock-details data-id="${r.id}" title="Stock details" aria-label="Stock details">${detailIcon}</button></td><td class="inventory-actions-col"><button type="button" class="inventory-summary-action" data-inventory-actions data-id="${r.id}" title="Actions" aria-label="Actions">${moreIcon}</button></td></tr>`).join('') || `<tr><td colspan="10"><div class="empty">${empty}${!p.count && !st.q && cfg.onNew ? `<br><button class="btn p" data-x="new" type="button" style="margin-top:8px">+ ${esc(cfg.newLabel)}</button>` : ''}</div></td></tr>`}</tbody></table></div>`;
+        st.total = p.count;
+        $('#cnt', root).textContent = p.count + (p.count === 1 ? ' record' : ' records');
+        $('#pgr', root).innerHTML = `<span class="sub">Page ${p.page} of ${p.pages}</span><span class="act"><select class="btn" data-size aria-label="Rows per page">${opts([10, 25, 50, 100].map(n => [n, n + ' / page']), st.size)}</select><button class="btn" data-x="pv" type="button" ${p.page <= 1 ? 'disabled' : ''}>Previous</button><button class="btn" data-x="nx" type="button" ${p.page >= p.pages ? 'disabled' : ''}>Next</button></span>`;
+        updateSelectionUI();
+        return;
+      }
       const renderRowActions = (acts, rowId) => {
         if (!acts || !acts.length) return '';
         if (acts.length <= 3) {
@@ -1298,6 +1374,58 @@ function listPage(root, cfg) {
     }
     const th = e.target.closest('th[data-s]'); if (th) return sortBy(th);
     if (e.target.closest('[data-retry]')) return load();
+    if (cfg.inventorySummary) {
+      const stockDetailsButton = e.target.closest('[data-inventory-stock-details]');
+      if (stockDetailsButton) {
+        e.stopPropagation();
+        const row = cache[String(stockDetailsButton.dataset.id)];
+        closeInventoryPopovers();
+        if (!row) return;
+        const popover = document.createElement('div');
+        popover.className = 'inventory-summary-popover';
+        popover.setAttribute('role', 'dialog');
+        popover.setAttribute('aria-label', 'Stock details');
+        const packageIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>';
+        const trendingIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>';
+        const truckIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M14 9h4l4 4v4h-3"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>';
+        const boxesIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.75a2 2 0 0 0 1.3 1.88l7 2.63a2 2 0 0 0 1.4 0l7-2.63A2 2 0 0 0 20 18.38v-3.75a2 2 0 0 0-.97-1.71"/><path d="m7 16 5 1.9L17 16"/><path d="m7 10 5 1.9 5-1.9"/><path d="M12 22V12"/></svg>';
+        popover.innerHTML = `
+          <div class="inventory-popover-row"><span class="inventory-popover-label">${packageIcon}<span>Opening Stock</span></span><span class="inventory-popover-value">${qty(row.opening_stock || 0)}</span></div>
+          <div class="inventory-popover-row"><span class="inventory-popover-label">${trendingIcon}<span>Stock Out</span></span><span class="inventory-popover-value">${qty(row.stock_out || 0)}</span></div>
+          <div class="inventory-popover-row"><span class="inventory-popover-label">${truckIcon}<span>Transfer Out</span></span><span class="inventory-popover-value">${qty(row.transfer_out || 0)}</span></div>
+          <div class="inventory-popover-row"><span class="inventory-popover-label">${boxesIcon}<span>Current Stock / In Hand</span></span><span class="inventory-popover-value">${qty(row.stock_in_hand != null ? row.stock_in_hand : (row.stock || 0))} ${esc(row.unit || '')}</span></div>`;
+        positionInventoryPopover(stockDetailsButton, popover);
+        return;
+      }
+      const inventoryActionsButton = e.target.closest('[data-inventory-actions]');
+      if (inventoryActionsButton) {
+        e.stopPropagation();
+        closeInventoryPopovers();
+        const row = cache[String(inventoryActionsButton.dataset.id)];
+        if (!row) return;
+        const popover = document.createElement('div');
+        popover.className = 'inventory-summary-popover inventory-summary-menu';
+        popover.setAttribute('role', 'menu');
+        popover.innerHTML = `
+          <button type="button" role="menuitem" data-inventory-action="adjust" data-id="${row.id}" data-warehouse="${esc(row.warehouse_code || '')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6"/><path d="M6 20v-4"/><path d="M18 20V10"/><path d="M3 8h18"/><path d="m3 8 3-3"/><path d="m21 8-3-3"/></svg><span>Adjust</span></button>
+          <button type="button" role="menuitem" data-inventory-action="preview-opening" data-id="${row.id}" data-warehouse="${esc(row.warehouse_code || '')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5Z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="16" y1="17" y2="17"/></svg><span>Opening Preview</span></button>
+          <button type="button" role="menuitem" data-inventory-action="preview-stock" data-id="${row.id}" data-warehouse="${esc(row.warehouse_code || '')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg><span>Stock in Hand Preview</span></button>`;
+        positionInventoryPopover(inventoryActionsButton, popover);
+        return;
+      }
+      const inventoryAction = e.target.closest('[data-inventory-action]');
+      if (inventoryAction) {
+        e.stopPropagation();
+        const action = inventoryAction.dataset.inventoryAction;
+        const rowId = inventoryAction.dataset.id;
+        const warehouse = inventoryAction.dataset.warehouse;
+        closeInventoryPopovers();
+        if (action === 'preview-opening') previewOpeningStockModal(rowId, warehouse);
+        else if (action === 'preview-stock') previewStockInHandModal(rowId, warehouse);
+        else if (action === 'adjust') adjustForm({ itemId: rowId, warehouseCode: warehouse });
+        return;
+      }
+    }
     const moreBtn = e.target.closest('[data-rowa-more]');
     if (moreBtn) {
       e.stopPropagation();
@@ -1534,22 +1662,17 @@ const LISTS = {
   },
   inventory: {
     api: 'items', title: 'Inventory Summary', bc: 'Inventory', params: { tracked: 1 }, empty: 'No inventory-tracked items yet. Create a goods item with “Track inventory” on.',
+    inventorySummary: true,
     filters: [
       { name: 'stock', label: 'Stock level', opts: [['', 'All Stock Levels'], ['low', 'Low stock'], ['out', 'Out of stock']] },
       { name: 'warehouse', label: 'Warehouse', loadOpts: async () => [['', 'All Warehouses'], ...(await api('lookup/warehouses/').catch(() => [])).map(w => [w.code, `${w.code} - ${w.name}${w.is_sub_warehouse ? ' (Sub)' : ''}`])] }
     ],
     cols: [
-      { h: 'Warehouse Code', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;">${esc(r.warehouse_code || 'WH-MAIN')}</span>` },
+      { h: 'Warehouse', s: 'warehouse_code', f: r => `<span class="pastel-chip chip-lavender" style="font-weight:600;font-size:11px;" title="${esc(r.warehouse_code || 'WH-MAIN')}">${esc(r.warehouse_code || 'WH-MAIN')}</span>` },
       { h: 'Item', s: 'name', f: r => esc(r.name) },
       { h: 'SKU', s: 'sku', f: r => esc(r.sku || '—') },
-      { h: 'Opening Stock', s: 'opening_stock', r: 1, f: r => `<button class="lk" type="button" data-act="preview-opening" data-id="${r.id}" title="Click to view Opening Stock Details" style="font-weight:600;color:var(--p, #2563eb);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;">${qty(r.opening_stock || 0)}</button>` },
-      { h: 'Stock In', s: 'stock_in', r: 1, f: r => `<span class="up" style="font-weight:600;color:#10b981;">+${qty(r.stock_in || 0)}</span>` },
-      { h: 'Stock Out', s: 'stock_out', r: 1, f: r => `<span class="dn" style="font-weight:600;color:#ef4444;">-${qty(r.stock_out || 0)}</span>` },
-      { h: 'Transfer In', s: 'transfer_in', r: 1, f: r => `<span class="up" style="font-weight:600;color:#0ea5e9;">+${qty(r.transfer_in || 0)}</span>` },
-      { h: 'Transfer Out', s: 'transfer_out', r: 1, f: r => `<span class="dn" style="font-weight:600;color:#f97316;">-${qty(r.transfer_out || 0)}</span>` },
-      { h: 'Current Stock / In Hand', s: 'stock', r: 1, f: r => `<button class="lk" type="button" data-act="preview-stock" data-id="${r.id}" title="Click to view Stock in Hand & Balance Details" style="font-weight:700;color:var(--p, #2563eb);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline;">${qty(r.stock_in_hand != null ? r.stock_in_hand : (r.stock || 0))} ${esc(r.unit || '')}</button>` },
       { h: 'Closing Stock', s: 'closing_stock', r: 1, f: r => `<span style="font-weight:600;">${qty(r.closing_stock != null ? r.closing_stock : (r.stock || 0))}</span>` },
-      { h: 'Unit cost', ...money(r => inr(r.purchase_price)) },
+      { h: 'Unit Cost', ...money(r => inr(r.purchase_price)) },
       { h: 'Total Stock Value', ...money(r => inr(r.stock_value != null ? r.stock_value : r.valuation)) },
       { h: 'Status', f: r => badge(r.status) }
     ],

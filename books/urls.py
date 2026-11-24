@@ -67,6 +67,9 @@ urlpatterns = [
     path('gst/returns/history/', api.gst_returns_history_view),
     path('compliance/gstin-lookup/<slug:gstin>/', api.gstin_lookup_view),
     path('locking/', api.transaction_locking_view),
+    path('accountant/bulk-update/', api.accountant_bulk_update_view),
+    path('accountant/currency-adjustment/preview/', api.accountant_currency_adjustment_preview_view),
+    path('accountant/currency-adjustment/post/', api.accountant_currency_adjustment_post_view),
 
     path('ai/doubt-clearance/', api.ai_doubt_clearance_view),
     path('ai/query/', api.ai_query_view),

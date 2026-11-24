@@ -8414,15 +8414,20 @@ function orgForm() {
 }
 
 async function accountForm(id, onDone) {
-  const o = id ? await api(`accounts/${id}/`) : { code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', active: true };
+  const [o, allAccounts] = await Promise.all([
+    id ? api(`accounts/${id}/`) : Promise.resolve({ code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', parent_id: null, active: true }),
+    api('accounts/?page_size=500').catch(() => ({ results: [] }))
+  ]);
+  const accountOptions = (allAccounts.results || allAccounts || []).filter(account => !id || String(account.id) !== String(id));
   const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
   formModal({
     title: id ? 'Edit Account' : 'New Account',
     dialog: Boolean(onDone || Modal.count() > 0),
     body: `<div class="zb-form-wrap">
-      ${fld({ name: 'code', label: 'Account Code', req: true, value: o.code, ph: 'e.g. 6095' })}
+      ${fld({ name: 'code', label: 'Account Code', value: o.code, ph: 'Optional, e.g. 6095' })}
       ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
       ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: typeOpts, value: o.account_type, req: true })}
+      ${fld({ name: 'parent_id', label: 'Parent Account', type: 'select', opts: [['', 'No Parent'], ...accountOptions.map(account => [account.id, `${account.code ? account.code + ' - ' : ''}${account.name}`])], value: o.parent_id || '' })}
       ${fld({ name: 'sub_type', label: 'Sub-Category', value: o.sub_type, ph: 'e.g. operating_expense' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, rows: 2 })}
       ${fld({ name: 'active', label: 'Active', type: 'checkbox', value: o.active })}
@@ -8440,10 +8445,11 @@ async function accountForm(id, onDone) {
 }
 
 async function journalForm(id) {
-  const [accounts, rec, businessLocations] = await Promise.all([
+  const [accounts, rec, businessLocations, currencies] = await Promise.all([
     api('lookup/accounts/'),
     id ? api(`manual-journals/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/branches/').catch(() => [])
+    api('lookup/branches/').catch(() => []),
+    api('lookup/currencies/').catch(() => [])
   ]);
   const journalLocations = Array.isArray(businessLocations) ? businessLocations : [];
   const journalBusinessLocationId = defaultBusinessLocationId(
@@ -8478,8 +8484,11 @@ async function journalForm(id) {
       <form id="jrn-form">
         <div class="zb-form-wrap" style="margin-bottom:16px;">
           ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: rec ? rec.date : APP.today })}
-          ${fld({ name: 'reference', label: 'Reference / Voucher #', value: rec ? (rec.reference || '') : '', ph: 'e.g. JRN-ADJ-01' })}
-          ${fld({ name: 'notes', label: 'Notes / Narration', value: rec ? (rec.notes || '') : '', ph: 'Purpose of journal entry' })}
+          ${fld({ name: 'reverse_journal_date', label: 'Reverse Journal Date', type: 'date', value: rec ? (rec.reverse_journal_date || '') : '' })}
+          ${fld({ name: 'notes', label: 'Notes', type: 'textarea', req: true, value: rec ? rec.notes : '', ph: 'Maximum 500 characters', max: 500 })}
+          ${fld({ name: 'reference', label: 'Reference#', value: rec ? (rec.reference || '') : '', ph: 'Reference number' })}
+          ${fld({ name: 'reporting_method', label: 'Reporting Method', type: 'select', opts: [['accrual_cash','Accrual and Cash'],['accrual','Accrual Only'],['cash','Cash Only']], value: rec ? (rec.reporting_method || 'accrual_cash') : 'accrual_cash', req: true })}
+          ${fld({ name: 'currency', label: 'Currency', type: 'select', opts: [['INR','INR - Indian Rupee'], ...((Array.isArray(currencies)?currencies:[]).filter(c=>c.code!=='INR').map(c=>[c.code,`${c.code} - ${c.name||''}`]))], value: rec ? (rec.currency || 'INR') : 'INR', req: true })}
           ${businessLocationSelectHtml(journalLocations, journalBusinessLocationId, 'jrn-business-location')}
         </div>
         <div style="font-weight:600;margin-bottom:8px;color:var(--tx);">Journal Debits & Credits</div>
@@ -8498,7 +8507,8 @@ async function journalForm(id) {
     `,
     footer: `
       <button type="button" class="btn" data-close>Cancel</button>
-      <button type="button" class="btn p" id="jrn-submit-btn">${id ? 'Update Journal' : 'Post Journal'}</button>
+      <button type="button" class="btn" id="jrn-draft-btn">${id ? 'Update Draft' : 'Save as Draft'}</button>
+      <button type="button" class="btn p" id="jrn-submit-btn">${id ? 'Update and Publish' : 'Save and Publish'}</button>
     `
   });
 
@@ -8554,11 +8564,23 @@ async function journalForm(id) {
     }
   });
 
-  $('#jrn-submit-btn', m.el).addEventListener('click', async () => {
+  async function saveJournal(status) {
     clearErrors(form);
     const dt = $('input[name="date"]', form).value;
     const ref = $('input[name="reference"]', form).value;
     const notes = $('input[name="notes"]', form).value;
+    if (!notes.trim()) {
+      showErrors(form, { notes: 'Notes are required.' }, 'Notes are required.');
+      $('textarea[name="notes"]', form)?.focus();
+      return;
+    }
+    if (notes.trim().length > 500) {
+      showErrors(form, { notes: 'Notes must not exceed 500 characters.' }, 'Notes must not exceed 500 characters.');
+      return;
+    }
+    const reverseDate = $('input[name="reverse_journal_date"]', form)?.value || null;
+    const reportingMethod = $('select[name="reporting_method"]', form)?.value || 'accrual_cash';
+    const currency = $('select[name="currency"]', form)?.value || 'INR';
     const outLines = [];
     const accs = $$('.line-acc', form);
     const debs = $$('.line-deb', form);
@@ -8576,18 +8598,24 @@ async function journalForm(id) {
         date: dt,
         reference: ref,
         notes,
+        status,
+        reverse_journal_date: reverseDate,
+        reporting_method: reportingMethod,
+        currency,
         branch_id: selectedBusinessLocationId(form, '#jrn-business-location'),
         lines: outLines
       };
       if (id) await api(`manual-journals/${id}/`, { method: 'PUT', body: payload });
       else await api('manual-journals/', { method: 'POST', body: payload });
-      toast(id ? 'Journal voucher updated' : 'Journal voucher posted');
+      toast(status === 'draft' ? 'Journal saved as draft' : (id ? 'Journal voucher updated and published' : 'Journal voucher published'));
       m.close();
       refresh();
     } catch (err) {
       showErrors(form, err.errors, err.message);
     }
-  });
+  }
+  $('#jrn-submit-btn', m.el).addEventListener('click', () => saveJournal('published'));
+  $('#jrn-draft-btn', m.el).addEventListener('click', () => saveJournal('draft'));
   updateTotals();
 }
 

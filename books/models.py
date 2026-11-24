@@ -534,11 +534,12 @@ class Account(models.Model):
         (EXPENSE, 'Expense'),
     ]
 
-    code = models.CharField(max_length=30)
+    code = models.CharField(max_length=30, blank=True, default='')
     name = models.CharField(max_length=150)
     account_type = models.CharField(max_length=20, choices=TYPES)
     sub_type = models.CharField(max_length=60, blank=True, default='') 
     description = models.TextField(blank=True)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='children')
     is_system = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -549,7 +550,13 @@ class Account(models.Model):
 
     class Meta:
         ordering = ['code', 'name']
-        constraints = [models.UniqueConstraint(fields=['organization', 'code'], name='unique_org_account_code')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'code'],
+                condition=~models.Q(code=''),
+                name='unique_org_account_code',
+            )
+        ]
 
     def __str__(self):
         return f'{self.code} - {self.name}'
@@ -563,6 +570,13 @@ class Journal(models.Model):
     entry_type = models.CharField(max_length=40, default='manual') 
     reference = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
+    status = models.CharField(max_length=20, default='published', db_index=True)
+    reverse_journal_date = models.DateField(null=True, blank=True)
+    publish_reverse_on_date = models.BooleanField(default=False)
+    reporting_method = models.CharField(max_length=30, default='accrual_cash')
+    currency = models.CharField(max_length=10, blank=True, default='INR')
+    reversed_from = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='reversals')
+    draft_data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 

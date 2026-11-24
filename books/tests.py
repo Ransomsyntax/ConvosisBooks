@@ -196,6 +196,144 @@ class TestAuthAndRBAC(BaseAccountingTestCase):
 class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
     """Test transaction integrity, bank transfers, reconciliation, payments, and period locks."""
 
+    def test_account_code_optional_and_parent_type_validation(self):
+        self.client.force_login(self.admin_user)
+        created = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({'name': 'Optional Code Account', 'account_type': 'asset', 'code': '', 'active': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        account = Account.objects.get(pk=created.json()['id'])
+        self.assertEqual(account.code, '')
+
+        child = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({'name': 'Matching Asset Child', 'account_type': 'asset', 'code': '', 'parent_id': account.pk, 'active': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(child.status_code, 201, child.content)
+
+        invalid = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({'name': 'Invalid Expense Child', 'account_type': 'expense', 'code': '', 'parent_id': account.pk, 'active': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_manual_journal_draft_publish_and_delete_protection(self):
+        self.client.force_login(self.admin_user)
+        draft = self.client.post(
+            '/api/manual-journals/',
+            data=json.dumps({
+                'date': timezone.localdate().isoformat(),
+                'notes': 'Draft accountant journal',
+                'status': 'draft',
+                'currency': 'INR',
+                'reporting_method': 'accrual_cash',
+                'lines': [
+                    {'account': self.gl_cash.pk, 'debit': '100.00', 'credit': '0.00', 'description': 'Debit'},
+                    {'account': self.gl_sales.pk, 'debit': '0.00', 'credit': '100.00', 'description': 'Credit'},
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(draft.status_code, 201, draft.content)
+        journal = Journal.objects.get(pk=draft.json()['id'])
+        self.assertEqual(journal.status, 'draft')
+        self.assertFalse(journal.items.exists())
+
+        publish = self.client.post(
+            f'/api/manual-journals/{journal.pk}/publish/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(publish.status_code, 200, publish.content)
+        journal.refresh_from_db()
+        self.assertEqual(journal.status, 'published')
+        self.assertEqual(JournalItem.objects.filter(journal=journal).count(), 2)
+
+        deleted = self.client.delete(f'/api/manual-journals/{journal.pk}/')
+        self.assertEqual(deleted.status_code, 409)
+
+    def test_account_code_is_optional_and_parent_must_match_type(self):
+        self.client.force_login(self.admin_user)
+        created = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({
+                'name': 'Optional Code Account',
+                'account_type': 'asset',
+                'sub_type': 'other_asset',
+                'description': 'Test account',
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        account = Account.objects.get(pk=created.json()['id'])
+        self.assertEqual(account.code, '')
+
+        child = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({
+                'name': 'Matching Child',
+                'account_type': 'asset',
+                'code': '',
+                'parent_id': account.pk,
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(child.status_code, 201, child.content)
+
+        invalid_parent = self.client.post(
+            '/api/accounts/',
+            data=json.dumps({
+                'name': 'Invalid Child',
+                'account_type': 'expense',
+                'code': '',
+                'parent_id': account.pk,
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_parent.status_code, 400)
+
+    def test_manual_journal_draft_publish_and_published_delete_protection(self):
+        self.client.force_login(self.admin_user)
+        draft = self.client.post(
+            '/api/manual-journals/',
+            data=json.dumps({
+                'date': timezone.localdate().isoformat(),
+                'notes': 'Draft journal test',
+                'status': 'draft',
+                'currency': 'INR',
+                'reporting_method': 'accrual_cash',
+                'lines': [
+                    {'account': self.gl_cash.pk, 'debit': '100.00', 'credit': '0.00', 'description': 'Opening debit'},
+                    {'account': self.gl_sales.pk, 'debit': '0.00', 'credit': '100.00', 'description': 'Opening credit'},
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(draft.status_code, 201, draft.content)
+        journal = Journal.objects.get(pk=draft.json()['id'])
+        self.assertEqual(journal.status, 'draft')
+        self.assertFalse(journal.items.exists())
+        self.assertIn('lines', journal.draft_data)
+
+        published = self.client.post(
+            f"/api/manual-journals/{journal.pk}/publish/",
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(published.status_code, 200, published.content)
+        journal.refresh_from_db()
+        self.assertEqual(journal.status, 'published')
+
+        deleted = self.client.delete(f'/api/manual-journals/{journal.pk}/')
+        self.assertEqual(deleted.status_code, 409)
+
     def test_vendor_creation_with_bank_and_details(self):
         # Issue 1: Vendor Creation Issue fix verification
         self.client.force_login(self.admin_user)

@@ -700,6 +700,19 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
 
     org_code = org.get_code() if org else 'CONVO'
     branch_val = str(branch or getattr(series_obj, 'branch', '') or getattr(getattr(series_obj, 'series_group', None), 'branch', '') or '').strip()
+    branch_prefix = ''
+    branch_object = getattr(series_obj, 'business_location', None)
+    if not branch_object:
+        branch_object = getattr(getattr(series_obj, 'series_group', None), 'business_location', None)
+    if not branch_object and org and branch_val:
+        from .models import Branch
+        branch_object = Branch.objects.filter(
+            organization=org,
+            name__iexact=branch_val,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first()
+    if branch_object:
+        branch_prefix = str(getattr(branch_object, 'prefix', '') or '').strip().upper()
 
     # Resolve location
     loc_val = str(location or '').strip()
@@ -746,9 +759,20 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     raw_pattern = raw_pattern.strip()
     if not raw_pattern:
         raw_pattern = (getattr(series_obj, 'prefix', '') or '').strip()
-    validate_document_number_format_pattern(raw_pattern)
-
     sep = separator if separator is not None else (getattr(series_obj, 'separator', '/') or '/')
+    if branch_prefix:
+        pattern_parts = [part for part in raw_pattern.replace('\\', '/').split('/') if part]
+        pattern_parts = [part for part in pattern_parts if part.upper() != branch_prefix]
+        if re.search(r'(?:\$\s*)?\{\s*BRANCH\s*\}|%\s*BRANCH\s*%', raw_pattern, re.IGNORECASE):
+            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
+        elif org_code.upper() in [part.upper() for part in pattern_parts]:
+            org_index = next(index for index, part in enumerate(pattern_parts) if part.upper() == org_code.upper())
+            pattern_parts.insert(org_index + 1, branch_prefix)
+            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
+        elif pattern_parts:
+            pattern_parts.insert(1 if len(pattern_parts) > 1 else len(pattern_parts), branch_prefix)
+            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
+    validate_document_number_format_pattern(raw_pattern)
 
     # Token mappings (case-insensitive keys handled below)
     token_map = {

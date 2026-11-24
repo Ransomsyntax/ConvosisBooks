@@ -11535,6 +11535,7 @@ def lookup(request, name):
         data = [{
             'id': item.pk,
             'name': item.name,
+            'prefix': item.prefix,
             'gstin': item.gstin,
             'state': item.state,
             'is_default': item.is_default,
@@ -14524,6 +14525,7 @@ def _business_location_payload(location):
         'branch_id': location.pk,
         'location_type': location.location_type,
         'name': location.name,
+        'prefix': location.prefix,
         'logo_data': location.logo_data,
         'custom_fields_data': location.custom_fields_data or {},
         'parent_id': location.parent_id,
@@ -14641,6 +14643,10 @@ def settings_locations_view(request, location_id=None):
     name = str(data.get('name') or '').strip()
     if not name or len(name) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in name):
         raise ApiError(400, 'Location name must be between 1 and 120 characters.')
+    prefix = str(data['prefix']).strip().upper() if 'prefix' in data else None
+    if prefix:
+        if len(prefix) > 20 or not re.fullmatch(r'[A-Z0-9_-]+', prefix):
+            raise ApiError(400, 'Branch prefix must use uppercase letters, numbers, underscores, or hyphens only.')
     gstin = str(data.get('gstin') or '').strip().upper()
     if gstin and not GSTIN_RE.fullmatch(gstin):
         raise ApiError(400, 'Enter a valid 15-character GSTIN.')
@@ -14859,6 +14865,12 @@ def settings_locations_view(request, location_id=None):
             duplicate = duplicate.exclude(pk=location.pk)
         if duplicate.exists():
             raise ApiError(409, 'A business location with this name already exists.')
+        if prefix:
+            duplicate_prefix = queryset.filter(prefix__iexact=prefix)
+            if location:
+                duplicate_prefix = duplicate_prefix.exclude(pk=location.pk)
+            if duplicate_prefix.exists():
+                raise ApiError(409, 'This branch prefix is already used by another branch.')
         if gstin:
             duplicate_gstin = queryset.filter(gstin=gstin)
             if location:
@@ -14883,6 +14895,8 @@ def settings_locations_view(request, location_id=None):
                 cursor = cursor.parent
         location.location_type = location_type
         location.name = name
+        if prefix is not None:
+            location.prefix = prefix
         location.logo_data = logo_data
         location.custom_fields_data = custom_fields_data
         location.parent = parent
@@ -15209,6 +15223,7 @@ def settings_transaction_series_preview_view(request, series_id):
     preview_series.separator = separator
     preview_series.branch = grp.branch
     preview_series.location = grp.location
+    preview_series.business_location = grp.business_location
     formatted = services._format_series_number(
         preview_series,
         seq,
@@ -15231,6 +15246,7 @@ def settings_transaction_series_preview_view(request, series_id):
         'org_code': org.get_code(),
         'branch': grp.branch,
         'location': grp.location,
+        'branch_prefix': grp.business_location.prefix if grp.business_location_id and grp.business_location else '',
     }})
 
 
@@ -15280,6 +15296,7 @@ def settings_transaction_series_view(request, series_id=None):
                 'name': s.name,
                 'branch': s.branch,
                 'location': s.location,
+                'branch_prefix': s.business_location.prefix if s.business_location_id and s.business_location else '',
                 'branch_id': s.business_location_id,
                 'business_location_id': s.business_location_id,
                 'is_default': s.is_default,

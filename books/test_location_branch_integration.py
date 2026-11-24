@@ -1,7 +1,10 @@
 import json
+from datetime import date
 
 from django.contrib.auth.models import User
 from django.test import Client, TestCase
+
+from . import services
 
 from .models import (
     Account,
@@ -129,6 +132,112 @@ class LocationBranchIntegrationTests(TestCase):
         detail = self.client.get(f'/api/settings/branches/{created_id}/')
         self.assertEqual(detail.status_code, 200)
         self.assertFalse(detail.json()['active'])
+
+    def test_branch_prefix_crud_duplicate_validation_and_number_format(self):
+        invalid = self.post_json('/api/settings/branches/', {
+            'name': 'Invalid Prefix Branch',
+            'prefix': 'BAD PREFIX!',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [],
+            'default_transaction_series_id': None,
+            'active': True,
+        })
+        self.assertEqual(invalid.status_code, 400)
+
+        numbering_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Kochi Branch Prefix Series',
+            document_type='invoices',
+            prefix='INV',
+        )
+        duplicate_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Duplicate Branch Prefix Series',
+            document_type='invoices',
+            prefix='DUP',
+        )
+        update_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Update Branch Prefix Series',
+            document_type='invoices',
+            prefix='UPD',
+        )
+        create = self.post_json('/api/settings/branches/', {
+            'name': 'Ransom Kochi',
+            'prefix': 'KOCHI',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [numbering_series.id],
+            'default_transaction_series_id': numbering_series.id,
+            'active': True,
+        })
+        self.assertEqual(create.status_code, 201, create.content)
+        created_branch_id = create.json()['location']['id']
+
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Ransom Kochi Invoice Series',
+            document_type='invoices',
+            prefix='LOC/INV/%FY%',
+            format_pattern='LOC/INV/%FY%/%SEQUENCE%',
+            next_number=1,
+            padding=5,
+            active=True,
+        )
+        from .models import TransactionSeries
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='Ransom Kochi Invoice Series',
+            branch='Ransom Kochi',
+            business_location_id=created_branch_id,
+            is_default=False,
+            is_active=True,
+        )
+        series.series_group = group
+        series.business_location_id = created_branch_id
+        series.branch = 'Ransom Kochi'
+        series.save()
+
+        preview = services.preview_document_number(
+            'INV',
+            org=self.org,
+            series=group.name,
+            series_id=group.id,
+            date=date(2026, 10, 15),
+            branch='Ransom Kochi',
+            business_location_id=created_branch_id,
+            allow_inactive=True,
+        )
+        self.assertTrue(preview['formatted'].startswith('LOC/KOCHI/INV/26-27/'))
+
+        duplicate = self.post_json('/api/settings/branches/', {
+            'name': 'Another Kochi Branch',
+            'prefix': 'KOCHI',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [duplicate_series.id],
+            'default_transaction_series_id': duplicate_series.id,
+            'active': True,
+        })
+        self.assertEqual(duplicate.status_code, 409)
+
+        update = self.client.put(
+            f'/api/settings/branches/{created_branch_id}/',
+            data=json.dumps({
+                'name': 'Ransom Kochi',
+                'prefix': 'COK',
+                'location_type': 'business',
+                'primary_contact_id': self.user.id,
+                'transaction_series_ids': [update_series.id],
+                'default_transaction_series_id': update_series.id,
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 200, update.content)
+        updated_location = BusinessLocation.objects.get(pk=created_branch_id)
+        self.assertEqual(updated_location.prefix, 'COK')
 
     def test_warehouse_only_location_requires_business_parent(self):
         missing_parent = self.post_json('/api/settings/branches/', {

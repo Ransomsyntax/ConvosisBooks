@@ -1329,6 +1329,7 @@ class Branch(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
     location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES, default=LOCATION_TYPE_BUSINESS)
     name = models.CharField(max_length=120)
+    prefix = models.CharField(max_length=20, blank=True, default='')
     logo_data = models.TextField(blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='child_locations')
@@ -1365,6 +1366,11 @@ class Branch(models.Model):
                 fields=['organization', 'gstin'],
                 condition=~models.Q(gstin=''),
                 name='uniq_org_business_location_gstin',
+            ),
+            models.UniqueConstraint(
+                fields=['organization', 'prefix'],
+                condition=~models.Q(prefix=''),
+                name='uniq_org_business_location_prefix',
             ),
             models.UniqueConstraint(
                 fields=['organization'],

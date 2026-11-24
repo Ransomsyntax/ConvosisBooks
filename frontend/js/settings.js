@@ -3633,8 +3633,32 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     const select = modal.querySelector('#newSeriesLocation');
     if (!select) return;
     select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
-      `<option value="${location.id}">${esc(location.name)}</option>`
+      `<option value="${location.id}" data-prefix="${esc(location.prefix || '')}">${esc(location.name)}</option>`
     ).join('');
+    let selectedBranchPrefix = '';
+    const applySelectedBranchPrefix = () => {
+      const selected = select.options[select.selectedIndex];
+      const nextPrefix = (selected?.dataset.prefix || '').trim().toUpperCase();
+      pfxInputs.forEach(input => {
+        if (input.dataset.userEdited === '1') return;
+        const basePrefix = input.dataset.basePrefix || '';
+        let segments = basePrefix.replace(/\\/g, '/').split('/').filter(Boolean);
+        if (selectedBranchPrefix) {
+          segments = segments.filter(segment => segment.toUpperCase() !== selectedBranchPrefix);
+        }
+        if (nextPrefix) {
+          const orgSegmentIndex = segments.findIndex(segment => /^[A-Z0-9_-]+$/i.test(segment));
+          if (orgSegmentIndex >= 0) {
+            segments.splice(orgSegmentIndex + 1, 0, nextPrefix);
+          } else {
+            segments.unshift(nextPrefix);
+          }
+        }
+        input.value = segments.join('/');
+      });
+      selectedBranchPrefix = nextPrefix;
+    };
+    select.addEventListener('change', applySelectedBranchPrefix);
   }).catch(error => {
     toast(error.message || 'Could not load branches for the transaction series.', 'error');
   });
@@ -3820,7 +3844,7 @@ function openEditSeriesMetaModal(container, currentSeries) {
     const select = modal.querySelector('#editMetaLocation');
     if (!select) return;
     select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
-      `<option value="${location.id}" ${String(location.id) === String(currentSeries.business_location_id || '') ? 'selected' : ''}>${esc(location.name)}</option>`
+      `<option value="${location.id}" data-prefix="${esc(location.prefix || '')}" ${String(location.id) === String(currentSeries.business_location_id || '') ? 'selected' : ''}>${esc(location.name)}</option>`
     ).join('');
   }).catch(() => {});
 
@@ -5422,7 +5446,7 @@ async function renderBusinessLocationsPage(container) {
     let location = {
       id: null, location_type: 'business', name: '', logo_data: '', parent_id: null,
       gstin: '', attention: '', address: '', street1: '', street2: '', city: '', pincode: '',
-      country: 'India', state: '', phone: '', fax: '', website: '',
+      country: 'India', state: '', phone: '', fax: '', website: '', prefix: '',
       primary_contact_id: null, assigned_user_ids: [], transaction_series_ids: [],
       default_transaction_series_id: null, is_default: false, active: true, warehouse_ids: []
     };
@@ -5476,9 +5500,16 @@ async function renderBusinessLocationsPage(container) {
               </div>
             </div>
             <div class="settings-location-row">
-              <label class="settings-location-label" for="locationName">Name <span class="required">*</span></label>
-              <div class="settings-location-field">
-                <input class="form-control" id="locationName" value="${esc(location.name)}" maxlength="120" required>
+              <span class="settings-location-label">Branch Name &amp; Prefix</span>
+              <div class="settings-location-field settings-location-field-pair">
+                <div>
+                  <label class="settings-location-inline-label" for="locationName">Branch Name <span class="required">*</span></label>
+                  <input class="form-control" id="locationName" value="${esc(location.name)}" maxlength="120" required placeholder="Enter branch name">
+                </div>
+                <div>
+                  <label class="settings-location-inline-label" for="locationPrefix">Branch Prefix</label>
+                  <input class="form-control" id="locationPrefix" value="${esc(location.prefix || '')}" maxlength="20" placeholder="Enter prefix" style="text-transform:uppercase;">
+                </div>
               </div>
             </div>
             <div class="settings-location-row" id="locationChildWrap" data-business-location-only>
@@ -5774,6 +5805,13 @@ async function renderBusinessLocationsPage(container) {
         root.querySelector('#locationName').focus();
         return;
       }
+      const prefixInput = root.querySelector('#locationPrefix');
+      prefixInput.value = prefixInput.value.trim().toUpperCase();
+      if (prefixInput.value && !/^[A-Z0-9_-]{1,20}$/.test(prefixInput.value)) {
+        toast('Branch prefix must use uppercase letters, numbers, underscores, or hyphens only.', 'error');
+        prefixInput.focus();
+        return;
+      }
       const parentId = root.querySelector('#locationParent').value;
       if (locationType === 'warehouse' && !parentId) {
         toast('Choose a parent Business Location for this warehouse-only location.', 'error');
@@ -5825,6 +5863,7 @@ async function renderBusinessLocationsPage(container) {
       const payload = {
         location_type: locationType,
         name: root.querySelector('#locationName').value.trim(),
+        prefix: prefixInput.value,
         gstin: root.querySelector('#locationGstin').value.trim(),
         logo_data: selectedLogoData,
         parent_id: locationType === 'warehouse' || root.querySelector('#locationChild').checked ? (parentId || null) : null,

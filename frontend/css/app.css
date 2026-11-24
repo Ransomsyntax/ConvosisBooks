@@ -1820,6 +1820,14 @@ body.in-settings .pg {
   width: 100%;
 }
 
+.settings-location-inline-label {
+  display: block;
+  margin: 0 0 5px;
+  color: var(--tx, #334155);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .settings-location-checkbox,
 .settings-location-status,
 .settings-location-status label {

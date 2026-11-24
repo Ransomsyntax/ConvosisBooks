@@ -14,7 +14,9 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'profile', label: 'Profile', hash: '#/settings/profile' },
           { key: 'branding', label: 'Branding', hash: '#/settings/branding' },
+          { key: 'custom-domain', label: 'Custom Domain', hash: '#/settings/profile' },
           { key: 'branches', label: 'Branches', hash: '#/settings/branches' },
+          { key: 'networking', label: 'Networking', hash: '#/settings/profile' },
           { key: 'ai', label: 'AI Control Center', hash: '#/settings/ai' },
           { key: 'subscription-billing', label: 'Manage Subscription', hash: '#/settings/subscription-billing' },
         ]
@@ -275,6 +277,9 @@ async function renderSettingsDashboard(root) {
                 <ul class="settings-cat-list">
                   <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Profile</span></a></li>
                   <li><a href="#/settings/branding" class="settings-link"><span class="link-label">Branding</span></a></li>
+                  <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Custom Domain</span></a></li>
+                  <li><a href="#/settings/branches" class="settings-link"><span class="link-label">Branches</span></a></li>
+                  <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Networking</span></a></li>
                   <li><a href="#/settings/ai" class="settings-link"><span class="link-label">AI Control Center</span><span class="pastel-chip chip-sky" style="font-size:10px;margin-left:8px;">Smart</span></a></li>
                   <li><a href="#/settings/subscription-billing" class="settings-link"><span class="link-label">Manage Subscription</span></a></li>
                 </ul>
@@ -5611,6 +5616,15 @@ async function renderBusinessLocationsPage(container) {
       root.querySelector('#locationParent').required = event.target.checked;
       if (!event.target.checked && root.querySelector('input[name="locationType"]:checked')?.value === 'business') {
         root.querySelector('#locationParent').value = '';
+      }
+    });
+    root.querySelector('#locationIsDefault').addEventListener('change', event => {
+      if (!event.target.checked) return;
+      const message = locationId
+        ? 'Set this branch as the default location? The existing default location will be changed.'
+        : 'Set this branch as the default location? The existing default location will be changed.';
+      if (!window.confirm(message)) {
+        event.target.checked = false;
       }
     });
     root.querySelector('#btnCancelLocation').addEventListener('click', () => renderBusinessLocationsPage(container));

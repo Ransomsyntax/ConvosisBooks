@@ -1826,6 +1826,10 @@ body.in-settings .pg {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
 }
 
 .settings-location-checkbox {

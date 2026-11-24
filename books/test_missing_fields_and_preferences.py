@@ -84,6 +84,25 @@ class MissingFieldsAndPreferencesTest(TestCase):
         self.assertEqual(post_res.status_code, 201)
         self.assertTrue(Salesperson.objects.filter(organization=self.org, name='Jane Smith').exists())
 
+    def test_salesperson_api_rejects_invalid_name_and_email(self):
+        invalid_name = self.client.post(
+            '/api/salespersons/',
+            data=json.dumps({'name': 'xyz@3%%', 'email': 'priyaa@example.com'}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_name.status_code, 400)
+        self.assertEqual(invalid_name.json()['errors']['name'], 'Enter a valid name')
+        self.assertFalse(Salesperson.objects.filter(organization=self.org, name='xyz@3%%').exists())
+
+        invalid_email = self.client.post(
+            '/api/salespersons/',
+            data=json.dumps({'name': 'Priya K.', 'email': 'abc@123'}),
+            content_type='application/json',
+        )
+        self.assertEqual(invalid_email.status_code, 400)
+        self.assertEqual(invalid_email.json()['errors']['email'], 'Enter a valid email address')
+        self.assertFalse(Salesperson.objects.filter(organization=self.org, name='Priya K.').exists())
+
     def test_doc_number_preference_and_service(self):
         # Configure preference
         pref = DocumentNumberPreference.objects.create(

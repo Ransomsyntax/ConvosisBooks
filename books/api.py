@@ -19,6 +19,7 @@ from django.conf import settings
 from django.core.paginator import Paginator
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.core.mail import EmailMessage
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Count, F, Max, ProtectedError, Q, Sum
@@ -10471,6 +10472,21 @@ class StockTransferResource(Resource):
 class SalespersonResource(Resource):
     name = 'salespersons'
 
+    @staticmethod
+    def validate_name(name):
+        if not re.fullmatch(r"[A-Za-z .'-]+", name):
+            raise ApiError(400, 'Enter a valid name', {'name': 'Enter a valid name'})
+
+    @staticmethod
+    def validate_email(email):
+        if email:
+            try:
+                validate_email(email)
+            except ValidationError:
+                raise ApiError(400, 'Enter a valid email address', {'email': 'Enter a valid email address'})
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[A-Za-z]{2,63}", email):
+                raise ApiError(400, 'Enter a valid email address', {'email': 'Enter a valid email address'})
+
     def handle_collection(self, request):
         check_permission(request, resource_name=self.name)
         user_org = get_user_org(request.user) or Organization.get()
@@ -10498,8 +10514,12 @@ class SalespersonResource(Resource):
             d = body(request)
             name = (d.get('name') or '').strip()
             if not name:
-                raise ApiError(400, 'Salesperson name is required.', {'name': 'Salesperson name is required.'})
+                raise ApiError(400, 'Enter a valid name', {'name': 'Enter a valid name'})
+            self.validate_name(name)
             email = (d.get('email') or '').strip().lower()
+            if not email:
+                raise ApiError(400, 'Enter a valid email address', {'email': 'Enter a valid email address'})
+            self.validate_email(email)
             phone = (d.get('phone') or '').strip()
 
             sp, created = Salesperson.objects.update_or_create(
@@ -10532,9 +10552,17 @@ class SalespersonResource(Resource):
         elif request.method in ('PUT', 'PATCH'):
             d = body(request)
             if 'name' in d:
-                sp.name = (d.get('name') or '').strip()
+                name = (d.get('name') or '').strip()
+                if not name:
+                    raise ApiError(400, 'Enter a valid name', {'name': 'Enter a valid name'})
+                self.validate_name(name)
+                sp.name = name
             if 'email' in d:
-                sp.email = (d.get('email') or '').strip().lower()
+                email = (d.get('email') or '').strip().lower()
+                if not email:
+                    raise ApiError(400, 'Enter a valid email address', {'email': 'Enter a valid email address'})
+                self.validate_email(email)
+                sp.email = email
             if 'phone' in d:
                 sp.phone = (d.get('phone') or '').strip()
             if 'is_active' in d:

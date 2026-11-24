@@ -398,7 +398,11 @@ async function salespersonModal(onDone) {
     `,
     onSubmit: async d => {
       const name = (d.name || '').trim();
-      if (!name) throw new ApiErr(400, { name: 'Salesperson Name is required.' }, 'Salesperson Name is required.');
+      const email = (d.email || '').trim();
+      const nameValid = /^[A-Za-z .'-]+$/.test(name);
+      const emailValid = !email || /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,63}$/.test(email);
+      if (!nameValid) throw new ApiErr(400, { name: 'Enter a valid name' }, 'Enter a valid name');
+      if (!emailValid) throw new ApiErr(400, { email: 'Enter a valid email address' }, 'Enter a valid email address');
       const res = await api('salespersons/', { method: 'POST', body: d });
       toast(`Salesperson "${res.name || name}" added successfully!`, 'ok');
       if (onDone) onDone(res);
@@ -4477,10 +4481,12 @@ async function openManageSalespersonsModal({ onSelect, onListUpdated }) {
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#ef4444;margin-bottom:4px;">Name*</label>
             <input type="text" id="sp-new-name" class="in" placeholder="Salesperson name" style="width:100%;">
+            <div id="sp-new-name-error" role="alert" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;"></div>
           </div>
           <div>
             <label style="display:block;font-size:12px;font-weight:600;color:#ef4444;margin-bottom:4px;">Email*</label>
             <input type="email" id="sp-new-email" class="in" placeholder="email@company.com" style="width:100%;">
+            <div id="sp-new-email-error" role="alert" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;"></div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
@@ -4528,6 +4534,28 @@ async function openManageSalespersonsModal({ onSelect, onListUpdated }) {
   const emailInp = mEl.querySelector('#sp-new-email');
   const searchInp = mEl.querySelector('#sp-modal-search');
   const tbody = mEl.querySelector('#sp-modal-tbody');
+  const nameError = mEl.querySelector('#sp-new-name-error');
+  const emailError = mEl.querySelector('#sp-new-email-error');
+
+  function isValidSalespersonName(name) {
+    return /^[A-Za-z .'-]+$/.test(name);
+  }
+
+  function isValidSalespersonEmail(email) {
+    if (!email) return false;
+    const parts = email.split('@');
+    if (parts.length !== 2) return false;
+    if (!parts[1] || !parts[1].includes('.')) return false;
+    const suffix = parts[1].split('.').pop();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) && /^[A-Za-z]{2,63}$/.test(suffix);
+  }
+
+  function setInlineSalespersonError(input, errorEl, message) {
+    if (!input || !errorEl) return;
+    errorEl.textContent = message || '';
+    errorEl.style.display = message ? 'block' : 'none';
+    input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  }
 
   if (showNewBtn && newCard) {
     showNewBtn.addEventListener('click', () => {
@@ -4540,18 +4568,40 @@ async function openManageSalespersonsModal({ onSelect, onListUpdated }) {
       newCard.style.display = 'none';
       if (nameInp) nameInp.value = '';
       if (emailInp) emailInp.value = '';
+      setInlineSalespersonError(nameInp, nameError, '');
+      setInlineSalespersonError(emailInp, emailError, '');
     });
   }
+
+  nameInp?.addEventListener('input', () => {
+    const name = nameInp.value.trim();
+    setInlineSalespersonError(nameInp, nameError, name && !isValidSalespersonName(name) ? 'Enter a valid name' : '');
+  });
+  emailInp?.addEventListener('input', () => {
+    const email = emailInp.value.trim();
+    setInlineSalespersonError(emailInp, emailError, email && !isValidSalespersonEmail(email) ? 'Enter a valid email address' : '');
+  });
 
   if (saveNewBtn) {
     saveNewBtn.addEventListener('click', async () => {
       const name = nameInp ? nameInp.value.trim() : '';
       const email = emailInp ? emailInp.value.trim().toLowerCase() : '';
-      if (!name) {
-        alert('Please enter salesperson name.');
+      let invalid = false;
+      if (!name || !isValidSalespersonName(name)) {
+        setInlineSalespersonError(nameInp, nameError, 'Enter a valid name');
         if (nameInp) nameInp.focus();
-        return;
+        invalid = true;
+      } else {
+        setInlineSalespersonError(nameInp, nameError, '');
       }
+      if (!isValidSalespersonEmail(email)) {
+        setInlineSalespersonError(emailInp, emailError, 'Enter a valid email address');
+        if (!invalid && emailInp) emailInp.focus();
+        invalid = true;
+      } else {
+        setInlineSalespersonError(emailInp, emailError, '');
+      }
+      if (invalid) return;
       try {
         saveNewBtn.disabled = true;
         saveNewBtn.textContent = 'Saving...';
@@ -4566,7 +4616,12 @@ async function openManageSalespersonsModal({ onSelect, onListUpdated }) {
       } catch (err) {
         saveNewBtn.disabled = false;
         saveNewBtn.textContent = 'Save and Select';
-        alert(err.message || 'Failed to save salesperson.');
+        const fieldErrors = err && err.fields ? err.fields : {};
+        setInlineSalespersonError(nameInp, nameError, fieldErrors.name || '');
+        setInlineSalespersonError(emailInp, emailError, fieldErrors.email || '');
+        if (!fieldErrors.name && !fieldErrors.email) {
+          alert(err.message || 'Failed to save salesperson.');
+        }
       }
     });
   }
@@ -13109,7 +13164,6 @@ async function quoteForm(id, targetEl, onDone) {
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = qBusinessLocation?.name || (rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam');
   const qBranch = rec ? (rec.branch || '') : '';
-  const qOrderNum = rec ? (rec.order_number || '') : '';
   const qPos = rec ? (rec.place_of_supply || (APP.org && APP.org.state) || 'Kerala') : ((APP.org && APP.org.state) || 'Kerala');
   const qDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const qExpiry = rec ? (rec.expiry_date || '') : '';
@@ -13352,6 +13406,9 @@ ${renderStockQuantityCell(l, items, whList)}
           .quote-customer-row {
             display: grid;
             grid-template-columns: minmax(320px, 42%) minmax(0, 1fr);
+            align-items: start;
+            gap: 16px;
+            margin-bottom: 14px;
           }
           .quote-customer-row .customer-select-outer {
             width: 100%;
@@ -13539,10 +13596,6 @@ ${renderStockQuantityCell(l, items, whList)}
               <input class="in" id="q-reference" name="reference_number" value="${esc(qRef)}" placeholder="e.g. REF-2026-001" style="width:100%;box-sizing:border-box;padding:0 12px;">
             </div>
 
-            <div class="quote-card-field">
-              <label class="quote-card-label" for="q-order-number">Sales Order Number</label>
-              <input class="in" id="q-order-number" name="order_number" value="${esc(qOrderNum)}" placeholder="Optional sales order number" style="width:100%;box-sizing:border-box;padding:0 12px;">
-            </div>
           </div>
 
           <!-- Card 2: additional quote information -->
@@ -14353,7 +14406,6 @@ ${renderStockQuantityCell(l, items, whList)}
       billing_address_data: normalizeQuoteAddress(quoteAddressData.billing),
       shipping_address_data: normalizeQuoteAddress(quoteAddressData.shipping),
       reference_number: ($('#q-reference', form)?.value || '').trim(),
-      order_number: ($('#q-order-number', form)?.value || '').trim(),
       location: $('#q-location', form)?.value || 'HO Kottayam',
       transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
       date: dt,

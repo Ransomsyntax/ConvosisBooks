@@ -45,6 +45,7 @@ urlpatterns = [
     path('banking/unmatch/<int:txn_id>/', api.banking_unmatch_action_view),
     path('banking/quick-categorize/<int:txn_id>/', api.banking_quick_categorize_view),
     path('banking/bulk-categorize/', api.banking_bulk_categorize_view),
+    path('banking/split-categorize/<int:txn_id>/', api.banking_split_categorize_view),
     path('banking/exclude/<int:txn_id>/', api.banking_exclude_view),
     path('banking/reconcile/<int:txn_id>/', api.banking_reconcile_view),
     path('banking/reconciliation/complete/', api.banking_reconcile_complete_view),

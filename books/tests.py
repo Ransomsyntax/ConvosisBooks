@@ -433,6 +433,60 @@ class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
         self.bank_hdfc.refresh_from_db()
         self.assertEqual(self.bank_hdfc.bank_balance, Decimal('275000.00'))
 
+    def test_bank_reconciliation_rejects_nonzero_difference(self):
+        today = timezone.localdate()
+        txn = BankTransaction.objects.create(
+            bank_account=self.bank_hdfc,
+            date=today,
+            description='Opening mismatch',
+            deposit=Decimal('100.00'),
+            withdrawal=Decimal('0.00'),
+            balance=Decimal('250100.00'),
+            status='unmatched',
+        )
+        with self.assertRaises(services.ApiError) as ctx:
+            services.complete_bank_reconciliation({
+                'bank_account_id': self.bank_hdfc.pk,
+                'statement_date': str(today),
+                'statement_ending_balance': '250000.00',
+                'cleared_transaction_ids': [txn.pk],
+            }, user=self.admin_user)
+        self.assertEqual(ctx.exception.status, 409)
+        txn.refresh_from_db()
+        self.assertNotEqual(txn.status, 'reconciled')
+
+    def test_split_categorization_posts_balanced_journal(self):
+        txn = BankTransaction.objects.create(
+            organization=self.org,
+            bank_account=self.bank_hdfc,
+            date=timezone.localdate(),
+            description='Split cloud and stationery',
+            withdrawal=Decimal('10000.00'),
+            deposit=Decimal('0.00'),
+            balance=Decimal('240000.00'),
+            status='unreconciled',
+        )
+        gl_other_expense = Account.objects.create(
+            organization=self.org,
+            code='5020',
+            name='General Supplies',
+            account_type='expense',
+        )
+        res = services.split_categorize_bank_transaction(txn.pk, {
+            'lines': [
+                {'account_id': self.gl_exp.pk, 'amount': '6000.00', 'description': 'Office rent'},
+                {'account_id': gl_other_expense.pk, 'amount': '4000.00', 'description': 'Stationery'},
+            ],
+            'notes': 'Balanced split',
+        }, user=self.admin_user)
+        self.assertEqual(res['status'], 'categorized')
+        journal = Journal.objects.filter(entry_type='bank_split_categorization', reference=f'BANK-SPLIT-{txn.pk}').first()
+        self.assertIsNotNone(journal)
+        debit_total = sum(item.debit for item in journal.items.all())
+        credit_total = sum(item.credit for item in journal.items.all())
+        self.assertEqual(debit_total, Decimal('10000.00'))
+        self.assertEqual(credit_total, Decimal('10000.00'))
+
     def test_period_locking_prevents_backdated_records(self):
         today = timezone.localdate()
         lock_dt = today - timedelta(days=5)

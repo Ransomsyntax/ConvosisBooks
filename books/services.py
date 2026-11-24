@@ -6546,12 +6546,57 @@ def record_bank_transfer(data, user=None, org=None):
     }
 
 @transaction.atomic
+def match_bank_transaction_many_action(txn_id, matches, fee=Decimal('0.00'), notes='', user=None):
+    txn = BankTransaction.objects.select_for_update().filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+    if txn.status in ('matched', 'reconciled'):
+        raise ApiError(409, 'The bank transaction is already matched or reconciled.')
+    if not isinstance(matches, list) or not matches:
+        raise ApiError(400, 'Select at least one eligible transaction to match.')
+
+    txn_amount = txn.deposit if txn.deposit > 0 else txn.withdrawal
+    selected_total = Decimal('0.00')
+    labels = []
+    for match in matches:
+        if not isinstance(match, dict):
+            raise ApiError(400, 'Each match must include entity_type and entity_id.')
+        entity_type = str(match.get('entity_type') or '').strip()
+        entity_id = match.get('entity_id')
+        if not entity_type or not str(entity_id).isdigit():
+            raise ApiError(400, 'Each match must include a valid entity type and ID.')
+        amount = Decimal(str(match.get('amount') or '0'))
+        if amount <= 0:
+            raise ApiError(400, 'Matched transaction amounts must be greater than zero.')
+        selected_total += amount
+        labels.append(f"{entity_type.replace('_', ' ').title()} #{entity_id}")
+
+    if abs(selected_total - txn_amount) > Decimal('0.01'):
+        raise ApiError(400, f'Selected transaction total ₹{selected_total} does not equal statement amount ₹{txn_amount}.')
+
+    txn.status = 'matched'
+    txn.matched_entity_type = 'multi'
+    txn.matched_entity_id = None
+    txn.match_metadata = {
+        'matched_at': timezone.now().isoformat(),
+        'matched_by': user.get_username() if user and getattr(user, 'get_username', None) else 'admin',
+        'matches': matches,
+        'entity_labels': labels,
+        'fee_adjustment': str(fee),
+        'notes': notes,
+    }
+    txn.save(update_fields=['status', 'matched_entity_type', 'matched_entity_id', 'match_metadata'])
+    log_audit(user, 'match', 'BankTransaction', txn.pk, f"Matched bank txn {txn.reference or txn.id} to multiple records: {', '.join(labels)}")
+    return {'id': txn.pk, 'status': txn.status, 'entity_label': ', '.join(labels), 'message': 'Transaction matched to selected records.'}
+
+
+@transaction.atomic
 def match_bank_transaction_action(txn_id, entity_type, entity_id, fee=Decimal('0.00'), notes='', user=None):
     txn = BankTransaction.objects.select_for_update().filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
-    if txn.status == 'reconciled':
-        raise ApiError(409, 'Cannot match an already reconciled bank transaction.')
+    if txn.status in ('matched', 'reconciled'):
+        raise ApiError(409, 'Cannot match an already matched or reconciled bank transaction.')
     check_transaction_lock(txn.date)
 
     entity_label = f"{entity_type.replace('_', ' ').title()} #{entity_id}"
@@ -6629,11 +6674,29 @@ def quick_categorize_bank_transaction(txn_id, data, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    if txn.status == 'reconciled':
+        raise ApiError(409, 'Reconciled transactions cannot be re-categorized.')
     check_transaction_lock(txn.date)
 
     ttype = data.get('transaction_type', 'Expense')
     acc_id = data.get('category_account_id') or data.get('account_id')
     cat_acc = Account.objects.filter(pk=acc_id).first() if acc_id else None
+    if acc_id and not cat_acc:
+        raise ApiError(400, 'Choose a valid Chart of Accounts category.')
+    if not cat_acc:
+        raise ApiError(400, 'Choose an expense or income account before categorizing.')
+    bank_acc = txn.bank_account
+    bank_gl = bank_acc.gl_account
+    if not bank_gl:
+        bank_gl = Account.objects.filter(
+            organization=bank_acc.organization,
+            code='1010',
+        ).first()
+    if not bank_gl:
+        raise ApiError(400, 'The bank account has no linked Chart of Accounts ledger.')
+    amount = txn.withdrawal if txn.withdrawal > 0 else txn.deposit
+    if amount <= 0:
+        raise ApiError(400, 'The bank transaction has no valid amount.')
     payee = data.get('payee', txn.payee)
     notes = data.get('notes', txn.notes)
     location = data.get('location', txn.location or 'HO Kottayam')
@@ -6646,6 +6709,29 @@ def quick_categorize_bank_transaction(txn_id, data, user=None):
     txn.status = 'categorized'
     txn.save(update_fields=['transaction_type', 'category_account', 'payee', 'notes', 'location', 'status'])
 
+    if txn.withdrawal > 0:
+        post_journal_entry(
+            txn.date,
+            'bank_categorization',
+            f"BANK-CAT-{txn.pk}",
+            f"Bank categorization: {txn.description}",
+            [(cat_acc, amount, Decimal('0.00'), txn.description),
+             (bank_gl, Decimal('0.00'), amount, f"Payment from {bank_acc.name}")],
+            user,
+            org=txn.organization,
+        )
+    else:
+        post_journal_entry(
+            txn.date,
+            'bank_categorization',
+            f"BANK-CAT-{txn.pk}",
+            f"Bank categorization: {txn.description}",
+            [(bank_gl, amount, Decimal('0.00'), f"Receipt to {bank_acc.name}"),
+             (cat_acc, Decimal('0.00'), amount, txn.description)],
+            user,
+            org=txn.organization,
+        )
+
     log_audit(user, 'categorize', 'BankTransaction', txn.pk, f"Categorized bank txn {txn.reference or txn.id} as {ttype} ({cat_acc.name if cat_acc else 'Direct'})")
     return {
         'id': txn.pk,
@@ -6657,28 +6743,119 @@ def quick_categorize_bank_transaction(txn_id, data, user=None):
     }
 
 @transaction.atomic
+def split_categorize_bank_transaction(txn_id, data, user=None):
+    txn = BankTransaction.objects.select_for_update().filter(pk=txn_id).first()
+    if not txn:
+        raise ApiError(404, 'Transaction not found.')
+    if txn.status == 'reconciled':
+        raise ApiError(409, 'Reconciled transactions cannot be split.')
+    check_transaction_lock(txn.date)
+
+    lines = data.get('lines', [])
+    if not isinstance(lines, list) or not lines:
+        raise ApiError(400, 'Add at least one split line.')
+    original = txn.withdrawal if txn.withdrawal > 0 else txn.deposit
+    if original <= 0:
+        raise ApiError(400, 'The bank transaction has no valid amount.')
+    bank_acc = txn.bank_account
+    bank_gl = bank_acc.gl_account or Account.objects.filter(
+        organization=bank_acc.organization,
+        code='1010',
+    ).first()
+    if not bank_gl:
+        raise ApiError(400, 'The bank account has no linked Chart of Accounts ledger.')
+
+    journal_lines = []
+    split_total = Decimal('0.00')
+    for line in lines:
+        if not isinstance(line, dict):
+            raise ApiError(400, 'Split lines must contain account and amount.')
+        amount = Decimal(str(line.get('amount') or '0'))
+        if amount <= 0:
+            raise ApiError(400, 'Every split amount must be greater than zero.')
+        account_id = line.get('account_id') or line.get('category_account_id')
+        account = Account.objects.filter(pk=account_id).first() if account_id else None
+        if not account:
+            raise ApiError(400, 'Every split line requires a valid Chart of Accounts account.')
+        split_total += amount
+        journal_lines.append((account, amount if txn.withdrawal > 0 else Decimal('0.00'),
+                              amount if txn.deposit > 0 else Decimal('0.00'),
+                              str(line.get('description') or txn.description).strip()))
+    if split_total != original:
+        raise ApiError(400, f'Split amounts must equal ₹{original}; current split total is ₹{split_total}.')
+
+    items = []
+    if txn.withdrawal > 0:
+        items.extend(journal_lines)
+        items.append((bank_gl, Decimal('0.00'), original, f"Payment from {bank_acc.name}"))
+    else:
+        items.append((bank_gl, original, Decimal('0.00'), f"Receipt to {bank_acc.name}"))
+        items.extend(journal_lines)
+
+    txn.status = 'categorized'
+    txn.transaction_type = str(data.get('transaction_type') or 'Split Transaction')
+    txn.notes = str(data.get('notes') or txn.notes or '').strip()
+    txn.match_metadata = {
+        **(txn.match_metadata or {}),
+        'split': [
+            {
+                'account_id': line.get('account_id') or line.get('category_account_id'),
+                'amount': str(line.get('amount')),
+                'description': str(line.get('description') or ''),
+            }
+            for line in lines
+        ],
+        'categorized_at': timezone.now().isoformat(),
+    }
+    txn.save(update_fields=['status', 'transaction_type', 'notes', 'match_metadata'])
+
+    post_journal_entry(
+        txn.date,
+        'bank_split_categorization',
+        f"BANK-SPLIT-{txn.pk}",
+        f"Split categorization: {txn.description}",
+        items,
+        user,
+        org=txn.organization,
+    )
+    log_audit(user, 'categorize', 'BankTransaction', txn.pk, f"Split-categorized bank transaction {txn.pk}")
+    return {'id': txn.pk, 'status': txn.status, 'split_total': str(split_total), 'message': 'Transaction split and categorized successfully.'}
+
+
+@transaction.atomic
 def bulk_categorize_bank_transactions(txn_ids, data, user=None):
     results = []
+    failures = []
     for tid in txn_ids:
         try:
             r = quick_categorize_bank_transaction(tid, data, user)
             results.append(r)
-        except Exception:
-            pass
-    return {'count': len(results), 'message': f"Categorized {len(results)} transactions"}
+        except Exception as error:
+            failures.append({'id': tid, 'error': str(getattr(error, 'message', error))})
+    return {
+        'count': len(results),
+        'successful': len(results),
+        'failed': len(failures),
+        'failures': failures,
+        'message': f"Categorized {len(results)} transaction(s); {len(failures)} failed.",
+    }
 
 def toggle_exclude_bank_transaction(txn_id, user=None):
     txn = BankTransaction.objects.filter(pk=txn_id).first()
     if not txn:
         raise ApiError(404, 'Transaction not found.')
+    if txn.status == 'reconciled':
+        raise ApiError(409, 'Reconciled transactions cannot be excluded or restored.')
 
     if txn.status == 'excluded':
         txn.status = 'unmatched'
+        txn.notes = (txn.notes or '').replace('Excluded from banking review.', '').strip()
         msg = 'Transaction restored to unmatched'
     else:
         txn.status = 'excluded'
+        txn.notes = ('Excluded from banking review. ' + (txn.notes or '').strip()).strip()
         msg = 'Transaction marked as excluded'
-    txn.save(update_fields=['status'])
+    txn.save(update_fields=['status', 'notes'])
     log_audit(user, 'exclude', 'BankTransaction', txn.pk, f"{msg} ({txn.reference or txn.id})")
     return {'id': txn.pk, 'status': txn.status, 'message': msg}
 
@@ -6704,6 +6881,8 @@ def complete_bank_reconciliation(data, user=None):
     cleared_wd = sum((t.withdrawal for t in cleared_txns), Decimal('0.00'))
     cleared_bal = acc.opening_balance + cleared_dep - cleared_wd
     diff = ending_bal - cleared_bal
+    if abs(diff) > Decimal('0.01'):
+        raise ApiError(409, f'Reconciliation cannot be completed while the difference is ₹{diff}.')
 
     BankTransaction.objects.filter(bank_account=acc, pk__in=cleared_ids).update(
         is_cleared=True, cleared_date=stmt_date, status='reconciled'
@@ -6729,7 +6908,8 @@ def complete_bank_reconciliation(data, user=None):
 
     acc.bank_balance = ending_bal
     acc.last_feed_date = stmt_date
-    acc.save(update_fields=['bank_balance', 'last_feed_date'])
+    acc.last_reconciled_date = stmt_date
+    acc.save(update_fields=['bank_balance', 'last_feed_date', 'last_reconciled_date'])
 
     log_audit(user, 'reconcile', 'BankReconciliation', rec.pk, f"Completed reconciliation {rec.reconciliation_number} for {acc.name}: cleared {len(cleared_ids)} transactions, ending balance ₹{ending_bal}")
     return {

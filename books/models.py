@@ -759,12 +759,25 @@ class BankAccount(models.Model):
     last_feed_date = models.DateField(null=True, blank=True)
     description = models.TextField(blank=True)
     gl_account = models.ForeignKey(Account, null=True, blank=True, on_delete=models.SET_NULL, related_name='bank_accounts')
+    account_holder_name = models.CharField(max_length=150, blank=True, default='')
+    gateway = models.CharField(max_length=30, blank=True, default='')
+    credit_limit = models.DecimalField(default=Decimal('0.00'), **MONEY)
+    is_primary = models.BooleanField(default=False)
+    feed_status = models.CharField(max_length=30, default='manual')
+    last_reconciled_date = models.DateField(null=True, blank=True)
     active = models.BooleanField(default=True)
     is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=models.Q(is_primary=True),
+                name='uniq_org_primary_bank_account',
+            )
+        ]
 
     def __str__(self):
         return f'{self.name} ({self.bank_name})'

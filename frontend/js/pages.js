@@ -3534,10 +3534,6 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
         </div>
       `;
     }).join('');
-    box.querySelectorAll('.master-doc-cb').forEach(cb => {
-      cb.checked = masterSelectedIds.has(String(cb.dataset.id));
-    });
-    updateMasterSelectionUI();
   }
 
   async function loadDetail(id) {
@@ -6278,6 +6274,13 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
           <div style="font-size:12px;color:var(--tx-muted);margin-top:2px;">Upload CSV, OFX, or MT940 bank statement files into Convosis Books</div>
         </div>
 
+        <div class="glass-card" style="padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:12px;font-weight:600;">Bank Account</label>
+          <select id="bnkImportAccountSelect" class="in" style="max-width:320px;font-size:12px;">
+            ${bankAccounts.map(account => `<option value="${account.id}">${esc(account.name)} (${esc(account.number)})</option>`).join('')}
+          </select>
+        </div>
+
         <div class="banking-drop-zone" id="bnkDropZone">
           <input type="file" id="bnkFileInput" style="display:none;" accept=".csv,.ofx,.qbo"/>
           <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:50%;background:rgba(37,99,235,0.1);display:grid;place-items:center;color:#2563eb;font-size:26px;">
@@ -6583,7 +6586,7 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
     grid.innerHTML = bankAccounts.map(acc => `
-      <div class="glass-card" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
+      <div class="glass-card" data-banking-account-card="${acc.id}" style="padding:18px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;cursor:pointer;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
           <div>
             <span style="font-size:10.5px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;">${esc(acc.type)}</span>
@@ -6699,6 +6702,9 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
             <button type="button" class="btn" data-act="quick-categorize" data-id="${feed.id}" style="font-size:12px;padding:5px 12px;display:flex;align-items:center;gap:6px;background:rgba(16,185,129,0.12);color:#059669;border-color:rgba(16,185,129,0.3);">
               <i class="fa-solid fa-tag"></i> Categorize Directly
             </button>
+            <button type="button" class="btn" data-act="split-categorize" data-id="${feed.id}" data-amount="${amount}" style="font-size:12px;padding:5px 10px;">
+              Split
+            </button>
             <button type="button" class="btn" data-act="open-rule-modal" style="font-size:12px;padding:5px 10px;">
               Rule
             </button>
@@ -6709,10 +6715,6 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
         </div>
       `;
     }).join('');
-    box.querySelectorAll('.master-doc-cb').forEach(cb => {
-      cb.checked = masterSelectedIds.has(String(cb.dataset.id));
-    });
-    updateMasterSelectionUI();
   }
 
   function renderStatements() {
@@ -6987,13 +6989,85 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
   }
 
   async function quickCategorize(feedId) {
+    let accounts = [];
     try {
-      await api(`banking/quick-categorize/${feedId}/`, { method: 'POST', body: {} });
-      toast('Transaction categorized directly.', 'ok');
-      renderBankingModule(root, currentTab);
-    } catch(err) {
-      toast(err.message || 'Error categorizing transaction', 'err');
-    }
+      const res = await api('accounts/?page_size=200');
+      accounts = (res && res.results) ? res.results : (Array.isArray(res) ? res : []);
+    } catch (_) {}
+    formModal({
+      title: 'Categorize Bank Transaction',
+      wide: false,
+      body: `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <label class="zb-form-row fg">Category Account*
+            <select class="in" name="category_account_id" required>
+              <option value="">Select an account</option>
+              ${accounts.map(account => `<option value="${esc(account.id)}">${esc(account.name)}${account.code ? ` (${esc(account.code)})` : ''}</option>`).join('')}
+            </select>
+          </label>
+          <label class="zb-form-row fg">Payee
+            <input class="in" name="payee" placeholder="Payee or details">
+          </label>
+          <label class="zb-form-row fg">Notes
+            <textarea class="in" name="notes" rows="3"></textarea>
+          </label>
+        </div>
+      `,
+      onSubmit: async d => {
+        if (!d.category_account_id) throw new ApiErr(400, { category_account_id: 'Choose a category account.' });
+        await api(`banking/quick-categorize/${feedId}/`, {
+          method: 'POST',
+          body: {
+            category_account_id: Number(d.category_account_id),
+            payee: d.payee || '',
+            notes: d.notes || '',
+            transaction_type: d.transaction_type || 'Categorized'
+          }
+        });
+        toast('Transaction categorized and posted.', 'ok');
+        renderBankingModule(root, currentTab);
+      }
+    });
+  }
+
+  async function splitCategorize(feedId, amount) {
+    let accounts = [];
+    try {
+      const res = await api('accounts/?page_size=200');
+      accounts = (res && res.results) ? res.results : (Array.isArray(res) ? res : []);
+    } catch (_) {}
+    formModal({
+      title: 'Split Bank Transaction',
+      wide: false,
+      body: `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="font-size:12px;color:var(--tx-muted);">Original amount: <b>₹${Number(amount).toLocaleString('en-IN', {minimumFractionDigits:2})}</b></div>
+          ${[1, 2].map(index => `
+            <div style="display:grid;grid-template-columns:1fr 120px;gap:8px;">
+              <select class="in" name="account_${index}">
+                <option value="">Select account</option>
+                ${accounts.map(account => `<option value="${esc(account.id)}">${esc(account.name)}${account.code ? ` (${esc(account.code)})` : ''}</option>`).join('')}
+              </select>
+              <input class="in" name="amount_${index}" type="number" min="0.01" step="0.01" placeholder="Amount">
+            </div>
+          `).join('')}
+          <textarea class="in" name="notes" rows="2" placeholder="Notes"></textarea>
+        </div>
+      `,
+      onSubmit: async d => {
+        const lines = [1, 2].map(index => ({
+          account_id: Number(d[`account_${index}`]),
+          amount: d[`amount_${index}`]
+        })).filter(line => line.account_id && line.amount);
+        if (!lines.length) throw new ApiErr(400, { lines: 'Add at least one split line.' });
+        await api(`banking/split-categorize/${feedId}/`, {
+          method: 'POST',
+          body: { lines, notes: d.notes || '', transaction_type: 'Split Transaction' }
+        });
+        toast('Transaction split and categorized.', 'ok');
+        renderBankingModule(root, currentTab);
+      }
+    });
   }
 
   async function dismissFeed(feedId) {
@@ -7353,6 +7427,19 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       return;
     }
 
+    const accountCard = e.target.closest('[data-banking-account-card]');
+    if (accountCard) {
+      switchTab('all-transactions');
+      setTimeout(() => {
+        const accountFilter = root.querySelector('#bnkTxFilterAccount');
+        if (accountFilter) {
+          accountFilter.value = accountCard.dataset.bankingAccountCard;
+          renderAllTransactions();
+        }
+      }, 0);
+      return;
+    }
+
     const btn = e.target.closest('button, [data-tab], [data-close-modal], [data-act]');
     if (!btn) return;
 
@@ -7431,6 +7518,10 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       quickCategorize(btn.dataset.id);
       return;
     }
+    if (btn.dataset.act === 'split-categorize') {
+      splitCategorize(btn.dataset.id, btn.dataset.amount);
+      return;
+    }
     if (btn.dataset.act === 'dismiss-feed') {
       dismissFeed(btn.dataset.id);
       return;
@@ -7459,7 +7550,12 @@ async function renderBankingModule(root, initialTabId = 'dashboard') {
       if (fileInput && fileInput.files && fileInput.files[0]) {
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
-        formData.append('bank_account', bankAccounts.length ? bankAccounts[0].id : 1);
+        const importAccount = root.querySelector('#bnkImportAccountSelect')?.value;
+        if (!importAccount) {
+          toast('Please select a bank account.', 'err');
+          return;
+        }
+        formData.append('bank_account', importAccount);
         fetch('/api/banking/statement-import/', {
           method: 'POST',
           headers: { 'X-CSRFToken': csrf() },

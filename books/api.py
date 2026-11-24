@@ -1423,7 +1423,11 @@ class PartyResource(Resource):
         return obj
 
     def update(self, obj, data, user):
-        for k, v in self.clean(data).items():
+        cleaned = self.clean(data)
+        user_org = get_user_org(user)
+        if cleaned['is_primary'] and user_org:
+            BankAccount.objects.filter(organization=user_org).exclude(pk=obj.pk).update(is_primary=False)
+        for k, v in cleaned.items():
             setattr(obj, k, v)
         obj.save()
         services.log_audit(user, 'update', self.kind, obj.pk, f"Updated {self.kind} {obj.name}")
@@ -5800,6 +5804,12 @@ class BankAccountResource(Resource):
             'last_feed_date': o.last_feed_date,
             'gl_account_id': o.gl_account_id,
             'gl_account_name': o.gl_account.name if o.gl_account else '',
+            'account_holder_name': o.account_holder_name,
+            'gateway': o.gateway,
+            'credit_limit': o.credit_limit,
+            'is_primary': o.is_primary,
+            'feed_status': o.feed_status,
+            'last_reconciled_date': o.last_reconciled_date,
             'unreconciled_count': unrec,
             'uncategorized_count': unrec,
             'matched_count': matched,
@@ -5873,6 +5883,10 @@ class BankAccountResource(Resource):
             'last_feed_date': c.date('last_feed_date'),
             'gl_account_id': c.integer('gl_account'),
             'description': c.text('description', max_len=500),
+            'account_holder_name': c.text('account_holder_name', max_len=150),
+            'gateway': c.text('gateway', max_len=30),
+            'credit_limit': c.number('credit_limit', default=Decimal('0.00')),
+            'is_primary': c.boolean('is_primary', False),
             'active': c.boolean('active', True),
             'is_archived': c.boolean('is_archived', False),
         }
@@ -5881,6 +5895,9 @@ class BankAccountResource(Resource):
 
     def create(self, data, user):
         c = self.clean(data)
+        user_org = get_user_org(user)
+        if c['is_primary'] and user_org:
+            BankAccount.objects.filter(organization=user_org).update(is_primary=False)
         if c['current_balance'] == 0 and c['opening_balance'] != 0:
             c['current_balance'] = c['opening_balance']
         if c['bank_balance'] == 0 and c['current_balance'] != 0:
@@ -5890,7 +5907,11 @@ class BankAccountResource(Resource):
         return ba
 
     def update(self, obj, data, user):
-        for k, v in self.clean(data).items():
+        cleaned = self.clean(data)
+        user_org = get_user_org(user)
+        if cleaned['is_primary'] and user_org:
+            BankAccount.objects.filter(organization=user_org).exclude(pk=obj.pk).update(is_primary=False)
+        for k, v in cleaned.items():
             setattr(obj, k, v)
         obj.save()
         services.log_audit(user, 'update', 'BankAccount', obj.pk, f"Updated bank account {obj.name}")
@@ -12416,13 +12437,7 @@ def banking_import_view(request):
 
     today = timezone.localdate()
     if not rows:
-        feed_samples = [
-            {'date': today.isoformat(), 'description': 'NEFT/Customer Inward Remittance', 'deposit': '15000.00', 'withdrawal': '0.00', 'reference': 'N10293848'},
-            {'date': today.isoformat(), 'description': 'UPI/Office Stationery Store', 'deposit': '0.00', 'withdrawal': '1250.00', 'reference': 'UPI-492019'},
-            {'date': today.isoformat(), 'description': 'IMPS/Cloud Server Hosting Bill', 'deposit': '0.00', 'withdrawal': '4500.00', 'reference': 'IMP-882910'},
-            {'date': today.isoformat(), 'description': 'Direct Debit/Monthly Workspace Rent', 'deposit': '0.00', 'withdrawal': '25000.00', 'reference': 'DD-002919'},
-        ]
-        rows = feed_samples
+        raise ApiError(400, 'The statement contains no transaction rows.')
 
     stmt_raw = json.dumps(rows, sort_keys=True, default=str)
     stmt_checksum = hashlib.sha256(f"{ba.pk}:{stmt_raw}".encode('utf-8')).hexdigest()
@@ -12470,10 +12485,15 @@ def banking_import_view(request):
                 except Exception:
                     pass
             if not dt:
-                dt = today
+                raise ApiError(400, f"Invalid transaction date in row: {raw_dt or 'missing'}")
 
-            dep = Decimal(str(r.get('deposit') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
-            wth = Decimal(str(r.get('withdrawal') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+            try:
+                dep = Decimal(str(r.get('deposit') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+                wth = Decimal(str(r.get('withdrawal') or 0).replace('₹', '').replace('$', '').replace(',', '').strip() or '0')
+            except (ArithmeticError, ValueError):
+                raise ApiError(400, 'Invalid decimal amount in statement row.')
+            if dep.is_finite() is False or wth.is_finite() is False or dep < 0 or wth < 0:
+                raise ApiError(400, 'Statement amounts must be finite positive numbers.')
             ref = str(r.get('reference') or '')
             desc = str(r.get('description') or 'Bank Transaction')
 
@@ -12536,7 +12556,16 @@ def banking_match_action_view(request, txn_id):
     eid = d.get('entity_id')
     fee = Decimal(str(d.get('fee', '0.00') or '0.00'))
     notes = d.get('notes', '')
-    res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
+    entity_ids = d.get('entity_ids')
+    if entity_ids:
+        if not isinstance(entity_ids, list):
+            raise ApiError(400, 'entity_ids must be a list.')
+        res = services.match_bank_transaction_many_action(
+            txn_id, entity_ids,
+            fee=fee, notes=notes, user=request.user
+        )
+    else:
+        res = services.match_bank_transaction_action(txn_id, etype, eid, fee=fee, notes=notes, user=request.user)
     return j(res)
 
 @api_view
@@ -12564,6 +12593,14 @@ def banking_bulk_categorize_view(request):
     d = body(request)
     txn_ids = d.get('transaction_ids', [])
     res = services.bulk_categorize_bank_transactions(txn_ids, d, user=request.user)
+    return j(res)
+
+@api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
+def banking_split_categorize_view(request, txn_id):
+    if request.method != 'POST':
+        raise ApiError(405, 'Method not allowed.')
+    res = services.split_categorize_bank_transaction(txn_id, body(request), user=request.user)
     return j(res)
 
 @api_view

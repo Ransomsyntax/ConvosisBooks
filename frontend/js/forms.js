@@ -124,9 +124,9 @@ function defaultBusinessLocationId(locations, existingId = null, isNew = false) 
 function businessLocationSelectHtml(locations, selectedId, id) {
   const options = Array.isArray(locations) ? locations : [];
   return `<label class="transaction-card-field">
-    <span class="transaction-card-label" id="${esc(id)}-label">Business Location</span>
-    <select class="in" id="${esc(id)}" name="business_location_id" aria-labelledby="${esc(id)}-label">
-      <option value="">No business location</option>
+    <span class="transaction-card-label" id="${esc(id)}-label">Branch</span>
+    <select class="in" id="${esc(id)}" name="branch_id" aria-labelledby="${esc(id)}-label">
+      <option value="">Select Branch...</option>
       ${options.map(item => `<option value="${item.id}" ${String(item.id) === String(selectedId || '') ? 'selected' : ''}>${esc(item.name)}${item.is_default ? ' (Default)' : ''}</option>`).join('')}
     </select>
   </label>`;
@@ -5805,7 +5805,7 @@ async function paymentReceivedForm(pre = {}) {
     [customersResponse, bankAccounts, locations, taxResponse, customResponse, existing, numberPreview, txSeriesList] = await Promise.all([
       api('lookup/customers/'),
       api('lookup/bank-accounts/'),
-      api('lookup/business-locations/'),
+      api('lookup/branches/'),
       api('/settings/taxes/'),
       api('custom-fields/?module=payments_received&page_size=100'),
       payId ? api(`payments-received/${payId}/`) : Promise.resolve(null),
@@ -5820,9 +5820,8 @@ async function paymentReceivedForm(pre = {}) {
   const data = existing || (typeof pre === 'object' ? pre : {});
   if (!payId && data.business_location_id) {
     const locationParams = new URLSearchParams({
-      business_location_id: String(data.business_location_id),
-      date: data.date || APP.today,
-      branch: data.branch || ''
+      branch_id: String(data.business_location_id),
+      date: data.date || APP.today
     });
     numberPreview = await api(`lookup/next-payment-received-number/?${locationParams}`)
       .catch(() => numberPreview);
@@ -6102,19 +6101,11 @@ async function paymentReceivedForm(pre = {}) {
           </div>
 
           <div class="pay-card-field">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-              <div>
-                <label class="pay-card-label" for="pay-business-location">Business Location</label>
-                <select class="in" id="pay-business-location" name="business_location_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
-                  <option value="">Select Location…</option>
-                  ${locations.map(item => `<option value="${item.id}" ${String(data.business_location_id || '') === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
-                </select>
-              </div>
-              <div>
-                <label class="pay-card-label" for="pay-branch">Branch</label>
-                <input class="in" id="pay-branch" name="branch" value="${esc(data.branch || '')}" placeholder="Branch name" style="width:100%;box-sizing:border-box;padding:0 10px;">
-              </div>
-            </div>
+            <label class="pay-card-label" for="pay-business-location">Branch</label>
+            <select class="in" id="pay-business-location" name="branch_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
+              <option value="">Select Branch…</option>
+              ${locations.map(item => `<option value="${item.id}" ${String(data.business_location_id || '') === String(item.id) ? 'selected' : ''}>${esc(item.name)}${item.is_default ? ' (Default)' : ''}</option>`).join('')}
+            </select>
           </div>
 
           <div class="pay-card-field" id="payment-tds-row">
@@ -6496,8 +6487,7 @@ async function paymentReceivedForm(pre = {}) {
         openDocNumberPreferencesModal({
           kind: 'payments-received',
           series: $('#pay-series', form)?.value || 'Default Transaction Series',
-          location: locations.find(item => String(item.id) === String(form.elements.business_location_id?.value))?.name || '',
-          branch: form.elements.branch?.value || '',
+          location: locations.find(item => String(item.id) === String(form.elements.branch_id?.value))?.name || '',
           onSave: (resOrPfx, next) => {
             const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
             if (val) form.elements.number.value = val;
@@ -6510,9 +6500,8 @@ async function paymentReceivedForm(pre = {}) {
           const q = new URLSearchParams({
             series: $('#pay-series', form)?.value || '',
             date: form.elements.date?.value || APP.today,
-            location: locations.find(item => String(item.id) === String(form.elements.business_location_id?.value))?.name || '',
-            business_location_id: form.elements.business_location_id?.value || '',
-            branch: form.elements.branch?.value || ''
+            location: locations.find(item => String(item.id) === String(form.elements.branch_id?.value))?.name || '',
+            branch_id: form.elements.branch_id?.value || ''
           });
           const p = await api(`lookup/next-payment-received-number/?${q}`);
           if (p && (p.formatted || p.next_number || p.number)) {
@@ -6525,7 +6514,6 @@ async function paymentReceivedForm(pre = {}) {
       $('#pay-series', form)?.addEventListener('change', refreshPaymentReceivedNumber);
       $('#pay-business-location', form)?.addEventListener('change', refreshPaymentReceivedNumber);
       form.elements.date?.addEventListener('change', refreshPaymentReceivedNumber);
-      form.elements.branch?.addEventListener('change', refreshPaymentReceivedNumber);
       renderFiles();
       toggleEmail();
       toggleType();
@@ -7360,7 +7348,7 @@ async function paymentMadeForm(pre = {}) {
     api('lookup/transaction-series/').catch(() => []),
     payId ? api(`payments-made/${payId}/`).catch(() => null) : Promise.resolve(null),
     api('custom-fields/?module=payments_made&page_size=100').catch(() => []),
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
 
   const paymLocations = Array.isArray(businessLocations) ? businessLocations : [];
@@ -7379,7 +7367,7 @@ async function paymentMadeForm(pre = {}) {
     'lookup/next-payment-made-number/?' + qs({
       series: paySeries,
       date: dataObj.date || APP.today,
-      business_location_id: paymBusinessLocationId
+      branch_id: paymBusinessLocationId
     })
   ).catch(() => ({ next_number: 'PM-000001' }));
   const payNum = dataObj.number || (numberPreview && (numberPreview.next_number || numberPreview.number)) || 'PM-000001';
@@ -7568,7 +7556,7 @@ async function paymentMadeForm(pre = {}) {
           const res = await api('lookup/next-payment-made-number/?' + qs({
             series: $('#paym-series', form)?.value || '',
             date: $('#paym-date', form)?.value || APP.today,
-            business_location_id: selectedBusinessLocationId(form, '#paym-business-location')
+            branch_id: selectedBusinessLocationId(form, '#paym-business-location')
           }));
           if (res && res.next_number) {
             $('#paym-number', form).value = res.next_number;
@@ -8387,7 +8375,7 @@ async function journalForm(id) {
   const [accounts, rec, businessLocations] = await Promise.all([
     api('lookup/accounts/'),
     id ? api(`manual-journals/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
   const journalLocations = Array.isArray(businessLocations) ? businessLocations : [];
   const journalBusinessLocationId = defaultBusinessLocationId(
@@ -8520,7 +8508,7 @@ async function journalForm(id) {
         date: dt,
         reference: ref,
         notes,
-        business_location_id: selectedBusinessLocationId(form, '#jrn-business-location'),
+        branch_id: selectedBusinessLocationId(form, '#jrn-business-location'),
         lines: outLines
       };
       if (id) await api(`manual-journals/${id}/`, { method: 'PUT', body: payload });
@@ -8544,14 +8532,14 @@ async function expenseForm(id) {
     api('lookup/projects/').catch(() => []),
     api('lookup/transaction-series/').catch(() => []),
     id ? api(`expenses/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
   const expLocations = Array.isArray(businessLocations) ? businessLocations : [];
   const expBusinessLocationId = defaultBusinessLocationId(
     expLocations, existing?.business_location_id, !id
   );
   const nextNum = id ? null : await api(
-    'lookup/next-expense-number/?' + qs({ business_location_id: expBusinessLocationId })
+    'lookup/next-expense-number/?' + qs({ branch_id: expBusinessLocationId })
   ).catch(() => ({ next_number: 'EXP-000001' }));
   const expAccounts = accounts.filter(a => a.type === 'expense');
   const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
@@ -8750,16 +8738,6 @@ async function expenseForm(id) {
           <div class="exp-card-field">
             ${businessLocationSelectHtml(expLocations, expBusinessLocationId, 'exp-business-location')}
           </div>
-
-          <div class="exp-card-field">
-            <label class="exp-card-label" for="exp-location">Location</label>
-            <input class="in" id="exp-location" name="location" value="${esc(expLocationText)}" placeholder="e.g. HO Kottayam" style="width:100%;box-sizing:border-box;padding:0 12px;">
-          </div>
-
-          <div class="exp-card-field">
-            <label class="exp-card-label" for="exp-branch">Branch</label>
-            <input class="in" id="exp-branch" name="branch" value="${esc(o.branch || '')}" placeholder="Optional branch" style="width:100%;box-sizing:border-box;padding:0 12px;">
-          </div>
         </div>
 
         <!-- Card 3: 3. Expense Details -->
@@ -8921,7 +8899,7 @@ async function expenseForm(id) {
           const res = await api('lookup/next-expense-number/?' + qs({
             series: $('#exp-series', form)?.value || '',
             location: $('#exp-location', form)?.value || '',
-            business_location_id: selectedBusinessLocationId(form, '#exp-business-location')
+            branch_id: selectedBusinessLocationId(form, '#exp-business-location')
           }));
           if (res && res.next_number) {
             $('#exp-number', form).value = res.next_number;
@@ -10369,7 +10347,7 @@ async function challanModal(id) {
     api('lookup/customers/'),
     api('lookup/items/'),
     api('lookup/warehouses/'),
-    api('lookup/business-locations/'),
+    api('lookup/branches/'),
     id ? api(`delivery-challans/${id}/`) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => [])
   ]);
@@ -10551,19 +10529,11 @@ async function challanModal(id) {
         </div>
 
         <div class="dc-card-field">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            <div>
-              <label class="dc-card-label" for="dc-business-location">Business Location</label>
-              <select class="in" id="dc-business-location" name="business_location_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
-                <option value="">Select location…</option>
-                ${locations.map(location => `<option value="${location.id}" ${String(o.business_location_id || '') === String(location.id) ? 'selected' : ''}>${esc(location.name)}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label class="dc-card-label" for="dc-branch">Branch</label>
-              <input class="in" id="dc-branch" name="branch" value="${esc(o.branch || '')}" placeholder="Branch name" style="width:100%;box-sizing:border-box;padding:0 8px;">
-            </div>
-          </div>
+          <label class="dc-card-label" for="dc-business-location">Branch</label>
+          <select class="in" id="dc-business-location" name="branch_id" style="width:100%;box-sizing:border-box;padding:0 8px;">
+            <option value="">Select Branch…</option>
+            ${locations.map(location => `<option value="${location.id}" ${String(o.business_location_id || '') === String(location.id) ? 'selected' : ''}>${esc(location.name)}${location.is_default ? ' (Default)' : ''}</option>`).join('')}
+          </select>
         </div>
 
         <div class="dc-card-field dc-source-wrap">
@@ -10697,7 +10667,7 @@ async function challanModal(id) {
       const updateCustomer = () => {
         const customer = custs.find(value => String(value.id) === customerSelect.value);
         const cType = customer ? (customer.gstin || customer.customer_type === 'business' ? 'B2B' : 'B2C') : 'B2B';
-        const selectedLocation = locations.find(value => String(value.id) === form.elements.business_location_id.value);
+        const selectedLocation = locations.find(value => String(value.id) === form.elements.branch_id.value);
         const cGstin = selectedLocation && selectedLocation.gstin ? selectedLocation.gstin : customer ? customer.gstin || '' : '';
         const cCurrency = customer ? customer.currency || APP.org?.base_currency || 'INR' : APP.org?.base_currency || 'INR';
 
@@ -10716,9 +10686,8 @@ async function challanModal(id) {
         const query = new URLSearchParams({
           date: form.elements.date.value || APP.today,
           customer_id: customerSelect.value || '',
-          branch: form.elements.branch.value || '',
-          location: form.elements.business_location_id.value || '',
-          business_location_id: form.elements.business_location_id.value || '',
+          location: form.elements.branch_id.value || '',
+          branch_id: form.elements.branch_id.value || '',
           series: $('#dc-series', form)?.value || 'Default Transaction Series'
         });
         try {
@@ -10753,8 +10722,7 @@ async function challanModal(id) {
         openDocNumberPreferencesModal({
           kind: 'delivery-challans',
           series: $('#dc-series', form)?.value || 'Default Transaction Series',
-          location: form.elements.business_location_id?.value || 'HO Kottayam',
-          branch: form.elements.branch?.value || '',
+          location: form.elements.branch_id?.value || 'HO Kottayam',
           onSave: (resOrPfx, next) => {
             const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
             if (val) $('#dc-number-preview', form).value = val;
@@ -10763,8 +10731,7 @@ async function challanModal(id) {
       });
       customerSelect.addEventListener('change', updateCustomer);
       form.elements.date.addEventListener('change', updateNumberPreview);
-      form.elements.branch.addEventListener('input', updateNumberPreview);
-      form.elements.business_location_id.addEventListener('change', updateNumberPreview);
+      $('#dc-business-location', form)?.addEventListener('change', updateNumberPreview);
       $('#dc-series', form)?.addEventListener('change', updateNumberPreview);
 
       const tbody = $('#dc-lines', form);
@@ -10899,9 +10866,8 @@ async function challanModal(id) {
           renderAttachments();
         }
       });
-      form.elements.business_location_id.addEventListener('change', () => {
-        const location = locations.find(value => String(value.id) === form.elements.business_location_id.value);
-        if (location) form.elements.branch.value = form.elements.branch.value || location.name;
+      $('#dc-business-location', form)?.addEventListener('change', () => {
+        const location = locations.find(value => String(value.id) === $('#dc-business-location', form).value);
         updateCustomer();
       });
       updateCustomer();
@@ -10943,8 +10909,7 @@ async function challanModal(id) {
         challan_type: d.challan_type,
         reference_number: d.reference_number,
         vehicle_number: d.vehicle_number || '',
-        business_location_id: d.business_location_id ? Number(d.business_location_id) : '',
-        branch: d.branch,
+        branch_id: d.business_location_id ? Number(d.business_location_id) : '',
         location: locations.find(location => String(location.id) === d.business_location_id)?.name || '',
         source_warehouse_id: d.source_warehouse_id ? Number(d.source_warehouse_id) : '',
         destination_warehouse_id: d.destination_warehouse_id ? Number(d.destination_warehouse_id) : '',
@@ -11375,7 +11340,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
     id ? api(`recurring-invoices/${id}/`).catch(() => null) : Promise.resolve(initialData),
     api('lookup/salespersons/').catch(() => []),
     api('custom-fields/?module=recurring_invoices&page_size=100').catch(() => []),
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
 
   const recCustomFields = Array.isArray(customFieldResponse)
@@ -12197,9 +12162,8 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
       name: profName,
       order_number: ($('#rec-order-number', form)?.value || '').trim(),
       accounts_receivable: $('#rec-accounts-receivable', form)?.value || 'Accounts Receivable',
-      branch: (rec && rec.branch) || '',
       location: recLocations.find(item => String(item.id) === String($('#rec-business-location', form)?.value))?.name || (rec && rec.location) || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#rec-business-location'),
+      branch_id: selectedBusinessLocationId(form, '#rec-business-location'),
       frequency: $('#rec-frequency', form)?.value || 'monthly',
       repeat_every: Number($('#rec-repeat-every', form)?.value || 1),
       start_date: sd,
@@ -13119,7 +13083,7 @@ async function quoteForm(id, targetEl, onDone) {
     id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
     id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => []),
-    api('lookup/business-locations/').catch(() => []),
+    api('lookup/branches/').catch(() => []),
     api('custom-fields/?module=quotes&page_size=100').catch(() => [])
   ]);
 
@@ -13571,14 +13535,6 @@ ${renderStockQuantityCell(l, items, whList)}
           <!-- Card 2: additional quote information -->
           <div class="quote-card">
             <div class="quote-card-field">
-              <label class="quote-card-label" for="q-branch">Branch</label>
-              <select class="in" id="q-branch" name="branch" style="width:100%;box-sizing:border-box;padding:0 10px;">
-                <option value="">Select Branch…</option>
-                ${branchNames.map(name => `<option value="${esc(name)}" ${qBranch === name ? 'selected' : ''}>${esc(name)}</option>`).join('')}
-              </select>
-            </div>
-
-            <div class="quote-card-field">
               <label class="quote-card-label">Salesperson</label>
               <div id="q-salesperson-container" style="width:100%;"></div>
             </div>
@@ -13972,8 +13928,7 @@ ${renderStockQuantityCell(l, items, whList)}
       kind: 'quotes',
       series: $('#q-series', form)?.value || 'Default Transaction Series',
       location: $('#q-location', form)?.value || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#q-business-location'),
-      branch: $('#q-branch', form)?.value || '',
+      branch_id: selectedBusinessLocationId(form, '#q-business-location'),
       onSave: (resOrPfx, next) => {
         const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
         if (val) $('#q-number', form).value = val;
@@ -14387,7 +14342,6 @@ ${renderStockQuantityCell(l, items, whList)}
       reference_number: ($('#q-reference', form)?.value || '').trim(),
       order_number: ($('#q-order-number', form)?.value || '').trim(),
       location: $('#q-location', form)?.value || 'HO Kottayam',
-      branch: $('#q-branch', form)?.value || '',
       transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expiry_date: expVal,
@@ -14473,7 +14427,6 @@ ${renderStockQuantityCell(l, items, whList)}
       number: '#q-number',
       date: '#q-date',
       series: '#q-series',
-      branch: '#q-branch',
       location: '#q-location',
       customerType: '#q-customer-type',
       party: '#q-customer',
@@ -14508,7 +14461,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
-    api('lookup/business-locations/').catch(() => []),
+    api('lookup/branches/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
     id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => []),
@@ -14671,12 +14624,9 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <!-- Card 2: Additional Information -->
           <div class="transaction-card">
             <div class="transaction-card-field">
-              <label class="transaction-card-label" for="so-branch">Branch &amp; Supply</label>
-              <div style="display:flex;flex-direction:column;gap:6px;">
-                <input class="in" id="so-branch" name="branch" maxlength="120" placeholder="Branch / Location" value="${esc(soBranch)}" style="width:100%;box-sizing:border-box;padding:0 12px;">
-                <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;">
-                  Source of Supply: ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-                </div>
+              <label class="transaction-card-label">Source of Supply</label>
+              <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;">
+                ${esc(rec ? (rec.place_of_supply || 'Kerala') : (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
               </div>
             </div>
 
@@ -14836,8 +14786,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'sales-orders',
       series: $('#so-series', form)?.value || 'Default Transaction Series',
       location: $('#so-location', form)?.value || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#so-business-location'),
-      branch: $('#so-branch', form)?.value || '',
+      branch_id: selectedBusinessLocationId(form, '#so-business-location'),
       onSave: (resOrPfx, next) => {
         const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
         if (val) $('#so-number', form).value = val;
@@ -15158,7 +15107,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       reference_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
       order_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
       location: $('#so-location', form)?.value || 'HO Kottayam',
-      branch: $('#so-branch', form)?.value || '',
       transaction_series: $('#so-series', form)?.value || 'Default Transaction Series',
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
@@ -15218,7 +15166,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       number: '#so-number',
       date: '#so-date',
       series: '#so-series',
-      branch: '#so-branch',
       location: '#so-location',
       customerType: '#so-customer-type',
       party: '#so-customer',
@@ -15250,7 +15197,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
     api('lookup/vendors/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
-    api('lookup/business-locations/').catch(() => []),
+    api('lookup/branches/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-bill-number/').catch(() => ({ next_number: 'BILL-000001' })),
     id ? api(`bills/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => []),
@@ -15423,15 +15370,6 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
               </select>
             </div>
 
-            <div class="transaction-card-field">
-              <label class="transaction-card-label" for="bill-location-select">Location &amp; Branch</label>
-              <div style="display:flex;gap:8px;">
-                <select class="in" id="bill-location-select" style="flex:1;box-sizing:border-box;padding:0 10px;">
-                  ${warehouses.map(w => `<option value="${esc(w.name)}" ${(billLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="bill-branch" name="branch" maxlength="120" placeholder="Optional branch" value="${esc(billBranch)}" style="flex:1;box-sizing:border-box;padding:0 12px;">
-              </div>
-            </div>
 
             <div class="transaction-card-field">
               <label class="transaction-card-label" for="bill-customer-type">Supplier Type</label>
@@ -15600,8 +15538,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'bills',
       series: $('#bill-series', form)?.value || 'Default Transaction Series',
       location: $('#bill-location', form)?.value || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#bill-business-location'),
-      branch: $('#bill-branch', form)?.value || '',
+      branch_id: selectedBusinessLocationId(form, '#bill-business-location'),
       onSave: (resOrPfx, next) => {
         const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
         if (val) $('#bill-number', form).value = val;
@@ -15925,7 +15862,6 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       order_number: $('#bill-order-number', form).value.trim(),
       vendor_ref: $('#bill-order-number', form).value.trim(),
       location: $('#bill-location', form)?.value || 'HO Kottayam',
-      branch: $('#bill-branch', form)?.value || '',
       transaction_series: $('#bill-series', form)?.value || 'Default Transaction Series',
       accounts_payable: $('#bill-accounts-payable', form)?.value || 'Accounts Payable',
       project_name: $('#bill-project', form)?.value || '',
@@ -15983,7 +15919,6 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       date: '#bill-date',
       series: '#bill-series',
       customerType: '#bill-customer-type',
-      branch: '#bill-branch',
       location: '#bill-location',
       party: '#bill-vendor',
       getGstin: () => parties.find(p => String(p.id) === String($('#bill-vendor', form)?.value))?.gstin || '',
@@ -16007,7 +15942,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
     api('lookup/vendors/').catch(() => []),
     api('lookup/items/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
-    api('lookup/business-locations/').catch(() => []),
+    api('lookup/branches/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-po-number/').catch(() => ({ next_number: 'PO-000001' })),
     id ? api(`purchase-orders/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => []),
@@ -16156,18 +16091,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <!-- Card 2: Additional Information -->
           <div class="transaction-card">
             ${businessLocationSelectHtml(poLocations, poBusinessLocationId, 'po-business-location')}
-            <div class="transaction-card-field">
-              <label class="transaction-card-label" for="po-location">Location &amp; Branch</label>
-              <div style="display:flex;gap:8px;margin-bottom:6px;">
-                <select class="in" id="po-location" name="location" style="flex:1;box-sizing:border-box;padding:0 10px;">
-                  ${warehouses.map(w => `<option value="${esc(w.name)}" ${(poLocation === w.name) || (!rec && w.name === 'HO Kottayam') ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-                </select>
-                <input class="in" id="po-branch" name="branch" maxlength="120" placeholder="Branch" value="${esc(poBranch)}" style="flex:1;box-sizing:border-box;padding:0 12px;">
-              </div>
-              <div id="po-destination-of-supply" style="font-size:11.5px;color:#64748b;">
-                Destination of Supply: ${esc(poPos || (window.APP && window.APP.org ? window.APP.org.state : 'Kerala'))}
-              </div>
-            </div>
 
             <div class="transaction-card-field">
               <label class="transaction-card-label" for="po-customer-type">Supplier Type</label>
@@ -16331,8 +16254,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'purchase-orders',
       series: $('#po-series', form)?.value || 'Default Transaction Series',
       location: $('#po-location', form)?.value || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#po-business-location'),
-      branch: $('#po-branch', form)?.value || '',
+      branch_id: selectedBusinessLocationId(form, '#po-business-location'),
       onSave: (resOrPfx, next) => {
         const val = (typeof next === 'string' && next) || (resOrPfx && typeof resOrPfx === 'object' && (resOrPfx.preview_formatted || resOrPfx.formatted)) || (typeof resOrPfx === 'string' ? resOrPfx : '');
         if (val) $('#po-number', form).value = val;
@@ -16651,7 +16573,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       number: numVal,
       order_number: $('#po-reference', form).value.trim(),
       location: $('#po-location', form)?.value || 'HO Kottayam',
-      branch: $('#po-branch', form)?.value || '',
       transaction_series: $('#po-series', form)?.value || 'Default Transaction Series',
       project_name: $('#po-project', form)?.value || '',
       date: dt,
@@ -16707,7 +16628,6 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       date: '#po-date',
       series: '#po-series',
       customerType: '#po-customer-type',
-      branch: '#po-branch',
       location: '#po-location',
       party: '#po-vendor',
       getGstin: () => parties.find(p => String(p.id) === String($('#po-vendor', form)?.value))?.gstin || '',
@@ -16746,7 +16666,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
     id ? Promise.resolve(null) : api('lookup/next-invoice-number/').catch(() => ({ next_number: 'INV-000001' })),
     id ? api(`invoices/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/warehouses/').catch(() => []),
-    api('lookup/business-locations/').catch(() => []),
+    api('lookup/branches/').catch(() => []),
     api('lookup/transaction-series/').catch(() => []),
     api('custom-fields/?module=invoices&page_size=100').catch(() => [])
   ]);
@@ -17141,8 +17061,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       kind: 'invoices',
       series: $('#inv-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
       location: $('#inv-location', form)?.value || 'HO Kottayam',
-      business_location_id: selectedBusinessLocationId(form, '#inv-business-location'),
-      branch: (rec && rec.branch) || '',
+      branch_id: selectedBusinessLocationId(form, '#inv-business-location'),
       onSave: (res) => {
         if (res && res.preview_formatted) {
           $('#inv-number', form).value = res.preview_formatted;
@@ -17576,7 +17495,6 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       customer_id: custId,
       number: numVal,
       location: (rec && rec.location) || 'HO Kottayam',
-      branch: (rec && rec.branch) || '',
       transaction_series: $('#inv-series', form)?.value || (rec && rec.transaction_series) || 'Default Transaction Series',
       accounts_receivable: $('#inv-accounts-receivable', form)?.value || 'Accounts Receivable',
       order_number: $('#inv-order-number', form).value.trim(),
@@ -17660,7 +17578,6 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       number: '#inv-number',
       date: '#inv-date',
       series: '#inv-series',
-      branch: '#inv-branch',
       location: '#inv-location',
       party: '#inv-customer',
       getGstin: () => parties.find(p => String(p.id) === String($('#inv-customer', form)?.value))?.gstin || '',
@@ -17683,7 +17600,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     id ? api(`retainer-invoices/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/transaction-series/').catch(() => []),
     api('custom-fields/?module=retainer_invoices&page_size=100').catch(() => []),
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
 
   const retCustomFields = Array.isArray(customFieldResponse)
@@ -18124,7 +18041,6 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       kind: 'retainer-invoices',
       series: rec ? (rec.transaction_series || 'Default Transaction Series') : 'Default Transaction Series',
       location: rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam',
-      branch: rec ? (rec.branch || '') : '',
       onSave: (res) => {
         if (res && res.preview_formatted) {
           $('#ret-number', form).value = res.preview_formatted;
@@ -18287,7 +18203,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
       customer: custId,
       customer_id: custId,
       number: numVal,
-      business_location_id: selectedBusinessLocationId(form, '#ret-business-location'),
+      branch_id: selectedBusinessLocationId(form, '#ret-business-location'),
       location: retLocations.find(item => String(item.id) === String($('#ret-business-location', form)?.value))?.name || 'HO Kottayam',
       reference: ($('#ret-reference', form)?.value || '').trim(),
       date: dt,
@@ -18304,7 +18220,6 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
     };
 
     if (rec) {
-      if (rec.branch) payload.branch = rec.branch;
       if (rec.transaction_series) payload.transaction_series = rec.transaction_series;
       if (rec.accounts_receivable) payload.accounts_receivable = rec.accounts_receivable;
       if (rec.customer_type) payload.customer_type = rec.customer_type;
@@ -18591,7 +18506,7 @@ async function stockTransferModal(id = null, onDone = null) {
     api('lookup/warehouses/').catch(() => []),
     api('lookup/items/').catch(() => []),
     id ? api(`stock-transfers/${id}/`).catch(() => null) : null,
-    api('lookup/business-locations/').catch(() => [])
+    api('lookup/branches/').catch(() => [])
   ]);
 
   if (id && rec && rec.status !== 'draft') {
@@ -18693,9 +18608,9 @@ async function stockTransferModal(id = null, onDone = null) {
               </select>
             </div>
             <div>
-              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Business Location (Source)</label>
+              <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Branch (Source)</label>
               <select class="in" id="st-business-location" style="width:100%;">
-                <option value="">No Business Location</option>
+                <option value="">No Branch</option>
                 ${stLocations.map(location => `<option value="${location.id}" ${String(location.id) === String(stBusinessLocationId || '') ? 'selected' : ''}>${esc(location.name)}${location.is_default ? ' (Default)' : ''}</option>`).join('')}
               </select>
             </div>
@@ -19007,7 +18922,7 @@ async function stockTransferModal(id = null, onDone = null) {
       date: transferDate,
       source_warehouse: Number(srcId),
       destination_warehouse: Number(dstId),
-      business_location_id: businessLocationSel.value ? Number(businessLocationSel.value) : null,
+      branch_id: businessLocationSel.value ? Number(businessLocationSel.value) : null,
       notes: notesEl.value.trim(),
       lines
     };

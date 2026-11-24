@@ -14,7 +14,7 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'profile', label: 'Profile', hash: '#/settings/profile' },
           { key: 'branding', label: 'Branding', hash: '#/settings/branding' },
-          { key: 'locations', label: 'Locations', hash: '#/settings/business-locations' },
+          { key: 'branches', label: 'Branches', hash: '#/settings/branches' },
           { key: 'ai', label: 'AI Control Center', hash: '#/settings/ai' },
           { key: 'subscription-billing', label: 'Manage Subscription', hash: '#/settings/subscription-billing' },
         ]
@@ -60,7 +60,6 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'number-series', label: 'Transaction Number Series', hash: '#/settings/number-series' },
           { key: 'custom-fields', label: 'Custom Fields', hash: '#/settings/custom-fields' },
-          { key: 'location-customization', label: 'Locations', hash: '#/settings/location-customization' },
           { key: 'pdf-templates', label: 'PDF Templates', hash: '#/settings/pdf-templates' },
           { key: 'email-notifications', label: 'Email Notifications', hash: '#/settings/email-notifications' },
           { key: 'sms-notifications', label: 'SMS Notifications', hash: '#/settings/sms-notifications' },
@@ -574,7 +573,6 @@ async function renderCustomFieldsSettingsPage(container, initialModule = '', pag
     { key: 'bills', label: 'Bills' },
     { key: 'payments_made', label: 'Payments Made' },
     { key: 'payments_received', label: 'Payments Received' },
-    { key: 'locations', label: 'Locations' },
   ];
   const fieldTypes = [
     ['text', 'Text'],
@@ -604,7 +602,7 @@ async function renderCustomFieldsSettingsPage(container, initialModule = '', pag
         <div class="settings-panel-header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
           <div>
             <h2>${esc(pageTitle)}</h2>
-            <div class="sub">${initialModule ? 'Configure organization-level custom fields for locations.' : 'Create organization-level fields for supported modules.'}</div>
+            <div class="sub">${initialModule ? 'Configure organization-level custom fields for branches.' : 'Create organization-level fields for supported modules.'}</div>
           </div>
           <button type="button" class="btn p" data-custom-field-add>Add Custom Field</button>
         </div>
@@ -816,7 +814,7 @@ async function renderCustomFieldsSettingsPage(container, initialModule = '', pag
 }
 
 async function renderLocationCustomizationPage(container) {
-  return renderCustomFieldsSettingsPage(container, 'locations', 'Location Customization');
+  return renderCustomFieldsSettingsPage(container, 'locations', 'Branch Customization');
 }
 
 function toggleSettingsNavGroup(btn) {
@@ -971,7 +969,6 @@ async function openInviteUserModal(isAccountant = false) {
     </div>
   `;
   document.body.appendChild(modal);
-
   const errorBox = modal.querySelector('#inviteUserError');
   const submitButton = modal.querySelector('#btnSubmitInvite');
   const showInviteError = message => {
@@ -3047,7 +3044,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
             <span class="pastel-chip ${currentSeries.is_active ? 'chip-green' : 'chip-rose'}">${currentSeries.is_active ? 'Active' : 'Inactive'}</span>
           </div>
           <div style="font-size:12px;color:#64748b;margin-top:4px;">
-            Branch / Location: <b>${esc(currentSeries.branch || currentSeries.location || 'All Branches / Head Office')}</b>
+            Branch: <b>${esc(currentSeries.branch || currentSeries.location || 'All Branches')}</b>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -3583,7 +3580,11 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <label class="form-group">Series Name*<input class="form-control" id="newSeriesName" placeholder="e.g. Kerala Branch" required></label>
-          <label class="form-group">Branch / Location<input class="form-control" id="newSeriesBranch" placeholder="e.g. Kerala Branch"></label>
+          <label class="form-group">Branch / Branch
+            <select class="form-control" id="newSeriesLocation">
+              <option value="">All branches</option>
+            </select>
+          </label>
         </div>
         <div style="display:flex;align-items:center;gap:16px;">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -3623,6 +3624,13 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     </div>
   `;
   document.body.appendChild(modal);
+  api('lookup/branches/').then(locations => {
+    const select = modal.querySelector('#newSeriesLocation');
+    if (!select) return;
+    select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
+      `<option value="${location.id}">${esc(location.name)}</option>`
+    ).join('');
+  }).catch(() => {});
 
   const nameInput = modal.querySelector('#newSeriesName');
   const pfxInputs = modal.querySelectorAll('.s-pfx');
@@ -3693,7 +3701,7 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
       nameInput.focus();
       return;
     }
-    const branch = modal.querySelector('#newSeriesBranch').value.trim();
+    const locationId = modal.querySelector('#newSeriesLocation').value;
     const isDefault = modal.querySelector('#newSeriesDefault').checked;
     const isActive = modal.querySelector('#newSeriesActive').checked;
 
@@ -3739,8 +3747,7 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
         method: 'POST',
         body: JSON.stringify({
           name: name,
-          branch: branch,
-          location: branch,
+          branch_id: locationId || null,
           is_default: isDefault,
           is_active: isActive,
           items: items
@@ -3785,7 +3792,9 @@ function openEditSeriesMetaModal(container, currentSeries) {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
         <label class="form-group">Series Name*<input class="form-control" id="editMetaName" value="${esc(currentSeries.name)}" required></label>
-        <label class="form-group">Branch / Location<input class="form-control" id="editMetaBranch" value="${esc(currentSeries.branch || currentSeries.location || '')}"></label>
+        <label class="form-group">Branch / Branch
+          <select class="form-control" id="editMetaLocation"><option value="">All branches</option></select>
+        </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
           <input type="checkbox" id="editMetaDefault" ${currentSeries.is_default ? 'checked' : ''}> Default series
         </label>
@@ -3800,6 +3809,13 @@ function openEditSeriesMetaModal(container, currentSeries) {
     </div>
   `;
   document.body.appendChild(modal);
+  api('lookup/branches/').then(locations => {
+    const select = modal.querySelector('#editMetaLocation');
+    if (!select) return;
+    select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
+      `<option value="${location.id}" ${String(location.id) === String(currentSeries.business_location_id || '') ? 'selected' : ''}>${esc(location.name)}</option>`
+    ).join('');
+  }).catch(() => {});
 
   const closeModal = () => {
     document.removeEventListener('keydown', onKeyDown);
@@ -3825,7 +3841,7 @@ function openEditSeriesMetaModal(container, currentSeries) {
       modal.querySelector('#editMetaName').focus();
       return;
     }
-    const branch = modal.querySelector('#editMetaBranch').value.trim();
+    const locationId = modal.querySelector('#editMetaLocation').value;
     const isDefault = modal.querySelector('#editMetaDefault').checked;
     const isActive = modal.querySelector('#editMetaActive').checked;
 
@@ -3841,8 +3857,7 @@ function openEditSeriesMetaModal(container, currentSeries) {
         method: 'PUT',
         body: JSON.stringify({
           name: name,
-          branch: branch,
-          location: branch,
+          branch_id: locationId || null,
           is_default: isDefault,
           is_active: isActive
         })
@@ -5035,7 +5050,7 @@ async function renderEnterpriseSettingsPage(container) {
   const existingRoutes = {
     profile: '#/settings/profile',
     branding: '#/settings/branding',
-    branches: '#/settings/business-locations',
+    branches: '#/settings/branches',
     currencies: '#/settings/currencies',
     'opening-balances': '#/settings/opening-balances',
     'manage-subscription': '#/settings/subscription-billing',
@@ -5368,7 +5383,7 @@ function renderLocationStateControl(country, selectedState) {
 }
 
 async function renderBusinessLocationsPage(container) {
-  container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading locations…</div>`;
+  container.innerHTML = `<div class="spin" style="margin:40px auto;">Loading branches…</div>`;
   let locations = [];
   let users = [];
   let series = [];
@@ -5376,7 +5391,7 @@ async function renderBusinessLocationsPage(container) {
   let organization = null;
   try {
     const [locationData, userData, organizationData, customFieldData] = await Promise.all([
-      api('/settings/locations/'),
+      api('/settings/branches/'),
       api('/settings/users/'),
       api('/settings/organization/'),
       api('custom-fields/?module=locations&page_size=100')
@@ -5387,7 +5402,7 @@ async function renderBusinessLocationsPage(container) {
     customFields = (customFieldData.results || []).filter(field => field.active && !field.hidden && field.form_visible);
     organization = organizationData || null;
   } catch (error) {
-    container.innerHTML = `<div class="error-msg-card">${esc(error.message || 'Failed to load locations.')}</div>`;
+    container.innerHTML = `<div class="error-msg-card">${esc(error.message || 'Failed to load branches.')}</div>`;
     return;
   }
 
@@ -5400,7 +5415,7 @@ async function renderBusinessLocationsPage(container) {
       default_transaction_series_id: null, is_default: false, active: true, warehouse_ids: []
     };
     if (locationId) {
-      try { location = await api(`/settings/locations/${locationId}/`); }
+      try { location = await api(`/settings/branches/${locationId}/`); }
       catch (error) { toast(error.message || 'Failed to load location.', 'error'); return; }
     }
     let availableSeries = series.filter(item =>
@@ -5408,27 +5423,12 @@ async function renderBusinessLocationsPage(container) {
     );
     const countryOptions = getLocationCountryOptions(location.country || 'India');
     const modal = Modal.open({
-      title: locationId ? 'Edit Location' : 'Add Location',
+      title: locationId ? 'Edit Branch' : 'Add Branch',
       wide: true,
       body: `
       <div class="settings-location-form">
-        <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Location' : 'Add Location'}</h2></div></div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label>Location Type</label>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;">
-            <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
-              <input type="radio" name="locationType" value="business" ${location.location_type === 'business' ? 'checked' : ''}>
-              <b>Business Location</b>
-              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A Business Location represents your organization's office or operational location. It is used to record transactions, assess regional performance, and monitor stock levels for items stored at this location.</div>
-            </label>
-            <label data-location-type-card style="display:block;flex:1;min-width:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;cursor:pointer;">
-              <input type="radio" name="locationType" value="warehouse" ${location.location_type === 'warehouse' ? 'checked' : ''}>
-              <b>Warehouse Only Location</b>
-              <div style="margin:5px 0 0 24px;color:#64748b;font-size:12px;">A Warehouse Only Location refers to where your items are stored. It helps track and monitor stock levels for items stored at this location.</div>
-            </label>
-          </div>
-        </div>
-        <label class="form-group"><span id="locationNameLabel">${location.location_type === 'warehouse' ? 'Warehouse Name' : 'Name'}*</span>
+        <div class="settings-page-header"><div class="settings-page-header-left"><h2>${locationId ? 'Edit Branch' : 'Add Branch'}</h2></div></div>
+        <label class="form-group"><span id="locationNameLabel">Branch Name*</span>
           <input class="form-control" id="locationName" value="${esc(location.name)}" required>
         </label>
         <label class="form-group"><input type="checkbox" id="locationActive" ${location.active ? 'checked' : ''}> Active</label>
@@ -5514,21 +5514,9 @@ async function renderBusinessLocationsPage(container) {
       root.querySelector('#locationAccessCount').textContent = `${count} user(s) selected`;
     };
     const updateLocationTypeFields = () => {
-      const isBusinessLocation = root.querySelector('[name="locationType"]:checked').value === 'business';
-      root.querySelector('#locationNameLabel').textContent = isBusinessLocation ? 'Name*' : 'Warehouse Name*';
-      root.querySelectorAll('[data-business-location-only]').forEach(field => { field.hidden = !isBusinessLocation; });
-      root.querySelectorAll('[data-location-type-card]').forEach(card => {
-        const selected = card.querySelector('[name="locationType"]').checked;
-        card.style.borderColor = selected ? '#38bdf8' : '#cbd5e1';
-        card.style.background = selected ? '#f0f9ff' : '#fff';
-      });
-      if (!isBusinessLocation) {
-        root.querySelector('#locationPrimaryContact').value = '';
-        root.querySelector('#locationSeries').selectedIndex = -1;
-        root.querySelector('#locationDefaultSeries').value = '';
-      }
+      root.querySelector('#locationNameLabel').textContent = 'Branch Name*';
+      root.querySelectorAll('[data-business-location-only]').forEach(field => { field.hidden = false; });
     };
-    root.querySelectorAll('[name="locationType"]').forEach(radio => radio.addEventListener('change', updateLocationTypeFields));
     root.querySelectorAll('.locationUser').forEach(input => input.addEventListener('change', updateLocationAccessCount));
     updateLocationTypeFields();
     updateLocationAccessCount();
@@ -5551,9 +5539,6 @@ async function renderBusinessLocationsPage(container) {
       });
     };
     seriesSelect.addEventListener('change', updateDefaultSeriesOptions);
-    root.querySelectorAll('[name="locationType"]').forEach(radio => {
-      radio.addEventListener('change', updateDefaultSeriesOptions);
-    });
     root.querySelector('#locationSeriesSearch').addEventListener('input', event => {
       const search = event.target.value.trim().toLowerCase();
       Array.from(seriesSelect.options).forEach(option => {
@@ -5636,7 +5621,7 @@ async function renderBusinessLocationsPage(container) {
         openAddTransactionSeriesModal(container, seriesConfig.supported_types || [], async () => {
           const previousSeriesIds = new Set(Array.from(seriesSelect.selectedOptions).map(option => Number(option.value)));
           const previousDefaultId = defaultSeriesSelect.value;
-          const locationData = await api('/settings/locations/');
+          const locationData = await api('/settings/branches/');
           series = locationData.transaction_series_options || [];
           availableSeries = series.filter(item =>
             !item.business_location_id || String(item.business_location_id) === String(location.id || '')
@@ -5656,13 +5641,13 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
       const saveButton = root.querySelector('#btnSaveLocation');
       if (saveButton.disabled) return;
-      const locationType = root.querySelector('[name="locationType"]:checked').value;
+      const locationType = 'business';
       const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
       const selectedSeriesIds = Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value));
       const defaultSeriesId = root.querySelector('#locationDefaultSeries').value;
       if (locationType === 'business' && !primaryContactId) {
-        toast('Choose a primary contact for this business location.', 'error');
+        toast('Choose a primary contact for this branch.', 'error');
         return;
       }
       if (locationType === 'business' && (!defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
@@ -5755,9 +5740,9 @@ async function renderBusinessLocationsPage(container) {
       saveButton.disabled = true;
       saveButton.textContent = 'Saving...';
       try {
-        await api(locationId ? `/settings/locations/${locationId}/` : '/settings/locations/', { method: locationId ? 'PUT' : 'POST', body: payload });
+        await api(locationId ? `/settings/branches/${locationId}/` : '/settings/branches/', { method: locationId ? 'PUT' : 'POST', body: payload });
         modal.close();
-        toast(locationId ? 'Location updated successfully.' : 'Location created successfully.', 'success');
+        toast(locationId ? 'Branch updated successfully.' : 'Branch created successfully.', 'success');
         renderBusinessLocationsPage(container);
       } catch (error) {
         toast(error.message || 'Failed to save location.', 'error');
@@ -5771,11 +5756,11 @@ async function renderBusinessLocationsPage(container) {
   }
 
   container.innerHTML = `
-    <div class="settings-page-header"><div class="settings-page-header-left"><h1>Locations</h1></div>
-      <div class="settings-page-header-right"><button type="button" class="btn-primary" id="btnAddLocation">+ Add Location</button></div>
+    <div class="settings-page-header"><div class="settings-page-header-left"><h1>Branches</h1></div>
+      <div class="settings-page-header-right"><button type="button" class="btn-primary" id="btnAddLocation">+ Add Branch</button></div>
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin:12px 0;">
-      <input class="form-control" id="locationListSearch" type="search" placeholder="Search locations" aria-label="Search locations" style="max-width:320px;">
+      <input class="form-control" id="locationListSearch" type="search" placeholder="Search branches" aria-label="Search branches" style="max-width:320px;">
       <select class="form-control" id="locationListStatus" aria-label="Filter by status" style="max-width:180px;">
         <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
       </select>
@@ -5805,13 +5790,13 @@ async function renderBusinessLocationsPage(container) {
     const pageLocations = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
     container.querySelector('#locationRows').innerHTML = pageLocations.map(location => `
       <tr><td><b>${esc(location.name)}</b></td>
-        <td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Business Location'}</td>
+        <td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Branch'}</td>
         <td>${esc(location.parent_name || '')}</td>
         <td>${location.is_default ? 'Default' : ''}</td>
         <td>${location.active ? 'Active' : 'Inactive'}</td>
         <td><button type="button" class="btn-table-action" data-location-id="${location.id}">Edit</button></td>
-      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No locations found.</td></tr>';
-    container.querySelector('#locationPageInfo').textContent = `Page ${currentPage + 1} of ${pageCount} (${filtered.length} locations)`;
+      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No branches found.</td></tr>';
+    container.querySelector('#locationPageInfo').textContent = `Page ${currentPage + 1} of ${pageCount} (${filtered.length} branches)`;
     container.querySelector('#locationPrevPage').disabled = currentPage === 0;
     container.querySelector('#locationNextPage').disabled = currentPage >= pageCount - 1;
     container.querySelectorAll('[data-location-id]').forEach(button =>

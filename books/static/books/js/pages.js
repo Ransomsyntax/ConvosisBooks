@@ -7970,14 +7970,14 @@ async function gstFilingPage(root, tab = 'overview') {
 function reportBusinessLocationQuery(key) {
   const filters = APP.reportBusinessLocationFilters || {};
   const locationId = filters[key] || '';
-  return locationId ? `business_location_id=${encodeURIComponent(locationId)}` : '';
+  return locationId ? `branch_id=${encodeURIComponent(locationId)}` : '';
 }
 
 async function populateReportBusinessLocationFilter(select, key, onChange) {
   const locations = await api('lookup/business-locations/');
   APP.reportBusinessLocationFilters = APP.reportBusinessLocationFilters || {};
   const selectedId = APP.reportBusinessLocationFilters[key] || '';
-  select.innerHTML = `<option value="">All business locations</option>${locations.map(location =>
+  select.innerHTML = `<option value="">All branches</option>${locations.map(location =>
     `<option value="${location.id}">${esc(location.name)}${location.is_default ? ' (Default)' : ''}</option>`
   ).join('')}`;
   select.value = selectedId;
@@ -8005,8 +8005,8 @@ async function trialBalancePage(root) {
       <div class="tb">
         <span style="font-weight:600;">As of Date:</span>
         <input class="in" type="date" id="tb-date" value="${APP.today}" style="max-width:180px;">
-        <label for="tb-business-location" style="font-weight:600;">Business Location:</label>
-        <select class="in" id="tb-business-location" style="max-width:240px;"><option value="">All business locations</option></select>
+        <label for="tb-business-location" style="font-weight:600;">Branch:</label>
+        <select class="in" id="tb-business-location" style="max-width:240px;"><option value="">All branches</option></select>
         <span class="sub" id="tb-bal-badge"></span>
       </div>
       <div class="tw" id="tb-table">${spinner}</div>
@@ -8024,7 +8024,7 @@ async function trialBalancePage(root) {
     try {
       const params = new URLSearchParams({ as_of: dInp.value });
       const locationId = APP.reportBusinessLocationFilters?.['trial-balance'];
-      if (locationId) params.set('business_location_id', locationId);
+      if (locationId) params.set('branch_id', locationId);
       const res = await api(`reports/trial-balance/?${params.toString()}`);
       if (!root.isConnected) return;
       $('#tb-bal-badge', root).innerHTML = res.is_balanced
@@ -8071,8 +8071,8 @@ async function profitAndLossPage(root) {
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:12px 16px;">
-      <label for="pl-business-location" style="font-weight:600;">Business Location:</label>
-      <select class="in" id="pl-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+      <label for="pl-business-location" style="font-weight:600;">Branch:</label>
+      <select class="in" id="pl-business-location" style="max-width:260px;margin-left:8px;"><option value="">All branches</option></select>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="pl-container">${spinner}</div>
   `;
@@ -8129,8 +8129,8 @@ async function balanceSheetPage(root) {
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:12px 16px;">
-      <label for="bs-business-location" style="font-weight:600;">Business Location:</label>
-      <select class="in" id="bs-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+      <label for="bs-business-location" style="font-weight:600;">Branch:</label>
+      <select class="in" id="bs-business-location" style="max-width:260px;margin-left:8px;"><option value="">All branches</option></select>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="bs-container">${spinner}</div>
   `;
@@ -8176,8 +8176,8 @@ async function cashFlowPage(root) {
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:12px 16px;">
-      <label for="cf-business-location" style="font-weight:600;">Business Location:</label>
-      <select class="in" id="cf-business-location" style="max-width:260px;margin-left:8px;"><option value="">All business locations</option></select>
+      <label for="cf-business-location" style="font-weight:600;">Branch:</label>
+      <select class="in" id="cf-business-location" style="max-width:260px;margin-left:8px;"><option value="">All branches</option></select>
     </div>
     <div class="card" style="margin-top:14px;padding:20px;" id="cf-container">${spinner}</div>
   `;

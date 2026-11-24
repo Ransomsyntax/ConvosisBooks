@@ -72,7 +72,7 @@ class LocationBranchIntegrationTests(TestCase):
         )
 
     def test_location_crud_duplicate_validation_and_lookup_isolation(self):
-        create = self.post_json('/api/settings/locations/', {
+        create = self.post_json('/api/settings/branches/', {
             'name': 'Trivandrum Branch',
             'location_type': 'business',
             'city': 'Thiruvananthapuram',
@@ -83,7 +83,7 @@ class LocationBranchIntegrationTests(TestCase):
         self.assertEqual(create.status_code, 201, create.content)
         created_id = create.json()['location']['id']
 
-        duplicate = self.post_json('/api/settings/locations/', {
+        duplicate = self.post_json('/api/settings/branches/', {
             'name': 'trivandrum branch',
             'location_type': 'business',
             'active': True,
@@ -91,7 +91,7 @@ class LocationBranchIntegrationTests(TestCase):
         self.assertEqual(duplicate.status_code, 409)
 
         update = self.client.put(
-            f'/api/settings/locations/{created_id}/',
+            f'/api/settings/branches/{created_id}/',
             data=json.dumps({
                 'name': 'Thiruvananthapuram Branch',
                 'location_type': 'business',
@@ -104,13 +104,13 @@ class LocationBranchIntegrationTests(TestCase):
         )
         self.assertEqual(update.status_code, 200, update.content)
 
-        lookup = self.client.get('/api/lookup/business-locations/')
+        lookup = self.client.get('/api/lookup/branches/')
         self.assertEqual(lookup.status_code, 200)
         lookup_ids = {row['id'] for row in lookup.json()}
         self.assertIn(self.location.id, lookup_ids)
         self.assertNotIn(created_id, lookup_ids)
 
-        detail = self.client.get(f'/api/settings/locations/{created_id}/')
+        detail = self.client.get(f'/api/settings/branches/{created_id}/')
         self.assertEqual(detail.status_code, 200)
         self.assertFalse(detail.json()['active'])
 
@@ -120,7 +120,7 @@ class LocationBranchIntegrationTests(TestCase):
             'number': 'LOC-INV-001',
             'date': '2026-11-24',
             'due_date': '2026-11-24',
-            'business_location_id': self.location.id,
+            'branch_id': self.location.id,
             'lines': [{
                 'item': self.item.id,
                 'description': 'Location test',
@@ -148,7 +148,7 @@ class LocationBranchIntegrationTests(TestCase):
                 'customer': self.customer.id,
                 'date': '2026-11-24',
                 'due_date': '2026-11-24',
-                'business_location_id': self.location.id,
+                'branch_id': self.location.id,
                 'lines': [{
                     'item': self.item.id,
                     'description': 'Location test edited',
@@ -168,7 +168,7 @@ class LocationBranchIntegrationTests(TestCase):
             'number': 'LOC-INV-002',
             'date': '2026-11-24',
             'due_date': '2026-11-24',
-            'business_location_id': self.location.id,
+            'branch_id': self.location.id,
             'lines': [{
                 'item': self.item.id,
                 'description': 'Inactive location test',
@@ -190,7 +190,7 @@ class LocationBranchIntegrationTests(TestCase):
             'expense_account': expense_account.id,
             'vendor': self.vendor.id,
             'amount': '250.00',
-            'business_location_id': self.location.id,
+            'branch_id': self.location.id,
         })
         self.assertEqual(expense.status_code, 201, expense.content)
         expense_id = expense.json()['id']
@@ -203,7 +203,7 @@ class LocationBranchIntegrationTests(TestCase):
             'vendor': self.vendor.id,
             'date': '2026-11-24',
             'due_date': '2026-11-24',
-            'business_location_id': self.location.id,
+            'branch_id': self.location.id,
             'lines': [{
                 'item': self.item.id,
                 'description': 'Location bill',
@@ -243,7 +243,7 @@ class LocationBranchIntegrationTests(TestCase):
             'number': 'LOC-INV-XORG',
             'date': '2026-11-24',
             'due_date': '2026-11-24',
-            'business_location_id': other_location.id,
+            'branch_id': other_location.id,
             'lines': [{
                 'item': self.item.id,
                 'description': 'Cross org',
@@ -256,7 +256,7 @@ class LocationBranchIntegrationTests(TestCase):
 
         other_client = Client()
         other_client.force_login(other_user)
-        lookup = other_client.get('/api/lookup/business-locations/')
+        lookup = other_client.get('/api/lookup/branches/')
         self.assertEqual(lookup.status_code, 200)
         ids = {row['id'] for row in lookup.json()}
         self.assertIn(other_location.id, ids)

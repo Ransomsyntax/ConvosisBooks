@@ -45,7 +45,7 @@ from .models import (
     StockTransfer, StockTransferLine,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
-    BusinessLocation, CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
+    Branch, BusinessLocation, CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
     DeliveryChallanLine, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
@@ -75,6 +75,14 @@ def format_qty(val):
 
 def j(data, status=200):
     return JsonResponse(data, status=status, encoder=DjangoJSONEncoder, safe=False)
+
+def normalize_branch_payload(data):
+    if not isinstance(data, dict):
+        return data
+    if 'branch_id' in data:
+        data = dict(data)
+        data['business_location_id'] = data.get('branch_id')
+    return data
 
 def body(request):
     try:
@@ -786,6 +794,7 @@ class Resource:
                     raise ApiError(400, f'Failed to parse uploaded file: {str(e)}')
             else:
                 data = body(request)
+                data = normalize_branch_payload(data)
                 if isinstance(data, dict) and 'import_records' in data:
                     records = data['import_records']
                 elif isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
@@ -1064,7 +1073,7 @@ class Resource:
                 prev_row = self.row(obj)
             except Exception:
                 pass
-            submitted = body(request)
+            submitted = normalize_branch_payload(body(request))
             submitted_number = str(submitted.get('number') or '').strip()
             if hasattr(obj, 'number') and getattr(obj, 'status', 'draft') != 'draft' and submitted_number and submitted_number != obj.number:
                 raise ApiError(400, 'Issued document numbers cannot be changed. Void the document and create a new one.')
@@ -2577,7 +2586,7 @@ class DocResource(Resource):
         for fld in ('branch', 'location', 'transaction_series', 'order_number', 'salesperson', 'project_name', 'subject', 'terms', 'accounts_receivable', 'accounts_payable'):
             if fld in data:
                 head[fld] = str(data.get(fld) or '').strip()
-        location_id = data.get('business_location_id') or data.get('business_location')
+        location_id = data.get('branch_id') or data.get('business_location_id') or data.get('business_location')
         if location_id not in (None, '', 0):
             try:
                 location_id = int(location_id)
@@ -11487,8 +11496,8 @@ def lookup(request, name):
                  'business_location_name': o.business_location.name if o.business_location else '',
                  'shared_database': o.shared_database}
                 for o in wh_qs]
-    elif name in ('business-locations', 'retainer-locations'):
-        location_qs = org_filter(BusinessLocation.objects.filter(active=True)).filter(location_type='business')
+    elif name in ('branches', 'business-locations', 'retainer-locations'):
+        location_qs = org_filter(Branch.objects.filter(active=True)).filter(location_type='business')
         profile = getattr(request.user, 'profile', None)
         if profile and not request.user.is_superuser and profile.role != UserProfile.ADMIN:
             location_qs = location_qs.filter(
@@ -11938,8 +11947,8 @@ def reports_view(request, name):
     start, end = parse_range(request)
     user_org = get_user_org(request.user)
     def report_business_location():
-        location_id = request.GET.get('business_location_id') or request.GET.get('location_id')
-        location = BusinessLocation.objects.filter(
+        location_id = request.GET.get('branch_id') or request.GET.get('business_location_id') or request.GET.get('location_id')
+        location = Branch.objects.filter(
             organization=user_org, pk=location_id
         ).first() if location_id and user_org else None
         if location_id and not location:
@@ -14483,6 +14492,7 @@ def _business_location_payload(location):
     return {
         'id': location.pk,
         'uuid': str(location.uuid),
+        'branch_id': location.pk,
         'location_type': location.location_type,
         'name': location.name,
         'logo_data': location.logo_data,
@@ -15205,6 +15215,8 @@ def settings_transaction_series_view(request, series_id=None):
                 'name': s.name,
                 'branch': s.branch,
                 'location': s.location,
+                'branch_id': s.business_location_id,
+                'business_location_id': s.business_location_id,
                 'is_default': s.is_default,
                 'is_active': s.is_active,
                 'created_at': s.created_at.isoformat() if s.created_at else '',
@@ -15271,6 +15283,7 @@ def settings_transaction_series_view(request, series_id=None):
                 'name': current_series.name if current_series else '',
                 'branch': current_series.branch if current_series else '',
                 'location': current_series.location if current_series else '',
+                'branch_id': current_series.business_location_id if current_series else None,
                 'is_default': current_series.is_default if current_series else False,
                 'is_active': current_series.is_active if current_series else True,
             } if current_series else None,
@@ -15287,6 +15300,7 @@ def settings_transaction_series_view(request, series_id=None):
 
     if request.method == 'POST':
         data = body(request)
+        data = normalize_branch_payload(data)
         name = str(data.get('name') or '').strip()
         if not name:
             raise ApiError(400, 'Series Name is required.')
@@ -15295,6 +15309,16 @@ def settings_transaction_series_view(request, series_id=None):
 
         branch = str(data.get('branch') or '').strip()
         location = str(data.get('location') or '').strip()
+        branch_location = None
+        branch_id = data.get('branch_id') or data.get('business_location_id')
+        if branch_id not in (None, '', 0):
+            branch_location = Branch.objects.filter(
+                organization=org, pk=branch_id, active=True
+            ).first()
+            if not branch_location:
+                raise ApiError(400, 'Choose an active branch belonging to this organization.')
+            branch = branch_location.name
+            location = branch_location.name
         is_default = _transaction_series_boolean(data, 'is_default', False)
         is_active = _transaction_series_boolean(data, 'is_active', True)
         if is_default and not is_active:
@@ -15311,6 +15335,7 @@ def settings_transaction_series_view(request, series_id=None):
                 name=name,
                 branch=branch,
                 location=location,
+                business_location=branch_location,
                 is_default=is_default,
                 is_active=is_active
             )
@@ -15368,6 +15393,7 @@ def settings_transaction_series_view(request, series_id=None):
                     is_default=is_default,
                     branch=branch,
                     location=location,
+                    business_location=branch_location,
                 )
 
             services.log_audit(request.user, 'create', 'TransactionSeries', grp.pk, f"Created transaction series {grp.name}", org=org)
@@ -15380,10 +15406,25 @@ def settings_transaction_series_view(request, series_id=None):
         if not grp:
             raise ApiError(404, 'Transaction series not found.')
 
-        data = body(request)
+        data = normalize_branch_payload(body(request))
         with transaction.atomic():
             Organization.objects.select_for_update().get(pk=org.pk)
             grp = TransactionSeries.objects.select_for_update().get(pk=grp.pk, organization=org)
+            if 'branch_id' in data or 'business_location_id' in data:
+                branch_id = data.get('branch_id') or data.get('business_location_id')
+                if branch_id in (None, '', 0):
+                    grp.business_location = None
+                    grp.branch = ''
+                    grp.location = ''
+                else:
+                    branch_location = Branch.objects.filter(
+                        organization=org, pk=branch_id, active=True
+                    ).first()
+                    if not branch_location:
+                        raise ApiError(400, 'Choose an active branch belonging to this organization.')
+                    grp.business_location = branch_location
+                    grp.branch = branch_location.name
+                    grp.location = branch_location.name
             if 'name' in data:
                 new_name = str(data['name']).strip()
                 if not new_name:
@@ -15545,6 +15586,7 @@ def _number_series_payload(series):
         'customer_type': series.customer_type,
         'branch': series.branch,
         'location': series.location,
+        'branch_id': series.business_location_id,
         'business_location_id': series.business_location_id,
         'gstin': series.gstin,
         'prefix': series.prefix,

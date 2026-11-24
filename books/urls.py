@@ -172,6 +172,8 @@ urlpatterns = [
     path('settings/retainer-number-series/<int:series_id>/', api.settings_document_number_series_view, {'retainer_only': True}),
     path('settings/locations/', api.settings_locations_view),
     path('settings/locations/<int:location_id>/', api.settings_locations_view),
+    path('settings/branches/', api.settings_locations_view),
+    path('settings/branches/<int:location_id>/', api.settings_locations_view),
     path('settings/doc-number-preferences/', api.doc_number_preferences_view),
     path('document-number-preferences/', api.doc_number_preferences_view),
     path('settings/templates/', api.settings_templates_view),

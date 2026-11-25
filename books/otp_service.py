@@ -283,7 +283,10 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
                 raise RuntimeError(f"Brevo API rejected the email with HTTP {resp.status}.")
         except Exception as api_err:
             api_error = api_err
-            logger.warning("Brevo REST API delivery failed (%s), attempting configured SMTP backend...", api_err)
+            logger.warning(
+                "Brevo REST API delivery failed with %s; attempting configured SMTP backend.",
+                type(api_err).__name__,
+            )
 
     if not smtp_configured:
         if api_error:
@@ -310,7 +313,11 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
         else:
             raise RuntimeError(f"Email backend returned 0 delivered messages to {mask_identifier(to_email, 'email')}.")
     except Exception as exc:
-        logger.error("Failed to deliver email to %s: %s", mask_identifier(to_email, 'email'), str(exc), exc_info=True)
+        logger.exception(
+            "Email delivery failed for %s with %s.",
+            mask_identifier(to_email, 'email'),
+            type(exc).__name__,
+        )
         raise
 
 
@@ -421,17 +428,27 @@ def create_and_send_otp(
         except Exception as exc:
             # Clean up pending record so invalid/unreceived OTP is not stored
             record.delete()
-            err_str = str(exc)
-            logger.error("Failed to dispatch OTP email to %s: %s", mask_identifier(target_value, 'email'), err_str)
-            if "STARTTLS" in err_str or "TLS" in err_str:
-                user_msg = "SMTP TLS connection error. Please ensure EMAIL_USE_TLS is True in hosting environment."
-            elif "Authentication" in err_str or "535" in err_str:
-                user_msg = "SMTP authentication failed. Please verify your Brevo SMTP login and key."
-            elif "Sender" in err_str or "550" in err_str:
-                user_msg = "Sender address was rejected by Brevo. Please check your verified sender in DEFAULT_FROM_EMAIL."
-            else:
-                user_msg = f"Failed to deliver verification email: {err_str}"
-            raise OTPServiceError(user_msg, code="email_delivery_failed", status_code=502)
+            logger.exception(
+                "Verification email dispatch failed for %s with %s.",
+                mask_identifier(target_value, 'email'),
+                type(exc).__name__,
+            )
+            raise OTPServiceError(
+                "We couldn't send your verification email. Please try again later.",
+                code="email_delivery_failed",
+                status_code=502,
+            ) from exc
+        if not sent:
+            record.delete()
+            logger.error(
+                "Verification email dispatch returned no success for %s.",
+                mask_identifier(target_value, 'email'),
+            )
+            raise OTPServiceError(
+                "We couldn't send your verification email. Please try again later.",
+                code="email_delivery_failed",
+                status_code=502,
+            )
     elif target_type == 'mobile':
         sent = send_msg91_sms(target_value, otp)
         if not sent:

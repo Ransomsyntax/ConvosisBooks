@@ -34,7 +34,7 @@ if not SECRET_KEY:
         raise ImproperlyConfigured('Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0.')
     SECRET_KEY = 'dev-only-insecure-key-change-me'
 
-raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS') or os.environ.get('ALLOWED_HOSTS') or 'localhost,127.0.0.1,testserver,convosisbooks.onrender.com,books-d8i1.onrender.com,api.convosis.com,convosis.com,www.convosis.com'
+raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS') or os.environ.get('ALLOWED_HOSTS') or 'localhost,127.0.0.1,testserver,convosisbooks.onrender.com,books-d8i1.onrender.com,api.convosis.com,convosis.com,www.convosis.com,staging.convosis.com'
 ALLOWED_HOSTS = []
 for h in raw_hosts.replace(';', ',').split(','):
     h = h.strip()
@@ -53,7 +53,7 @@ try:
 except Exception:
     pass
 
-raw_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS') or 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com,https://api.convosis.com,https://convosis.com,https://www.convosis.com'
+raw_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS') or 'https://convosisbooks.onrender.com,https://books-d8i1.onrender.com,https://api.convosis.com,https://convosis.com,https://www.convosis.com,https://staging.convosis.com'
 CSRF_TRUSTED_ORIGINS = []
 for o in raw_origins.replace(';', ',').split(','):
     o = o.strip()
@@ -155,6 +155,10 @@ elif os.environ.get("POSTGRES_DB") or os.environ.get("DB_NAME"):
         }
     }
 else:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'Set DATABASE_URL or PostgreSQL connection variables when DJANGO_DEBUG=0.'
+        )
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",

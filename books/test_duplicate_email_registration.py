@@ -119,7 +119,10 @@ class DuplicateEmailRegistrationTestCase(TransactionTestCase):
             }, content_type='application/json')
             self.assertEqual(resp.status_code, 400)
             data = resp.json()
-            self.assertIn("An account with this email address already exists. Please log in instead.", data.get('error', ''))
+            self.assertEqual(
+                data.get('error', ''),
+                "An account with this email already exists. Please sign in or use another email.",
+            )
 
     def test_05_concurrent_registration_race_condition(self):
         """Simultaneous duplicate registrations or race conditions result in only ONE account being created."""

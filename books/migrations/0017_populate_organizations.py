@@ -7,7 +7,7 @@ def populate_existing_orgs(apps, schema_editor):
     Organization = apps.get_model('books', 'Organization')
     default_org = Organization.objects.first()
     if not default_org:
-        default_org = Organization.objects.create(pk=1, name='Convosis Technologies Pvt Ltd')
+        default_org = Organization.objects.create(name='Convosis Technologies Pvt Ltd')
 
     UserProfile = apps.get_model('books', 'UserProfile')
     # Build user -> organization mapping for reliable ownership assignment

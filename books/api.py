@@ -7,6 +7,7 @@ from datetime import timedelta
 import hashlib
 import io
 import json
+import logging
 import re
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
@@ -28,6 +29,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 slug = slugify
 REQUIRED = 'This field is required.'
@@ -17547,85 +17549,9 @@ def dpdp_export_principal_data_view(request):
 
 def api_register_view(request):
     """
-    Public registration API endpoint with strict duplicate-email prevention.
+    Keep legacy registration URLs on the verified signup workflow.
     """
-    if request.method != 'POST':
-        return j({'error': 'Method not allowed.'}, 405)
-    try:
-        data = body(request)
-        email = (data.get('email') or data.get('signup_email') or '').strip().lower()
-        username = (data.get('username') or data.get('signup_username') or '').strip()
-        password = data.get('password') or data.get('signup_password') or ''
-        name = (data.get('name') or data.get('signup_name') or '').strip()
-        org_name = (data.get('org_name') or data.get('signup_org') or '').strip()
-
-        if not email:
-            raise ApiError(400, 'Email address is required.', {'email': 'Email address is required.'})
-        if '@' not in email or '.' not in email.split('@')[-1]:
-            raise ApiError(400, 'Please enter a valid email address.', {'email': 'Please enter a valid email address.'})
-        if not username or not password:
-            raise ApiError(400, 'Username and password are required.')
-        if len(username) < 3:
-            raise ApiError(400, 'Username must be at least 3 characters long.')
-        if len(password) < 4:
-            raise ApiError(400, 'Password must be at least 4 characters long.')
-
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-
-        if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
-            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
-
-        if User.objects.filter(username__iexact=username).exists():
-            raise ApiError(400, f'Username "{username}" is already registered. Please sign in.', {'username': f'Username "{username}" is already registered. Please sign in.'})
-
-        try:
-            with transaction.atomic():
-                if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
-                    raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
-
-                user = User.objects.create_user(
-                    username=username,
-                    email=email,
-                    password=password,
-                    first_name=name
-                )
-                company_title = org_name or (f"{name}'s Company" if name else f"{username}'s Company")
-                org = Organization.objects.create(
-                    name=company_title,
-                    owner=user,
-                    email=email,
-                    state='Kerala'
-                )
-                UserProfile.objects.create(
-                    user=user,
-                    role=UserProfile.ADMIN,
-                    organization=org,
-                    normalized_email=email
-                )
-                services.ensure_default_accounts(org)
-                services.log_audit(user, 'signup', 'organization', org.pk, f'User {username} registered company {org.name} via API')
-                return j({
-                    'status': 'ok',
-                    'message': 'Account registered successfully.',
-                    'user': {
-                        'id': user.id,
-                        'user_id': user.profile.user_id_code,
-                        'username': user.username,
-                        'email': user.email
-                    },
-                    'organization': {
-                        'id': org.id,
-                        'organization_id': org.organization_id,
-                        'name': org.name
-                    }
-                }, 201)
-        except (IntegrityError, ValidationError, OperationalError):
-            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
-    except ApiError as e:
-        return j({'error': e.message, 'message': e.message, 'errors': e.errors}, e.status)
-    except Exception as e:
-        return j({'error': str(e), 'message': str(e)}, 400)
+    return api_register_with_otp_view(request)
 
 
 def api_otp_send_view(request):
@@ -17651,12 +17577,26 @@ def api_otp_send_view(request):
         if purpose == OTPVerification.PURPOSE_SIGNUP:
             norm_email = otp_service.normalize_email(target_value) if target_type == 'email' else ''
             if norm_email:
-                if User.objects.filter(email__iexact=norm_email).exists() or UserProfile.objects.filter(normalized_email=norm_email).exists():
-                    raise ApiError(400, 'An account with this email address already exists. Please log in instead.')
+                user = User.objects.filter(email__iexact=norm_email).first()
+                profile = UserProfile.objects.filter(normalized_email=norm_email).select_related(
+                    'user', 'organization'
+                ).first()
+                user = user or (profile.user if profile else None)
+                if user:
+                    profile = profile or getattr(user, 'profile', None)
+                    if user.is_active or not profile or profile.is_email_verified:
+                        raise ApiError(400, 'An account with this email already exists. Please sign in or use another email.')
+                    org = profile.organization
             elif target_type == 'mobile':
                 clean_phone = otp_service.normalize_phone(target_value)
-                if UserProfile.objects.filter(phone=clean_phone).exists():
-                    raise ApiError(400, 'An account with this mobile number already exists. Please log in instead.')
+                profile = UserProfile.objects.filter(phone=clean_phone).select_related(
+                    'user', 'organization'
+                ).first()
+                if profile:
+                    if profile.user.is_active or profile.is_mobile_verified:
+                        raise ApiError(400, 'An account with this mobile number already exists. Please sign in or use another number.')
+                    user = profile.user
+                    org = profile.organization
 
         elif purpose == OTPVerification.PURPOSE_FORGOT_PASSWORD:
             norm_email = otp_service.normalize_email(target_value)
@@ -17709,8 +17649,10 @@ def api_otp_send_view(request):
         return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except Exception:
+        logger.exception('Unexpected error while sending an OTP.')
+        return j({'error': 'Registration is temporarily unavailable. Please try again shortly.',
+                  'message': 'Registration is temporarily unavailable. Please try again shortly.'}, 503)
 
 
 def api_otp_verify_view(request):
@@ -17731,38 +17673,41 @@ def api_otp_verify_view(request):
         if not otp_code:
             raise ApiError(400, 'Please enter the 6-digit verification code.')
 
-        success, msg, record = otp_service.verify_otp_attempt(target_value, purpose, otp_code)
-        if not success:
-            return j({'error': msg, 'message': msg, 'verified': False}, 400)
+        signup_user = None
+        with transaction.atomic():
+            success, msg, record = otp_service.verify_otp_attempt(target_value, purpose, otp_code)
+            if not success:
+                return j({'error': msg, 'message': msg, 'verified': False}, 400)
+            if purpose == OTPVerification.PURPOSE_SIGNUP:
+                target_norm = otp_service.normalize_email(target_value)
+                signup_user = User.objects.select_for_update().filter(email__iexact=target_norm).first()
+                if not signup_user:
+                    raise ApiError(400, 'No pending registration was found. Please register again.')
+                signup_profile = UserProfile.objects.select_for_update().filter(user=signup_user).first()
+                if not signup_profile:
+                    raise ApiError(400, 'No pending registration was found. Please register again.')
+                signup_user.is_active = True
+                signup_user.save(update_fields=['is_active'])
+                signup_profile.is_email_verified = True
+                signup_profile.status = UserProfile.STATUS_ACTIVE
+                signup_profile.save(update_fields=['is_email_verified', 'status'])
 
         result = {
             'status': 'ok',
             'verified': True,
             'message': msg,
-            'token': record.token,
             'purpose': purpose,
         }
 
         # Handle specific actions on verified OTP
         if purpose == OTPVerification.PURPOSE_SIGNUP:
-            target_norm = otp_service.normalize_email(target_value)
-            user = User.objects.filter(email__iexact=target_norm).first()
-            if user:
-                user.is_active = True
-                user.save(update_fields=['is_active'])
-                profile = getattr(user, 'profile', None)
-                if profile:
-                    profile.is_email_verified = True
-                    profile.status = UserProfile.STATUS_ACTIVE
-                    profile.save(update_fields=['is_email_verified', 'status'])
-                from django.contrib.auth import login as auth_login
-                try:
-                    auth_login(request, user)
-                except Exception:
-                    pass
-                result['user_id'] = user.id
-                result['redirect'] = '/'
-                result['message'] = 'Account verified and activated successfully!'
+            from django.contrib.auth import login as auth_login
+            try:
+                auth_login(request, signup_user)
+            except Exception:
+                logger.exception('Verified account activation succeeded but session login failed.')
+            result['redirect'] = '/'
+            result['message'] = 'Account verified and activated successfully!'
 
         elif purpose == OTPVerification.PURPOSE_FORGOT_PASSWORD:
             result['reset_token'] = record.token
@@ -17792,8 +17737,10 @@ def api_otp_verify_view(request):
         return j(result)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except Exception:
+        logger.exception('Unexpected error while verifying an OTP.')
+        return j({'error': 'Something went wrong. Please contact support.',
+                  'message': 'Something went wrong. Please contact support.'}, 500)
 
 
 def api_otp_resend_view(request):
@@ -17832,18 +17779,6 @@ def api_register_with_otp_view(request):
         if len(username) < 3:
             raise ApiError(400, 'Username must be at least 3 characters long.')
 
-        if User.objects.filter(email__iexact=email).exists() or UserProfile.objects.filter(normalized_email=email).exists():
-            raise ApiError(400, 'An account with this email address already exists. Please log in instead.', {'email': 'An account with this email address already exists. Please log in instead.'})
-
-        if mobile:
-            if len(re.sub(r'\D', '', mobile)) < 7:
-                raise ApiError(400, 'Please enter a valid mobile number.', {'mobile': 'Please enter a valid mobile number.'})
-            if UserProfile.objects.filter(phone=mobile).exists():
-                raise ApiError(400, 'An account with this mobile number already exists. Please log in instead.', {'mobile': 'An account with this mobile number already exists. Please log in instead.'})
-
-        if User.objects.filter(username__iexact=username).exists():
-            raise ApiError(400, f'Username "{username}" is already registered. Please sign in.', {'username': f'Username "{username}" is already registered. Please sign in.'})
-
         if ('confirm_password' in data or 'signup_confirm_password' in data) and password != confirm_password:
             raise ApiError(400, 'Passwords do not match.', {'confirm_password': 'Passwords do not match.'})
 
@@ -17855,7 +17790,82 @@ def api_register_with_otp_view(request):
             msg = ve.messages[0] if hasattr(ve, 'messages') else str(ve)
             raise ApiError(400, msg, {'password': msg})
 
-        # Create user in inactive status until email OTP is verified
+        existing_profile = UserProfile.objects.filter(normalized_email=email).select_related(
+            'user', 'organization'
+        ).first()
+        existing_user = User.objects.filter(email__iexact=email).first()
+        existing_user = existing_user or (existing_profile.user if existing_profile else None)
+        if existing_user:
+            existing_profile = existing_profile or getattr(existing_user, 'profile', None)
+            if (
+                not existing_user.is_active
+                and existing_profile
+                and not existing_profile.is_email_verified
+                and existing_user.username.lower() == username.lower()
+                and existing_user.check_password(password)
+            ):
+                if mobile and existing_profile.phone and existing_profile.phone != mobile:
+                    raise ApiError(400, 'This mobile number does not match the pending registration.')
+                active_otp = OTPVerification.objects.filter(
+                    target_value=email,
+                    purpose=OTPVerification.PURPOSE_SIGNUP,
+                    user=existing_user,
+                    is_consumed=False,
+                    expires_at__gt=timezone.now(),
+                ).first()
+                if active_otp:
+                    elapsed = (timezone.now() - active_otp.created_at).total_seconds()
+                    cooldown = max(
+                        0,
+                        getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60) - int(elapsed),
+                    )
+                    return j({
+                        'status': 'ok',
+                        'step': 'verify_otp',
+                        'email': email,
+                        'mobile': existing_profile.phone or mobile,
+                        'masked_target': otp_service.mask_identifier(email, 'email'),
+                        'expires_in_seconds': max(
+                            0,
+                            int((active_otp.expires_at - timezone.now()).total_seconds()),
+                        ),
+                        'cooldown_seconds': cooldown,
+                        'message': f"A verification code has been sent to {otp_service.mask_identifier(email, 'email')}."
+                    })
+                _, dispatch_info = otp_service.create_and_send_otp(
+                    target_type='email',
+                    target_value=email,
+                    purpose=OTPVerification.PURPOSE_SIGNUP,
+                    user=existing_user,
+                    organization=existing_profile.organization,
+                    metadata={'username': username, 'name': name, 'phone': mobile},
+                    ip_address=get_client_ip(request),
+                    recipient_name=existing_user.get_full_name() or name
+                )
+                return j({
+                    'status': 'ok',
+                    'step': 'verify_otp',
+                    'email': email,
+                    'mobile': existing_profile.phone or mobile,
+                    'masked_target': dispatch_info['masked_target'],
+                    'expires_in_seconds': dispatch_info['expires_in_seconds'],
+                    'cooldown_seconds': dispatch_info['cooldown_seconds'],
+                    'message': f"A verification code has been sent to {dispatch_info['masked_target']}."
+                })
+            raise ApiError(400, 'An account with this email already exists. Please sign in or use another email.',
+                           {'email': 'An account with this email already exists. Please sign in or use another email.'})
+
+        if mobile:
+            if len(re.sub(r'\D', '', mobile)) < 7:
+                raise ApiError(400, 'Please enter a valid mobile number.', {'mobile': 'Please enter a valid mobile number.'})
+            if UserProfile.objects.filter(phone=mobile).exists():
+                raise ApiError(400, 'An account with this mobile number already exists. Please log in instead.', {'mobile': 'An account with this mobile number already exists. Please log in instead.'})
+
+        if User.objects.filter(username__iexact=username).exists():
+            raise ApiError(400, 'This username is already taken. Please choose another.',
+                           {'username': 'This username is already taken. Please choose another.'})
+
+        # Commit the pending account first so provider outages remain recoverable.
         with transaction.atomic():
             user = User.objects.create_user(
                 username=username,
@@ -17872,7 +17882,7 @@ def api_register_with_otp_view(request):
                 phone=mobile,
                 state='Kerala'
             )
-            profile = UserProfile.objects.create(
+            UserProfile.objects.create(
                 user=user,
                 role=UserProfile.ADMIN,
                 organization=org,
@@ -17884,17 +17894,16 @@ def api_register_with_otp_view(request):
             )
             services.ensure_default_accounts(org)
 
-            ip_addr = get_client_ip(request)
-            record, dispatch_info = otp_service.create_and_send_otp(
-                target_type='email',
-                target_value=email,
-                purpose=OTPVerification.PURPOSE_SIGNUP,
-                user=user,
-                organization=org,
-                metadata={'username': username, 'name': name, 'phone': mobile},
-                ip_address=ip_addr,
-                recipient_name=name
-            )
+        _, dispatch_info = otp_service.create_and_send_otp(
+            target_type='email',
+            target_value=email,
+            purpose=OTPVerification.PURPOSE_SIGNUP,
+            user=user,
+            organization=org,
+            metadata={'username': username, 'name': name, 'phone': mobile},
+            ip_address=get_client_ip(request),
+            recipient_name=name
+        )
 
         return j({
             'status': 'ok',
@@ -17910,8 +17919,24 @@ def api_register_with_otp_view(request):
         return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except IntegrityError:
+        logger.exception('Registration database integrity failure.')
+        if UserProfile.objects.filter(normalized_email=email).exists() or User.objects.filter(email__iexact=email).exists():
+            message = 'An account with this email already exists. Please sign in or use another email.'
+            return j({'error': message, 'message': message}, 400)
+        if User.objects.filter(username__iexact=username).exists():
+            message = 'This username is already taken. Please choose another.'
+            return j({'error': message, 'message': message}, 400)
+        message = 'Registration is temporarily unavailable. Please try again shortly.'
+        return j({'error': message, 'message': message}, 503)
+    except OperationalError:
+        logger.exception('Registration database operation failed.')
+        message = 'Registration is temporarily unavailable. Please try again shortly.'
+        return j({'error': message, 'message': message}, 503)
+    except Exception:
+        logger.exception('Unexpected error during account registration.')
+        message = 'Something went wrong. Please contact support.'
+        return j({'error': message, 'message': message}, 500)
 
 
 def api_signup_verify_otp_view(request):
@@ -17970,8 +17995,10 @@ def api_forgot_password_view(request):
         return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except Exception:
+        logger.exception('Unexpected error while requesting a password reset.')
+        message = 'Something went wrong. Please contact support.'
+        return j({'error': message, 'message': message}, 500)
 
 
 def api_reset_password_view(request):
@@ -18035,7 +18062,7 @@ def api_reset_password_view(request):
                 if str(s_data.get('_auth_user_id')) == str(user.id):
                     s.delete()
             except Exception:
-                pass
+                logger.exception('Password reset confirmation email delivery failed.')
 
         # Send password change confirmation notification
         try:
@@ -18054,8 +18081,10 @@ def api_reset_password_view(request):
         })
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except Exception:
+        logger.exception('Unexpected error while resetting a password.')
+        message = 'Something went wrong. Please contact support.'
+        return j({'error': message, 'message': message}, 500)
 
 
 def api_change_contact_view(request):
@@ -18172,5 +18201,7 @@ def api_change_contact_view(request):
         return j({'error': oe.message, 'message': oe.message, 'code': oe.code}, oe.status_code)
     except ApiError as ae:
         return j({'error': ae.message, 'message': ae.message, 'errors': ae.errors}, ae.status)
-    except Exception as exc:
-        return j({'error': str(exc), 'message': str(exc)}, 400)
+    except Exception:
+        logger.exception('Unexpected error while updating account contact details.')
+        message = 'Something went wrong. Please contact support.'
+        return j({'error': message, 'message': message}, 500)

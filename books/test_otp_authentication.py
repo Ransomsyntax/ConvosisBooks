@@ -1,10 +1,14 @@
 import datetime
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from unittest import skipUnless
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import TestCase, Client, override_settings
+from django.db import close_old_connections, connection
+from django.test import TestCase, Client, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from books import otp_service
@@ -77,6 +81,44 @@ class OTPAuthenticationTests(TestCase):
         self.assertFalse(otp_rec.is_verified)
         self.assertTrue(otp_rec.hashed_otp.startswith("pbkdf2_sha256$"))
 
+    def test_registration_otp_verification_activates_the_same_account_atomically(self):
+        payload = {
+            "username": "verified_signup_user",
+            "email": "verified_signup@example.com",
+            "password": "SecurePassword123!",
+        }
+        with patch("books.otp_service.generate_secure_otp", return_value="654321"):
+            registration = self.client.post(
+                "/api/auth/register-with-otp/",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+        self.assertEqual(registration.status_code, 201, registration.content)
+        org_before_verify = Organization.objects.get(
+            owner__username=payload["username"]
+        ).pk
+
+        verification = self.client.post(
+            "/api/auth/otp/verify/",
+            data=json.dumps({
+                "target_value": payload["email"],
+                "purpose": OTPVerification.PURPOSE_SIGNUP,
+                "otp": "654321",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(verification.status_code, 200, verification.content)
+        self.assertTrue(verification.json()["verified"])
+        self.assertNotIn("user_id", verification.json())
+
+        user = User.objects.get(username=payload["username"])
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.profile.is_email_verified)
+        self.assertEqual(
+            Organization.objects.get(owner=user).pk,
+            org_before_verify,
+        )
+
     def test_signup_duplicate_email_and_mobile_rejected(self):
         """Duplicate email or mobile number registration is rejected with 400."""
         # Duplicate email
@@ -106,6 +148,106 @@ class OTPAuthenticationTests(TestCase):
         )
         self.assertEqual(res_mobile.status_code, 400)
         self.assertIn("already exists", res_mobile.json()["message"])
+
+    def test_api_signup_generates_distinct_organization_primary_keys(self):
+        created_org_ids = []
+        for index in range(2):
+            payload = {
+                "username": f"org_sequence_user_{index}",
+                "email": f"org_sequence_{index}@example.com",
+                "password": "SecurePassword123!",
+            }
+            response = self.client.post(
+                "/api/auth/register/",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 201, response.content)
+            created_org_ids.append(
+                Organization.objects.get(owner__username=payload["username"]).pk
+            )
+        self.assertEqual(len(set(created_org_ids)), 2)
+
+    def test_registration_retry_reuses_existing_pending_organization_and_otp(self):
+        payload = {
+            "username": "retry_signup_user",
+            "email": "retry_signup@example.com",
+            "password": "SecurePassword123!",
+        }
+        first = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201, first.content)
+        org_id = Organization.objects.get(owner__username=payload["username"]).pk
+        otp_count = OTPVerification.objects.filter(target_value=payload["email"]).count()
+
+        retry = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(retry.status_code, 200, retry.content)
+        self.assertEqual(
+            Organization.objects.filter(owner__username=payload["username"]).count(),
+            1,
+        )
+        self.assertEqual(
+            Organization.objects.get(owner__username=payload["username"]).pk,
+            org_id,
+        )
+        self.assertEqual(
+            OTPVerification.objects.filter(target_value=payload["email"]).count(),
+            otp_count,
+        )
+
+    def test_signup_duplicate_username_has_safe_validation_message(self):
+        response = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps({
+                "username": "existing_admin",
+                "email": "new_username_conflict@example.com",
+                "password": "SecurePassword123!",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["message"],
+            "This username is already taken. Please choose another.",
+        )
+
+    def test_resend_signup_otp_for_pending_user(self):
+        pending = User.objects.create_user(
+            username="resend_pending_user",
+            email="resend_pending@example.com",
+            password="SecurePassword123!",
+            is_active=False,
+        )
+        UserProfile.objects.create(
+            user=pending,
+            organization=self.org,
+            normalized_email=pending.email,
+            status=UserProfile.STATUS_INACTIVE,
+            is_email_verified=False,
+        )
+        response = self.client.post(
+            "/api/auth/otp/resend/",
+            data=json.dumps({
+                "target_type": "email",
+                "target_value": pending.email,
+                "purpose": OTPVerification.PURPOSE_SIGNUP,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        record = OTPVerification.objects.get(
+            target_value=pending.email,
+            purpose=OTPVerification.PURPOSE_SIGNUP,
+        )
+        self.assertEqual(record.user, pending)
+        self.assertEqual(record.organization, self.org)
 
     def test_otp_verification_activates_account(self):
         """Verifying the valid 6-digit OTP activates the account and marks email verified."""
@@ -441,8 +583,9 @@ class OTPAuthenticationTests(TestCase):
         self.assertEqual(res2.status_code, 400)
         self.assertIn("special character", res2.json()["message"])
 
-    def test_smtp_failure_prevents_false_positive_and_rolls_back(self):
-        """When SMTP delivery fails, API returns error, does not create orphan user, and deletes pending OTP."""
+    def test_smtp_failure_preserves_pending_signup_and_allows_retry(self):
+        """A failed email dispatch leaves a pending account that can request a new code."""
+        initial_org_count = Organization.objects.count()
         with patch("books.otp_service.send_brevo_email", side_effect=Exception("Brevo SMTP auth rejected (code 535)")):
             res = self.client.post(
                 "/api/auth/register-with-otp/",
@@ -455,15 +598,62 @@ class OTPAuthenticationTests(TestCase):
                 }),
                 content_type="application/json"
             )
-        self.assertIn(res.status_code, [400, 502])
+        self.assertEqual(res.status_code, 502)
         data = res.json()
-        self.assertTrue("failed" in data["message"].lower() or "rejected" in data["message"].lower())
+        self.assertEqual(
+            data["message"],
+            "We couldn't send your verification email. Please try again later.",
+        )
+        self.assertNotIn("SMTP", data["message"])
+        self.assertNotIn("535", data["message"])
 
-        # Ensure user was NOT created in DB (atomic rollback)
-        self.assertFalse(User.objects.filter(username="smtp_fail_user").exists())
-        self.assertFalse(User.objects.filter(email="smtp_fail@example.com").exists())
-        # Ensure no pending OTP verification was left orphaned
+        # The account and organization are retained, but remain unverified.
+        pending_user = User.objects.get(username="smtp_fail_user")
+        self.assertFalse(pending_user.is_active)
+        self.assertFalse(pending_user.profile.is_email_verified)
+        self.assertEqual(Organization.objects.count(), initial_org_count + 1)
         self.assertFalse(OTPVerification.objects.filter(target_value="smtp_fail@example.com").exists())
+
+        retry = self.client.post(
+            "/api/auth/register-with-otp/",
+            data=json.dumps({
+                "username": "smtp_fail_user",
+                "email": "smtp_fail@example.com",
+                "mobile": "+919988776633",
+                "password": "Surya@123",
+                "confirm_password": "Surya@123",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(retry.status_code, 200, retry.content)
+        self.assertEqual(Organization.objects.count(), initial_org_count + 1)
+        self.assertTrue(
+            OTPVerification.objects.filter(
+                target_value="smtp_fail@example.com",
+                purpose=OTPVerification.PURPOSE_SIGNUP,
+                user=pending_user,
+            ).exists()
+        )
+
+    def test_registration_unexpected_failure_does_not_expose_exception(self):
+        with patch("books.api.services.ensure_default_accounts", side_effect=RuntimeError(
+            "books_organization_pkey database diagnostic"
+        )):
+            response = self.client.post(
+                "/api/auth/register-with-otp/",
+                data=json.dumps({
+                    "username": "hidden_error_user",
+                    "email": "hidden_error@example.com",
+                    "password": "SecurePassword123!",
+                }),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 500)
+        message = response.json()["message"]
+        self.assertEqual(message, "Something went wrong. Please contact support.")
+        self.assertNotIn("books_organization_pkey", message)
+        self.assertFalse(User.objects.filter(username="hidden_error_user").exists())
+        self.assertFalse(Organization.objects.filter(owner__username="hidden_error_user").exists())
 
 
 @override_settings(
@@ -474,6 +664,21 @@ class OTPAuthenticationTests(TestCase):
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
 )
 class OTPEmailDeliveryConfigurationTests(TestCase):
+    def test_false_provider_result_is_not_reported_as_sent(self):
+        with patch("books.otp_service.send_brevo_email", return_value=False):
+            with self.assertRaises(otp_service.OTPServiceError) as error:
+                otp_service.create_and_send_otp(
+                    target_type="email",
+                    target_value="delivery_failure@example.com",
+                    purpose=OTPVerification.PURPOSE_SIGNUP,
+                )
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertFalse(
+            OTPVerification.objects.filter(
+                target_value="delivery_failure@example.com"
+            ).exists()
+        )
+
     def test_configured_smtp_backend_dispatches_email(self):
         with override_settings(
             EMAIL_HOST='smtp-relay.brevo.com',
@@ -517,3 +722,45 @@ class OTPEmailDeliveryConfigurationTests(TestCase):
                         )
 
         send_mail_mock.assert_not_called()
+
+
+@skipUnless(
+    connection.vendor == 'postgresql',
+    'Concurrent signup integration test requires PostgreSQL.',
+)
+class ConcurrentRegistrationTests(TransactionTestCase):
+    def test_concurrent_duplicate_email_creates_one_organization(self):
+        barrier = Barrier(2)
+        payloads = [
+            {
+                "username": f"parallel_signup_{index}",
+                "email": "parallel_signup@example.com",
+                "password": "SecurePassword123!",
+            }
+            for index in range(2)
+        ]
+
+        def register(payload):
+            close_old_connections()
+            client = Client()
+            try:
+                barrier.wait(timeout=10)
+                response = client.post(
+                    "/api/auth/register-with-otp/",
+                    data=json.dumps(payload),
+                    content_type="application/json",
+                )
+                return response.status_code
+            finally:
+                connection.close()
+
+        with patch("books.otp_service.send_brevo_email", return_value=True):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                statuses = list(executor.map(register, payloads))
+
+        self.assertEqual(sorted(statuses), [201, 400])
+        self.assertEqual(User.objects.filter(email__iexact=payloads[0]["email"]).count(), 1)
+        self.assertEqual(
+            Organization.objects.filter(owner__email__iexact=payloads[0]["email"]).count(),
+            1,
+        )

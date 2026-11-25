@@ -139,12 +139,17 @@ def login_view(request, tab=None):
                         if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.content_type == 'application/json':
                             return JsonResponse({'status': 'ok', 'redirect': next_url})
                         return redirect(next_url)
-                except (IntegrityError, ValidationError, ValueError, OperationalError) as err:
-                    err_msg = str(err)
-                    if 'already exists' in err_msg or 'unique' in err_msg.lower() or 'email' in err_msg.lower() or 'locked' in err_msg.lower():
-                        signup_error = 'An account with this email address already exists. Please log in instead.'
+                except (IntegrityError, ValidationError, ValueError, OperationalError):
+                    logger.exception('Signup failed while creating the account.')
+                    if UserProfile.objects.filter(normalized_email=normalized_email).exists() or User.objects.filter(email__iexact=normalized_email).exists():
+                        signup_error = 'An account with this email already exists. Please sign in or use another email.'
+                    elif User.objects.filter(username__iexact=username).exists():
+                        signup_error = 'This username is already taken. Please choose another.'
                     else:
-                        signup_error = err_msg or 'Registration failed. Please try again.'
+                        signup_error = 'Registration is temporarily unavailable. Please try again shortly.'
+                except Exception:
+                    logger.exception('Unexpected error while creating a signup account.')
+                    signup_error = 'Something went wrong. Please contact support.'
 
             if signup_error:
                 if request.headers.get('x-requested-with') == 'XMLHttpRequest' or request.content_type == 'application/json':

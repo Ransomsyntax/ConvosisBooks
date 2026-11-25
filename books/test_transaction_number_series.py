@@ -8,7 +8,7 @@ from books.models import (
     Invoice, Quote, SalesOrder, Bill, PurchaseOrder, RetainerInvoice,
     CreditNote, VendorCredit, DeliveryChallan, StockTransfer, StockMovement,
     PaymentReceived, PaymentMade, Customer, Item, DocumentNumberAllocation,
-    DocumentNumberSeriesCounter, BankAccount, Account, Warehouse,
+    DocumentNumberSeriesCounter, BankAccount, BankTransaction, Account, Warehouse,
     RecurringInvoice
 )
 from books import services
@@ -326,7 +326,9 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         dns_item.save()
         counter = DocumentNumberSeriesCounter.objects.get(
             series=dns_item,
-            financial_year=services.get_financial_year(org=org),
+            financial_year='*',
+            branch_prefix='KOCHI',
+            customer_type_prefix='',
         )
         counter.next_number = 8888
         counter.save(update_fields=['next_number'])
@@ -471,6 +473,7 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
             name='Series Source Bank',
             bank_name='Test Bank',
             account_number='SERIES-SOURCE',
+            opening_balance=Decimal('500.00'),
             current_balance=Decimal('500.00'),
         )
         destination = BankAccount.objects.create(
@@ -498,11 +501,14 @@ class TransactionNumberSeriesIntegrationTests(TransactionTestCase):
         self.assertEqual(transfer['number'], transfer_preview)
 
         reconciliation_preview = services.preview_document_number('RECON', org=self.org)['formatted']
+        cleared_transaction_ids = list(
+            BankTransaction.objects.filter(bank_account=source).values_list('pk', flat=True)
+        )
         reconciliation = services.complete_bank_reconciliation({
             'bank_account_id': source.pk,
             'statement_date': '2026-11-15',
             'statement_ending_balance': '515.00',
-            'cleared_transaction_ids': [],
+            'cleared_transaction_ids': cleared_transaction_ids,
         }, user=self.user)
         self.assertEqual(reconciliation['number'], reconciliation_preview)
 

@@ -4165,6 +4165,8 @@ class TestConfiguredDocumentNumberSeries(BaseAccountingTestCase):
             data=json.dumps({
                 'date': '2026-10-15',
                 'reference': 'LOCATION-JRN-1',
+                'notes': 'Journal for branch location integration test',
+                'status': 'draft',
                 'business_location_id': first_location.pk,
                 'lines': [
                     {'account': self.gl_exp.pk, 'debit': '100.00', 'credit': '0.00'},

@@ -2754,6 +2754,8 @@ def post_journal_entry(date, entry_type, reference, notes, items, user=None, org
         c_val = q2(cred or 0)
         if d_val < 0 or c_val < 0:
             raise ApiError(400, "Debits and credits cannot be negative.")
+        if d_val > 0 and c_val > 0:
+            raise ApiError(400, "A journal line cannot contain both debit and credit.")
         if d_val == 0 and c_val == 0:
             continue
         tot_debit += d_val

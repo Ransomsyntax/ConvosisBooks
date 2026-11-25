@@ -5300,6 +5300,10 @@ class JournalResource(Resource):
             acc_id = ln.get('account') or ln.get('account_id')
             if not acc_id:
                 raise ApiError(400, 'Each line item must specify an account.')
+            debit = q2(ln.get('debit', 0))
+            credit = q2(ln.get('credit', 0))
+            if debit > 0 and credit > 0:
+                raise ApiError(400, 'A journal line cannot contain both debit and credit.')
             items.append((acc_id, ln.get('debit', 0), ln.get('credit', 0), ln.get('description', '')))
 
         user_org = get_user_org(user)
@@ -5339,6 +5343,8 @@ class JournalResource(Resource):
         return jrn
 
     def update(self, obj, data, user):
+        if getattr(obj, 'status', 'published') == 'published':
+            raise ApiError(409, 'Published journals cannot be overwritten. Use reversal or clone instead.')
         if 'payment_terms' in data and isinstance(data['payment_terms'], str):
             terms_map = {'due on receipt': 0, 'net 15': 15, 'net 30': 30, 'net 45': 45, 'net 60': 60, 'due end of the month': 0}
             pt_clean = data['payment_terms'].strip().lower()
@@ -11688,6 +11694,10 @@ def lookup(request, name):
                  'business_location_name': o.business_location.name if o.business_location else '',
                  'shared_database': o.shared_database}
                 for o in wh_qs]
+    elif name in ('currencies', 'currency'):
+        currency_qs = org_filter(CurrencySetting.objects.filter(is_active=True)).order_by('code')
+        data = [{'id': item.pk, 'code': item.code, 'name': item.name, 'symbol': item.symbol}
+                for item in currency_qs]
     elif name in ('branches', 'business-locations', 'retainer-locations'):
         location_qs = org_filter(Branch.objects.filter(active=True)).filter(location_type='business')
         profile = getattr(request.user, 'profile', None)

@@ -221,6 +221,23 @@ class TestAccountingAndTransactionIntegrity(BaseAccountingTestCase):
         )
         self.assertEqual(invalid.status_code, 400)
 
+    def test_manual_journal_rejects_both_debit_and_credit_line(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            '/api/manual-journals/',
+            data=json.dumps({
+                'date': timezone.localdate().isoformat(),
+                'notes': 'Invalid mixed journal',
+                'status': 'draft',
+                'lines': [
+                    {'account': self.gl_cash.pk, 'debit': '100.00', 'credit': '100.00', 'description': 'Invalid'},
+                    {'account': self.gl_sales.pk, 'debit': '0.00', 'credit': '100.00', 'description': 'Valid'},
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_manual_journal_draft_publish_and_delete_protection(self):
         self.client.force_login(self.admin_user)
         draft = self.client.post(

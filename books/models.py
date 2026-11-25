@@ -455,6 +455,7 @@ class PaymentReceived(Payment):
 
 class PaymentMade(Payment):
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name='payments')
+    transaction_series = models.CharField(max_length=120, blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)
     billing_address_data = models.JSONField(default=dict, blank=True)
     shipping_address_data = models.JSONField(default=dict, blank=True)

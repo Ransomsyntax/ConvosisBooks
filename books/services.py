@@ -1059,7 +1059,10 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         val += 1
 
 
-def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, series=None, series_id=None):
+def sync_series_counter_from_manual_number(
+    org, module_or_pfx, number_str, series=None, series_id=None,
+    business_location_id=None,
+):
     """
     Safely advance the series counter if a manual document number has a numeric suffix >= next_number.
     Never moves the counter backwards.
@@ -1068,7 +1071,10 @@ def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, serie
         return
     import re
     from .models import DocumentNumberSeries
-    series_obj = _select_document_number_series(module_or_pfx, org, series=series, series_id=series_id)
+    series_obj = _select_document_number_series(
+        module_or_pfx, org, series=series, series_id=series_id,
+        business_location_id=business_location_id,
+    )
     if not series_obj:
         return
     num = str(number_str).strip()

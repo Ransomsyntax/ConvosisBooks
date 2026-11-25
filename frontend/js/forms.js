@@ -37,6 +37,10 @@ function bindDocumentNumberPreview(form, options) {
       const value = el ? el.value : '';
       if (value) params.set(name, value);
     });
+    const selectedSeriesId = options.series
+      ? form.querySelector(options.series)?.selectedOptions?.[0]?.dataset.id
+      : '';
+    if (selectedSeriesId) params.set('series_id', selectedSeriesId);
     const businessLocation = options.businessLocation
       ? form.querySelector(options.businessLocation)
       : null;
@@ -126,7 +130,7 @@ function businessLocationSelectHtml(locations, selectedId, id) {
   return `<label class="transaction-card-field">
     <span class="transaction-card-label" id="${esc(id)}-label">Branch</span>
     <select class="in" id="${esc(id)}" name="branch_id" aria-labelledby="${esc(id)}-label">
-      <option value="">Select Branch...</option>
+      <option value="">${options.length ? 'Select Branch...' : 'No branches available'}</option>
       ${options.map(item => `<option value="${item.id}" ${String(item.id) === String(selectedId || '') ? 'selected' : ''}>${esc(item.name)}${item.is_default ? ' (Default)' : ''}</option>`).join('')}
     </select>
   </label>`;
@@ -147,6 +151,63 @@ function bindBusinessLocationSelection(form, selector, locations, legacyLocation
 function selectedBusinessLocationId(form, selector) {
   const value = form.querySelector(selector)?.value || '';
   return /^\d+$/.test(value) ? Number(value) : null;
+}
+
+function transactionSeriesForBusinessLocation(series, locations, locationId) {
+  const options = Array.isArray(series) ? series : [];
+  const location = (Array.isArray(locations) ? locations : [])
+    .find(item => String(item.id) === String(locationId || ''));
+  const assignedIds = new Set((location?.transaction_series_ids || []).map(String));
+  return options.filter(item => {
+    if (item.business_location_id && String(item.business_location_id) !== String(locationId || '')) {
+      return false;
+    }
+    if (!locationId && item.business_location_id) return false;
+    return !assignedIds.size || assignedIds.has(String(item.id));
+  });
+}
+
+function chooseTransactionSeries(options, location, preferredName = '', preferredId = '', preferBranchDefault = false) {
+  const candidates = Array.isArray(options) ? options : [];
+  const byId = id => candidates.find(item => String(item.id) === String(id || ''));
+  const byName = name => candidates.find(item => item.name === name);
+  return (preferBranchDefault && byId(location?.default_transaction_series_id)) ||
+    byName(preferredName) ||
+    byId(preferredId) ||
+    byId(location?.default_transaction_series_id) ||
+    candidates.find(item => item.is_default) ||
+    candidates[0] ||
+    null;
+}
+
+function transactionSeriesOptionsHtml(options, selectedId) {
+  if (!options.length) {
+    return '<option value="">No active transaction series available</option>';
+  }
+  return options.map(item =>
+    `<option value="${esc(item.name)}" data-id="${item.id}" data-branch="${esc(item.branch || '')}" data-location="${esc(item.location || '')}" data-business-location-id="${item.business_location_id || ''}" ${String(selectedId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`
+  ).join('');
+}
+
+function bindTransactionSeriesToBusinessLocation(form, seriesSelector, locationSelector, series, locations) {
+  const select = form.querySelector(seriesSelector);
+  const branchSelect = form.querySelector(locationSelector);
+  if (!select || !branchSelect) return;
+  branchSelect.addEventListener('change', () => {
+    const location = (Array.isArray(locations) ? locations : [])
+      .find(item => String(item.id) === String(branchSelect.value || ''));
+    const options = transactionSeriesForBusinessLocation(series, locations, branchSelect.value);
+    const currentOption = select.selectedOptions[0];
+    const selected = chooseTransactionSeries(
+      options, location, currentOption?.value || '', currentOption?.dataset.id || '', true
+    );
+    select.innerHTML = transactionSeriesOptionsHtml(options, selected?.id);
+  });
+}
+
+function selectedNumberingSeriesId(form, selector) {
+  const id = form.querySelector(selector)?.selectedOptions?.[0]?.dataset.id || '';
+  return /^\d+$/.test(id) ? Number(id) : null;
 }
 
 const Modal = (() => {
@@ -1370,6 +1431,24 @@ function openGstPricingExplainerModal(contextKind = 'invoices') {
               </div>
             </div>
 
+            <!-- Customer Name & Addresses Row -->
+            <div class="transaction-party-row">
+              <div class="customer-select-outer">
+                <label class="customer-select-outer-label" for="so-customer">Customer Name*</label>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+                    <option value="">Search or type customer name...</option>
+                    <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+                    ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                  </select>
+                  <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                    <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="transaction-party-addresses" id="so-customer-addresses" aria-live="polite"></div>
+            </div>
+
             <!-- Tax Inclusive Box -->
             <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:18px;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
@@ -2168,6 +2247,24 @@ async function partyForm(kind, id, onDone, onCancel) {
           <input type="file" id="party_file_quick_import" accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;">
         </div>
       </div>
+
+        <!-- Vendor Name & Addresses Row -->
+        <div class="transaction-party-row">
+          <div class="customer-select-outer">
+            <label class="customer-select-outer-label" for="pay-vendor">Vendor Name*</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <select class="in" id="pay-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+                <option value="">Select Vendor…</option>
+                <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+                ${parties.map(item => `<option value="${item.id}" ${String(vendorId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-pay-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+              </button>
+            </div>
+          </div>
+          <div class="transaction-party-addresses" id="paym-vendor-addresses" aria-live="polite"></div>
+        </div>
 
       ${isCust ? `
         <div class="zb-form-row">
@@ -5871,7 +5968,7 @@ async function paymentReceivedForm(pre = {}) {
     toast(`Could not load payment form data: ${error.message}`, 'err');
     return;
   }
-  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const activeSeries = Array.isArray(txSeriesList) ? txSeriesList : [];
   const data = existing || (typeof pre === 'object' ? pre : {});
   if (!payId && data.business_location_id) {
     const locationParams = new URLSearchParams({
@@ -6847,6 +6944,14 @@ function ensureTransactionCardStyles() {
       width: 100% !important;
       box-sizing: border-box !important;
     }
+    .transaction-two-cards-grid {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 20px !important;
+      margin-bottom: 24px !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
     .transaction-card,
     .so-card,
     .invoice-card,
@@ -7041,6 +7146,10 @@ function ensureTransactionCardStyles() {
       .po-three-cards-grid,
       .bill-three-cards-grid,
       .paym-three-cards-grid {
+        grid-template-columns: 1fr !important;
+        gap: 16px !important;
+      }
+      .transaction-two-cards-grid {
         grid-template-columns: 1fr !important;
         gap: 16px !important;
       }
@@ -7400,10 +7509,16 @@ async function paymentMadeForm(pre = {}) {
   const [parties, bankAccounts, txSeriesList, existing, customFieldResponse, businessLocations] = await Promise.all([
     api('lookup/vendors/').catch(() => []),
     api('lookup/bank-accounts/').catch(() => []),
-    api('lookup/transaction-series/').catch(() => []),
+    api('lookup/transaction-series/?document_type=payments_made').catch(error => {
+      console.warn(`Could not load payment transaction series: ${error.message}`);
+      return [];
+    }),
     payId ? api(`payments-made/${payId}/`).catch(() => null) : Promise.resolve(null),
     api('custom-fields/?module=payments_made&page_size=100').catch(() => []),
-    api('lookup/branches/').catch(() => [])
+    api('lookup/branches/?document_type=payments_made').catch(error => {
+      console.warn(`Could not load payment branches: ${error.message}`);
+      return [];
+    })
   ]);
 
   const paymLocations = Array.isArray(businessLocations) ? businessLocations : [];
@@ -7413,16 +7528,23 @@ async function paymentMadeForm(pre = {}) {
   const paymCustomFields = Array.isArray(customFieldResponse)
     ? customFieldResponse
     : (customFieldResponse && Array.isArray(customFieldResponse.results) ? customFieldResponse.results : []);
-  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const activeSeries = Array.isArray(txSeriesList) ? txSeriesList : [];
   const dataObj = existing || (typeof pre === 'object' ? pre : {});
   const vendorId = dataObj.vendor_id || dataObj.vendor || dataObj.party_id || dataObj.party || '';
   const initialVendor = parties.find(p => String(p.id) === String(vendorId)) || null;
-  const paySeries = dataObj.transaction_series || (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
+  const paymBusinessLocation = paymLocations.find(item => String(item.id) === String(paymBusinessLocationId));
+  const paymAvailableSeries = transactionSeriesForBusinessLocation(activeSeries, paymLocations, paymBusinessLocationId);
+  const paySeriesOption = chooseTransactionSeries(
+    paymAvailableSeries, paymBusinessLocation, dataObj.transaction_series || '',
+    dataObj.numbering_series_id, false
+  );
+  const paySeries = paySeriesOption?.name || '';
   const numberPreview = payId ? null : await api(
     'lookup/next-payment-made-number/?' + qs({
       series: paySeries,
+      series_id: paySeriesOption?.id,
       date: dataObj.date || APP.today,
-      branch_id: paymBusinessLocationId
+      business_location_id: paymBusinessLocationId
     })
   ).catch(() => ({ next_number: 'PM-000001' }));
   const payNum = dataObj.number || (numberPreview && (numberPreview.next_number || numberPreview.number)) || 'PM-000001';
@@ -7438,45 +7560,32 @@ async function paymentMadeForm(pre = {}) {
     wide: true,
     headerActions: `<button type="button" class="btn ic" id="btn-paym-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>`,
     body: `
-      <!-- Vendor Name & Addresses Row -->
-      <div class="transaction-party-row">
-        <div class="customer-select-outer">
-          <label class="customer-select-outer-label" for="pay-vendor">Vendor Name*</label>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <select class="in" id="pay-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
-              <option value="">Select Vendor…</option>
-              <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
-              ${parties.map(item => `<option value="${item.id}" ${String(vendorId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
-            </select>
-            <button type="button" class="btn p" id="btn-pay-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+      <div class="transaction-two-cards-grid">
+      <div class="transaction-card">
+        <div class="transaction-card-field">
+          <label class="transaction-card-label required" for="paym-series">Transaction Series*</label>
+          <select class="in" id="paym-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Series">
+            ${transactionSeriesOptionsHtml(paymAvailableSeries, paySeriesOption?.id)}
+          </select>
+        </div>
+        <div class="transaction-card-field">
+          <label class="transaction-card-label required" for="paym-number">Payment#*</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1;min-width:0;padding:0 12px;">
+            <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+              <i class="fa-solid fa-gear" style="font-size:13px;"></i>
             </button>
           </div>
         </div>
-        <div class="transaction-party-addresses" id="paym-vendor-addresses" aria-live="polite"></div>
+      </div>
+      <div class="transaction-card">
+        ${businessLocationSelectHtml(paymLocations, paymBusinessLocationId, 'paym-business-location')}
+      </div>
       </div>
 
       <div class="transaction-three-cards-grid">
         <!-- Card 1: Transaction Information -->
         <div class="transaction-card">
-          ${businessLocationSelectHtml(paymLocations, paymBusinessLocationId, 'paym-business-location')}
-          <div class="transaction-card-field">
-            <label class="transaction-card-label" for="paym-series">Payment Series</label>
-            <select class="in" id="paym-series" name="transaction_series" style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Series">
-              ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(paySeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-            </select>
-          </div>
-
-          <div class="transaction-card-field">
-            <label class="transaction-card-label required" for="paym-number">Payment#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1;min-width:0;padding:0 12px;">
-              <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-              </button>
-            </div>
-          </div>
-
           <div class="transaction-card-field">
             <label class="transaction-card-label required" for="paym-date">Payment Date*</label>
             <input class="in" type="date" id="paym-date" name="date" value="${dataObj.date || APP.today}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
@@ -7539,6 +7648,9 @@ async function paymentMadeForm(pre = {}) {
       <div class="cs" style="margin-top:10px"><div><span>Applied</span><b id="ap">₹0.00</b></div><div><span>Unapplied (kept as credit on payment)</span><b id="un">₹0.00</b></div></div>
     `,
     onReady: (form, m) => {
+      bindTransactionSeriesToBusinessLocation(
+        form, '#paym-series', '#paym-business-location', activeSeries, paymLocations
+      );
       const paymAddrMgr = initTransactionAddressManager({
         form,
         addressesContainerId: '#paym-vendor-addresses',
@@ -7607,11 +7719,13 @@ async function paymentMadeForm(pre = {}) {
       });
 
       const refreshPaymentNumber = async () => {
+        if (payId) return;
         try {
           const res = await api('lookup/next-payment-made-number/?' + qs({
             series: $('#paym-series', form)?.value || '',
+            series_id: selectedNumberingSeriesId(form, '#paym-series'),
             date: $('#paym-date', form)?.value || APP.today,
-            branch_id: selectedBusinessLocationId(form, '#paym-business-location')
+            business_location_id: selectedBusinessLocationId(form, '#paym-business-location')
           }));
           if (res && res.next_number) {
             $('#paym-number', form).value = res.next_number;
@@ -7663,6 +7777,16 @@ async function paymentMadeForm(pre = {}) {
       if (vendorId) load(); else totals();
     },
     onSubmit: async (d, a, form) => {
+      const seriesId = selectedNumberingSeriesId(form, '#paym-series');
+      if (!seriesId) {
+        throw new ApiErr(400, {
+          message: 'Select an active transaction series for this payment.',
+          errors: { transaction_series: 'Select an active transaction series for this payment.' }
+        });
+      }
+      d.transaction_series = $('#paym-series', form)?.value || '';
+      d.numbering_series_id = seriesId;
+      d.business_location_id = selectedBusinessLocationId(form, '#paym-business-location');
       d.allocations = $$('.al-in', form).filter(i => num(i.value) > 0).map(i => ({ bill: Number(i.dataset.id), amount: i.value }));
       const applied = d.allocations.reduce((s, x) => s + num(x.amount), 0);
       if (applied > num(d.amount) + 0.001) throw new ApiErr(400, { message: 'Please correct the allocations.', errors: { allocations: 'Applied amount exceeds the payment amount.' } });
@@ -8663,7 +8787,7 @@ async function expenseForm(id) {
     'lookup/next-expense-number/?' + qs({ branch_id: expBusinessLocationId })
   ).catch(() => ({ next_number: 'EXP-000001' }));
   const expAccounts = accounts.filter(a => a.type === 'expense');
-  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const activeSeries = Array.isArray(txSeriesList) ? txSeriesList : [];
   const o = existing || {
     date: APP.today, expense_account: expAccounts[0]?.id || '', vendor: '',
     amount: '', gst_rate: '18', paid_through: 'Bank Account', reference: '', notes: '',
@@ -13208,16 +13332,27 @@ async function quoteForm(id, targetEl, onDone) {
     api('lookup/warehouses/').catch(() => []),
     id ? Promise.resolve(null) : api('lookup/next-quote-number/').catch(() => ({ next_number: 'QT-000001' })),
     id ? api(`quotes/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/transaction-series/').catch(() => []),
-    api('lookup/branches/').catch(() => []),
+    api('lookup/transaction-series/?document_type=quotes').catch(error => {
+      console.warn(`Could not load quote transaction series: ${error.message}`);
+      return [];
+    }),
+    api('lookup/branches/?document_type=quotes').catch(error => {
+      console.warn(`Could not load quote branches: ${error.message}`);
+      return [];
+    }),
     api('custom-fields/?module=quotes&page_size=100').catch(() => [])
   ]);
 
-  const activeSeries = (txSeriesList && txSeriesList.length) ? txSeriesList : [{ id: 1, name: 'Default Transaction Series', is_default: true }];
+  const activeSeries = Array.isArray(txSeriesList) ? txSeriesList : [];
   const qLocations = Array.isArray(businessLocations) ? businessLocations : [];
   const qBusinessLocationId = defaultBusinessLocationId(qLocations, rec?.business_location_id, !rec);
   const qBusinessLocation = qLocations.find(item => String(item.id) === qBusinessLocationId);
-  const qSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name);
+  const qAvailableSeries = transactionSeriesForBusinessLocation(activeSeries, qLocations, qBusinessLocationId);
+  const qSeriesOption = chooseTransactionSeries(
+    qAvailableSeries, qBusinessLocation, rec?.transaction_series || '',
+    rec?.numbering_series_id, false
+  );
+  const qSeries = qSeriesOption?.name || '';
   const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = qBusinessLocation?.name || (rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam');
@@ -13337,6 +13472,13 @@ ${renderStockQuantityCell(l, items, whList)}
           .quote-three-cards-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+            width: 100%;
+          }
+          .quote-two-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 20px;
             margin-bottom: 24px;
             width: 100%;
@@ -13509,12 +13651,19 @@ ${renderStockQuantityCell(l, items, whList)}
             margin-bottom: 18px;
           }
           @media (max-width: 1024px) {
+            .quote-two-cards-grid {
+              gap: 16px;
+            }
             .quote-three-cards-grid {
               grid-template-columns: repeat(2, minmax(0, 1fr));
               gap: 16px;
             }
           }
           @media (max-width: 768px) {
+            .quote-two-cards-grid {
+              grid-template-columns: 1fr;
+              gap: 16px;
+            }
             .quote-three-cards-grid {
               grid-template-columns: 1fr;
               gap: 16px;
@@ -13591,6 +13740,29 @@ ${renderStockQuantityCell(l, items, whList)}
           }
         </style>
 
+        <div class="quote-two-cards-grid">
+          <div class="quote-card">
+            <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-series">Transaction Series*</label>
+              <select class="in" id="q-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
+                ${transactionSeriesOptionsHtml(qAvailableSeries, qSeriesOption?.id)}
+              </select>
+            </div>
+            <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-number">Quote Number*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="quote-card">
+            ${businessLocationSelectHtml(qLocations, qBusinessLocationId, 'q-business-location')}
+          </div>
+        </div>
+
         <div class="quote-customer-row">
           <div class="customer-select-outer">
             <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
@@ -13617,25 +13789,6 @@ ${renderStockQuantityCell(l, items, whList)}
 
           <!-- Card 1: quote reference information -->
           <div class="quote-card">
-            ${businessLocationSelectHtml(qLocations, qBusinessLocationId, 'q-business-location')}
-            <div class="quote-number-row">
-              <div class="quote-card-field">
-                <label class="quote-card-label" for="q-series">Quote Series</label>
-                <select class="in" id="q-series" name="transaction_series" style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
-                  ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(qSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-                </select>
-              </div>
-              <div class="quote-card-field">
-                <label class="quote-card-label required" for="q-number">Quote Number*</label>
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
-                  <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                    <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-                  </button>
-                </div>
-              </div>
-            </div>
-
             <div class="quote-card-field">
               <div class="q-date-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
@@ -13872,6 +14025,9 @@ ${renderStockQuantityCell(l, items, whList)}
 
   const form = $('#quote-form-element', target);
   bindBusinessLocationSelection(form, '#q-business-location', qLocations, '#q-location');
+  bindTransactionSeriesToBusinessLocation(
+    form, '#q-series', '#q-business-location', activeSeries, qLocations
+  );
   const tbody = $('#quote-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, whList, () => calcQuote());
@@ -14392,6 +14548,12 @@ ${renderStockQuantityCell(l, items, whList)}
       $('#q-number', form).focus();
       return;
     }
+    const seriesId = selectedNumberingSeriesId(form, '#q-series');
+    if (!seriesId) {
+      toast('Select an active transaction series for this quote.', 'err');
+      $('#q-series', form).focus();
+      return;
+    }
     const dt = $('#q-date', form).value;
     if (!dt) {
       toast('Please enter quote date.', 'err');
@@ -14465,7 +14627,10 @@ ${renderStockQuantityCell(l, items, whList)}
       shipping_address_data: normalizeQuoteAddress(quoteAddressData.shipping),
       reference_number: ($('#q-reference', form)?.value || '').trim(),
       location: $('#q-location', form)?.value || 'HO Kottayam',
-      transaction_series: $('#q-series', form)?.value || 'Default Transaction Series',
+      branch: qLocations.find(item => String(item.id) === String($('#q-business-location', form)?.value))?.name || '',
+      business_location_id: selectedBusinessLocationId(form, '#q-business-location'),
+      transaction_series: $('#q-series', form)?.value || '',
+      numbering_series_id: seriesId,
       date: dt,
       expiry_date: expVal,
       tax_pricing_type: $('#q-tax-pricing', form)?.value || 'tax_exclusive',
@@ -14584,10 +14749,16 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     api('lookup/items/').catch(() => []),
     api('lookup/salespersons/').catch(() => []),
     api('lookup/warehouses/').catch(() => []),
-    api('lookup/branches/').catch(() => []),
+    api('lookup/branches/?document_type=sales_orders').catch(error => {
+      console.warn(`Could not load sales order branches: ${error.message}`);
+      return [];
+    }),
     id ? Promise.resolve(null) : api('lookup/next-so-number/').catch(() => ({ next_number: 'SO-000001' })),
     id ? api(`sales-orders/${id}/`).catch(() => null) : Promise.resolve(null),
-    api('lookup/transaction-series/').catch(() => []),
+    api('lookup/transaction-series/?document_type=sales_orders').catch(error => {
+      console.warn(`Could not load sales order transaction series: ${error.message}`);
+      return [];
+    }),
     api('custom-fields/?module=sales_orders&page_size=100').catch(() => [])
   ]);
 
@@ -14603,9 +14774,15 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
     !rec && !srcQuote?.business_location_id
   );
   const soBusinessLocation = soLocations.find(item => String(item.id) === soBusinessLocationId);
+  const soAvailableSeries = transactionSeriesForBusinessLocation(activeSeries, soLocations, soBusinessLocationId);
+  const soSeriesOption = chooseTransactionSeries(
+    soAvailableSeries, soBusinessLocation,
+    rec?.transaction_series || srcQuote?.transaction_series || '',
+    rec?.numbering_series_id, false
+  );
   const soLocation = soBusinessLocation?.name || (rec ? (rec.location || 'HO Kottayam') : (srcQuote ? (srcQuote.location || 'HO Kottayam') : 'HO Kottayam'));
   const soBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : '');
-  const soSeries = rec ? (rec.transaction_series || 'Default Transaction Series') : (srcQuote ? (srcQuote.transaction_series || 'Default Transaction Series') : (activeSeries.find(s => s.is_default)?.name || activeSeries[0].name));
+  const soSeries = soSeriesOption?.name || '';
   const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
   const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
@@ -14680,22 +14857,27 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <form id="so-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-        <!-- Customer Name & Addresses Row -->
-        <div class="transaction-party-row">
-          <div class="customer-select-outer">
-            <label class="customer-select-outer-label" for="so-customer">Customer Name*</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
-                <option value="">Search or type customer name...</option>
-                <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
-                ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        <div class="transaction-two-cards-grid">
+          <div class="transaction-card">
+            <div class="transaction-card-field">
+              <label class="transaction-card-label required" for="so-series">Transaction Series*</label>
+              <select class="in" id="so-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
+                ${transactionSeriesOptionsHtml(soAvailableSeries, soSeriesOption?.id)}
               </select>
-              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
-              </button>
+            </div>
+            <div class="transaction-card-field">
+              <label class="transaction-card-label required" for="so-number">Sales Order#*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" id="so-number" name="number" value="${esc(soNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
             </div>
           </div>
-          <div class="transaction-party-addresses" id="so-customer-addresses" aria-live="polite"></div>
+          <div class="transaction-card">
+            ${businessLocationSelectHtml(soLocations, soBusinessLocationId, 'so-business-location')}
+          </div>
         </div>
 
         <div class="transaction-three-cards-grid">
@@ -14707,24 +14889,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
           <!-- Card 1: Transaction Information -->
           <div class="transaction-card">
-            ${businessLocationSelectHtml(soLocations, soBusinessLocationId, 'so-business-location')}
-            <div class="transaction-card-field">
-              <label class="transaction-card-label" for="so-series">Sales Order Series</label>
-              <select class="in" id="so-series" name="transaction_series" style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
-                ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(soSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              </select>
-            </div>
-
-            <div class="transaction-card-field">
-              <label class="transaction-card-label required" for="so-number">Sales Order#*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="so-number" name="number" value="${esc(soNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
-                <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-                </button>
-              </div>
-            </div>
-
             <div class="transaction-card-field">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
@@ -14885,6 +15049,9 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
   const form = $('#so-form-element', target);
   bindBusinessLocationSelection(form, '#so-business-location', soLocations, '#so-location');
+  bindTransactionSeriesToBusinessLocation(
+    form, '#so-series', '#so-business-location', activeSeries, soLocations
+  );
   const tbody = $('#so-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcSo());
@@ -15181,6 +15348,12 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       $('#so-number', form).focus();
       return;
     }
+    const seriesId = selectedNumberingSeriesId(form, '#so-series');
+    if (!seriesId) {
+      toast('Select an active transaction series for this sales order.', 'err');
+      $('#so-series', form).focus();
+      return;
+    }
     const dt = $('#so-date', form).value;
     if (!dt) {
       toast('Please enter a sales order date.', 'err');
@@ -15230,7 +15403,10 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       reference_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
       order_number: ($('#so-reference', form)?.value || $('#so-order-number', form)?.value || '').trim(),
       location: $('#so-location', form)?.value || 'HO Kottayam',
-      transaction_series: $('#so-series', form)?.value || 'Default Transaction Series',
+      branch: soLocations.find(item => String(item.id) === String($('#so-business-location', form)?.value))?.name || '',
+      business_location_id: selectedBusinessLocationId(form, '#so-business-location'),
+      transaction_series: $('#so-series', form)?.value || '',
+      numbering_series_id: seriesId,
       date: dt,
       expected_shipment_date: $('#so-ship-date', form).value || null,
       due_date: $('#so-ship-date', form).value || dt,

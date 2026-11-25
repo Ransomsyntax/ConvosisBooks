@@ -4368,6 +4368,245 @@ class TestConfiguredDocumentNumberSeries(BaseAccountingTestCase):
         self.assertTrue(response.json()['series'])
 
 
+class TestModuleTransactionSeriesIntegration(BaseAccountingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.admin_user)
+
+    def create_branch_series(self, branch, document_type, name, prefix, make_default=False):
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name=name,
+            document_type=document_type,
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            prefix=prefix,
+            starting_number=1,
+            next_number=1,
+            padding=4,
+        )
+        branch.transaction_series.add(series)
+        if make_default:
+            branch.default_transaction_series = series
+            branch.save(update_fields=['default_transaction_series'])
+        return series
+
+    def test_quote_series_and_branch_create_edit_and_tenant_validation(self):
+        branch = BusinessLocation.objects.create(
+            organization=self.org, name='Quote Branch'
+        )
+        first = self.create_branch_series(
+            branch, 'quotes', 'Quote Series One', 'CONVO/QUOTE-ONE/%FY%', make_default=True
+        )
+        second = self.create_branch_series(
+            branch, 'quotes', 'Quote Series Two', 'CONVO/QUOTE-TWO/%FY%'
+        )
+        unassigned = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Unassigned Quote Series',
+            document_type='quotes',
+            prefix='CONVO/QUOTE-UNASSIGNED/%FY%',
+        )
+        sales_series = self.create_branch_series(
+            branch, 'sales_orders', 'Sales Order Only', 'CONVO/SO/%FY%'
+        )
+
+        lookup = self.client.get('/api/lookup/transaction-series/?document_type=quotes')
+        self.assertEqual(lookup.status_code, 200, lookup.content)
+        lookup_ids = {item['id'] for item in lookup.json()}
+        self.assertIn(first.pk, lookup_ids)
+        self.assertIn(second.pk, lookup_ids)
+        self.assertNotIn(sales_series.pk, lookup_ids)
+
+        branch_lookup = self.client.get('/api/lookup/branches/')
+        branch_record = next(item for item in branch_lookup.json() if item['id'] == branch.pk)
+        self.assertCountEqual(
+            branch_record['transaction_series_ids'], [first.pk, second.pk, sales_series.pk]
+        )
+        self.assertEqual(branch_record['default_transaction_series_id'], first.pk)
+        quote_branch_lookup = self.client.get(
+            '/api/lookup/branches/?document_type=quotes'
+        )
+        quote_branch = next(
+            item for item in quote_branch_lookup.json() if item['id'] == branch.pk
+        )
+        self.assertCountEqual(
+            quote_branch['transaction_series_ids'], [first.pk, second.pk]
+        )
+        self.assertNotIn(unassigned.pk, quote_branch['transaction_series_ids'])
+
+        payload = {
+            'customer_id': self.customer.pk,
+            'date': '2026-10-31',
+            'expiry_date': '2026-11-30',
+            'number': 'CLIENT-PREVIEW-QUOTE-1',
+            'business_location_id': branch.pk,
+            'transaction_series': first.name,
+            'numbering_series_id': first.pk,
+            'lines': [{'description': 'Consulting', 'quantity': '1', 'rate': '100.00', 'gst_rate': '0'}],
+        }
+        created = self.client.post(
+            '/api/quotes/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        quote_id = created.json()['id']
+        quote = Quote.objects.get(pk=quote_id)
+        self.assertEqual(quote.business_location_id, branch.pk)
+        self.assertEqual(quote.transaction_series, first.name)
+        self.assertTrue(created.json()['number'].startswith('CONVO/QUOTE-ONE/'))
+        self.assertEqual(
+            DocumentNumberAllocation.objects.get(number=quote.number).series_id, first.pk
+        )
+
+        updated_payload = dict(payload, transaction_series=second.name, numbering_series_id=second.pk)
+        updated = self.client.put(
+            f'/api/quotes/{quote_id}/',
+            data=json.dumps(updated_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        quote.refresh_from_db()
+        self.assertEqual(quote.transaction_series, second.name)
+        detail = self.client.get(f'/api/quotes/{quote_id}/')
+        self.assertEqual(detail.status_code, 200, detail.content)
+        self.assertEqual(detail.json()['business_location_id'], branch.pk)
+        self.assertEqual(detail.json()['transaction_series'], second.name)
+        self.assertEqual(detail.json()['number'], created.json()['number'])
+
+        other_org = Organization.objects.create(name='Other Series Tenant')
+        foreign = DocumentNumberSeries.objects.create(
+            organization=other_org,
+            name='Foreign Quote Series',
+            document_type='quotes',
+            prefix='FOREIGN/%FY%',
+        )
+        invalid = dict(payload, transaction_series=foreign.name, numbering_series_id=foreign.pk)
+        rejected = self.client.post(
+            '/api/quotes/', data=json.dumps(invalid), content_type='application/json'
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.content)
+        unassigned_payload = dict(
+            payload,
+            transaction_series=unassigned.name,
+            numbering_series_id=unassigned.pk,
+        )
+        unassigned_response = self.client.post(
+            '/api/quotes/',
+            data=json.dumps(unassigned_payload),
+            content_type='application/json',
+        )
+        self.assertEqual(unassigned_response.status_code, 400, unassigned_response.content)
+
+        self.client.force_login(self.accountant_user)
+        denied = self.client.post(
+            '/api/quotes/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(denied.status_code, 400, denied.content)
+        self.assertIn(b'not assigned to this business location', denied.content.lower())
+        branch.assigned_users.add(self.accountant_user)
+        allowed = self.client.post(
+            '/api/quotes/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.content)
+
+    def test_sales_order_series_and_branch_create_edit(self):
+        from books.models import SalesOrder
+
+        branch = BusinessLocation.objects.create(
+            organization=self.org, name='Sales Order Branch'
+        )
+        first = self.create_branch_series(
+            branch, 'sales_orders', 'Order Series One', 'CONVO/ORDER-ONE/%FY%', make_default=True
+        )
+        second = self.create_branch_series(
+            branch, 'sales_orders', 'Order Series Two', 'CONVO/ORDER-TWO/%FY%'
+        )
+        payload = {
+            'customer_id': self.customer.pk,
+            'date': '2026-11-04',
+            'number': 'CLIENT-PREVIEW-ORDER-1',
+            'business_location_id': branch.pk,
+            'transaction_series': first.name,
+            'numbering_series_id': first.pk,
+            'lines': [{'description': 'Hardware', 'quantity': '1', 'rate': '250.00', 'gst_rate': '0'}],
+        }
+        created = self.client.post(
+            '/api/sales-orders/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        order = SalesOrder.objects.get(pk=created.json()['id'])
+        self.assertEqual(order.business_location_id, branch.pk)
+        self.assertEqual(order.transaction_series, first.name)
+        self.assertTrue(order.number.startswith('CONVO/ORDER-ONE/'))
+        self.assertEqual(
+            DocumentNumberAllocation.objects.get(number=order.number).series_id, first.pk
+        )
+
+        updated = self.client.put(
+            f'/api/sales-orders/{order.pk}/',
+            data=json.dumps({
+                'business_location_id': branch.pk,
+                'transaction_series': second.name,
+                'numbering_series_id': second.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        order.refresh_from_db()
+        self.assertEqual(order.transaction_series, second.name)
+        self.assertEqual(order.business_location_id, branch.pk)
+        self.assertEqual(order.number, created.json()['number'])
+
+    def test_payment_made_series_and_branch_create_edit(self):
+        branch = BusinessLocation.objects.create(
+            organization=self.org, name='Payment Branch'
+        )
+        first = self.create_branch_series(
+            branch, 'payments_made', 'Payment Series One', 'CONVO/PAY-ONE/%FY%', make_default=True
+        )
+        second = self.create_branch_series(
+            branch, 'payments_made', 'Payment Series Two', 'CONVO/PAY-TWO/%FY%'
+        )
+        payload = {
+            'vendor': self.vendor.pk,
+            'date': '2026-10-15',
+            'number': 'CLIENT-PREVIEW-PAYMENT-1',
+            'amount': '100.00',
+            'mode': 'bank_transfer',
+            'bank_account_id': self.bank_hdfc.pk,
+            'business_location_id': branch.pk,
+            'transaction_series': first.name,
+            'numbering_series_id': first.pk,
+        }
+        created = self.client.post(
+            '/api/payments-made/', data=json.dumps(payload), content_type='application/json'
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        payment = PaymentMade.objects.get(pk=created.json()['id'])
+        self.assertEqual(payment.business_location_id, branch.pk)
+        self.assertEqual(payment.transaction_series, first.name)
+        self.assertTrue(payment.number.startswith('CONVO/PAY-ONE/'))
+        self.assertEqual(
+            DocumentNumberAllocation.objects.get(number=payment.number).series_id, first.pk
+        )
+
+        updated = self.client.put(
+            f'/api/payments-made/{payment.pk}/',
+            data=json.dumps({
+                'business_location_id': branch.pk,
+                'transaction_series': second.name,
+                'numbering_series_id': second.pk,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        payment.refresh_from_db()
+        self.assertEqual(payment.transaction_series, second.name)
+        self.assertEqual(payment.business_location_id, branch.pk)
+        self.assertEqual(payment.number, created.json()['number'])
+
+
 class TestPasswordResetWorkflow(BaseAccountingTestCase):
     @override_settings(
         DEBUG=False,

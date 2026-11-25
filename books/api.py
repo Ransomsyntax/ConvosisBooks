@@ -53,7 +53,7 @@ from .models import (
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, ProjectMilestone, ProjectStaff, ProjectTask, ProjectTaskAssignment,
-    PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
+    PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice, TransactionSeries,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
     SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, OTPVerification, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule,
@@ -174,6 +174,52 @@ def get_user_org(user, request=None):
 def _user_can_access_business_location(user, location):
     return services.user_can_access_business_location(user, location)
 
+def _resolve_selected_number_series(org, document_type, series_name='', series_id=None, business_location=None):
+    if not org or not (series_name or series_id):
+        return None, ''
+
+    queryset = DocumentNumberSeries.objects.filter(
+        organization=org,
+        document_type=document_type,
+        active=True,
+    ).select_related('series_group')
+    series = None
+    if series_id:
+        series = queryset.filter(pk=series_id).first()
+        if series and series_name and series_name.casefold() not in {
+            series.name.casefold(),
+            (series.series_group.name if series.series_group_id else '').casefold(),
+        }:
+            return None, 'Select a valid transaction series.'
+    elif series_name:
+        series = queryset.filter(name__iexact=series_name).first()
+        if not series:
+            group = TransactionSeries.objects.filter(
+                organization=org,
+                name__iexact=series_name,
+                is_active=True,
+            ).first()
+            if group:
+                series = queryset.filter(series_group=group).first()
+
+    if not series:
+        return None, 'Select an active transaction series for this transaction type.'
+    if series.series_group_id and not series.series_group.is_active:
+        return None, 'Select an active transaction series for this transaction type.'
+    if series.business_location_id and (
+        not business_location or series.business_location_id != business_location.pk
+    ):
+        return None, 'The selected transaction series is not available for this branch.'
+    if business_location:
+        assigned_ids = business_location.transaction_series.filter(
+            document_type=document_type,
+            active=True,
+        ).filter(
+            Q(series_group__isnull=True) | Q(series_group__is_active=True)
+        ).values_list('pk', flat=True)
+        if assigned_ids.exists() and not assigned_ids.filter(pk=series.pk).exists():
+            return None, 'The selected transaction series is not assigned to this branch.'
+    return series, ''
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -2322,6 +2368,8 @@ class DocResource(Resource):
              'signed_by': getattr(o, 'signed_by', '') or '',
              'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
              'signature_title': getattr(o, 'signature_title', '') or ''}
+        if isinstance(o, Quote):
+            r['business_location_id'] = o.business_location_id
         allocation = DocumentNumberAllocation.objects.filter(
             organization=o.organization, number=o.number
         ).select_related('series').first()
@@ -2601,9 +2649,12 @@ class DocResource(Resource):
             except (TypeError, ValueError):
                 c.err('business_location_id', 'Choose a valid business location.')
             else:
-                business_location = BusinessLocation.objects.filter(
+                location_qs = BusinessLocation.objects.filter(
                     organization=org, pk=location_id
-                ).first()
+                )
+                if self.Model is Quote:
+                    location_qs = location_qs.filter(location_type='business')
+                business_location = location_qs.first()
                 if not business_location:
                     c.err('business_location_id', 'Select a business location in your organization.')
                 elif not business_location.active and not (
@@ -2615,6 +2666,24 @@ class DocResource(Resource):
                         c.err('business_location_id', 'You are not assigned to this business location.')
                     head['business_location'] = business_location
                     head['location'] = business_location.name
+        if self.Model is Quote:
+            series_name = str(data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
+            selected_series, series_error = _resolve_selected_number_series(
+                user_org,
+                'quotes',
+                series_name=series_name,
+                series_id=series_id,
+                business_location=head.get('business_location'),
+            )
+            if series_error:
+                c.err('transaction_series', series_error)
+            elif selected_series:
+                head['transaction_series'] = selected_series.name
+                head['_numbering_series_id'] = selected_series.pk
+                if head.get('business_location'):
+                    head['branch'] = head['business_location'].name
+                    head['location'] = head['business_location'].name
         for num_fld in ('adjustment', 'tcs_rate', 'tcs_amount', 'discount_percent'):
             if num_fld in data:
                 head[num_fld] = str(data.get(num_fld) or '0').strip()
@@ -2678,14 +2747,20 @@ class DocResource(Resource):
         services.check_transaction_lock(head['date'], org=user_org)
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
-        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
-        series_id = data.get('numbering_series_id') or data.get('series_id')
+        series_name = (head.get('transaction_series') or data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = head.get('_numbering_series_id') or data.get('numbering_series_id') or data.get('series_id')
 
-        if num:
+        if num and not (self.Model is Quote and series_id):
             num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
             if num_exists:
                 raise ApiError(400, f'{self.Model.__name__} number "{num}" already exists in your organization.')
-            services.sync_series_counter_from_manual_number(user_org, pfx, num, series=series_name, series_id=series_id)
+            services.sync_series_counter_from_manual_number(
+                user_org, pfx, num, series=series_name, series_id=series_id,
+                business_location_id=(
+                    getattr(head.get('business_location'), 'pk', None)
+                    if self.Model is Quote else None
+                ),
+            )
         else:
             party = head.get(self.party_attr)
             explicit_customer_type = str(head.get('customer_type') or data.get('customer_type') or '').strip().lower()
@@ -3739,7 +3814,7 @@ class PaymentResource(Resource):
         applied = q2(o.applied)
         p = getattr(o, self.party_attr)
         ba = getattr(o, 'bank_account', None)
-        return {'id': o.pk, 'number': o.number, 'party_id': p.pk if p else None, 'party': p.name if p else '',
+        row = {'id': o.pk, 'number': o.number, 'party_id': p.pk if p else None, 'party': p.name if p else '',
                 'customer_name': p.name if p else '', 'date': o.date, 'mode': o.mode,
                 'mode_label': MODE_LABEL.get(o.mode, o.mode), 'account': o.account,
                 'bank_account_id': o.bank_account_id,
@@ -3750,6 +3825,9 @@ class PaymentResource(Resource):
                 'reference': o.reference, 'notes': o.notes,
                 'business_location_id': o.business_location_id,
                 'business_location_name': o.business_location.name if o.business_location_id else ''}
+        if self.Model is PaymentMade:
+            row['transaction_series'] = o.transaction_series or ''
+        return row
 
     def detail(self, o):
         r = self.row(o)
@@ -3856,9 +3934,12 @@ class PaymentResource(Resource):
                'amount': c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999')),
                'reference': c.text('reference', max_len=80), 'notes': c.text('notes', max_len=2000)}
         business_location_id = c.integer('business_location_id', lo=1)
-        business_location = BusinessLocation.objects.filter(
+        location_qs = BusinessLocation.objects.filter(
             pk=business_location_id, organization=user_org, active=True
-        ).first() if business_location_id and user_org else None
+        )
+        if self.Model is PaymentMade:
+            location_qs = location_qs.filter(location_type='business')
+        business_location = location_qs.first() if business_location_id and user_org else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
         elif business_location and not _user_can_access_business_location(user, business_location):
@@ -3869,6 +3950,22 @@ class PaymentResource(Resource):
         shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
         mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
         cf_data = _clean_module_custom_fields(c, user_org, user, mod_name)
+        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+        series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
+        selected_series = None
+        if self.Model is PaymentMade and (series_name or series_id):
+            selected_series, series_error = _resolve_selected_number_series(
+                user_org,
+                'payments_made',
+                series_name=series_name,
+                series_id=series_id,
+                business_location=business_location,
+            )
+            if series_error:
+                c.err('transaction_series', series_error)
+            elif selected_series:
+                series_name = selected_series.name
+                series_id = selected_series.pk
         c.done()
         services.check_transaction_lock(out['date'], org=user_org)
         extra = {}
@@ -3882,16 +3979,26 @@ class PaymentResource(Resource):
             extra['shipping_address_data'] = shipping_addr
         if hasattr(self.Model, 'custom_fields_data'):
             extra['custom_fields_data'] = cf_data
+        if hasattr(self.Model, 'transaction_series') and series_name:
+            extra['transaction_series'] = series_name
         pay_num = (data.get('number') or '').strip()
-        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
-        series_id = data.get('numbering_series_id') or data.get('series_id')
-        if pay_num:
+        if pay_num and not (self.Model is PaymentMade and series_id):
             if user_org and self.Model.objects.filter(number=pay_num, organization=user_org).exists():
                 raise ApiError(400, f'{self.Model.__name__} number "{pay_num}" already exists in your organization.')
-            services.sync_series_counter_from_manual_number(user_org, self.prefix, pay_num, series=series_name, series_id=series_id)
+            services.sync_series_counter_from_manual_number(
+                user_org, self.prefix, pay_num, series=series_name, series_id=series_id,
+                business_location_id=(
+                    business_location.pk
+                    if self.Model is PaymentMade and business_location else None
+                ),
+            )
         else:
             pay_num = services.next_document_number(
                 self.prefix, org=user_org, date=out['date'],
+                branch=(
+                    business_location.name
+                    if self.Model is PaymentMade and business_location else ''
+                ),
                 location=business_location.name if business_location else '',
                 business_location_id=business_location.pk if business_location else None,
                 series=series_name, series_id=series_id, user=user
@@ -3992,9 +4099,12 @@ class PaymentResource(Resource):
             obj.notes = c.text('notes', max_len=2000)
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
-            business_location = BusinessLocation.objects.filter(
+            location_qs = BusinessLocation.objects.filter(
                 pk=business_location_id, organization=user_org
-            ).first() if business_location_id and user_org else None
+            )
+            if self.Model is PaymentMade:
+                location_qs = location_qs.filter(location_type='business')
+            business_location = location_qs.first() if business_location_id and user_org else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
             elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
@@ -4002,6 +4112,23 @@ class PaymentResource(Resource):
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             obj.business_location = business_location
+        if hasattr(obj, 'transaction_series') and (
+            'transaction_series' in data or 'series' in data or
+            'numbering_series_id' in data or 'series_id' in data
+        ):
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
+            selected_series, series_error = _resolve_selected_number_series(
+                user_org,
+                'payments_made',
+                series_name=series_name,
+                series_id=series_id,
+                business_location=obj.business_location,
+            )
+            if series_error or not selected_series:
+                c.err('transaction_series', series_error or 'Select an active transaction series for this transaction type.')
+            else:
+                obj.transaction_series = selected_series.name
         mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
         if hasattr(obj, 'billing_address_data'):
             billing_fallback = obj.billing_address_data or _party_address_snapshot(getattr(obj, self.party_attr, None), 'billing')
@@ -6648,6 +6775,8 @@ class SalesOrderResource(Resource):
             'date': o.date, 'due_date': o.due_date,
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'business_location_id': o.business_location_id,
+            'transaction_series': getattr(o, 'transaction_series', '') or '',
             'salesperson': getattr(o, 'salesperson', '') or '',
             'project_name': getattr(o, 'project_name', '') or '',
             'subject': getattr(o, 'subject', '') or '',
@@ -6745,6 +6874,34 @@ class SalesOrderResource(Resource):
         order_num = c.text('reference_number', max_len=60) or c.text('order_number', max_len=60) or ''
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=user_org,
+            active=True, location_type='business',
+        ).first() if business_location_id and user_org else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = branch or business_location.name
+            location = business_location.name
+        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+        series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
+        selected_series = None
+        if series_name or series_id:
+            selected_series, series_error = _resolve_selected_number_series(
+                user_org,
+                'sales_orders',
+                series_name=series_name,
+                series_id=series_id,
+                business_location=business_location,
+            )
+            if series_error:
+                c.err('transaction_series', series_error)
+            elif selected_series:
+                series_name = selected_series.name
+                series_id = selected_series.pk
         salesperson = c.text('salesperson', max_len=120)
         project_name = c.text('project_name', max_len=150)
         subject = c.text('subject', max_len=2000)
@@ -6764,7 +6921,9 @@ class SalesOrderResource(Resource):
             num = services.next_document_number(
                 'SO', org=user_org, date=dt, customer_type=cust_type,
                 branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), user=user
+                business_location_id=business_location.pk if business_location else None,
+                gstin=(business_location.gstin if business_location else getattr(user_org, 'gstin', '')),
+                series=series_name, series_id=series_id, user=user
             )
         else:
             import re
@@ -6781,11 +6940,13 @@ class SalesOrderResource(Resource):
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         so = SalesOrder.objects.create(
             organization=user_org,
+            business_location=business_location,
             number=num, customer=cust, date=dt, due_date=due_dt,
             place_of_supply=pos,
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
             order_number=order_num, status=status, branch=branch, location=location,
+            transaction_series=series_name or 'Default Transaction Series',
             salesperson=salesperson, project_name=project_name, subject=subject,
             billing_address_data=billing_addr, shipping_address_data=shipping_addr,
             custom_fields_data=cf_data
@@ -6836,6 +6997,34 @@ class SalesOrderResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+        user_org = obj.organization or get_user_org(user)
+        if 'business_location_id' in data:
+            business_location_id = c.integer('business_location_id', lo=1)
+            business_location = BusinessLocation.objects.filter(
+                pk=business_location_id, organization=user_org,
+                active=True, location_type='business',
+            ).first() if business_location_id and user_org else None
+            if business_location_id and not business_location:
+                c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not _user_can_access_business_location(user, business_location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
+            obj.business_location = business_location
+            obj.branch = business_location.name if business_location else ''
+            obj.location = business_location.name if business_location else 'HO Kottayam'
+        if 'transaction_series' in data or 'series' in data or 'numbering_series_id' in data or 'series_id' in data:
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
+            selected_series, series_error = _resolve_selected_number_series(
+                user_org,
+                'sales_orders',
+                series_name=series_name,
+                series_id=series_id,
+                business_location=obj.business_location,
+            )
+            if series_error or not selected_series:
+                c.err('transaction_series', series_error or 'Select an active transaction series for this transaction type.')
+            else:
+                obj.transaction_series = selected_series.name
         if 'salesperson' in data:
             obj.salesperson = c.text('salesperson', max_len=120)
         if 'project_name' in data:
@@ -6848,7 +7037,6 @@ class SalesOrderResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
-        user_org = obj.organization or get_user_org(user)
         if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
             billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.customer, 'billing')
             obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -11753,7 +11941,14 @@ def lookup(request, name):
         data = [{'id': item.pk, 'code': item.code, 'name': item.name, 'symbol': item.symbol}
                 for item in currency_qs]
     elif name in ('branches', 'business-locations', 'retainer-locations'):
-        location_qs = org_filter(Branch.objects.filter(active=True)).filter(location_type='business')
+        document_type = request.GET.get('document_type', '').strip()
+        if document_type and document_type not in {
+            item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES
+        }:
+            raise ApiError(400, 'Unsupported transaction document type.')
+        location_qs = org_filter(
+            Branch.objects.filter(active=True)
+        ).filter(location_type='business').prefetch_related('transaction_series__series_group')
         profile = getattr(request.user, 'profile', None)
         if profile and not request.user.is_superuser and profile.role != UserProfile.ADMIN:
             location_qs = location_qs.filter(
@@ -11767,6 +11962,13 @@ def lookup(request, name):
             'gstin': item.gstin,
             'state': item.state,
             'is_default': item.is_default,
+            'transaction_series_ids': [
+                series.pk for series in item.transaction_series.all()
+                if (not document_type or series.document_type == document_type)
+                and series.active
+                and (not series.series_group_id or series.series_group.is_active)
+            ],
+            'default_transaction_series_id': item.default_transaction_series_id,
         } for item in locations]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
@@ -11788,12 +11990,45 @@ def lookup(request, name):
                 data.append({'id': f"u_{u.pk}", 'name': uname, 'email': u.email, 'phone': getattr(u.profile, 'phone', '') if hasattr(u, 'profile') else ''})
     elif name == 'transaction-series':
         services.ensure_default_transaction_series(user_org)
-        from .models import TransactionSeries
-        series_qs = TransactionSeries.objects.filter(organization=user_org, is_active=True).order_by('-is_default', 'name') if user_org else TransactionSeries.objects.filter(is_active=True).order_by('-is_default', 'name')
-        data = [
-            {'id': s.pk, 'name': s.name, 'branch': s.branch, 'location': s.location, 'is_default': s.is_default}
-            for s in series_qs
-        ]
+        document_type = request.GET.get('document_type', '').strip()
+        if document_type:
+            supported_types = {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}
+            if document_type not in supported_types:
+                raise ApiError(400, 'Unsupported transaction document type.')
+            series_qs = DocumentNumberSeries.objects.filter(
+                organization=user_org,
+                document_type=document_type,
+                active=True,
+            ).filter(
+                Q(series_group__isnull=True) | Q(series_group__is_active=True)
+            ).select_related('series_group').order_by('name') if user_org else DocumentNumberSeries.objects.none()
+            data = [
+                {
+                    'id': s.pk,
+                    'name': s.name,
+                    'branch': s.branch,
+                    'location': s.location,
+                    'business_location_id': s.business_location_id,
+                    'series_group_id': s.series_group_id,
+                    'is_default': s.is_default or bool(s.series_group_id and s.series_group.is_default),
+                }
+                for s in series_qs
+            ]
+        else:
+            series_qs = TransactionSeries.objects.filter(
+                organization=user_org, is_active=True
+            ).order_by('-is_default', 'name') if user_org else TransactionSeries.objects.none()
+            data = [
+                {
+                    'id': s.pk,
+                    'name': s.name,
+                    'branch': s.branch,
+                    'location': s.location,
+                    'business_location_id': s.business_location_id,
+                    'is_default': s.is_default,
+                }
+                for s in series_qs
+            ]
     elif name == 'employees':
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -11807,7 +12042,7 @@ def lookup(request, name):
         data = services.preview_document_number(
             'QTN', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            branch=business_location.name if business_location else request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
             business_location_id=business_location.pk if business_location else None,
@@ -11821,7 +12056,7 @@ def lookup(request, name):
         data = services.preview_document_number(
             'SO', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            branch=business_location.name if business_location else request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
             business_location_id=business_location.pk if business_location else None,
@@ -11973,7 +12208,7 @@ def lookup(request, name):
         business_location = preview_business_location(org)
         data = services.preview_document_number(
             'PM', org=org, date=request.GET.get('date'),
-            branch=request.GET.get('branch'),
+            branch=business_location.name if business_location else request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             business_location_id=business_location.pk if business_location else None,
             series=request.GET.get('series') or request.GET.get('transaction_series'),

@@ -13740,29 +13740,6 @@ ${renderStockQuantityCell(l, items, whList)}
           }
         </style>
 
-        <div class="quote-two-cards-grid">
-          <div class="quote-card">
-            <div class="quote-card-field">
-              <label class="quote-card-label required" for="q-series">Transaction Series*</label>
-              <select class="in" id="q-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
-                ${transactionSeriesOptionsHtml(qAvailableSeries, qSeriesOption?.id)}
-              </select>
-            </div>
-            <div class="quote-card-field">
-              <label class="quote-card-label required" for="q-number">Quote Number*</label>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
-                <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="quote-card">
-            ${businessLocationSelectHtml(qLocations, qBusinessLocationId, 'q-business-location')}
-          </div>
-        </div>
-
         <div class="quote-customer-row">
           <div class="customer-select-outer">
             <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
@@ -13790,6 +13767,22 @@ ${renderStockQuantityCell(l, items, whList)}
           <!-- Card 1: quote reference information -->
           <div class="quote-card">
             <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-series">Transaction Series*</label>
+              <select class="in" id="q-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Number Series">
+                ${transactionSeriesOptionsHtml(qAvailableSeries, qSeriesOption?.id)}
+              </select>
+            </div>
+            <div class="quote-card-field">
+              <label class="quote-card-label required" for="q-number">Quote Number*</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+                  <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="quote-card-field">
               <div class="q-date-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
                   <label class="quote-card-label required" for="q-date">Date*</label>
@@ -13811,6 +13804,8 @@ ${renderStockQuantityCell(l, items, whList)}
 
           <!-- Card 2: additional quote information -->
           <div class="quote-card">
+            ${businessLocationSelectHtml(qLocations, qBusinessLocationId, 'q-business-location')}
+
             <div class="quote-card-field">
               <label class="quote-card-label">Salesperson</label>
               <div id="q-salesperson-container" style="width:100%;"></div>

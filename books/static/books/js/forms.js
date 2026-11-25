@@ -8428,9 +8428,7 @@ async function accountForm(id, onDone) {
       ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
       ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: typeOpts, value: o.account_type, req: true })}
       ${fld({ name: 'parent_id', label: 'Parent Account', type: 'select', opts: [['', 'No Parent'], ...accountOptions.map(account => [account.id, `${account.code ? account.code + ' - ' : ''}${account.name}`])], value: o.parent_id || '' })}
-      ${fld({ name: 'sub_type', label: 'Sub-Category', value: o.sub_type, ph: 'e.g. operating_expense' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, rows: 2 })}
-      ${fld({ name: 'active', label: 'Active', type: 'checkbox', value: o.active })}
     </div>`,
     onSubmit: async d => {
       d.active = !!d.active;
@@ -8445,11 +8443,13 @@ async function accountForm(id, onDone) {
 }
 
 async function journalForm(id) {
-  const [accounts, rec, businessLocations, currencies] = await Promise.all([
+  const [accounts, rec, businessLocations, currencies, customers, vendors] = await Promise.all([
     api('lookup/accounts/'),
     id ? api(`manual-journals/${id}/`).catch(() => null) : Promise.resolve(null),
     api('lookup/branches/').catch(() => []),
-    api('lookup/currencies/').catch(() => [])
+    api('lookup/currencies/').catch(() => []),
+    api('lookup/customers/').catch(() => []),
+    api('lookup/vendors/').catch(() => [])
   ]);
   const journalLocations = Array.isArray(businessLocations) ? businessLocations : [];
   const journalBusinessLocationId = defaultBusinessLocationId(
@@ -8467,11 +8467,12 @@ async function journalForm(id) {
 
   function renderLines() {
     return lines.map((l, i) => `
-      <div class="journal-line-row" data-idx="${i}" style="display:grid;grid-template-columns:3fr 1.5fr 1.5fr 3fr 36px;gap:8px;margin-bottom:8px;align-items:center;">
+      <div class="journal-line-row" data-idx="${i}" style="display:grid;grid-template-columns:2.2fr 2fr 1.8fr 1.3fr 1.3fr 36px;gap:8px;margin-bottom:8px;align-items:center;">
         <select class="in line-acc" name="line_acc_${i}">${opts([...accounts.map(a => [a.id, `${a.code} - ${a.name}`]), ['__new_account__', '+ Add New Account…']], l.account)}</select>
         <input class="in line-deb r" type="number" step="0.01" min="0" placeholder="Debit ₹" value="${esc(l.debit)}" data-idx="${i}">
         <input class="in line-cred r" type="number" step="0.01" min="0" placeholder="Credit ₹" value="${esc(l.credit)}" data-idx="${i}">
         <input class="in line-desc" type="text" placeholder="Description" value="${esc(l.description)}">
+        <select class="in line-contact" name="line_contact_${i}"><option value="">Contact</option></select>
         <button type="button" class="btn d icon-btn remove-line-btn" data-idx="${i}" style="padding:4px 8px;font-size:16px;">×</button>
       </div>
     `).join('');
@@ -8485,6 +8486,8 @@ async function journalForm(id) {
         <div class="zb-form-wrap" style="margin-bottom:16px;">
           ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: rec ? rec.date : APP.today })}
           ${fld({ name: 'reverse_journal_date', label: 'Reverse Journal Date', type: 'date', value: rec ? (rec.reverse_journal_date || '') : '' })}
+          <label class="zb-form-row fg"><span class="zb-form-label">Publish reverse journal only on reverse journal date</span><div class="zb-form-ctrl"><input type="checkbox" name="publish_reverse_on_date" ${rec?.publish_reverse_on_date ? 'checked' : ''}></div></label>
+          ${fld({ name: 'number', label: 'Journal#', req: true, value: rec ? rec.number : '', ph: 'Auto-generated if configured' })}
           ${fld({ name: 'notes', label: 'Notes', type: 'textarea', req: true, value: rec ? rec.notes : '', ph: 'Maximum 500 characters', max: 500 })}
           ${fld({ name: 'reference', label: 'Reference#', value: rec ? (rec.reference || '') : '', ph: 'Reference number' })}
           ${fld({ name: 'reporting_method', label: 'Reporting Method', type: 'select', opts: [['accrual_cash','Accrual and Cash'],['accrual','Accrual Only'],['cash','Cash Only']], value: rec ? (rec.reporting_method || 'accrual_cash') : 'accrual_cash', req: true })}
@@ -8492,11 +8495,16 @@ async function journalForm(id) {
           ${businessLocationSelectHtml(journalLocations, journalBusinessLocationId, 'jrn-business-location')}
         </div>
         <div style="font-weight:600;margin-bottom:8px;color:var(--tx);">Journal Debits & Credits</div>
-        <div style="display:grid;grid-template-columns:3fr 1.5fr 1.5fr 3fr 36px;gap:8px;font-weight:600;font-size:12px;color:var(--tx-muted);padding-bottom:4px;border-bottom:1px solid var(--bd);">
-          <span>Account</span><span class="r">Debit (₹)</span><span class="r">Credit (₹)</span><span>Description</span><span></span>
+        <div style="display:grid;grid-template-columns:2.2fr 2fr 1.8fr 1.3fr 1.3fr 36px;gap:8px;font-weight:600;font-size:12px;color:var(--tx-muted);padding-bottom:4px;border-bottom:1px solid var(--bd);">
+          <span>ACCOUNT</span><span>DESCRIPTION</span><span>CONTACT (Currency)</span><span class="r">DEBITS</span><span class="r">CREDITS</span><span></span>
         </div>
         <div id="jrn-lines" style="margin-top:8px;">${renderLines()}</div>
         <button type="button" class="btn" id="add-jrn-line" style="margin-top:6px;">+ Add Line</button>
+        <div style="margin-top:14px;padding:10px 0;">
+          <label class="zb-form-label" for="jrnAttachments">Attachments</label>
+          <input type="file" id="jrnAttachments" name="jrnAttachments" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.doc,.docx" class="in" style="max-width:420px;">
+          <div class="sub" style="margin-top:4px;">Maximum 5 files, 10 MB per file.</div>
+        </div>
         <div style="display:flex;justify-content:flex-end;gap:24px;margin-top:14px;padding:10px 14px;background:var(--surface-glass-subtle);border-radius:8px;border:1px solid var(--bd);">
           <div>Total Debits: <b id="jrn-tot-deb">₹0.00</b></div>
           <div>Total Credits: <b id="jrn-tot-cred">₹0.00</b></div>
@@ -8568,6 +8576,7 @@ async function journalForm(id) {
     clearErrors(form);
     const dt = $('input[name="date"]', form).value;
     const ref = $('input[name="reference"]', form).value;
+    const journalNumber = $('input[name="number"]', form)?.value.trim();
     const notes = $('input[name="notes"]', form).value;
     if (!notes.trim()) {
       showErrors(form, { notes: 'Notes are required.' }, 'Notes are required.');
@@ -8579,6 +8588,7 @@ async function journalForm(id) {
       return;
     }
     const reverseDate = $('input[name="reverse_journal_date"]', form)?.value || null;
+    const publishReverseOnDate = !!$('input[name="publish_reverse_on_date"]', form)?.checked;
     const reportingMethod = $('select[name="reporting_method"]', form)?.value || 'accrual_cash';
     const currency = $('select[name="currency"]', form)?.value || 'INR';
     const outLines = [];
@@ -8596,17 +8606,32 @@ async function journalForm(id) {
     try {
       const payload = {
         date: dt,
+        number: journalNumber,
         reference: ref,
         notes,
         status,
         reverse_journal_date: reverseDate,
+        publish_reverse_on_date: publishReverseOnDate,
         reporting_method: reportingMethod,
         currency,
         branch_id: selectedBusinessLocationId(form, '#jrn-business-location'),
         lines: outLines
       };
-      if (id) await api(`manual-journals/${id}/`, { method: 'PUT', body: payload });
-      else await api('manual-journals/', { method: 'POST', body: payload });
+      let saved;
+      if (id) saved = await api(`manual-journals/${id}/`, { method: 'PUT', body: payload });
+      else saved = await api('manual-journals/', { method: 'POST', body: payload });
+      const files = $('input[name="jrnAttachments"]', form)?.files || $('#jrnAttachments', form)?.files;
+      if (files && files.length) {
+        if (files.length > 5) throw new ApiErr(400, { attachments: 'Maximum 5 files are allowed.' });
+        for (const file of Array.from(files)) {
+          if (file.size > 10 * 1024 * 1024) throw new ApiErr(400, { attachments: `${file.name} exceeds 10 MB.` });
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('entity_type', 'manual_journal');
+          formData.append('entity_id', saved.id || id);
+          await fetch('/api/attachments/', { method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: formData });
+        }
+      }
       toast(status === 'draft' ? 'Journal saved as draft' : (id ? 'Journal voucher updated and published' : 'Journal voucher published'));
       m.close();
       refresh();
@@ -9922,7 +9947,7 @@ async function documentUploadModal(folderId) {
   });
 }
 
-async function lockDateModal() {
+async function lockDateModal(selectedModule = '') {
   const cur = await api('locking/');
   formModal({
     title: 'Statutory Transaction Locking',
@@ -9936,7 +9961,12 @@ async function lockDateModal() {
     `,
     submit: cur.is_locked ? 'Update Lock' : 'Enforce Lock',
     onSubmit: async d => {
-      const res = await api('locking/', { method: 'POST', body: d });
+      const moduleLocks = selectedModule ? (
+        selectedModule === 'all'
+          ? { sales:d.lock_date, purchases:d.lock_date, banking:d.lock_date, accountant:d.lock_date }
+          : { [selectedModule]: d.lock_date }
+      ) : null;
+      const res = await api('locking/', { method: 'POST', body: { ...d, module_locks: moduleLocks } });
       toast(res.is_locked ? `Transactions locked through ${fd(res.lock_date)}` : 'Transaction lock disabled');
       refresh();
     }

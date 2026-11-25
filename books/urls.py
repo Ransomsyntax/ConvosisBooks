@@ -70,6 +70,8 @@ urlpatterns = [
     path('accountant/bulk-update/', api.accountant_bulk_update_view),
     path('accountant/currency-adjustment/preview/', api.accountant_currency_adjustment_preview_view),
     path('accountant/currency-adjustment/post/', api.accountant_currency_adjustment_post_view),
+    path('accountant/custom-account-views/', api.accountant_custom_account_views_view),
+    path('accountant/custom-account-views/<int:pk>/', api.accountant_custom_account_views_view),
 
     path('ai/doubt-clearance/', api.ai_doubt_clearance_view),
     path('ai/query/', api.ai_query_view),

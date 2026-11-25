@@ -42,7 +42,7 @@ from .features.module_gating import (
     validate_module_dependencies,
 )
 from .models import (
-    Account, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
+    Account, CustomAccountView, Attachment, AuditLog, BackgroundTask, BankAccount, BankFeedConnection,
     StockTransfer, StockTransferLine,
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
@@ -3197,6 +3197,7 @@ class RetainerInvoiceResource(DocResource):
             c = Cleaner(b)
             amt = c.number('amount', required=True, lo=Decimal('0.01'))
             dt = c.date('date', required=True)
+            journal_number = c.text('number', max_len=60)
             mode = c.choice('mode', MODE_KEYS, 'bank_transfer')
             account = c.text('account', default='Bank Account', max_len=60)
             ref = c.text('reference', max_len=80)
@@ -3979,6 +3980,12 @@ class PaymentResource(Resource):
             obj.amount = new_amt
         if 'reference' in data:
             obj.reference = c.text('reference', max_len=80)
+        if 'number' in data:
+            number = c.text('number', max_len=60)
+            if number and number != obj.number and Journal.objects.filter(organization=obj.organization, number=number).exclude(pk=obj.pk).exists():
+                raise ApiError(409, 'A journal with this Journal# already exists.')
+            if number:
+                obj.number = number
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=2000)
         if 'business_location_id' in data:
@@ -5258,6 +5265,7 @@ class JournalResource(Resource):
             'reference': o.reference, 'notes': o.notes, 'total': tot,
             'status': getattr(o, 'status', 'published'),
             'reverse_journal_date': getattr(o, 'reverse_journal_date', None),
+            'publish_reverse_on_date': getattr(o, 'publish_reverse_on_date', False),
             'reporting_method': getattr(o, 'reporting_method', 'accrual_cash'),
             'currency': getattr(o, 'currency', 'INR'),
             'business_location_id': o.business_location_id,
@@ -5270,7 +5278,8 @@ class JournalResource(Resource):
         r['lines'] = [
             {'id': it.pk, 'account_id': it.account_id, 'account_code': it.account.code,
              'account_name': it.account.name, 'debit': it.debit, 'credit': it.credit,
-             'description': it.description}
+             'description': it.description, 'contact_id': it.contact_id,
+             'contact_name': it.contact_name, 'contact_currency': it.contact_currency}
             for it in o.items.select_related('account')
         ]
         return r
@@ -5284,6 +5293,7 @@ class JournalResource(Resource):
         if status not in ('draft', 'published'):
             raise ApiError(400, 'Journal status must be draft or published.')
         reverse_date = c.date('reverse_journal_date')
+        publish_reverse_on_date = bool(data.get('publish_reverse_on_date', False))
         reporting_method = str(data.get('reporting_method') or 'accrual_cash').strip()
         if reporting_method not in ('accrual_cash', 'accrual', 'cash'):
             raise ApiError(400, 'Choose a valid reporting method.')
@@ -5318,7 +5328,7 @@ class JournalResource(Resource):
             jrn = Journal.objects.create(
                 organization=user_org,
                 business_location=business_location,
-                number=services.next_document_number('JRN', org=user_org, date=dt),
+                number=(c.text('number', max_len=60) or services.next_document_number('JRN', org=user_org, date=dt)),
                 date=dt,
                 entry_type='manual',
                 reference=ref,
@@ -5327,7 +5337,12 @@ class JournalResource(Resource):
                 reverse_journal_date=reverse_date,
                 reporting_method=reporting_method,
                 currency=currency,
-                draft_data={'lines': items},
+                publish_reverse_on_date=publish_reverse_on_date,
+                draft_data={'lines': [
+                    [line[0], str(line[1]), str(line[2]), line[3],
+                     ln.get('contact_id'), ln.get('contact_name', ''), ln.get('contact_currency', '')]
+                    for line, ln in zip(items, lines_in)
+                ]},
                 created_by=user,
             )
         else:
@@ -5337,7 +5352,13 @@ class JournalResource(Resource):
                 jrn.reverse_journal_date = reverse_date
                 jrn.reporting_method = reporting_method
                 jrn.currency = currency
-                jrn.save(update_fields=['status', 'reverse_journal_date', 'reporting_method', 'currency'])
+                jrn.publish_reverse_on_date = publish_reverse_on_date
+                jrn.save(update_fields=['status', 'reverse_journal_date', 'publish_reverse_on_date', 'reporting_method', 'currency'])
+                for journal_item, ln in zip(jrn.items.all(), lines_in):
+                    journal_item.contact_id = ln.get('contact_id')
+                    journal_item.contact_name = str(ln.get('contact_name') or '')[:200]
+                    journal_item.contact_currency = str(ln.get('contact_currency') or '')[:10]
+                    journal_item.save(update_fields=['contact_id', 'contact_name', 'contact_currency'])
         tot_deb = sum((it.debit for it in jrn.items.all()), Z)
         services.log_audit(user, 'create', 'Journal', jrn.number, f"Created manual journal {jrn.number} for ₹{tot_deb}")
         return jrn
@@ -5360,6 +5381,17 @@ class JournalResource(Resource):
             obj.reference = c.text('reference', max_len=80)
         if 'notes' in data:
             obj.notes = c.text('notes', max_len=1000)
+        if 'reverse_journal_date' in data:
+            obj.reverse_journal_date = c.date('reverse_journal_date')
+        if 'publish_reverse_on_date' in data:
+            obj.publish_reverse_on_date = bool(data.get('publish_reverse_on_date'))
+        if 'reporting_method' in data:
+            reporting_method = str(data.get('reporting_method') or 'accrual_cash')
+            if reporting_method not in ('accrual_cash', 'accrual', 'cash'):
+                raise ApiError(400, 'Choose a valid reporting method.')
+            obj.reporting_method = reporting_method
+        if 'currency' in data:
+            obj.currency = str(data.get('currency') or 'INR').strip().upper()
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
             business_location = BusinessLocation.objects.filter(
@@ -5413,7 +5445,17 @@ class JournalResource(Resource):
 
             obj.items.all().delete()
             for acc, deb, cred, desc in clean_items:
-                JournalItem.objects.create(journal=obj, account=acc, debit=deb, credit=cred, description=desc)
+                matching_ln = next((ln for ln in lines_in if str(ln.get('account') or ln.get('account_id')) in (str(acc.pk), acc.code, acc.name)), {})
+                JournalItem.objects.create(
+                    journal=obj,
+                    account=acc,
+                    debit=deb,
+                    credit=cred,
+                    description=desc,
+                    contact_id=matching_ln.get('contact_id'),
+                    contact_name=str(matching_ln.get('contact_name') or '')[:200],
+                    contact_currency=str(matching_ln.get('contact_currency') or '')[:10],
+                )
 
         obj.save()
         services.log_audit(user, 'update', 'Journal', obj.number, f"Updated manual journal {obj.number}")
@@ -5431,7 +5473,14 @@ class JournalResource(Resource):
             if debit != credit:
                 raise ApiError(400, 'The journal must be balanced before publishing.')
             services.check_transaction_lock(obj.date, org=obj.organization)
-            for acc_id, deb, cred, description in draft_lines:
+            for draft_line in draft_lines:
+                acc_id = draft_line[0]
+                deb = draft_line[1]
+                cred = draft_line[2]
+                description = draft_line[3]
+                contact_id = draft_line[4] if len(draft_line) > 4 else None
+                contact_name = draft_line[5] if len(draft_line) > 5 else ''
+                contact_currency = draft_line[6] if len(draft_line) > 6 else ''
                 account = Account.objects.filter(pk=acc_id, organization=obj.organization).first()
                 if not account:
                     raise ApiError(400, 'A draft journal line references an invalid account.')
@@ -5441,6 +5490,9 @@ class JournalResource(Resource):
                     debit=q2(deb),
                     credit=q2(cred),
                     description=str(description or '')[:255],
+                    contact_id=contact_id,
+                    contact_name=contact_name,
+                    contact_currency=contact_currency,
                 )
             obj.status = 'published'
             obj.draft_data = {}
@@ -10902,7 +10954,7 @@ class BudgetResource(Resource):
         c = Cleaner(data)
         name = c.text('name', required=True, max_len=150)
         financial_year = c.text('financial_year', required=True, max_len=10)
-        period = c.choice('period', ['monthly', 'quarterly', 'annual'], required=True)
+        period = c.choice('period', ['monthly', 'quarterly', 'half_yearly', 'annual'], required=True)
         period_start = c.date('period_start', required=True)
         budget_amount = c.number('budget_amount', required=True)
         account_id = data.get('account') or data.get('account_id')
@@ -12919,13 +12971,16 @@ def transaction_locking_view(request):
         return j({
             'is_locked': bool(lock and lock.lock_date),
             'lock_date': lock.lock_date if lock else None,
-            'reason': lock.reason if lock else ''
+            'reason': lock.reason if lock else '',
+            'module_locks': lock.module_locks if lock else {},
+            'history': lock.lock_history if lock else [],
         })
     if request.method == 'POST':
         d = body(request)
         c = Cleaner(d)
         ld = c.date('lock_date')
         reason = c.text('reason', default='Books closed for accounting period', max_len=255)
+        module_locks = d.get('module_locks')
         c.done()
 
         org = get_user_org(request.user, request)
@@ -12937,11 +12992,35 @@ def transaction_locking_view(request):
             return j({'is_locked': False, 'lock_date': None, 'reason': ''})
 
         if not lock:
-            lock = LockDate.objects.create(organization=org, lock_date=ld, reason=reason, locked_by=request.user)
+            lock = LockDate.objects.create(
+                organization=org,
+                lock_date=ld,
+                reason=reason,
+                locked_by=request.user,
+                module_locks=module_locks if isinstance(module_locks, dict) else {},
+                lock_history=[{
+                    'lock_date': ld.isoformat(),
+                    'reason': reason,
+                    'module_locks': module_locks if isinstance(module_locks, dict) else {},
+                    'locked_by': request.user.username,
+                    'locked_at': timezone.now().isoformat(),
+                }],
+            )
         else:
             lock.lock_date = ld
             lock.reason = reason
             lock.locked_by = request.user
+            if isinstance(module_locks, dict):
+                lock.module_locks = module_locks
+            history = lock.lock_history if isinstance(lock.lock_history, list) else []
+            history.append({
+                'lock_date': ld.isoformat(),
+                'reason': reason,
+                'module_locks': module_locks if isinstance(module_locks, dict) else lock.module_locks,
+                'locked_by': request.user.username,
+                'locked_at': timezone.now().isoformat(),
+            })
+            lock.lock_history = history[-100:]
             lock.save()
         services.log_audit(request.user, 'lock', 'LockDate', 0, f"Transactions locked prior to {ld} ({reason})")
         return j({'is_locked': True, 'lock_date': lock.lock_date, 'reason': lock.reason})
@@ -12956,6 +13035,11 @@ def accountant_bulk_update_view(request):
         date_from = request.GET.get('date_from')
         date_to = request.GET.get('date_to')
         amount = request.GET.get('amount')
+        amount_min = request.GET.get('amount_min')
+        amount_max = request.GET.get('amount_max')
+        account_id = request.GET.get('account_id')
+        contact_id = request.GET.get('contact_id')
+        location_id = request.GET.get('location_id')
         results = []
         if module == 'banking':
             qs = BankTransaction.objects.filter(organization=org)
@@ -12965,6 +13049,16 @@ def accountant_bulk_update_view(request):
                 qs = qs.filter(date__lte=date_to)
             if amount:
                 qs = qs.filter(Q(deposit=amount) | Q(withdrawal=amount))
+            if amount_min:
+                qs = qs.filter(Q(deposit__gte=amount_min) | Q(withdrawal__gte=amount_min))
+            if amount_max:
+                qs = qs.filter(Q(deposit__lte=amount_max) | Q(withdrawal__lte=amount_max))
+            if account_id:
+                qs = qs.filter(category_account_id=account_id)
+            if contact_id:
+                qs = qs.filter(payee__icontains=str(contact_id))
+            if location_id:
+                qs = qs.filter(business_location_id=location_id)
             results = [{
                 'id': row.pk,
                 'date': row.date,
@@ -12972,6 +13066,31 @@ def accountant_bulk_update_view(request):
                 'account': row.category_account.name if row.category_account else '',
                 'amount': row.deposit or row.withdrawal,
             } for row in qs.select_related('category_account')[:200]]
+        elif module == 'accountant':
+            qs = Journal.objects.filter(organization=org)
+            if date_from:
+                qs = qs.filter(date__gte=date_from)
+            if date_to:
+                qs = qs.filter(date__lte=date_to)
+            if location_id:
+                qs = qs.filter(business_location_id=location_id)
+            results = []
+            for row in qs.select_related('business_location')[:200]:
+                total_debit = sum((item.debit for item in row.items.all()), Z)
+                if amount_min and total_debit < Decimal(str(amount_min)):
+                    continue
+                if amount_max and total_debit > Decimal(str(amount_max)):
+                    continue
+                if account_id and not row.items.filter(account_id=account_id).exists():
+                    continue
+                results.append({
+                    'account_id': bank_account.pk,
+                    'id': row.pk,
+                    'date': row.date,
+                    'reference': row.number,
+                    'account': ', '.join(dict.fromkeys(item.account.name for item in row.items.select_related('account'))),
+                    'amount': total_debit,
+                })
         return j({'status': 'ok', 'results': results})
     if request.method == 'POST':
         d = body(request)
@@ -13002,6 +13121,22 @@ def accountant_bulk_update_view(request):
                     txn.status = 'categorized'
                     txn.save(update_fields=['category_account', 'status'])
                     successful += 1
+            elif module == 'accountant':
+                source_account_id = d.get('source_account_id')
+                for txn_id in transaction_ids:
+                    jrn = Journal.objects.select_for_update().filter(organization=org, pk=txn_id).first()
+                    if not jrn:
+                        failed.append({'id': txn_id, 'error': 'Journal not found.'})
+                        continue
+                    if getattr(jrn, 'status', 'published') == 'published':
+                        failed.append({'id': txn_id, 'error': 'Published journals cannot be bulk overwritten.'})
+                        continue
+                    services.check_transaction_lock(jrn.date, org=org)
+                    qs = jrn.items.all()
+                    if source_account_id:
+                        qs = qs.filter(account_id=source_account_id)
+                    qs.update(account=account)
+                    successful += 1
         services.log_audit(request.user, 'bulk_update', 'Accountant', 0,
                            f"Bulk updated {successful} transactions to account {account.name}",
                            org=org, module='accounting', submodule='bulk_update')
@@ -13014,6 +13149,21 @@ def accountant_bulk_update_view(request):
 @role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
 def accountant_currency_adjustment_preview_view(request):
     if request.method != 'POST':
+        if request.method == 'GET':
+            org = get_user_org(request.user, request)
+            journals = Journal.objects.filter(
+                organization=org,
+                entry_type='currency_adjustment',
+            ).select_related('organization').order_by('-date', '-id')
+            return j({'results': [{
+                'id': journal.pk,
+                'date': journal.date,
+                'currency': journal.currency,
+                'exchange_rate': journal.reference.rsplit('-', 1)[-1] if '-' in journal.reference else '',
+                'gain_or_loss': str(sum((item.credit for item in journal.items.all()), Z) -
+                                     sum((item.debit for item in journal.items.all()), Z)),
+                'notes': journal.notes,
+            } for journal in journals]})
         raise ApiError(405, 'Method not allowed.')
     d = body(request)
     currency = str(d.get('currency') or '').strip().upper()
@@ -13029,11 +13179,10 @@ def accountant_currency_adjustment_preview_view(request):
     results = []
     for bank_account in accounts:
         foreign_balance = Decimal(str(bank_account.current_balance or 0))
-        current = foreign_balance
+        current = q2(foreign_balance)
         adjusted = q2(foreign_balance * rate)
         if foreign_balance:
             results.append({
-                'account_id': account.pk,
                 'account': bank_account.name,
                 'foreign_balance': str(foreign_balance),
                 'current_base_value': str(current),
@@ -13094,7 +13243,7 @@ def accountant_currency_adjustment_post_view(request):
             lines.append((loss_account, total_loss, Z, f"Exchange loss - {currency}"))
         journal = services.post_journal_entry(
             on_date, 'currency_adjustment', reference,
-            f"Foreign currency revaluation - {currency}",
+            str(d.get('notes') or f"Foreign currency revaluation - {currency}")[:500],
             lines,
             request.user, org=org,
         )
@@ -13102,6 +13251,69 @@ def accountant_currency_adjustment_post_view(request):
                            f"Posted {currency} currency adjustment at {rate}",
                            org=org, module='accounting', submodule='currency_adjustments')
     return j({'status': 'ok', 'journal_id': journal.pk, 'message': 'Currency adjustment posted.'})
+
+@api_view
+@role_required(UserProfile.ADMIN, UserProfile.ACCOUNTANT)
+def accountant_custom_account_views_view(request, pk=None):
+    org = get_user_org(request.user, request)
+    qs = CustomAccountView.objects.filter(organization=org)
+    if pk:
+        view = qs.filter(pk=pk).first()
+        if not view:
+            raise ApiError(404, 'Custom view not found.')
+        if request.method == 'GET':
+            return j({
+                'id': view.pk, 'name': view.name, 'is_favorite': view.is_favorite,
+                'criteria': view.criteria, 'criteria_pattern': view.criteria_pattern,
+                'available_columns': view.available_columns,
+                'selected_columns': view.selected_columns,
+                'visibility': view.visibility,
+                'shared_user_ids': view.shared_user_ids,
+                'shared_role_ids': view.shared_role_ids,
+            })
+        if request.method in ('PUT', 'PATCH'):
+            d = body(request)
+            if 'name' in d:
+                view.name = str(d.get('name') or '').strip()
+                if not view.name:
+                    raise ApiError(400, 'View Name is required.')
+            for field in ('is_favorite', 'criteria', 'criteria_pattern', 'available_columns', 'selected_columns', 'visibility', 'shared_user_ids', 'shared_role_ids'):
+                if field in d:
+                    setattr(view, field, d[field])
+            view.save()
+            return j({'status': 'ok', 'id': view.pk})
+        if request.method == 'DELETE':
+            view.delete()
+            return j({'status': 'deleted', 'id': pk})
+        raise ApiError(405, 'Method not allowed.')
+    if request.method == 'GET':
+        return j({'results': [{
+            'id': view.pk, 'name': view.name, 'is_favorite': view.is_favorite,
+            'criteria': view.criteria, 'criteria_pattern': view.criteria_pattern,
+            'selected_columns': view.selected_columns, 'visibility': view.visibility,
+        } for view in qs.order_by('-is_favorite', 'name')]})
+    if request.method == 'POST':
+        d = body(request)
+        name = str(d.get('name') or '').strip()
+        if not name:
+            raise ApiError(400, 'View Name is required.')
+        if qs.filter(name__iexact=name).exists():
+            raise ApiError(409, 'A custom view with this name already exists.')
+        view = CustomAccountView.objects.create(
+            organization=org,
+            name=name,
+            is_favorite=bool(d.get('is_favorite')),
+            criteria=d.get('criteria') if isinstance(d.get('criteria'), list) else [],
+            criteria_pattern=str(d.get('criteria_pattern') or 'and'),
+            available_columns=d.get('available_columns') if isinstance(d.get('available_columns'), list) else [],
+            selected_columns=d.get('selected_columns') if isinstance(d.get('selected_columns'), list) else [],
+            visibility=str(d.get('visibility') or 'only_me'),
+            shared_user_ids=d.get('shared_user_ids') if isinstance(d.get('shared_user_ids'), list) else [],
+            shared_role_ids=d.get('shared_role_ids') if isinstance(d.get('shared_role_ids'), list) else [],
+            created_by=request.user,
+        )
+        return j({'status': 'ok', 'id': view.pk, 'name': view.name}, status=201)
+    raise ApiError(405, 'Method not allowed.')
 
 @api_view
 def convobot_doubt_clearance_view(request):

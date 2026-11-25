@@ -561,6 +561,30 @@ class Account(models.Model):
     def __str__(self):
         return f'{self.code} - {self.name}'
 
+class CustomAccountView(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='custom_account_views')
+    name = models.CharField(max_length=150)
+    is_favorite = models.BooleanField(default=False)
+    criteria = models.JSONField(default=list, blank=True)
+    criteria_pattern = models.CharField(max_length=10, default='and')
+    available_columns = models.JSONField(default=list, blank=True)
+    selected_columns = models.JSONField(default=list, blank=True)
+    visibility = models.CharField(max_length=30, default='only_me')
+    shared_user_ids = models.JSONField(default=list, blank=True)
+    shared_role_ids = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_favorite', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['organization', 'name'], name='uniq_org_custom_account_view_name')
+        ]
+
+    def __str__(self):
+        return self.name
+
 class Journal(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='journals')
     business_location = models.ForeignKey('Branch', null=True, blank=True, on_delete=models.PROTECT, related_name='journals')
@@ -597,6 +621,9 @@ class JournalItem(models.Model):
     debit = models.DecimalField(default=Decimal('0.00'), **MONEY)
     credit = models.DecimalField(default=Decimal('0.00'), **MONEY)
     description = models.CharField(max_length=255, blank=True)
+    contact_id = models.PositiveIntegerField(null=True, blank=True)
+    contact_name = models.CharField(max_length=200, blank=True, default='')
+    contact_currency = models.CharField(max_length=10, blank=True, default='')
 
     class Meta:
         ordering = ['id']
@@ -608,6 +635,9 @@ class LockDate(models.Model):
     reason = models.CharField(max_length=255, blank=True, default='Books closed for accounting period')
     updated_at = models.DateTimeField(auto_now=True)
     locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    module_locks = models.JSONField(default=dict, blank=True)
+    lock_password_hash = models.CharField(max_length=128, blank=True, default='')
+    lock_history = models.JSONField(default=list, blank=True)
 
     @classmethod
     def get_lock(cls, org=None):
@@ -2568,7 +2598,7 @@ class DepreciationEntry(models.Model):
 
 
 class Budget(models.Model):
-    PERIODS = [('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('annual', 'Annual')]
+    PERIODS = [('monthly', 'Monthly'), ('quarterly', 'Quarterly'), ('half_yearly', 'Half-yearly'), ('annual', 'Yearly')]
     APPROVAL_STATUSES = [('draft', 'Draft'), ('submitted', 'Submitted'), ('approved', 'Approved'), ('rejected', 'Rejected')]
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='budgets')
     name = models.CharField(max_length=150)

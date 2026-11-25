@@ -2228,7 +2228,7 @@ const LISTS = {
     onAction: (a, r) => a === 'edit' ? accountForm(r.id) : a === 'delete' ? deleteRecord('accounts', r, 'Account') : null,
   },
   budgets: {
-    api: 'budgets', title: 'Budgets', bc: 'Accountant', newLabel: 'New budget', empty: 'No budgets created yet.',
+    api: 'budgets', title: 'Budgets', bc: 'Accountant', newLabel: 'Create Budget', onNew: () => budgetForm(), empty: 'No budgets created yet.',
     cols: [
       { h: 'Name', s: 'name', f: r => `<b>${esc(r.name)}</b>` },
       { h: 'Financial Year', s: 'financial_year', f: r => esc(r.financial_year) },
@@ -2240,7 +2240,7 @@ const LISTS = {
     ]
   },
   'fixed-assets': {
-    api: 'fixed-assets', title: 'Fixed Assets', bc: 'Accountant', newLabel: 'New asset', empty: 'No fixed assets registered.',
+    api: 'fixed-assets', title: 'Fixed Assets', bc: 'Accountant', newLabel: 'New asset', onNew: () => fixedAssetForm(), empty: 'No fixed assets registered.',
     cols: [
       { h: 'Asset Name', s: 'name', f: r => `<b>${esc(r.name)}</b>` },
       { h: 'Asset Code', s: 'code', f: r => esc(r.code) },
@@ -9445,95 +9445,172 @@ async function stockInHandReportPage(root) {
 }
 window.stockInHandReportPage = stockInHandReportPage;
 
+async function budgetForm(id = null) {
+  const [locations, accounts] = await Promise.all([
+    api('lookup/branches/').catch(() => []),
+    api('accounts/?page_size=500').catch(() => ({ results: [] }))
+  ]);
+  const existing = id ? await api(`budgets/${id}/`).catch(() => null) : null;
+  formModal({
+    title: id ? 'Edit Budget' : 'New Budget',
+    wide: false,
+    body: `
+      <div style="display:grid;gap:12px;">
+        <label class="zb-form-row fg">Name*<input class="in" name="name" value="${esc(existing?.name || '')}" required></label>
+        <label class="zb-form-row fg">Fiscal Year*<select class="in" name="financial_year"><option ${!existing?'selected':''}>Apr 2026 - Mar 2027</option><option>Apr 2025 - Mar 2026</option><option>Apr 2027 - Mar 2028</option></select></label>
+        <label class="zb-form-row fg">Budget Period*<select class="in" name="period"><option value="monthly" ${existing?.period==='monthly'?'selected':''}>Monthly</option><option value="quarterly" ${existing?.period==='quarterly'?'selected':''}>Quarterly</option><option value="half_yearly" ${existing?.period==='half_yearly'?'selected':''}>Half-yearly</option><option value="annual" ${existing?.period==='annual'?'selected':''}>Yearly</option></select></label>
+        <label class="zb-form-row fg">Location<select class="in" name="location_id"><option value="">Location</option>${(Array.isArray(locations)?locations:[]).map(l => `<option value="${l.id}" ${existing?.location_id===l.id?'selected':''}>${esc(l.name)}</option>`).join('')}</select></label>
+        <div style="font-size:12px;color:#64748b;font-weight:700;">INCOME AND EXPENSE ACCOUNTS</div>
+        <label class="zb-form-row fg">Income Accounts<select class="in" name="income_account_id"><option value="">Add Accounts</option>${((accounts.results||accounts)||[]).filter(a=>a.account_type==='income'||a.account_type==='other_income').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
+        <label class="zb-form-row fg">Expense Accounts<select class="in" name="expense_account_id"><option value="">Add Accounts</option>${((accounts.results||accounts)||[]).filter(a=>a.account_type==='expense').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
+        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="include_asset_liability_equity"> Include Asset, Liability, and Equity Accounts in Budget</label>
+        <div id="budgetAssetEquity" style="display:none;gap:10px;"><div><b>Asset Accounts</b><select class="in" name="asset_account_id"><option value="">Add Accounts</option>${((accounts.results||accounts)||[]).filter(a=>a.account_type==='asset').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div><div><b>Liability Accounts</b><select class="in" name="liability_account_id"><option value="">Add Accounts</option>${((accounts.results||accounts)||[]).filter(a=>a.account_type==='liability').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div><div><b>Equity Accounts</b><select class="in" name="equity_account_id"><option value="">Add Accounts</option>${((accounts.results||accounts)||[]).filter(a=>a.account_type==='equity').map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div></div>
+      </div>
+    `,
+    submit: id ? 'Update Budget' : 'Create Budget',
+    onSubmit: async d => {
+      if (!d.name || !d.financial_year || !d.period) throw new ApiErr(400, { name: 'Name, Fiscal Year and Budget Period are required.' });
+      const body = { name:d.name, financial_year:d.financial_year, period:d.period, period_start:'2026-04-01', account_id:d.income_account_id||d.expense_account_id||null, location_id:d.location_id||null };
+      await api(id ? `budgets/${id}/` : 'budgets/', { method:id?'PUT':'POST', body });
+      toast(id?'Budget updated':'Budget created','ok');
+      refresh();
+    }
+  });
+  const checkbox = document.querySelector('[name="include_asset_liability_equity"]');
+  checkbox?.addEventListener('change', () => {
+    document.querySelector('#budgetAssetEquity').style.display = checkbox.checked?'grid':'none';
+  });
+}
+
+async function fixedAssetForm(id = null) {
+  const existing = id ? await api(`fixed-assets/${id}/`).catch(() => null) : null;
+  formModal({
+    title: id?'Edit Fixed Asset':'New Fixed Asset',
+    body: `
+      <div style="display:grid;gap:12px;">
+        <label class="zb-form-row fg">Asset Name*<input class="in" name="name" value="${esc(existing?.name||'')}" required></label>
+        <label class="zb-form-row fg">Asset Code*<input class="in" name="code" value="${esc(existing?.code||'')}" required></label>
+        <label class="zb-form-row fg">Category<input class="in" name="category" value="${esc(existing?.category||'')}"></label>
+        <label class="zb-form-row fg">Purchase Date*<input type="date" class="in" name="purchase_date" value="${esc(existing?.purchase_date||APP.today||'')}" required></label>
+        <label class="zb-form-row fg">Purchase Cost*<input type="number" step="0.01" class="in" name="purchase_cost" value="${esc(existing?.purchase_cost||'')}"></label>
+        <label class="zb-form-row fg">Residual Value<input type="number" step="0.01" class="in" name="residual_value" value="${esc(existing?.residual_value||'0')}"></label>
+        <label class="zb-form-row fg">Useful Life (Months)<input type="number" class="in" name="useful_life_months" value="${esc(existing?.useful_life_months||12)}"></label>
+        <label class="zb-form-row fg">Depreciation Method<select class="in" name="depreciation_method"><option value="straight_line">Straight Line</option><option value="reducing_balance">Written Down Value</option></select></label>
+        <label class="zb-form-row fg">Depreciation Period<select class="in" name="depreciation_frequency"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></label>
+      </div>
+    `,
+    submit: id?'Update Asset':'Create Asset',
+    onSubmit: async d => {
+      if (!d.name||!d.code||!d.purchase_date||!d.purchase_cost) throw new ApiErr(400,{name:'Asset Name, Code, Purchase Date and Purchase Cost are required.'});
+      await api(id?`fixed-assets/${id}/`:'fixed-assets/', {method:id?'PUT':'POST',body:d});
+      toast(id?'Fixed asset updated':'Fixed asset created','ok');
+      refresh();
+    }
+  });
+}
 
 async function bulkUpdatePage(root) {
   root.innerHTML = `
     <div class="bc">Home / Accountant / Bulk Update</div>
-    <div class="hd"><div><h1>Bulk Update</h1><div class="sub">Find and recode transactions in one controlled operation</div></div></div>
-    <div class="card" style="padding:20px;margin-top:14px;">
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px;">
-        <label class="form-group">Module<select id="bulkModule" class="in"><option value="sales">Sales</option><option value="purchases">Purchases</option><option value="banking">Banking</option><option value="accountant">Accountant</option></select></label>
-        <label class="form-group">Date From<input id="bulkDateFrom" type="date" class="in"></label>
-        <label class="form-group">Date To<input id="bulkDateTo" type="date" class="in"></label>
-        <label class="form-group">Amount<input id="bulkAmount" type="number" step="0.01" class="in" placeholder="Optional"></label>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:12px;">
-        <button type="button" class="btn p" id="bulkFetchBtn">Fetch Transactions</button>
-      </div>
-      <div id="bulkResults" style="margin-top:16px;"></div>
+    <div class="hd"><div><h1>Bulk Update Accounts in Transactions</h1><div class="sub">Filter transactions (Invoices, Credit Notes, Purchase Orders, Expenses, Bills, Vendor Credits) and bulk-update their accounts.</div></div></div>
+    <div class="card" style="padding:48px;text-align:center;margin-top:14px;">
+      <div style="width:70px;height:70px;border-radius:16px;background:rgba(79,70,229,.1);display:grid;place-items:center;margin:0 auto 14px;font-size:28px;">⇄</div>
+      <h3 style="margin:0 0 8px;">Bulk-updating accounts in transactions will cause significant changes to the financial data.</h3>
+      <p class="sub" style="margin:0 auto 16px;">We recommend that you do this with the assistance of an accountant.</p>
+      <button type="button" class="btn p" id="bulkFilterBtn">Filter and Bulk Update</button>
+      <div id="bulkResults" style="margin-top:20px;text-align:left;"></div>
     </div>
   `;
-  $('#bulkFetchBtn', root).addEventListener('click', async () => {
-    const module = $('#bulkModule', root).value;
-    const params = new URLSearchParams({
-      module,
-      date_from: $('#bulkDateFrom', root).value,
-      date_to: $('#bulkDateTo', root).value,
-      amount: $('#bulkAmount', root).value
+  $('#bulkFilterBtn', root).addEventListener('click', async () => {
+    const [accounts, customers, vendors, locations] = await Promise.all([
+      api('accounts/?page_size=500').catch(() => ({ results: [] })),
+      api('lookup/customers/').catch(() => []),
+      api('lookup/vendors/').catch(() => []),
+      api('lookup/branches/').catch(() => [])
+    ]);
+    const accountRows = (accounts.results || accounts || []);
+    const contactRows = [...(Array.isArray(customers) ? customers : []), ...(Array.isArray(vendors) ? vendors : [])];
+    formModal({
+      title: 'Filter Transactions',
+      wide: false,
+      body: `
+        <div class="sub" style="margin-bottom:12px;">Select an account and enter your ranges to filter your transactions</div>
+        <div style="display:grid;gap:12px;">
+          <label class="zb-form-row fg">Account*<select class="in" name="account_id"><option value="">Select an account</option>${accountRows.map(a => `<option value="${a.id}">${esc(a.code ? a.code + ' - ' : '')}${esc(a.name)}</option>`).join('')}</select></label>
+          <label class="zb-form-row fg">Contact<select class="in" name="contact_id"><option value="">Select Contact</option>${contactRows.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><label class="zb-form-row fg">Date Range<input type="date" class="in" name="date_from"></label><label class="zb-form-row fg"><span></span><input type="date" class="in" name="date_to"></label></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><label class="zb-form-row fg">Total Amount Range<input type="number" step="0.01" class="in" name="amount_min"></label><label class="zb-form-row fg"><span></span><input type="number" step="0.01" class="in" name="amount_max"></label></div>
+          <label class="zb-form-row fg">Location<select class="in" name="location_id"><option value="">Location</option>${(Array.isArray(locations)?locations:[]).map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></label>
+        </div>
+      `,
+      submit: 'Search',
+      onSubmit: async d => {
+        if (!d.account_id) throw new ApiErr(400, { account_id: 'Account is required.' });
+        const params = new URLSearchParams({
+          module: 'accountant',
+          account_id: d.account_id,
+          contact_id: d.contact_id || '',
+          date_from: d.date_from || '',
+          date_to: d.date_to || '',
+          amount_min: d.amount_min || '',
+          amount_max: d.amount_max || '',
+          location_id: d.location_id || ''
+        });
+        const res = await api(`accountant/bulk-update/?${params}`);
+        const rows = res.results || [];
+        $('#bulkResults', root).innerHTML = rows.length ? `
+          <table class="tbl" style="width:100%;"><thead><tr><th>Select</th><th>Date</th><th>Reference</th><th>Account</th><th style="text-align:right;">Amount</th></tr></thead>
+          <tbody>${rows.map(row => `<tr><td><input type="checkbox" class="bulkTx" value="${row.id}" data-module="${esc(row.module || 'accountant')}"></td><td>${esc(row.date||'')}</td><td>${esc(row.reference||row.number||'')}</td><td>${esc(row.account||'')}</td><td style="text-align:right;">${inr(row.amount||0)}</td></tr>`).join('')}</tbody></table>
+          <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button type="button" class="btn p" id="bulkApplyBtn">Apply Account Update</button></div>
+        ` : '<div class="empty" style="padding:24px;">No matching transactions found.</div>';
+        $('#bulkApplyBtn', root)?.addEventListener('click', async () => {
+          const ids = Array.from(root.querySelectorAll('.bulkTx:checked')).map(input => Number(input.value));
+          if (!ids.length) return toast('Select at least one transaction.', 'err');
+          const updateAccountId = prompt('Enter the destination Account ID.');
+          if (!updateAccountId) return;
+          const update = await api('accountant/bulk-update/', { method: 'POST', body: { module: 'accountant', transaction_ids: ids, account_id: Number(updateAccountId) } });
+          toast(update.message || 'Bulk update completed.', 'ok');
+        });
+      }
     });
-    try {
-      const res = await api(`accountant/bulk-update/?${params}`);
-      const rows = res.results || [];
-      $('#bulkResults', root).innerHTML = rows.length ? `
-        <table class="tbl" style="width:100%;"><thead><tr><th>Select</th><th>Date</th><th>Reference</th><th>Account</th><th style="text-align:right;">Amount</th></tr></thead>
-        <tbody>${rows.map(row => `<tr><td><input type="checkbox" class="bulkTx" value="${row.id}" data-module="${esc(module)}"></td><td>${esc(row.date || '')}</td><td>${esc(row.reference || row.number || '')}</td><td>${esc(row.account || '')}</td><td style="text-align:right;">${inr(row.amount || 0)}</td></tr>`).join('')}</tbody></table>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;"><button type="button" class="btn p" id="bulkConfirmBtn">Apply Account Update</button></div>
-      ` : '<div class="empty" style="padding:24px;">No matching transactions found.</div>';
-      $('#bulkConfirmBtn', root)?.addEventListener('click', async () => {
-        const ids = Array.from(root.querySelectorAll('.bulkTx:checked')).map(input => Number(input.value));
-        if (!ids.length) return toast('Select at least one transaction.', 'err');
-        const accountId = prompt('Enter the destination Account ID.');
-        if (!accountId) return;
-        const res = await api('accountant/bulk-update/', { method: 'POST', body: { module, transaction_ids: ids, account_id: Number(accountId) } });
-        toast(res.message || 'Bulk update completed.', 'ok');
-        $('#bulkFetchBtn', root).click();
-      });
-    } catch (error) {
-      $('#bulkResults', root).innerHTML = errBox(error.message || 'Unable to fetch transactions.', true);
-    }
   });
 }
 
 async function baseCurrencyAdjustmentPage(root) {
   root.innerHTML = `
-    <div class="bc">Home / Accountant / Base Currency Adjustments</div>
-    <div class="hd"><div><h1>Base Currency Adjustments</h1><div class="sub">Preview and post foreign-currency revaluation</div></div></div>
-    <div class="card" style="padding:20px;margin-top:14px;">
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;">
-        <label class="form-group">Currency<input id="fxCurrency" class="in" value="USD" maxlength="10"></label>
-        <label class="form-group">Adjustment Date<input id="fxDate" type="date" class="in" value="${APP.today || ''}"></label>
-        <label class="form-group">New Exchange Rate<input id="fxRate" type="number" step="0.000001" min="0.000001" class="in" value="1"></label>
-      </div>
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
-        <button type="button" class="btn p" id="fxPreviewBtn">Preview Adjustment</button>
-      </div>
-      <div id="fxPreview" style="margin-top:16px;"></div>
+    <div class="bc">Home / Accountant / Currency Adjustments</div>
+    <div class="hd"><div><h1>Base Currency Adjustments</h1></div><div class="act"><button type="button" class="btn" id="fxFindAccounts">Find Accounts</button><button type="button" class="btn p" id="fxNewBtn">+ New</button></div></div>
+    <div class="card" style="margin-top:14px;padding:12px;">
+      <div style="display:flex;align-items:center;gap:10px;"><select id="fxFilter" class="in" style="max-width:180px;"><option>All</option><option>Today</option><option>This Week</option><option>This Month</option><option>This Quarter</option><option>This Year</option></select></div>
+      <table class="tbl" style="width:100%;margin-top:12px;"><thead><tr><th></th><th>DATE</th><th>CURRENCY</th><th>EXCHANGE RATE</th><th>GAIN OR LOSS</th><th>NOTES</th></tr></thead><tbody id="fxRows"><tr><td colspan="6" style="text-align:center;padding:48px;color:#64748b;">Record a Base Currency Adjustment to correct fluctuations in exchange rates</td></tr></tbody></table>
     </div>
   `;
-  $('#fxPreviewBtn', root).addEventListener('click', async () => {
-    try {
-      const res = await api('accountant/currency-adjustment/preview/', { method: 'POST', body: {
-        currency: $('#fxCurrency', root).value,
-        adjustment_date: $('#fxDate', root).value,
-        exchange_rate: $('#fxRate', root).value
-      }});
-      const rows = res.results || [];
-      $('#fxPreview', root).innerHTML = rows.length ? `
-        <table class="tbl" style="width:100%;"><thead><tr><th>Account</th><th>Foreign Balance</th><th>Current Base Value</th><th>Adjusted Value</th><th>Gain/Loss</th></tr></thead>
-        <tbody>${rows.map(row => `<tr><td>${esc(row.account)}</td><td>${esc(row.foreign_balance)}</td><td>${esc(row.current_base_value)}</td><td>${esc(row.adjusted_base_value)}</td><td>${esc(row.gain_loss)}</td></tr>`).join('')}</tbody></table>
-        <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button type="button" class="btn p" id="fxPostBtn">Post Adjustment</button></div>
-      ` : '<div class="empty" style="padding:24px;">No eligible foreign-currency balances found.</div>';
-      $('#fxPostBtn', root)?.addEventListener('click', async () => {
-        await api('accountant/currency-adjustment/post/', { method: 'POST', body: {
-          currency: $('#fxCurrency', root).value,
-          adjustment_date: $('#fxDate', root).value,
-          exchange_rate: $('#fxRate', root).value
-        }});
-        toast('Currency adjustment posted.', 'ok');
-      });
-    } catch (error) {
-      $('#fxPreview', root).innerHTML = errBox(error.message || 'Unable to preview adjustment.', true);
-    }
+  $('#fxNewBtn', root).addEventListener('click', () => {
+    formModal({
+      title:'Base Currency Adjustment',
+      body:`
+        <div style="display:grid;gap:12px;">
+          <label class="zb-form-row fg">Currency*<select class="in" name="currency"><option value="">Select Currency</option><option value="AED">AED - UAE Dirham</option><option value="AUD">AUD - Australian Dollar</option><option value="CAD">CAD - Canadian Dollar</option><option value="CNY">CNY - Yuan Renminbi</option><option value="EUR">EUR - Euro</option><option value="GBP">GBP - Pound Sterling</option><option value="JPY">JPY - Japanese Yen</option><option value="USD">USD - United States Dollar</option><option value="INR">INR - Indian Rupee</option></select></label>
+          <label class="zb-form-row fg">Date of Adjustment*<input type="date" class="in" name="adjustment_date" value="${APP.today||''}" required></label>
+          <label class="zb-form-row fg">Exchange Rate*<input type="number" step="0.000001" min="0.000001" class="in" name="exchange_rate" required></label>
+          <label class="zb-form-row fg">Notes*<textarea class="in" name="notes" maxlength="500" required></textarea></label>
+        </div>
+      `,
+      submit:'Continue',
+      onSubmit: async d=>{
+        if(!d.currency||!d.adjustment_date||!d.exchange_rate||!d.notes) throw new ApiErr(400,{notes:'Currency, date, exchange rate and notes are required.'});
+        const res=await api('accountant/currency-adjustment/preview/',{method:'POST',body:{currency:d.currency,adjustment_date:d.adjustment_date,exchange_rate:d.exchange_rate}});
+        const rows=res.results||[];
+        const gainLoss=rows.reduce((sum,row)=>sum+Number(row.gain_loss||0),0);
+        if(!rows.length) throw new ApiErr(400,{currency:'No eligible foreign-currency balances found.'});
+        formModal({
+          title:'Review Currency Adjustment',
+          body:`<table class="tbl" style="width:100%;"><thead><tr><th>Account</th><th>Foreign Balance</th><th>Current Base Value</th><th>Adjusted Base Value</th><th>Gain/Loss</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(row.account)}</td><td>${esc(row.foreign_balance)}</td><td>${esc(row.current_base_value)}</td><td>${esc(row.adjusted_base_value)}</td><td>${esc(row.gain_loss)}</td></tr>`).join('')}</tbody></table><div style="margin-top:12px;font-weight:700;">Net Gain/Loss: ${inr(gainLoss)}</div>`,
+          submit:'Post Adjustment',
+          onSubmit:async()=>{await api('accountant/currency-adjustment/post/',{method:'POST',body:{currency:d.currency,adjustment_date:d.adjustment_date,exchange_rate:d.exchange_rate,notes:d.notes}});toast('Currency adjustment posted','ok');}
+        });
+      }
+    });
   });
 }
 
@@ -9558,21 +9635,22 @@ async function transactionLockingPage(root) {
     const cur = await api('locking/');
     if (!root.isConnected) return;
     $('#lock-container', root).innerHTML = `
-      <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
-        <div style="width:48px;height:48px;border-radius:12px;background:${cur.is_locked ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};display:grid;place-items:center;font-size:24px;">
-          ${cur.is_locked ? '🔒' : '🔓'}
-        </div>
-        <div>
-          <div style="font-size:18px;font-weight:700;">Status: ${cur.is_locked ? '<span style="color:var(--up);">Active · Period Locked</span>' : '<span style="color:var(--dn);">Unlocked</span>'}</div>
-          <div class="sub">${cur.is_locked ? `Transactions on or prior to <b>${fd(cur.lock_date)}</b> are protected from changes.` : 'All historical accounting dates remain open for modification.'}</div>
-        </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div><div style="font-size:18px;font-weight:700;">Negative Stock Locking</div><div class="sub">Allow or restrict transactions that create negative inventory.</div></div>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="negativeStockLockToggle" ${cur.allow_negative_stock?'checked':''}> Restrict negative stock</label>
       </div>
-      ${cur.is_locked ? `
-        <div class="note" style="border-left:3px solid var(--accent);background:var(--surface-glass);">
-          <b>Audit Enforcement:</b> Invoices, vendor bills, manual journals, and payment receipts dated on or before <b>${fd(cur.lock_date)}</b> cannot be created, updated, or deleted. Reason: <i>${esc(cur.reason)}</i>
-        </div>
-      ` : ''}
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;">
+        ${['Sales','Purchases','Banking','Accountant'].map(module => {
+          const moduleLock=cur.module_locks?.[module.toLowerCase()]||{};
+          return `<div class="card" style="padding:16px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div><b>${module}</b><div class="sub">${moduleLock.lock_date?`Locked through ${fd(moduleLock.lock_date)}`:'Not locked'}</div></div><button type="button" class="btn p" data-lock-module="${module.toLowerCase()}">${moduleLock.lock_date?'Update Lock':'Lock'}</button></div></div>`;
+        }).join('')}
+      </div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;"><button type="button" class="btn p" id="lockAllModulesBtn">Lock All Transactions At Once</button></div>
     `;
+    root.querySelectorAll('[data-lock-module]').forEach(button => {
+      button.addEventListener('click', () => lockDateModal(button.dataset.lockModule));
+    });
+    root.querySelector('#lockAllModulesBtn')?.addEventListener('click', () => lockDateModal('all'));
   } catch (e) { $('#lock-container', root).innerHTML = errBox(e.message, true); }
 }
 
@@ -11979,6 +12057,10 @@ if (typeof window !== 'undefined') {
   window.recentUpdates = recentUpdates;
   window.gstFilingPage = gstFilingPage;
   window.transactionLockingPage = transactionLockingPage;
+  window.bulkUpdatePage = bulkUpdatePage;
+  window.baseCurrencyAdjustmentPage = baseCurrencyAdjustmentPage;
+  window.budgetForm = budgetForm;
+  window.fixedAssetForm = fixedAssetForm;
   window.tenantAdminPage = tenantAdminPage;
   window.securityCompliancePage = securityCompliancePage;
 }

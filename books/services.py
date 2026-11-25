@@ -372,7 +372,8 @@ def ensure_default_transaction_series(org):
     """
     if not org:
         return None
-    from .models import TransactionSeries, DocumentNumberSeries
+    from .models import DocumentNumberPreference, TransactionSeries, DocumentNumberSeries
+    from django.db.models import Q
     def_groups = list(TransactionSeries.objects.filter(organization=org, is_default=True))
     if len(def_groups) > 1:
         default_group = def_groups[0]
@@ -401,22 +402,37 @@ def ensure_default_transaction_series(org):
                 is_active=True
             )
 
+    document_types = [item['key'] for item in SUPPORTED_TRANSACTION_TYPES]
+    existing_series = DocumentNumberSeries.objects.filter(
+        organization=org,
+        document_type__in=document_types,
+    ).filter(
+        Q(series_group=default_group) | Q(name=default_group.name)
+    )
+    series_by_type = {}
+    for doc_series in existing_series:
+        if (
+            doc_series.document_type not in series_by_type
+            or doc_series.series_group_id == default_group.pk
+        ):
+            series_by_type[doc_series.document_type] = doc_series
+    preferences = {
+        preference.document_type: preference
+        for preference in DocumentNumberPreference.objects.filter(
+            organization=org, document_type__in=document_types
+        )
+    }
+
     org_ns = getattr(org, 'number_series', None) or {}
     for item in SUPPORTED_TRANSACTION_TYPES:
         doc_key = item['key']
         pfx_code = item['pfx']
-        doc_series = DocumentNumberSeries.objects.filter(
-            organization=org, document_type=doc_key, series_group=default_group
-        ).first()
-        if not doc_series:
-            doc_series = DocumentNumberSeries.objects.filter(
-                organization=org, document_type=doc_key, name=default_group.name
-            ).first()
-            if doc_series:
-                doc_series.series_group = default_group
-                doc_series.is_default = default_group.is_default
-                doc_series.active = default_group.is_active
-                doc_series.save(update_fields=['series_group', 'is_default', 'active', 'updated_at'])
+        doc_series = series_by_type.get(doc_key)
+        if doc_series and doc_series.series_group_id != default_group.pk:
+            doc_series.series_group = default_group
+            doc_series.is_default = default_group.is_default
+            doc_series.active = default_group.is_active
+            doc_series.save(update_fields=['series_group', 'is_default', 'active', 'updated_at'])
         if not doc_series:
             configured_pfx = default_document_number_prefix(org, item['pfx'])
             configured_next = item['default_next']
@@ -426,8 +442,7 @@ def ensure_default_transaction_series(org):
                 configured_next = int(org_ns[pfx_code].get('next_sequence') or configured_next)
                 configured_pad = max(configured_pad, len(str(configured_next)))
 
-            from .models import DocumentNumberPreference
-            pref = DocumentNumberPreference.objects.filter(organization=org, document_type=doc_key).first()
+            pref = preferences.get(doc_key)
             if pref:
                 if pref.prefix:
                     configured_pfx = pref.prefix
@@ -510,7 +525,7 @@ def _series_context_matches(series_obj, context):
     return True
 
 
-def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None, allow_inactive=False):
+def _select_document_number_series(module_or_pfx, org=None, date=None, customer_type='', branch='', location='', gstin=None, series_id=None, series=None, user=None, business_location_id=None, allow_inactive=False, ensure_defaults=True):
     from .models import BusinessLocation, Organization, DocumentNumberSeries, TransactionSeries
     if isinstance(module_or_pfx, Organization):
         actual_org = module_or_pfx
@@ -521,7 +536,8 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
         org = Organization.get()
     if not org:
         return None
-    ensure_default_transaction_series(org)
+    if ensure_defaults:
+        ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
 
     def validate_explicit_series_location(series_obj):
@@ -714,7 +730,16 @@ def _series_numbering_scope(series_obj, org, branch='', customer_type='', party=
     branch_object = getattr(series_obj, 'business_location', None)
     if not branch_object:
         branch_object = getattr(getattr(series_obj, 'series_group', None), 'business_location', None)
-    if business_location_id and org:
+    if (
+        business_location_id
+        and org
+        and not (
+            branch_object
+            and str(branch_object.pk) == str(business_location_id)
+            and branch_object.organization_id == org.pk
+            and branch_object.location_type == Branch.LOCATION_TYPE_BUSINESS
+        )
+    ):
         branch_object = Branch.objects.filter(
             organization=org,
             pk=business_location_id,
@@ -790,7 +815,7 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
 
     org_code = org.get_code() if org else 'CONVO'
-    branch_val, _, branch_prefix, branch_token, _, customer_prefix = (
+    branch_val, _, _, branch_token, _, customer_prefix = (
         _series_numbering_scope(
             series_obj, org, branch=branch, customer_type=customer_type,
             party=party, business_location_id=business_location_id
@@ -821,18 +846,6 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     if not raw_pattern:
         raw_pattern = (getattr(series_obj, 'prefix', '') or '').strip()
     sep = separator if separator is not None else (getattr(series_obj, 'separator', '/') or '/')
-    if branch_prefix:
-        pattern_parts = [part for part in raw_pattern.replace('\\', '/').split('/') if part]
-        pattern_parts = [part for part in pattern_parts if part.upper() != branch_prefix]
-        if re.search(r'(?:\$\s*)?\{\s*BRANCH\s*\}|%\s*BRANCH\s*%', raw_pattern, re.IGNORECASE):
-            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
-        elif org_code.upper() in [part.upper() for part in pattern_parts]:
-            org_index = next(index for index, part in enumerate(pattern_parts) if part.upper() == org_code.upper())
-            pattern_parts.insert(org_index + 1, branch_prefix)
-            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
-        elif pattern_parts:
-            pattern_parts.insert(1 if len(pattern_parts) > 1 else len(pattern_parts), branch_prefix)
-            raw_pattern = sep.join(pattern_parts) if sep else '/'.join(pattern_parts)
     validate_document_number_format_pattern(raw_pattern)
 
     # Token mappings (case-insensitive keys handled below)
@@ -879,7 +892,7 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     return candidate
 
 
-def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None, branch='', customer_type='', party=None, business_location_id=None):
+def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None, branch='', customer_type='', party=None, business_location_id=None, create=True, counter_cache=None):
     """Return the persisted counter for this series and date's configured reset period."""
     from .models import DocumentNumberSeriesCounter
 
@@ -897,23 +910,43 @@ def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None, bra
         and _series_pattern_includes_financial_year(series_obj)
         else '*'
     )
-    scoped_counters = series_obj.counters.filter(
-        branch_prefix=branch_scope,
-        customer_type_prefix=customer_scope,
-    )
-    counter = scoped_counters.filter(financial_year=counter_year).first()
+    if counter_cache is None:
+        scoped_counters = series_obj.counters.filter(
+            branch_prefix=branch_scope,
+            customer_type_prefix=customer_scope,
+        )
+        counter = scoped_counters.filter(financial_year=counter_year).first()
+        has_prior_counter = scoped_counters.exists() if not counter else True
+    else:
+        scoped_counters = [
+            item for item in counter_cache
+            if item.branch_prefix == branch_scope
+            and item.customer_type_prefix == customer_scope
+        ]
+        counter = next(
+            (item for item in scoped_counters if item.financial_year == counter_year),
+            None,
+        )
+        has_prior_counter = bool(scoped_counters)
     if counter:
         return counter
 
     # Keep the existing next number for the current period, but start a new
     # fiscal-year counter from its configured starting value.
     current_year = get_financial_year(org=org)
-    has_prior_counter = scoped_counters.exists()
     initial_next = (
         series_obj.next_number
         if counter_year == '*' or (year == current_year and not has_prior_counter)
         else series_obj.starting_number
     )
+    if not create:
+        return DocumentNumberSeriesCounter(
+            series=series_obj,
+            financial_year=counter_year,
+            branch_prefix=branch_scope,
+            customer_type_prefix=customer_scope,
+            next_number=max(series_obj.starting_number, initial_next),
+        )
     counter, _ = DocumentNumberSeriesCounter.objects.get_or_create(
         series=series_obj,
         financial_year=counter_year,
@@ -945,7 +978,8 @@ def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, 
         series_obj = _select_document_number_series(
             module_or_pfx, org, date=date, customer_type=customer_type,
             branch=branch, location=location, gstin=gstin, series_id=series_id,
-            series=series, user=user, business_location_id=business_location_id
+            series=series, user=user, business_location_id=business_location_id,
+            ensure_defaults=False,
         )
         if not series_obj:
             raise ApiError(400, f'No active numbering series found for {doc_type}.')
@@ -1045,40 +1079,58 @@ def next_document_number(module_or_pfx, org=None, date=None, series=None, custom
             time.sleep(0.01 * (2 ** attempt))
 
 
-def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None, allow_inactive=False):
+def preview_document_number(module_or_pfx, org=None, date=None, series=None, customer_type='', branch='', location='', gstin=None, series_id=None, user=None, use_configured_series=True, business_location_id=None, party=None, format_pattern=None, separator=None, allow_inactive=False, ensure_defaults=True, series_obj=None, preference_map=None):
     """
     Preview the next document number without incrementing the sequence counter.
     """
     from .models import Organization, DocumentNumberAllocation
     if not org:
         org = Organization.get()
-    ensure_default_transaction_series(org)
+    if ensure_defaults:
+        ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
     if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES:
         customer_type = _customer_type_from_party(party) or customer_type
 
-    series_obj = _select_document_number_series(
-        module_or_pfx, org, date=date, customer_type=customer_type,
-        branch=branch, location=location, gstin=gstin, series_id=series_id,
-        series=series, user=user, business_location_id=business_location_id,
-        allow_inactive=allow_inactive
-    )
+    if series_obj is None:
+        series_obj = _select_document_number_series(
+            module_or_pfx, org, date=date, customer_type=customer_type,
+            branch=branch, location=location, gstin=gstin, series_id=series_id,
+            series=series, user=user, business_location_id=business_location_id,
+            allow_inactive=allow_inactive, ensure_defaults=False
+        )
+    elif (
+        series_obj.organization_id != org.pk
+        or series_obj.document_type != doc_type
+    ):
+        raise ApiError(400, 'The selected numbering series is not available for this organization and document type.')
+    elif not series_obj.active and not allow_inactive:
+        raise ApiError(400, f'Transaction series "{series_obj.name}" is inactive.')
+    elif (
+        series_obj.business_location_id
+        and str(series_obj.business_location_id) != str(business_location_id or '')
+    ):
+        raise ApiError(400, 'The selected transaction series belongs to a different business location.')
     if not series_obj:
         return {'next_number': '', 'formatted': '', 'prefix': '', 'format_pattern': '', 'separator': '/', 'next_sequence': 1}
 
-    from .models import DocumentNumberPreference
-    pref = DocumentNumberPreference.objects.filter(
-        organization=org, document_type=doc_type, transaction_series=series_obj.name
-    ).first()
-    if not pref:
+    if preference_map is None:
+        from .models import DocumentNumberPreference
         pref = DocumentNumberPreference.objects.filter(
-            organization=org, document_type=doc_type, transaction_series=''
+            organization=org, document_type=doc_type, transaction_series=series_obj.name
         ).first()
+        if not pref:
+            pref = DocumentNumberPreference.objects.filter(
+                organization=org, document_type=doc_type, transaction_series=''
+            ).first()
+    else:
+        pref = preference_map.get(doc_type)
     if pref and not pref.auto_generate:
         counter = _series_counter_for_date(
             series_obj, org, date=date, module_or_pfx=module_or_pfx,
             branch=branch, customer_type=customer_type, party=party,
             business_location_id=business_location_id,
+            create=False,
         )
         return {
             'next_number': '',
@@ -1109,6 +1161,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         series_obj, org, date=date, module_or_pfx=module_or_pfx,
         branch=branch, customer_type=customer_type, party=party,
         business_location_id=business_location_id,
+        create=False,
     )
     val = counter.next_number
     while True:
@@ -1153,6 +1206,143 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
                 'org_code': org.get_code(),
             }
         val += 1
+
+
+def preview_document_numbers_for_series(series_by_type, org, preference_map=None, customer_type='b2b'):
+    """Build Settings previews while batching counter and collision lookups."""
+    from django.db.models import Q
+    from .models import DocumentNumberAllocation, DocumentNumberSeriesCounter
+
+    preferences = preference_map or {}
+    financial_year = get_financial_year(org=org)
+    series_ids = [series.pk for series in series_by_type.values()]
+    counters_by_series = {}
+    for counter in DocumentNumberSeriesCounter.objects.filter(series_id__in=series_ids):
+        counters_by_series.setdefault(counter.series_id, []).append(counter)
+
+    sequences = {}
+    previews = {}
+    for item in SUPPORTED_TRANSACTION_TYPES:
+        doc_type = item['key']
+        series_obj = series_by_type.get(doc_type)
+        if not series_obj:
+            continue
+        if series_obj.organization_id != org.pk or series_obj.document_type != doc_type:
+            raise ApiError(400, 'A transaction series is not available for this organization and document type.')
+        item_customer_type = customer_type if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES else ''
+        counter = _series_counter_for_date(
+            series_obj, org, module_or_pfx=item['pfx'],
+            branch=series_obj.branch, customer_type=item_customer_type,
+            business_location_id=series_obj.business_location_id,
+            create=False, counter_cache=counters_by_series.get(series_obj.pk, []),
+        )
+        sequence = counter.next_number
+        preference = preferences.get(doc_type)
+        if preference and not preference.auto_generate:
+            previews[doc_type] = {
+                'formatted': '',
+                'next_sequence': sequence,
+                'financial_year': financial_year,
+            }
+            continue
+        sequences[doc_type] = sequence
+
+    batch_size = 32
+    type_config_by_key = {item['key']: item for item in SUPPORTED_TRANSACTION_TYPES}
+    model_config_by_type = {}
+    for item in SUPPORTED_TRANSACTION_TYPES:
+        if item['key'] in sequences:
+            config = get_document_module_config(item['pfx'])
+            model_config_by_type[item['key']] = (
+                config.get('model'), config.get('field', 'number')
+            )
+
+    while sequences:
+        batch_candidates = {}
+        batch_errors = {}
+        for doc_type, sequence in sequences.items():
+            item = type_config_by_key[doc_type]
+            series_obj = series_by_type[doc_type]
+            item_customer_type = customer_type if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES else ''
+            batch_candidates[doc_type] = []
+            for value in range(sequence, sequence + batch_size):
+                try:
+                    candidate = _format_series_number(
+                        series_obj, value, org, customer_type=item_customer_type,
+                        branch=series_obj.branch, location=series_obj.location,
+                        business_location_id=series_obj.business_location_id,
+                    )
+                except ApiError as error:
+                    if value == sequence:
+                        raise
+                    batch_errors[doc_type] = error
+                    break
+                batch_candidates[doc_type].append((value, candidate))
+
+        document_types = list(batch_candidates)
+        candidate_numbers = {
+            candidate
+            for entries in batch_candidates.values()
+            for _, candidate in entries
+        }
+        allocated = set(
+            DocumentNumberAllocation.objects.filter(
+                organization=org,
+                document_type__in=document_types,
+                number__in=candidate_numbers,
+            ).values_list('document_type', 'number')
+        )
+
+        model_groups = {}
+        for doc_type, entries in batch_candidates.items():
+            model, field = model_config_by_type[doc_type]
+            if model and field:
+                organization_scoped = (
+                    not model._meta.get_field(field).unique
+                    and hasattr(model, 'organization')
+                )
+                key = (model, field, organization_scoped)
+                model_groups.setdefault(key, set()).update(
+                    candidate for _, candidate in entries
+                )
+
+        existing_by_group = {}
+        for (model, field, organization_scoped), numbers in model_groups.items():
+            queryset = model.objects.filter(**{f'{field}__in': numbers})
+            if organization_scoped:
+                queryset = queryset.filter(organization=org)
+            existing_by_group[(model, field, organization_scoped)] = set(
+                queryset.values_list(field, flat=True)
+            )
+
+        for doc_type, entries in batch_candidates.items():
+            model, field = model_config_by_type[doc_type]
+            organization_scoped = bool(
+                model and field
+                and not model._meta.get_field(field).unique
+                and hasattr(model, 'organization')
+            )
+            existing = existing_by_group.get(
+                (model, field, organization_scoped), set()
+            )
+            for sequence, candidate in entries:
+                if (
+                    (doc_type, candidate) not in allocated
+                    and candidate not in existing
+                ):
+                    previews[doc_type] = {
+                        'formatted': candidate,
+                        'next_sequence': sequence,
+                        'financial_year': financial_year,
+                    }
+                    del sequences[doc_type]
+                    break
+            else:
+                if doc_type in batch_errors:
+                    raise batch_errors[doc_type]
+                sequences[doc_type] += batch_size
+
+    return previews
 
 
 def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, series=None, series_id=None, branch='', customer_type='', party=None, business_location_id=None):

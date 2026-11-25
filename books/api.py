@@ -14843,6 +14843,7 @@ def settings_all_view(request):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_settings(org)
+    services.ensure_default_transaction_series(org)
 
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -14868,7 +14869,9 @@ def settings_all_view(request):
         ('DC', 'Delivery Challan'), ('ITEM', 'Items'), ('ST', 'Stock Transfer'),
         ('EXP', 'Expense'), ('ADJ', 'Stock Adjustment')
     ]:
-        prev = services.preview_document_number(mod_key, org=org, use_configured_series=False)
+        prev = services.preview_document_number(
+            mod_key, org=org, use_configured_series=False, ensure_defaults=False
+        )
         number_series.append({
             'module': mod_key,
             'label': label,
@@ -15957,6 +15960,11 @@ def settings_locations_view(request, location_id=None):
                 or (conflicting_default is not None and conflicting_default.exists())
             ):
                 raise ApiError(409, 'The business location conflicts with another location or default setting.')
+            conflicting_prefix = queryset.filter(prefix__iexact=prefix) if prefix else None
+            if conflicting_prefix is not None and location.pk:
+                conflicting_prefix = conflicting_prefix.exclude(pk=location.pk)
+            if conflicting_prefix is not None and conflicting_prefix.exists():
+                raise ApiError(409, 'This branch prefix is already used by another branch.')
             raise
 
         location.assigned_users.set(assigned_users)
@@ -16362,24 +16370,33 @@ def settings_transaction_series_view(request, series_id=None):
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     services.ensure_default_transaction_series(org)
-    from .models import TransactionSeries, DocumentNumberSeries
+    from .models import DocumentNumberPreference, TransactionSeries, DocumentNumberSeries
     supported_type_keys = {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}
 
     if request.method == 'GET':
-        series_qs = TransactionSeries.objects.filter(organization=org).order_by('-is_default', 'name')
-        if not series_qs.exists():
+        series_qs = TransactionSeries.objects.filter(organization=org).select_related(
+            'business_location'
+        ).order_by('-is_default', 'name')
+        series_records = list(series_qs)
+        if not series_records:
             services.ensure_default_transaction_series(org)
-            series_qs = TransactionSeries.objects.filter(organization=org).order_by('-is_default', 'name')
+            series_records = list(series_qs)
 
         active_id = series_id or request.GET.get('series_id')
         current_series = None
         if active_id:
-            current_series = series_qs.filter(pk=active_id).first()
+            current_series = next(
+                (item for item in series_records if str(item.pk) == str(active_id)),
+                None,
+            )
         if not current_series:
-            current_series = series_qs.filter(is_default=True).first() or series_qs.first()
+            current_series = next(
+                (item for item in series_records if item.is_default),
+                series_records[0] if series_records else None,
+            )
 
         series_list = []
-        for s in series_qs:
+        for s in series_records:
             series_list.append({
                 'id': s.pk,
                 'name': s.name,
@@ -16395,15 +16412,39 @@ def settings_transaction_series_view(request, series_id=None):
 
         items = []
         if current_series:
+            series_item_map = {
+                item.document_type: item
+                for item in DocumentNumberSeries.objects.filter(
+                    organization=org, series_group=current_series
+                ).select_related('business_location', 'series_group__business_location')
+            }
+            legacy_item_map = {
+                item.document_type: item
+                for item in DocumentNumberSeries.objects.filter(
+                    organization=org,
+                    name=current_series.name,
+                    document_type__in=supported_type_keys,
+                ).exclude(series_group=current_series).select_related(
+                    'business_location', 'series_group__business_location'
+                )
+            }
+            preference_rows = DocumentNumberPreference.objects.filter(
+                organization=org,
+                document_type__in=supported_type_keys,
+            ).filter(
+                Q(transaction_series=current_series.name) | Q(transaction_series='')
+            )
+            preference_map = {}
+            for preference in preference_rows:
+                if (
+                    preference.document_type not in preference_map
+                    or preference.transaction_series == current_series.name
+                ):
+                    preference_map[preference.document_type] = preference
+
             for t in services.SUPPORTED_TRANSACTION_TYPES:
                 doc_key = t['key']
-                s_item = DocumentNumberSeries.objects.filter(
-                    organization=org, series_group=current_series, document_type=doc_key
-                ).first()
-                if not s_item:
-                    s_item = DocumentNumberSeries.objects.filter(
-                        organization=org, name=current_series.name, document_type=doc_key
-                    ).first()
+                s_item = series_item_map.get(doc_key) or legacy_item_map.get(doc_key)
                 if not s_item:
                     s_item = DocumentNumberSeries.objects.create(
                         organization=org,
@@ -16420,13 +16461,15 @@ def settings_transaction_series_view(request, series_id=None):
                         location=current_series.location,
                         business_location=current_series.business_location,
                     )
-                prev = services.preview_document_number(
-                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk,
-                    customer_type='b2b', branch=s_item.branch,
-                    location=s_item.location,
-                    business_location_id=s_item.business_location_id,
-                    allow_inactive=True
-                )
+                series_item_map[doc_key] = s_item
+
+            previews = services.preview_document_numbers_for_series(
+                series_item_map, org, preference_map=preference_map
+            )
+            for t in services.SUPPORTED_TRANSACTION_TYPES:
+                doc_key = t['key']
+                s_item = series_item_map[doc_key]
+                prev = previews.get(doc_key, {})
                 current_next = max(int(t['default_next']), int(prev.get('next_sequence') or s_item.next_number))
                 items.append({
                     'document_type': doc_key,

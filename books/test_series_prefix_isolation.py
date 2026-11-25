@@ -1,11 +1,13 @@
 import json
 from decimal import Decimal
 from django.test import TestCase, Client
+from django.test.utils import CaptureQueriesContext
+from django.db import connection
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from books.models import (
     Organization, UserProfile, TransactionSeries, DocumentNumberSeries,
-    DocumentNumberSeriesCounter, Invoice
+    DocumentNumberSeriesCounter, DocumentNumberAllocation, Invoice
 )
 from books import services
 from books.cleaning import ApiError
@@ -124,6 +126,75 @@ class TransactionSeriesPrefixIsolationTests(TestCase):
         self.assertEqual(default_inv.prefix, original_prefix)
         self.assertEqual(default_inv.next_number, original_next)
 
+    def test_settings_series_get_avoids_repeated_default_and_preview_writes(self):
+        counter_count = DocumentNumberSeriesCounter.objects.count()
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get('/api/settings/transaction-series/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertLess(len(queries), 100)
+        self.assertEqual(DocumentNumberSeriesCounter.objects.count(), counter_count)
+        self.assertTrue(all(item['financial_year'] for item in response.json()['items']))
+
+    def test_bulk_settings_preview_matches_individual_preview_after_allocation(self):
+        group = TransactionSeries.objects.get(organization=self.org, is_default=True)
+        series_by_type = {
+            item.document_type: item
+            for item in DocumentNumberSeries.objects.filter(
+                organization=self.org, series_group=group
+            ).select_related('business_location', 'series_group__business_location')
+        }
+        invoice_series = series_by_type['invoices']
+        first_preview = services.preview_document_number(
+            'INV', org=self.org, series_obj=invoice_series, ensure_defaults=False
+        )
+        DocumentNumberAllocation.objects.create(
+            organization=self.org,
+            series=invoice_series,
+            document_type='invoices',
+            number=first_preview['formatted'],
+        )
+
+        bulk_previews = services.preview_document_numbers_for_series(
+            series_by_type, self.org
+        )
+        individual_preview = services.preview_document_number(
+            'INV', org=self.org, series_obj=invoice_series, ensure_defaults=False
+        )
+
+        self.assertEqual(
+            bulk_previews['invoices']['formatted'],
+            individual_preview['formatted'],
+        )
+        self.assertEqual(
+            bulk_previews['invoices']['next_sequence'],
+            individual_preview['next_sequence'],
+        )
+
+    def test_bulk_preview_ignores_invalid_later_candidates_when_first_is_available(self):
+        group = TransactionSeries.objects.create(
+            organization=self.org, name='Boundary Preview', is_default=False
+        )
+        invoice_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='invoices',
+            prefix='X' * 58,
+            separator='/',
+            starting_number=1,
+            next_number=1,
+            padding=1,
+            active=True,
+        )
+
+        preview = services.preview_document_numbers_for_series(
+            {'invoices': invoice_series}, self.org
+        )['invoices']
+
+        self.assertEqual(preview['formatted'], f"{'X' * 58}/1")
+        self.assertEqual(preview['next_sequence'], 1)
+
     def test_next_number_sequence_isolation_across_series(self):
         """
         Verify that generating a transaction number using Series KTM does NOT increment
@@ -166,6 +237,39 @@ class TransactionSeriesPrefixIsolationTests(TestCase):
         num_b2b = services.next_document_number('INV', org=self.org, series_id=b2b_id)
         self.assertTrue(num_b2b.startswith('B2B-'))
         self.assertTrue(num_b2b.endswith('00001'))
+
+    def test_series_name_is_internal_and_does_not_change_transaction_prefix(self):
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='KM',
+            is_default=False,
+            is_active=True,
+        )
+        invoice_series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            series_group=group,
+            name=group.name,
+            document_type='invoices',
+            prefix='INV',
+            separator='/',
+            starting_number=1,
+            next_number=1234,
+            padding=1,
+            active=True,
+        )
+
+        first = services.next_document_number(
+            'invoices', org=self.org, series_id=group.pk
+        )
+        second = services.next_document_number(
+            'invoices', org=self.org, series_id=group.pk
+        )
+
+        self.assertEqual(first, 'INV/1234')
+        self.assertEqual(second, 'INV/1235')
+        self.assertNotIn('KM', first)
+        invoice_series.refresh_from_db()
+        self.assertEqual(invoice_series.next_number, 1236)
 
     def test_default_series_validation(self):
         """

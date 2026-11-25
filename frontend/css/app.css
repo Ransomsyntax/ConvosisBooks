@@ -2059,6 +2059,8 @@ body.in-settings .pg {
 .settings-location-editor-footer {
   display: flex;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 100001;
   align-items: center;
   gap: 10px;
   padding: 12px 24px;

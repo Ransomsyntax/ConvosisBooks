@@ -3730,78 +3730,13 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     const select = modal.querySelector('#newSeriesLocation');
     if (!select) return;
     select.innerHTML = '<option value="">All branches</option>' + (Array.isArray(locations) ? locations : []).map(location =>
-      `<option value="${location.id}" data-prefix="${esc(location.prefix || '')}">${esc(location.name)}</option>`
+      `<option value="${location.id}">${esc(location.name)}</option>`
     ).join('');
-    let selectedBranchPrefix = '';
-    const applySelectedBranchPrefix = () => {
-      const selected = select.options[select.selectedIndex];
-      const nextPrefix = (selected?.dataset.prefix || '').trim().toUpperCase();
-      pfxInputs.forEach(input => {
-        if (input.dataset.userEdited === '1') return;
-        const basePrefix = input.dataset.basePrefix || '';
-        let segments = basePrefix.replace(/\\/g, '/').split('/').filter(Boolean);
-        if (selectedBranchPrefix) {
-          segments = segments.filter(segment => segment.toUpperCase() !== selectedBranchPrefix);
-        }
-        if (nextPrefix) {
-          const orgSegmentIndex = segments.findIndex(segment => /^[A-Z0-9_-]+$/i.test(segment));
-          if (orgSegmentIndex >= 0) {
-            segments.splice(orgSegmentIndex + 1, 0, nextPrefix);
-          } else {
-            segments.unshift(nextPrefix);
-          }
-        }
-        input.value = segments.join('/');
-      });
-      selectedBranchPrefix = nextPrefix;
-    };
-    select.addEventListener('change', applySelectedBranchPrefix);
   }).catch(error => {
     toast(error.message || 'Could not load branches for the transaction series.', 'error');
   });
 
   const nameInput = modal.querySelector('#newSeriesName');
-  const pfxInputs = modal.querySelectorAll('.s-pfx');
-
-  function deriveSeriesIdentifier(name) {
-    const raw = (name || '').trim();
-    if (!raw || raw.toLowerCase().includes('default')) return '';
-    const words = raw.split(/\s+/).filter(Boolean);
-    if (words.length === 1) {
-      return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
-    }
-    const initials = words.map(w => w[0]).join('').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    if (initials.length >= 2 && initials.length <= 5) {
-      return initials;
-    }
-    return words[0].replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
-  }
-
-  // Pure function: generates prefix from immutable basePrefix and current series identifier
-  const applyPrefixUpdates = () => {
-    const seriesId = deriveSeriesIdentifier(nameInput.value);
-    pfxInputs.forEach(input => {
-      if (input.dataset.userEdited === '1') return;
-      const basePrefix = input.dataset.basePrefix || '';
-      input.value = seriesId ? `${seriesId}-${basePrefix}` : basePrefix;
-    });
-  };
-
-  let updateTimer = null;
-  nameInput.addEventListener('input', () => {
-    if (updateTimer) clearTimeout(updateTimer);
-    updateTimer = setTimeout(applyPrefixUpdates, 50);
-  });
-  nameInput.addEventListener('blur', () => {
-    if (updateTimer) clearTimeout(updateTimer);
-    applyPrefixUpdates();
-  });
-
-  pfxInputs.forEach(inp => {
-    inp.addEventListener('input', () => {
-      inp.dataset.userEdited = '1';
-    });
-  });
 
   modal.querySelectorAll('[data-configure-new-item]').forEach(button => {
     button.addEventListener('click', () => {
@@ -3821,7 +3756,6 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
           Object.assign(item, updated);
           const prefixInput = row.querySelector('.s-pfx');
           prefixInput.value = updated.prefix;
-          prefixInput.dataset.userEdited = '1';
           row.querySelector('.s-nxt').value = String(updated.next_number).padStart(updated.padding || 1, '0');
           button.textContent = 'Configured';
         }

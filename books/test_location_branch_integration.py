@@ -180,7 +180,7 @@ class LocationBranchIntegrationTests(TestCase):
             name='Ransom Kochi Invoice Series',
             document_type='invoices',
             prefix='LOC/INV/%FY%',
-            format_pattern='LOC/INV/%FY%/%SEQUENCE%',
+            format_pattern='LOC/{BRANCH}/INV/{FY}/{SEQUENCE}',
             next_number=1,
             padding=5,
             active=True,
@@ -209,7 +209,8 @@ class LocationBranchIntegrationTests(TestCase):
             business_location_id=created_branch_id,
             allow_inactive=True,
         )
-        self.assertTrue(preview['formatted'].startswith('LOC/KOCHI/INV/26-27/'))
+        self.assertEqual(preview['formatted'], 'LOC/KOCHI/INV/26-27/00001')
+        self.assertEqual(preview['branch'], 'Ransom Kochi')
 
         duplicate = self.post_json('/api/settings/branches/', {
             'name': 'Another Kochi Branch',

@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from books.models import (
     Organization, UserProfile, Customer, Vendor,
-    TransactionSeries, DocumentNumberSeries, DocumentNumberSeriesCounter, DocumentNumberAllocation
+    Branch, TransactionSeries, DocumentNumberSeries, DocumentNumberSeriesCounter, DocumentNumberAllocation
 )
 from books import services
 
@@ -72,9 +72,9 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         series.format_pattern = 'INV/{CUSTOMERTYPE}/{FY}/{SEQUENCE}'
         series.save()
         res2_b2b = services._format_series_number(series, 1, self.org, customer_type='b2b')
-        self.assertEqual(res2_b2b, f'INV/B2B/{fy}/00001')
+        self.assertEqual(res2_b2b, f'INV/D/{fy}/00001')
         res2_b2c = services._format_series_number(series, 2, self.org, customer_type='b2c')
-        self.assertEqual(res2_b2c, f'INV/B2C/{fy}/00002')
+        self.assertEqual(res2_b2c, f'INV/C/{fy}/00002')
 
         # Combination 3: INV/{LOCATION}/{FY}/{SEQUENCE}
         series.format_pattern = 'INV/{LOCATION}/{FY}/{SEQUENCE}'
@@ -86,7 +86,7 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         series.format_pattern = 'INV/{CUSTOMERTYPE}/{LOCATION}/{FY}/{SEQUENCE}'
         series.save()
         res4 = services._format_series_number(series, 1, self.org, customer_type='b2b', location='KOTTAYAM')
-        self.assertEqual(res4, f'INV/B2B/KOTTAYAM/{fy}/00001')
+        self.assertEqual(res4, f'INV/D/KOTTAYAM/{fy}/00001')
 
         # Combination 5: {ORG}/INV/{BRANCH}/{FY}/{SEQUENCE}
         series.format_pattern = '{ORG}/INV/{BRANCH}/{FY}/{SEQUENCE}'
@@ -98,7 +98,7 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         series.format_pattern = 'INV/{FY}/{CUSTOMERTYPE}/{LOCATION}/{SEQUENCE}'
         series.save()
         res6 = services._format_series_number(series, 1, self.org, customer_type='b2b', location='KOTTAYAM')
-        self.assertEqual(res6, f'INV/{fy}/B2B/KOTTAYAM/00001')
+        self.assertEqual(res6, f'INV/{fy}/D/KOTTAYAM/00001')
 
     def test_dynamic_data_extraction_from_party_and_branch(self):
         """Verify dynamic placeholder extraction from Customer model and location attributes."""
@@ -113,13 +113,13 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         num_b2b = services.next_document_number(
             'invoices', org=self.org, party=self.b2b_customer, branch='TVM'
         )
-        self.assertEqual(num_b2b, f'INV/B2B/KOTTAYAM/{fy}/00001')
+        self.assertEqual(num_b2b, f'INV/D/KOTTAYAM/{fy}/00001')
 
         # Generate number using party John Doe (B2C, Kochi)
         num_b2c = services.next_document_number(
             'invoices', org=self.org, party=self.b2c_customer, branch='TVM'
         )
-        self.assertEqual(num_b2c, f'INV/B2C/KOCHI/{fy}/00002')
+        self.assertEqual(num_b2c, f'INV/C/KOCHI/{fy}/00001')
 
     def test_separator_variations(self):
         """Verify formatting with hyphen, underscore, slash, and custom separators."""
@@ -133,21 +133,21 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         series.separator = '-'
         series.save()
         res_hyphen = services._format_series_number(series, 5, self.org, customer_type='b2b')
-        self.assertEqual(res_hyphen, f'INV-B2B-{fy}-00005')
+        self.assertEqual(res_hyphen, f'INV-D-{fy}-00005')
 
         # Underscore separator
         series.format_pattern = 'INV_{CUSTOMERTYPE}_{FY}_{SEQUENCE}'
         series.separator = '_'
         series.save()
         res_underscore = services._format_series_number(series, 8, self.org, customer_type='b2c')
-        self.assertEqual(res_underscore, f'INV_B2C_{fy}_00008')
+        self.assertEqual(res_underscore, f'INV_C_{fy}_00008')
 
         # Implicit sequence append with custom separator
         series.format_pattern = 'INV-{CUSTOMERTYPE}'
         series.separator = '-'
         series.save()
         res_append = services._format_series_number(series, 10, self.org, customer_type='b2b')
-        self.assertEqual(res_append, 'INV-B2B-00010')
+        self.assertEqual(res_append, 'INV-D-00010')
 
     def test_case_insensitive_placeholders_and_calendar_tokens(self):
         """Verify that lowercase and mixed case placeholders work identically, along with {YEAR} and {MONTH}."""
@@ -162,7 +162,48 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         series.save()
 
         res = services._format_series_number(series, 1, self.org, customer_type='b2b')
-        self.assertEqual(res, f'INV/B2B/{yr}/{mo}/00001')
+        self.assertEqual(res, f'INV/D/{yr}/{mo}/00001')
+
+    def test_scoped_sequences_are_independent_by_branch_and_customer_prefix(self):
+        series = DocumentNumberSeries.objects.filter(
+            organization=self.org, document_type='invoices', is_default=True
+        ).first()
+        series.format_pattern = '{BRANCH}{CUSTOMERTYPE}-{SEQUENCE}'
+        series.padding = 3
+        series.b2b_prefix = 'D'
+        series.b2c_prefix = 'C'
+        series.save()
+        branch_t = Branch.objects.create(
+            organization=self.org, name='Thiruvananthapuram', prefix='T'
+        )
+        branch_k = Branch.objects.create(
+            organization=self.org, name='Kochi', prefix='K'
+        )
+
+        def generate(branch, party):
+            return services.next_document_number(
+                'invoices', org=self.org, series=series.name,
+                branch=branch.name, business_location_id=branch.pk, party=party,
+            )
+
+        self.assertEqual(generate(branch_t, self.b2b_customer), 'TD-001')
+        self.assertEqual(generate(branch_t, self.b2c_customer), 'TC-001')
+        self.assertEqual(generate(branch_t, self.b2b_customer), 'TD-002')
+        self.assertEqual(generate(branch_k, self.b2b_customer), 'KD-001')
+
+        scopes = set(series.counters.values_list('branch_prefix', 'customer_type_prefix'))
+        self.assertEqual(scopes, {('T', 'D'), ('T', 'C'), ('K', 'D')})
+
+    def test_customer_type_placeholder_is_empty_without_customer_context(self):
+        series = DocumentNumberSeries.objects.filter(
+            organization=self.org, document_type='invoices', is_default=True
+        ).first()
+        series.format_pattern = 'INV-{CUSTOMERTYPE}-{SEQUENCE}'
+        series.separator = '-'
+        series.save()
+
+        number = services._format_series_number(series, 1, self.org)
+        self.assertEqual(number, 'INV-00001')
 
     def test_multi_series_isolation_with_custom_formats(self):
         """Ensure multiple series maintain distinct formats, prefixes, and sequence counters."""
@@ -278,13 +319,36 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         self.assertIsNotNone(inv_item)
         self.assertIn('format_pattern', inv_item)
         self.assertIn('separator', inv_item)
+        curr_id = data['current_series']['id']
+
+        # A document type can retain a location-specific legacy configuration
+        # even when the parent series has no branch assigned.
+        location = Branch.objects.create(
+            organization=self.org, name='Series Preview Branch', prefix='SP'
+        )
+        bank_deposit_series = DocumentNumberSeries.objects.get(
+            organization=self.org, document_type='bank_deposits',
+            series_group_id=curr_id,
+        )
+        bank_deposit_series.business_location = location
+        bank_deposit_series.branch = location.name
+        bank_deposit_series.location = location.name
+        bank_deposit_series.save(update_fields=['business_location', 'branch', 'location'])
+        scoped_res = client.get('/api/settings/transaction-series/')
+        self.assertEqual(scoped_res.status_code, 200, scoped_res.content)
+        scoped_item = next(
+            item for item in scoped_res.json()['items']
+            if item['document_type'] == 'bank_deposits'
+        )
+        self.assertTrue(scoped_item['formatted'])
 
         # PUT series update with custom format pattern and hyphen separator
-        curr_id = data['current_series']['id']
         update_payload = {
             'items': [{
                 'document_type': 'invoices',
                 'prefix': 'INV',
+                'b2b_prefix': 'BUSINESS',
+                'b2c_prefix': 'RETAIL',
                 'format_pattern': 'INV-{CUSTOMERTYPE}-{FY}-{SEQUENCE}',
                 'separator': '-',
                 'next_number': 10,
@@ -297,5 +361,7 @@ class FlexibleTransactionNumberSeriesTests(TestCase):
         # Verify persisted format pattern
         inv_series = DocumentNumberSeries.objects.filter(organization=self.org, document_type='invoices', series_group_id=curr_id).first()
         self.assertEqual(inv_series.format_pattern, 'INV-{CUSTOMERTYPE}-{FY}-{SEQUENCE}')
+        self.assertEqual(inv_series.b2b_prefix, 'BUSINESS')
+        self.assertEqual(inv_series.b2c_prefix, 'RETAIL')
         self.assertEqual(inv_series.separator, '-')
         self.assertEqual(inv_series.next_number, 10)

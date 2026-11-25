@@ -677,7 +677,98 @@ def _select_document_number_series(module_or_pfx, org=None, date=None, customer_
     )
 
 
-def _format_series_number(series_obj, value, org, date=None, branch='', location='', gstin=None, customer_type='', party=None, format_pattern=None, separator=None):
+CUSTOMER_NUMBER_DOCUMENT_TYPES = {
+    'invoices',
+    'recurring_invoices',
+    'retainer_invoices',
+    'sales_orders',
+    'quotes',
+    'credit_notes',
+    'payments_received',
+    'delivery_challans',
+}
+
+
+def _customer_type_from_party(party):
+    if not party:
+        return ''
+    party_type = str(getattr(party, 'customer_type', '') or '').strip().lower()
+    if party_type in ('b2b', 'business', 'registered') or getattr(party, 'gstin', ''):
+        return 'b2b'
+    if party_type in ('b2c', 'individual', 'consumer'):
+        return 'b2c'
+    return ''
+
+
+def _series_numbering_scope(series_obj, org, branch='', customer_type='', party=None, business_location_id=None):
+    import re
+    from .models import Branch
+
+    doc_type = str(getattr(series_obj, 'document_type', '') or '').strip().lower()
+    branch_value = str(
+        branch
+        or getattr(series_obj, 'branch', '')
+        or getattr(getattr(series_obj, 'series_group', None), 'branch', '')
+        or ''
+    ).strip()
+    branch_object = getattr(series_obj, 'business_location', None)
+    if not branch_object:
+        branch_object = getattr(getattr(series_obj, 'series_group', None), 'business_location', None)
+    if business_location_id and org:
+        branch_object = Branch.objects.filter(
+            organization=org,
+            pk=business_location_id,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first()
+    elif not branch_object and org and branch_value:
+        branch_object = Branch.objects.filter(
+            organization=org,
+            name__iexact=branch_value,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first()
+    if branch_object and org and branch_object.organization_id != org.pk:
+        branch_object = None
+    if branch_object and not branch_value:
+        branch_value = branch_object.name
+
+    branch_code = str(getattr(branch_object, 'prefix', '') or '').strip()
+    branch_token_source = branch_code or branch_value
+    branch_token = re.sub(r'[^A-Za-z0-9_-]+', '-', branch_token_source).strip('-').upper()
+
+    resolved_customer_type = ''
+    if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES:
+        raw_type = _customer_type_from_party(party) or str(customer_type or '').strip().lower()
+        if not raw_type:
+            raw_type = str(getattr(series_obj, 'customer_type', '') or '').strip().lower()
+        if raw_type in ('b2b', 'business', 'registered'):
+            resolved_customer_type = 'b2b'
+        elif raw_type in ('b2c', 'individual', 'consumer'):
+            resolved_customer_type = 'b2c'
+
+    if resolved_customer_type == 'b2b':
+        customer_prefix = str(getattr(series_obj, 'b2b_prefix', 'D') or '').strip()
+    elif resolved_customer_type == 'b2c':
+        customer_prefix = str(getattr(series_obj, 'b2c_prefix', 'C') or '').strip()
+    else:
+        customer_prefix = ''
+    return branch_value, branch_object, branch_code.upper(), branch_token, resolved_customer_type, customer_prefix
+
+
+def _series_pattern_includes_financial_year(series_obj):
+    import re
+    pattern = str(
+        getattr(series_obj, 'format_pattern', '')
+        or getattr(series_obj, 'prefix', '')
+        or ''
+    )
+    return bool(re.search(
+        r'(?:\$\s*)?\{\s*(?:FY|FINANCIAL_YEAR|FINANCIAL-YEAR|FYS_YY|FYE_YY)\s*\}|%\s*(?:FY|FINANCIAL_YEAR|FINANCIAL-YEAR|FYS_YY|FYE_YY)\s*%',
+        pattern,
+        re.IGNORECASE,
+    ))
+
+
+def _format_series_number(series_obj, value, org, date=None, branch='', location='', gstin=None, customer_type='', party=None, format_pattern=None, separator=None, business_location_id=None):
     import datetime
     import re
     if not date:
@@ -699,20 +790,12 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
     end_yy = f"{((yr + 1) % 100 if date_val.month >= 4 else yr % 100):02d}"
 
     org_code = org.get_code() if org else 'CONVO'
-    branch_val = str(branch or getattr(series_obj, 'branch', '') or getattr(getattr(series_obj, 'series_group', None), 'branch', '') or '').strip()
-    branch_prefix = ''
-    branch_object = getattr(series_obj, 'business_location', None)
-    if not branch_object:
-        branch_object = getattr(getattr(series_obj, 'series_group', None), 'business_location', None)
-    if not branch_object and org and branch_val:
-        from .models import Branch
-        branch_object = Branch.objects.filter(
-            organization=org,
-            name__iexact=branch_val,
-            location_type=Branch.LOCATION_TYPE_BUSINESS,
-        ).first()
-    if branch_object:
-        branch_prefix = str(getattr(branch_object, 'prefix', '') or '').strip().upper()
+    branch_val, _, branch_prefix, branch_token, _, customer_prefix = (
+        _series_numbering_scope(
+            series_obj, org, branch=branch, customer_type=customer_type,
+            party=party, business_location_id=business_location_id
+        )
+    )
 
     # Resolve location
     loc_val = str(location or '').strip()
@@ -729,28 +812,6 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
         loc_val = branch_val
 
     clean_location = re.sub(r'[^A-Za-z0-9_-]+', '-', loc_val).strip('-').upper() if loc_val else 'HQ'
-
-    # Resolve customer type
-    cust_type_raw = str(customer_type or '').strip().lower()
-    if not cust_type_raw and party:
-        ptype = str(getattr(party, 'customer_type', '')).strip().lower()
-        if ptype:
-            cust_type_raw = ptype
-        elif getattr(party, 'gstin', ''):
-            cust_type_raw = 'b2b'
-        else:
-            cust_type_raw = 'b2c'
-    if not cust_type_raw:
-        cust_type_raw = str(getattr(series_obj, 'customer_type', '')).strip().lower()
-
-    if cust_type_raw in ('b2b', 'business'):
-        clean_cust_type = 'B2B'
-    elif cust_type_raw in ('b2c', 'individual', 'consumer'):
-        clean_cust_type = 'B2C'
-    elif cust_type_raw:
-        clean_cust_type = re.sub(r'[^A-Za-z0-9_-]+', '-', cust_type_raw).strip('-').upper()
-    else:
-        clean_cust_type = 'B2B'
 
     padding = max(1, getattr(series_obj, 'padding', 5) or 5)
     num_str = f"{value:0{padding}d}"
@@ -776,16 +837,16 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
 
     # Token mappings (case-insensitive keys handled below)
     token_map = {
-        'CUSTOMERTYPE': clean_cust_type,
-        'CUSTOMER_TYPE': clean_cust_type,
-        'CUSTOMER-TYPE': clean_cust_type,
+        'CUSTOMERTYPE': customer_prefix,
+        'CUSTOMER_TYPE': customer_prefix,
+        'CUSTOMER-TYPE': customer_prefix,
         'LOCATION': clean_location,
         'FY': fy,
         'FINANCIAL_YEAR': fy,
         'FINANCIAL-YEAR': fy,
         'ORG': org_code,
         'ORGANIZATION': org_code,
-        'BRANCH': branch_val or 'HQ',
+        'BRANCH': branch_token or 'HQ',
         'YEAR': str(yr),
         'YYYY': str(yr),
         'YY': start_yy,
@@ -811,17 +872,14 @@ def _format_series_number(series_obj, value, org, date=None, branch='', location
             result = f"{result}{sep}"
         candidate = f"{result}{num_str}"
 
-    # Clean redundant duplicated separators if single char
-    if sep and len(sep) == 1:
-        sep_esc = re.escape(sep)
-        candidate = re.sub(rf'{sep_esc}{{2,}}', sep, candidate)
+    candidate = re.sub(r'([/_-])\1+', r'\1', candidate)
 
     if len(candidate) > 60:
         raise ApiError(400, 'Generated document numbers cannot exceed 60 characters.')
     return candidate
 
 
-def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
+def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None, branch='', customer_type='', party=None, business_location_id=None):
     """Return the persisted counter for this series and date's configured reset period."""
     from .models import DocumentNumberSeriesCounter
 
@@ -829,15 +887,28 @@ def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
     type_config = next((item for item in SUPPORTED_TRANSACTION_TYPES if item['key'] == lookup), None)
     cfg = get_document_module_config(type_config['pfx'] if type_config else lookup)
     year = get_financial_year(date, org=org)
-    counter_year = year if series_obj.reset_annually and cfg.get('has_fy', True) else '*'
-    counter = series_obj.counters.filter(financial_year=counter_year).first()
+    _, _, _, branch_scope, _, customer_scope = _series_numbering_scope(
+        series_obj, org, branch=branch, customer_type=customer_type,
+        party=party, business_location_id=business_location_id
+    )
+    counter_year = (
+        year
+        if series_obj.reset_annually and cfg.get('has_fy', True)
+        and _series_pattern_includes_financial_year(series_obj)
+        else '*'
+    )
+    scoped_counters = series_obj.counters.filter(
+        branch_prefix=branch_scope,
+        customer_type_prefix=customer_scope,
+    )
+    counter = scoped_counters.filter(financial_year=counter_year).first()
     if counter:
         return counter
 
     # Keep the existing next number for the current period, but start a new
     # fiscal-year counter from its configured starting value.
     current_year = get_financial_year(org=org)
-    has_prior_counter = series_obj.counters.exists()
+    has_prior_counter = scoped_counters.exists()
     initial_next = (
         series_obj.next_number
         if counter_year == '*' or (year == current_year and not has_prior_counter)
@@ -846,6 +917,8 @@ def _series_counter_for_date(series_obj, org, date=None, module_or_pfx=None):
     counter, _ = DocumentNumberSeriesCounter.objects.get_or_create(
         series=series_obj,
         financial_year=counter_year,
+        branch_prefix=branch_scope,
+        customer_type_prefix=customer_scope,
         defaults={'next_number': max(series_obj.starting_number, initial_next)},
     )
     return counter
@@ -863,6 +936,8 @@ def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, 
         org = Organization.get()
     ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
+    if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES:
+        customer_type = _customer_type_from_party(party) or customer_type
 
     with transaction.atomic():
         # Serialize allocations across different series in the same organization too.
@@ -878,7 +953,15 @@ def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, 
         series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
         if not series_obj.active:
             raise ApiError(400, f'Transaction series "{series_obj.name}" is inactive.')
-        counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
+        branch_val, _, _, branch_scope, resolved_customer_type, customer_scope = _series_numbering_scope(
+            series_obj, org, branch=branch, customer_type=customer_type,
+            party=party, business_location_id=business_location_id
+        )
+        counter = _series_counter_for_date(
+            series_obj, org, date=date, module_or_pfx=module_or_pfx,
+            branch=branch, customer_type=customer_type, party=party,
+            business_location_id=business_location_id,
+        )
         counter = type(counter).objects.select_for_update().get(pk=counter.pk)
 
         cfg = get_document_module_config(module_or_pfx)
@@ -890,7 +973,8 @@ def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, 
             candidate = _format_series_number(
                 series_obj, val, org, date=date, branch=branch, location=location,
                 gstin=gstin, customer_type=customer_type, party=party,
-                format_pattern=format_pattern, separator=separator
+                format_pattern=format_pattern, separator=separator,
+                business_location_id=business_location_id,
             )
             collision = False
             if model and field:
@@ -922,20 +1006,21 @@ def _next_document_number_once(module_or_pfx, org=None, date=None, series=None, 
                 document_type=doc_type,
                 number=candidate,
                 financial_year=get_financial_year(date, org=org),
-                branch=branch or series_obj.branch,
+                branch=branch_val or series_obj.branch,
                 location=location or series_obj.location,
                 gstin=gstin or getattr(org, 'gstin', ''),
-                customer_type=customer_type or series_obj.customer_type,
+                customer_type=resolved_customer_type or series_obj.customer_type,
             )
             counter.next_number = val + 1
             counter.save(update_fields=['next_number', 'updated_at'])
-            series_obj.next_number = val + 1
-            series_obj.save(update_fields=['next_number', 'updated_at'])
-            DocumentNumberPreference.objects.filter(
-                organization=org,
-                document_type=doc_type,
-                transaction_series=series_obj.name,
-            ).update(next_number=counter.next_number)
+            if not branch_scope and not customer_scope:
+                series_obj.next_number = val + 1
+                series_obj.save(update_fields=['next_number', 'updated_at'])
+                DocumentNumberPreference.objects.filter(
+                    organization=org,
+                    document_type=doc_type,
+                    transaction_series=series_obj.name,
+                ).update(next_number=counter.next_number)
 
             return candidate
 
@@ -969,6 +1054,8 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         org = Organization.get()
     ensure_default_transaction_series(org)
     doc_type = _number_series_doc_type(module_or_pfx)
+    if doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES:
+        customer_type = _customer_type_from_party(party) or customer_type
 
     series_obj = _select_document_number_series(
         module_or_pfx, org, date=date, customer_type=customer_type,
@@ -988,7 +1075,11 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             organization=org, document_type=doc_type, transaction_series=''
         ).first()
     if pref and not pref.auto_generate:
-        counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
+        counter = _series_counter_for_date(
+            series_obj, org, date=date, module_or_pfx=module_or_pfx,
+            branch=branch, customer_type=customer_type, party=party,
+            business_location_id=business_location_id,
+        )
         return {
             'next_number': '',
             'formatted': '',
@@ -1014,13 +1105,18 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
     model = cfg.get('model')
     field = cfg.get('field', 'number')
 
-    counter = _series_counter_for_date(series_obj, org, date=date, module_or_pfx=module_or_pfx)
+    counter = _series_counter_for_date(
+        series_obj, org, date=date, module_or_pfx=module_or_pfx,
+        branch=branch, customer_type=customer_type, party=party,
+        business_location_id=business_location_id,
+    )
     val = counter.next_number
     while True:
         candidate = _format_series_number(
             series_obj, val, org, date=date, branch=branch, location=location,
             gstin=gstin, customer_type=customer_type, party=party,
-            format_pattern=format_pattern, separator=separator
+            format_pattern=format_pattern, separator=separator,
+            business_location_id=business_location_id,
         )
         collision = False
         if model and field:
@@ -1059,10 +1155,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
         val += 1
 
 
-def sync_series_counter_from_manual_number(
-    org, module_or_pfx, number_str, series=None, series_id=None,
-    business_location_id=None,
-):
+def sync_series_counter_from_manual_number(org, module_or_pfx, number_str, series=None, series_id=None, branch='', customer_type='', party=None, business_location_id=None):
     """
     Safely advance the series counter if a manual document number has a numeric suffix >= next_number.
     Never moves the counter backwards.
@@ -1073,6 +1166,7 @@ def sync_series_counter_from_manual_number(
     from .models import DocumentNumberSeries
     series_obj = _select_document_number_series(
         module_or_pfx, org, series=series, series_id=series_id,
+        branch=branch, customer_type=customer_type,
         business_location_id=business_location_id,
     )
     if not series_obj:
@@ -1085,13 +1179,22 @@ def sync_series_counter_from_manual_number(
             from .models import Organization
             Organization.objects.select_for_update().get(pk=org.pk)
             series_obj = DocumentNumberSeries.objects.select_for_update().get(pk=series_obj.pk)
-            counter = _series_counter_for_date(series_obj, org, module_or_pfx=module_or_pfx)
+            counter = _series_counter_for_date(
+                series_obj, org, module_or_pfx=module_or_pfx,
+                branch=branch, customer_type=customer_type, party=party,
+                business_location_id=business_location_id,
+            )
             counter = type(counter).objects.select_for_update().get(pk=counter.pk)
             if seq_val >= counter.next_number:
                 counter.next_number = seq_val + 1
                 counter.save(update_fields=['next_number', 'updated_at'])
-                series_obj.next_number = counter.next_number
-                series_obj.save(update_fields=['next_number', 'updated_at'])
+                _, _, _, branch_scope, _, customer_scope = _series_numbering_scope(
+                    series_obj, org, branch=branch, customer_type=customer_type,
+                    party=party, business_location_id=business_location_id
+                )
+                if not branch_scope and not customer_scope:
+                    series_obj.next_number = counter.next_number
+                    series_obj.save(update_fields=['next_number', 'updated_at'])
 
 
 def get_doc_number_preference(module_or_pfx, org=None, series=None):
@@ -1401,7 +1504,18 @@ def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', accou
     if amount > bal:
         raise ApiError(400, f'Payment amount (₹{amount}) exceeds remaining balance due (₹{bal}).')
 
-    pay_num = next_document_number('PR', org=user_org, date=date_)
+    pay_num = next_document_number(
+        'PR', org=user_org, date=date_,
+        customer_type=_customer_type_from_party(retainer.customer),
+        branch=retainer.branch,
+        location=retainer.location,
+        business_location_id=retainer.business_location_id,
+        party=retainer.customer,
+        user=user,
+    )
+    allocation = DocumentNumberAllocation.objects.filter(
+        organization=user_org, document_type='payments_received', number=pay_num
+    ).select_related('series').first()
     bank_acc = BankAccount.objects.filter(name=account, organization=user_org).first() if user_org else BankAccount.objects.filter(name=account).first()
     if not bank_acc and account:
         bank_acc = BankAccount.objects.filter(bank_name__iexact=account, organization=user_org).first()
@@ -1409,6 +1523,9 @@ def record_retainer_payment(retainer, amount, date_, mode='bank_transfer', accou
     pmt = PaymentReceived.objects.create(
         organization=user_org,
         number=pay_num, customer=retainer.customer, date=date_,
+        business_location=retainer.business_location,
+        branch=retainer.branch,
+        transaction_series=allocation.series.name if allocation else '',
         mode=mode, account=account, bank_account=bank_acc, amount=amount,
         reference=reference or f'Payment for Retainer {retainer.number}',
         notes=notes, created_by=user if getattr(user, 'pk', None) else None
@@ -1716,10 +1833,22 @@ def write_off_invoice(inv, reason='Bad Debt', notes='', user=None):
         org=org, business_location=inv.business_location,
     )
 
-    pay_num = next_document_number('PR', org=org, date=today)
+    pay_num = next_document_number(
+        'PR', org=org, date=today,
+        customer_type=_customer_type_from_party(inv.customer),
+        branch=inv.branch, location=inv.location,
+        business_location_id=inv.business_location_id,
+        party=inv.customer, user=user,
+    )
+    allocation = DocumentNumberAllocation.objects.filter(
+        organization=org, document_type='payments_received', number=pay_num
+    ).select_related('series').first()
     pmt = PaymentReceived.objects.create(
         organization=org,
         number=pay_num, customer=inv.customer, date=today,
+        business_location=inv.business_location,
+        branch=inv.branch,
+        transaction_series=allocation.series.name if allocation else '',
         mode='bank_transfer', account='Bad Debts / Write-off',
         amount=bal, reference=f'Write-off: {reason}',
         notes=notes or f'Balance write-off: {reason}',
@@ -1752,10 +1881,24 @@ def clone_document(doc, user=None):
     model_name = model_cls.__name__
     pfx = prefix_map.get(model_name, 'DOC')
     today = timezone.localdate()
-    new_num = next_document_number(pfx, org=org, date=today)
-
     party_field = 'customer' if hasattr(doc, 'customer') else ('vendor' if hasattr(doc, 'vendor') else None)
     party_val = getattr(doc, party_field) if party_field else None
+    branch = getattr(doc, 'branch', '') or ''
+    location = getattr(doc, 'location', '') or ''
+    business_location_id = getattr(doc, 'business_location_id', None)
+    series_name = getattr(doc, 'transaction_series', '') or ''
+    new_num = next_document_number(
+        pfx, org=org, date=today,
+        customer_type=_customer_type_from_party(party_val),
+        branch=branch, location=location,
+        business_location_id=business_location_id,
+        party=party_val, series=series_name, user=user,
+    )
+    allocation = DocumentNumberAllocation.objects.filter(
+        organization=org,
+        document_type=_number_series_doc_type(pfx),
+        number=new_num,
+    ).select_related('series').first()
 
     term_days = 30
     if party_val and hasattr(party_val, 'payment_terms'):
@@ -1767,6 +1910,10 @@ def clone_document(doc, user=None):
         'number': new_num,
         'date': today,
         'status': 'draft',
+        'business_location_id': business_location_id,
+        'branch': branch,
+        'location': location,
+        'transaction_series': allocation.series.name if allocation else series_name,
         'subtotal': getattr(doc, 'subtotal', Decimal('0.00')),
         'cgst': getattr(doc, 'cgst', Decimal('0.00')),
         'sgst': getattr(doc, 'sgst', Decimal('0.00')),
@@ -2141,7 +2288,16 @@ def set_expected_payment_date(inv, dt, user=None):
 def create_credit_note_from_invoice(inv, amount=None, reason='Sales Return', user=None):
     org = getattr(inv, 'organization', None) or (get_user_org(user) if user else Organization.get())
     today = timezone.localdate()
-    cn_num = next_document_number('CN', org=org, date=today)
+    cn_num = next_document_number(
+        'CN', org=org, date=today,
+        customer_type=_customer_type_from_party(inv.customer),
+        branch=inv.branch, location=inv.location,
+        business_location_id=inv.business_location_id,
+        party=inv.customer, user=user,
+    )
+    allocation = DocumentNumberAllocation.objects.filter(
+        organization=org, document_type='credit_notes', number=cn_num
+    ).select_related('series').first()
     tot = Decimal(str(amount)) if amount else inv.total
     subtot = inv.subtotal if not amount else tot
 
@@ -2149,6 +2305,10 @@ def create_credit_note_from_invoice(inv, amount=None, reason='Sales Return', use
         organization=org,
         number=cn_num,
         customer=inv.customer,
+        business_location=inv.business_location,
+        branch=inv.branch,
+        location=inv.location,
+        transaction_series=allocation.series.name if allocation else '',
         invoice=inv,
         date=today,
         due_date=today,
@@ -2383,8 +2543,11 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         branch=getattr(profile, 'branch', ''), location=getattr(profile, 'location', ''),
         gstin=profile.business_location.gstin if profile.business_location_id else getattr(org, 'gstin', ''),
         business_location_id=profile.business_location_id,
-        user=user
+        user=user, party=profile.customer,
     )
+    allocation = DocumentNumberAllocation.objects.filter(
+        organization=org, document_type='recurring_invoices', number=inv_num
+    ).select_related('series').first()
 
     inv = Invoice.objects.create(
         organization=org,
@@ -2398,6 +2561,7 @@ def generate_invoice_from_recurring_profile(profile, scheduled_date=None, user=N
         order_number=rec_order_no,
         branch=getattr(profile, 'branch', '') or '',
         location=getattr(profile, 'location', 'HO Kottayam') or 'HO Kottayam',
+        transaction_series=allocation.series.name if allocation else '',
         salesperson=getattr(profile, 'salesperson', '') or '',
         project_name=getattr(profile, 'project_name', '') or '',
         subject=getattr(profile, 'subject', '') or '',

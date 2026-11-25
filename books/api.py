@@ -53,7 +53,7 @@ from .models import (
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, ProjectMilestone, ProjectStaff, ProjectTask, ProjectTaskAssignment,
-    PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice, TransactionSeries,
+    PurchaseOrder, PurchaseOrderLine, Quote, QuoteLine, ReceivedAllocation, RecurringInvoice,
     RetainerInvoice, RetainerInvoiceAllocation, RetainerInvoiceLine, RetainerPayment, Role, SalesOrder,
     SalesOrderLine, SecurityBackupRecord, Sequence, StockMovement, SubscriptionInvoice, TenantSubscription, TimeLog, UserInvitation, UserProfile, OTPVerification, Vendor, VendorCredit,
     VendorCreditLine, VendorPortalAccess, Warehouse, WebhookConfig, WorkflowRule,
@@ -174,52 +174,6 @@ def get_user_org(user, request=None):
 def _user_can_access_business_location(user, location):
     return services.user_can_access_business_location(user, location)
 
-def _resolve_selected_number_series(org, document_type, series_name='', series_id=None, business_location=None):
-    if not org or not (series_name or series_id):
-        return None, ''
-
-    queryset = DocumentNumberSeries.objects.filter(
-        organization=org,
-        document_type=document_type,
-        active=True,
-    ).select_related('series_group')
-    series = None
-    if series_id:
-        series = queryset.filter(pk=series_id).first()
-        if series and series_name and series_name.casefold() not in {
-            series.name.casefold(),
-            (series.series_group.name if series.series_group_id else '').casefold(),
-        }:
-            return None, 'Select a valid transaction series.'
-    elif series_name:
-        series = queryset.filter(name__iexact=series_name).first()
-        if not series:
-            group = TransactionSeries.objects.filter(
-                organization=org,
-                name__iexact=series_name,
-                is_active=True,
-            ).first()
-            if group:
-                series = queryset.filter(series_group=group).first()
-
-    if not series:
-        return None, 'Select an active transaction series for this transaction type.'
-    if series.series_group_id and not series.series_group.is_active:
-        return None, 'Select an active transaction series for this transaction type.'
-    if series.business_location_id and (
-        not business_location or series.business_location_id != business_location.pk
-    ):
-        return None, 'The selected transaction series is not available for this branch.'
-    if business_location:
-        assigned_ids = business_location.transaction_series.filter(
-            document_type=document_type,
-            active=True,
-        ).filter(
-            Q(series_group__isnull=True) | Q(series_group__is_active=True)
-        ).values_list('pk', flat=True)
-        if assigned_ids.exists() and not assigned_ids.filter(pk=series.pk).exists():
-            return None, 'The selected transaction series is not assigned to this branch.'
-    return series, ''
 
 def get_user_role(user):
     if not user or not user.is_authenticated:
@@ -2368,8 +2322,6 @@ class DocResource(Resource):
              'signed_by': getattr(o, 'signed_by', '') or '',
              'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
              'signature_title': getattr(o, 'signature_title', '') or ''}
-        if isinstance(o, Quote):
-            r['business_location_id'] = o.business_location_id
         allocation = DocumentNumberAllocation.objects.filter(
             organization=o.organization, number=o.number
         ).select_related('series').first()
@@ -2649,12 +2601,9 @@ class DocResource(Resource):
             except (TypeError, ValueError):
                 c.err('business_location_id', 'Choose a valid business location.')
             else:
-                location_qs = BusinessLocation.objects.filter(
+                business_location = BusinessLocation.objects.filter(
                     organization=org, pk=location_id
-                )
-                if self.Model is Quote:
-                    location_qs = location_qs.filter(location_type='business')
-                business_location = location_qs.first()
+                ).first()
                 if not business_location:
                     c.err('business_location_id', 'Select a business location in your organization.')
                 elif not business_location.active and not (
@@ -2666,24 +2615,6 @@ class DocResource(Resource):
                         c.err('business_location_id', 'You are not assigned to this business location.')
                     head['business_location'] = business_location
                     head['location'] = business_location.name
-        if self.Model is Quote:
-            series_name = str(data.get('transaction_series') or data.get('series') or '').strip()
-            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
-            selected_series, series_error = _resolve_selected_number_series(
-                user_org,
-                'quotes',
-                series_name=series_name,
-                series_id=series_id,
-                business_location=head.get('business_location'),
-            )
-            if series_error:
-                c.err('transaction_series', series_error)
-            elif selected_series:
-                head['transaction_series'] = selected_series.name
-                head['_numbering_series_id'] = selected_series.pk
-                if head.get('business_location'):
-                    head['branch'] = head['business_location'].name
-                    head['location'] = head['business_location'].name
         for num_fld in ('adjustment', 'tcs_rate', 'tcs_amount', 'discount_percent'):
             if num_fld in data:
                 head[num_fld] = str(data.get(num_fld) or '0').strip()
@@ -2741,37 +2672,40 @@ class DocResource(Resource):
     def create_for_request(self, data, user, request):
         return self._create(data, user, get_user_org(user, request))
 
+    @transaction.atomic
     def _create(self, data, user, user_org):
         services.check_subscription_limits(user_org, 'record')
         head, lines = self.parse(data, user=user, user_org=user_org)
         services.check_transaction_lock(head['date'], org=user_org)
         num = (data.get('number') or '').strip()
         pfx = self.get_prefix() if hasattr(self, 'get_prefix') else self.prefix
-        series_name = (head.get('transaction_series') or data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
-        series_id = head.get('_numbering_series_id') or data.get('numbering_series_id') or data.get('series_id')
-
-        if num and not (self.Model is Quote and series_id):
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        party = head.get(self.party_attr)
+        explicit_customer_type = str(head.get('customer_type') or data.get('customer_type') or '').strip().lower()
+        party_type = str(getattr(party, 'customer_type', '') or '').strip().lower()
+        if party_type in ('b2b', 'business', 'registered') or getattr(party, 'gstin', ''):
+            customer_type = 'b2b'
+        elif party_type in ('b2c', 'individual', 'consumer'):
+            customer_type = 'b2c'
+        else:
+            customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else ''
+        loc = str(head.get('location') or getattr(party, 'billing_city', '') or getattr(party, 'city', '') or getattr(party, 'state', '') or '').strip()
+        business_location_id = getattr(head.get('business_location'), 'pk', None)
+        if num:
             num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
             if num_exists:
                 raise ApiError(400, f'{self.Model.__name__} number "{num}" already exists in your organization.')
             services.sync_series_counter_from_manual_number(
                 user_org, pfx, num, series=series_name, series_id=series_id,
-                business_location_id=(
-                    getattr(head.get('business_location'), 'pk', None)
-                    if self.Model is Quote else None
-                ),
+                branch=head.get('branch', ''), customer_type=customer_type,
+                party=party, business_location_id=business_location_id,
             )
         else:
-            party = head.get(self.party_attr)
-            explicit_customer_type = str(head.get('customer_type') or data.get('customer_type') or '').strip().lower()
-            customer_type = explicit_customer_type if explicit_customer_type in ('b2b', 'b2c') else (
-                'b2b' if getattr(party, 'gstin', '') else 'b2c'
-            )
-            loc = str(head.get('location') or getattr(party, 'billing_city', '') or getattr(party, 'city', '') or getattr(party, 'state', '') or '').strip()
             num = services.next_document_number(
                 pfx, org=user_org, date=head['date'], customer_type=customer_type,
                 branch=head.get('branch', ''), location=loc,
-                business_location_id=getattr(head.get('business_location'), 'pk', None),
+                business_location_id=business_location_id,
                 gstin=(
                     head.get('business_location_gstin', '')
                     if 'business_location' in head
@@ -3814,7 +3748,7 @@ class PaymentResource(Resource):
         applied = q2(o.applied)
         p = getattr(o, self.party_attr)
         ba = getattr(o, 'bank_account', None)
-        row = {'id': o.pk, 'number': o.number, 'party_id': p.pk if p else None, 'party': p.name if p else '',
+        return {'id': o.pk, 'number': o.number, 'party_id': p.pk if p else None, 'party': p.name if p else '',
                 'customer_name': p.name if p else '', 'date': o.date, 'mode': o.mode,
                 'mode_label': MODE_LABEL.get(o.mode, o.mode), 'account': o.account,
                 'bank_account_id': o.bank_account_id,
@@ -3823,11 +3757,9 @@ class PaymentResource(Resource):
                 'amount': o.amount,
                 'applied': applied, 'unapplied': o.amount - applied,
                 'reference': o.reference, 'notes': o.notes,
+                'transaction_series': getattr(o, 'transaction_series', ''),
                 'business_location_id': o.business_location_id,
                 'business_location_name': o.business_location.name if o.business_location_id else ''}
-        if self.Model is PaymentMade:
-            row['transaction_series'] = o.transaction_series or ''
-        return row
 
     def detail(self, o):
         r = self.row(o)
@@ -3903,6 +3835,7 @@ class PaymentResource(Resource):
                 a.amount += amt
                 a.save(update_fields=['amount'])
 
+    @transaction.atomic
     def create(self, data, user):
         c = Cleaner(data)
         pid = c.integer(self.party_attr, lo=1, required=True)
@@ -3934,12 +3867,9 @@ class PaymentResource(Resource):
                'amount': c.number('amount', True, lo=Decimal('0.01'), hi=Decimal('999999999')),
                'reference': c.text('reference', max_len=80), 'notes': c.text('notes', max_len=2000)}
         business_location_id = c.integer('business_location_id', lo=1)
-        location_qs = BusinessLocation.objects.filter(
+        business_location = BusinessLocation.objects.filter(
             pk=business_location_id, organization=user_org, active=True
-        )
-        if self.Model is PaymentMade:
-            location_qs = location_qs.filter(location_type='business')
-        business_location = location_qs.first() if business_location_id and user_org else None
+        ).first() if business_location_id and user_org else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
         elif business_location and not _user_can_access_business_location(user, business_location):
@@ -3950,22 +3880,6 @@ class PaymentResource(Resource):
         shipping_addr = _clean_transaction_address(c, 'shipping_address_data', shipping_fallback)
         mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
         cf_data = _clean_module_custom_fields(c, user_org, user, mod_name)
-        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
-        series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
-        selected_series = None
-        if self.Model is PaymentMade and (series_name or series_id):
-            selected_series, series_error = _resolve_selected_number_series(
-                user_org,
-                'payments_made',
-                series_name=series_name,
-                series_id=series_id,
-                business_location=business_location,
-            )
-            if series_error:
-                c.err('transaction_series', series_error)
-            elif selected_series:
-                series_name = selected_series.name
-                series_id = selected_series.pk
         c.done()
         services.check_transaction_lock(out['date'], org=user_org)
         extra = {}
@@ -3979,30 +3893,58 @@ class PaymentResource(Resource):
             extra['shipping_address_data'] = shipping_addr
         if hasattr(self.Model, 'custom_fields_data'):
             extra['custom_fields_data'] = cf_data
-        if hasattr(self.Model, 'transaction_series') and series_name:
-            extra['transaction_series'] = series_name
         pay_num = (data.get('number') or '').strip()
-        if pay_num and not (self.Model is PaymentMade and series_id):
+        series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        customer_type = ''
+        if self.Model is PaymentReceived:
+            customer_type = services._customer_type_from_party(party)
+        selected_series = services._select_document_number_series(
+            self.prefix, user_org, customer_type=customer_type,
+            branch=business_location.name if business_location else '',
+            series=series_name, series_id=series_id,
+            business_location_id=business_location.pk if business_location else None,
+        )
+        if not selected_series:
+            raise ApiError(400, 'No active transaction series is available for this payment type.')
+        if series_id:
+            try:
+                requested_series_id = int(series_id)
+            except (TypeError, ValueError):
+                raise ApiError(400, 'Select a valid transaction series.')
+            if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                raise ApiError(400, 'Select a valid transaction series.')
+        if series_name and series_name.casefold() not in {
+            selected_series.name.casefold(),
+            selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+        }:
+            raise ApiError(400, 'Select a valid transaction series.')
+        if pay_num:
             if user_org and self.Model.objects.filter(number=pay_num, organization=user_org).exists():
                 raise ApiError(400, f'{self.Model.__name__} number "{pay_num}" already exists in your organization.')
             services.sync_series_counter_from_manual_number(
                 user_org, self.prefix, pay_num, series=series_name, series_id=series_id,
-                business_location_id=(
-                    business_location.pk
-                    if self.Model is PaymentMade and business_location else None
-                ),
+                branch=business_location.name if business_location else '',
+                customer_type=customer_type, party=party,
+                business_location_id=business_location.pk if business_location else None,
             )
         else:
             pay_num = services.next_document_number(
                 self.prefix, org=user_org, date=out['date'],
-                branch=(
-                    business_location.name
-                    if self.Model is PaymentMade and business_location else ''
-                ),
+                customer_type=customer_type, party=party,
                 location=business_location.name if business_location else '',
                 business_location_id=business_location.pk if business_location else None,
                 series=series_name, series_id=series_id, user=user
             )
+            allocation = DocumentNumberAllocation.objects.filter(
+                organization=user_org,
+                document_type=services._number_series_doc_type(self.prefix),
+                number=pay_num,
+            ).select_related('series').first()
+            if allocation:
+                selected_series = allocation.series
+        if hasattr(self.Model, 'transaction_series'):
+            extra['transaction_series'] = selected_series.name if selected_series else series_name
 
         with transaction.atomic():
             if bank_acc:
@@ -4069,7 +4011,7 @@ class PaymentResource(Resource):
         user_org = getattr(obj, 'organization', None) or get_user_org(user)
         if self.party_attr in data:
             pid = c.integer(self.party_attr, lo=1, required=True)
-            party = self.Party.objects.filter(pk=pid).first() if pid else None
+            party = self.Party.objects.filter(pk=pid, organization=user_org).first() if pid and user_org else None
             if not party:
                 raise ApiError(404, f"{self.party_attr.capitalize()} not found.")
             setattr(obj, self.party_attr, party)
@@ -4099,12 +4041,10 @@ class PaymentResource(Resource):
             obj.notes = c.text('notes', max_len=2000)
         if 'business_location_id' in data:
             business_location_id = c.integer('business_location_id', lo=1)
-            location_qs = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org
-            )
-            if self.Model is PaymentMade:
-                location_qs = location_qs.filter(location_type='business')
-            business_location = location_qs.first() if business_location_id and user_org else None
+            business_location = BusinessLocation.objects.filter(
+                pk=business_location_id, organization=user_org,
+                location_type=Branch.LOCATION_TYPE_BUSINESS,
+            ).first() if business_location_id and user_org else None
             if business_location_id and not business_location:
                 c.err('business_location_id', 'Select an active business location in your organization.')
             elif business_location and not business_location.active and business_location.pk != obj.business_location_id:
@@ -4112,22 +4052,35 @@ class PaymentResource(Resource):
             elif business_location and not _user_can_access_business_location(user, business_location):
                 c.err('business_location_id', 'You are not assigned to this business location.')
             obj.business_location = business_location
-        if hasattr(obj, 'transaction_series') and (
-            'transaction_series' in data or 'series' in data or
-            'numbering_series_id' in data or 'series_id' in data
-        ):
-            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
-            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
-            selected_series, series_error = _resolve_selected_number_series(
-                user_org,
-                'payments_made',
-                series_name=series_name,
-                series_id=series_id,
-                business_location=obj.business_location,
+        if 'transaction_series' in data or 'series' in data or 'numbering_series' in data or 'series_id' in data or 'numbering_series_id' in data:
+            series_name = str(data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            customer_type = ''
+            if isinstance(obj, PaymentReceived):
+                party = getattr(obj, 'customer', None)
+                customer_type = services._customer_type_from_party(party)
+            selected_series = services._select_document_number_series(
+                self.prefix, user_org, customer_type=customer_type,
+                branch=obj.business_location.name if obj.business_location_id else '',
+                series=series_name, series_id=series_id,
+                business_location_id=obj.business_location_id,
+                party=getattr(obj, self.party_attr, None), user=user,
             )
-            if series_error or not selected_series:
-                c.err('transaction_series', series_error or 'Select an active transaction series for this transaction type.')
-            else:
+            if not selected_series:
+                raise ApiError(400, 'Select an active transaction series for this payment type.')
+            if series_id:
+                try:
+                    requested_series_id = int(series_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, 'Select a valid transaction series.')
+                if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                    raise ApiError(400, 'Select a valid transaction series.')
+            if series_name and series_name.casefold() not in {
+                selected_series.name.casefold(),
+                selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+            }:
+                raise ApiError(400, 'Select a valid transaction series.')
+            if hasattr(obj, 'transaction_series'):
                 obj.transaction_series = selected_series.name
         mod_name = getattr(self, 'module_key', None) or (getattr(self, 'name', '') or '').replace('-', '_')
         if hasattr(obj, 'billing_address_data'):
@@ -4593,13 +4546,19 @@ class PaymentReceivedResource(PaymentResource):
         with transaction.atomic():
             number = services.next_document_number(
                 'PR', org=parsed['organization'], date=parsed['date'],
+                customer_type=services._customer_type_from_party(parsed['customer']),
                 branch=parsed['branch'],
                 location=parsed['business_location'].name if parsed['business_location'] else '',
                 business_location_id=parsed['business_location'].pk if parsed['business_location'] else None,
                 series=(data.get('transaction_series') or data.get('series') or '').strip(),
                 series_id=data.get('series_id') or data.get('numbering_series_id'),
-                user=user
+                user=user, party=parsed['customer'],
             )
+            allocation = DocumentNumberAllocation.objects.filter(
+                organization=parsed['organization'],
+                document_type='payments_received',
+                number=number,
+            ).select_related('series').first()
             pay = PaymentReceived.objects.create(
                 number=number, created_by=user,
                 customer=parsed['customer'], organization=parsed['organization'],
@@ -4612,6 +4571,9 @@ class PaymentReceivedResource(PaymentResource):
                 tax_type=parsed['tax_type'], tax_rate=parsed['tax_rate'],
                 tax_amount=tax_amount, place_of_supply=parsed['place_of_supply'],
                 branch=parsed['branch'], business_location=parsed['business_location'],
+                transaction_series=allocation.series.name if allocation else (
+                    (data.get('transaction_series') or data.get('series') or '').strip()
+                ),
                 custom_fields_data=parsed['custom_fields_data'],
                 draft_allocations=[
                     {'invoice': invoice.pk, 'amount': str(amount)} for invoice, amount in rows
@@ -4656,6 +4618,33 @@ class PaymentReceivedResource(PaymentResource):
                 'thank_you_recipients': 'Choose at least one customer email address.'
             })
 
+        selected_series = None
+        if any(key in data for key in ('transaction_series', 'series', 'numbering_series_id', 'series_id')):
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            selected_series = services._select_document_number_series(
+                'PR', obj.organization,
+                customer_type=services._customer_type_from_party(parsed['customer']),
+                branch=parsed['branch'],
+                series=series_name, series_id=series_id,
+                business_location_id=parsed['business_location'].pk if parsed['business_location'] else None,
+                user=user,
+            )
+            if not selected_series:
+                raise ApiError(400, 'Select an active customer payment series for this branch.')
+            if series_id:
+                try:
+                    requested_series_id = int(series_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, 'Select a valid transaction series.')
+                if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                    raise ApiError(400, 'Select a valid transaction series.')
+            if series_name and series_name.casefold() not in {
+                selected_series.name.casefold(),
+                selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+            }:
+                raise ApiError(400, 'Select a valid transaction series.')
+
         with transaction.atomic():
             pay = PaymentReceived.objects.select_for_update().get(
                 pk=obj.pk, organization=obj.organization
@@ -4678,6 +4667,8 @@ class PaymentReceivedResource(PaymentResource):
             pay.place_of_supply = parsed['place_of_supply']
             pay.branch = parsed['branch']
             pay.business_location = parsed['business_location']
+            if selected_series:
+                pay.transaction_series = selected_series.name
             pay.reference = parsed['reference']
             pay.notes = parsed['notes']
             pay.custom_fields_data = parsed['custom_fields_data']
@@ -4721,6 +4712,7 @@ class PaymentReceivedResource(PaymentResource):
             'tds_amount': tds_amount, 'tax_name': o.tax_name,
             'tax_type': o.tax_type, 'tax_rate': o.tax_rate, 'tax_amount': tax_amount,
             'place_of_supply': o.place_of_supply, 'branch': o.branch,
+            'transaction_series': o.transaction_series,
             'business_location_id': o.business_location_id,
             'business_location_name': o.business_location.name if o.business_location else '',
             'customer_gstin': party.gstin, 'customer_pan': party.pan,
@@ -6776,7 +6768,8 @@ class SalesOrderResource(Resource):
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
             'business_location_id': o.business_location_id,
-            'transaction_series': getattr(o, 'transaction_series', '') or '',
+            'business_location_name': o.business_location.name if o.business_location_id else '',
+            'transaction_series': o.transaction_series,
             'salesperson': getattr(o, 'salesperson', '') or '',
             'project_name': getattr(o, 'project_name', '') or '',
             'subject': getattr(o, 'subject', '') or '',
@@ -6857,6 +6850,7 @@ class SalesOrderResource(Resource):
         })
         return r
 
+    @transaction.atomic
     def create(self, data, user):
         user_org = get_user_org(user)
         c = Cleaner(data)
@@ -6875,33 +6869,19 @@ class SalesOrderResource(Resource):
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
         business_location_id = c.integer('business_location_id', lo=1)
-        business_location = BusinessLocation.objects.filter(
-            pk=business_location_id, organization=user_org,
-            active=True, location_type='business',
+        business_location = Branch.objects.filter(
+            pk=business_location_id,
+            organization=user_org,
+            active=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
         ).first() if business_location_id and user_org else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
         elif business_location and not _user_can_access_business_location(user, business_location):
             c.err('business_location_id', 'You are not assigned to this business location.')
         if business_location:
-            branch = branch or business_location.name
+            branch = business_location.name
             location = business_location.name
-        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
-        series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
-        selected_series = None
-        if series_name or series_id:
-            selected_series, series_error = _resolve_selected_number_series(
-                user_org,
-                'sales_orders',
-                series_name=series_name,
-                series_id=series_id,
-                business_location=business_location,
-            )
-            if series_error:
-                c.err('transaction_series', series_error)
-            elif selected_series:
-                series_name = selected_series.name
-                series_id = selected_series.pk
         salesperson = c.text('salesperson', max_len=120)
         project_name = c.text('project_name', max_len=150)
         subject = c.text('subject', max_len=2000)
@@ -6916,14 +6896,16 @@ class SalesOrderResource(Resource):
 
         num = (data.get('number') or '').strip()
         num_exists = SalesOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (SalesOrder.objects.filter(number=num).exists() if num else False)
-        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
-        if not num or num_exists or services.has_document_number_series('SO', org=user_org):
+        cust_type = services._customer_type_from_party(cust) or str(data.get('customer_type') or '').strip().lower()
+        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        if not num or num_exists or series_name or series_id or services.has_document_number_series('SO', org=user_org):
             num = services.next_document_number(
                 'SO', org=user_org, date=dt, customer_type=cust_type,
                 branch=branch, location=location,
                 business_location_id=business_location.pk if business_location else None,
-                gstin=(business_location.gstin if business_location else getattr(user_org, 'gstin', '')),
-                series=series_name, series_id=series_id, user=user
+                gstin=getattr(user_org, 'gstin', ''), user=user, party=cust,
+                series=series_name, series_id=series_id,
             )
         else:
             import re
@@ -6936,8 +6918,16 @@ class SalesOrderResource(Resource):
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
+            services.sync_series_counter_from_manual_number(
+                user_org, 'SO', num, series=series_name, series_id=series_id,
+                branch=branch, customer_type=cust_type, party=cust,
+                business_location_id=business_location.pk if business_location else None,
+            )
 
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=user_org, document_type='sales_orders', number=num
+        ).select_related('series').first() if user_org else None
         so = SalesOrder.objects.create(
             organization=user_org,
             business_location=business_location,
@@ -6946,7 +6936,7 @@ class SalesOrderResource(Resource):
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             expected_shipment_date=ship_dt, terms=terms, notes=notes,
             order_number=order_num, status=status, branch=branch, location=location,
-            transaction_series=series_name or 'Default Transaction Series',
+            transaction_series=allocation.series.name if allocation else series_name,
             salesperson=salesperson, project_name=project_name, subject=subject,
             billing_address_data=billing_addr, shipping_address_data=shipping_addr,
             custom_fields_data=cf_data
@@ -6974,7 +6964,7 @@ class SalesOrderResource(Resource):
         c = Cleaner(data)
         cust_id = c.integer('customer', lo=1) or c.integer('customer_id', lo=1)
         if cust_id:
-            cust = Customer.objects.filter(pk=cust_id).first()
+            cust = Customer.objects.filter(pk=cust_id, organization=obj.organization).first()
             if not cust:
                 raise ApiError(404, 'Customer not found.')
             obj.customer = cust
@@ -6997,34 +6987,6 @@ class SalesOrderResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
-        user_org = obj.organization or get_user_org(user)
-        if 'business_location_id' in data:
-            business_location_id = c.integer('business_location_id', lo=1)
-            business_location = BusinessLocation.objects.filter(
-                pk=business_location_id, organization=user_org,
-                active=True, location_type='business',
-            ).first() if business_location_id and user_org else None
-            if business_location_id and not business_location:
-                c.err('business_location_id', 'Select an active business location in your organization.')
-            elif business_location and not _user_can_access_business_location(user, business_location):
-                c.err('business_location_id', 'You are not assigned to this business location.')
-            obj.business_location = business_location
-            obj.branch = business_location.name if business_location else ''
-            obj.location = business_location.name if business_location else 'HO Kottayam'
-        if 'transaction_series' in data or 'series' in data or 'numbering_series_id' in data or 'series_id' in data:
-            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
-            series_id = c.integer('numbering_series_id', lo=1) or c.integer('series_id', lo=1)
-            selected_series, series_error = _resolve_selected_number_series(
-                user_org,
-                'sales_orders',
-                series_name=series_name,
-                series_id=series_id,
-                business_location=obj.business_location,
-            )
-            if series_error or not selected_series:
-                c.err('transaction_series', series_error or 'Select an active transaction series for this transaction type.')
-            else:
-                obj.transaction_series = selected_series.name
         if 'salesperson' in data:
             obj.salesperson = c.text('salesperson', max_len=120)
         if 'project_name' in data:
@@ -7037,6 +6999,48 @@ class SalesOrderResource(Resource):
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        user_org = obj.organization or get_user_org(user)
+        if 'business_location_id' in data:
+            business_location_id = c.integer('business_location_id', lo=1)
+            business_location = Branch.objects.filter(
+                pk=business_location_id,
+                organization=user_org,
+                active=True,
+                location_type=Branch.LOCATION_TYPE_BUSINESS,
+            ).first() if business_location_id and user_org else None
+            if business_location_id and not business_location:
+                c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not _user_can_access_business_location(user, business_location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
+            obj.business_location = business_location
+            if business_location:
+                obj.branch = business_location.name
+                obj.location = business_location.name
+        if 'transaction_series' in data or 'series' in data or 'numbering_series_id' in data or 'series_id' in data:
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            selected_series = services._select_document_number_series(
+                'SO', user_org, customer_type=services._customer_type_from_party(obj.customer),
+                branch=obj.branch,
+                series=series_name, series_id=series_id,
+                business_location_id=obj.business_location_id,
+                user=user,
+            )
+            if not selected_series:
+                raise ApiError(400, 'Select an active sales order numbering series for this branch.')
+            if series_id:
+                try:
+                    requested_series_id = int(series_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, 'Select a valid transaction series.')
+                if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                    raise ApiError(400, 'Select a valid transaction series.')
+            if series_name and series_name.casefold() not in {
+                selected_series.name.casefold(),
+                selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+            }:
+                raise ApiError(400, 'Select a valid transaction series.')
+            obj.transaction_series = selected_series.name
         if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
             billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.customer, 'billing')
             obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -7393,6 +7397,9 @@ class PurchaseOrderResource(Resource):
             'delivery_date': o.delivery_date, 'due_date': o.delivery_date or o.date, 'status': o.status,
             'branch': getattr(o, 'branch', '') or '',
             'location': getattr(o, 'location', 'HO Kottayam') or 'HO Kottayam',
+            'business_location_id': o.business_location_id,
+            'business_location_name': o.business_location.name if o.business_location_id else '',
+            'transaction_series': o.transaction_series,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
@@ -7445,16 +7452,30 @@ class PurchaseOrderResource(Resource):
         ]
         return r
 
+    @transaction.atomic
     def create(self, data, user):
         c = Cleaner(data)
+        user_org = get_user_org(user)
         ven_id = c.integer('vendor', required=True, lo=1)
-        ven = Vendor.objects.filter(pk=ven_id).first()
+        ven = Vendor.objects.filter(pk=ven_id, organization=user_org).first() if user_org else None
         if not ven:
-            raise ApiError(404, 'Vendor not found.')
+            raise ApiError(404, 'Vendor not found in your organization.')
         dt = c.date('date', required=True)
         deliv = c.date('delivery_date')
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = Branch.objects.filter(
+            pk=business_location_id, organization=user_org, active=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first() if business_location_id and user_org else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = business_location.name
+            location = business_location.name
         billing_fallback = _party_address_snapshot(ven, 'billing')
         shipping_fallback = _party_address_snapshot(ven, 'shipping')
         billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -7463,16 +7484,19 @@ class PurchaseOrderResource(Resource):
         cf_data = _clean_module_custom_fields(c, user_org, user, 'purchase_orders')
         c.done()
 
-        user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         num_exists = PurchaseOrder.objects.filter(number=num, organization=user_org).exists() if (num and user_org) else (PurchaseOrder.objects.filter(number=num).exists() if num else False)
         cust_type = str(data.get('customer_type') or 'registered').strip().lower()
-        if not num or num_exists or services.has_document_number_series('PO', org=user_org):
+        series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+        series_id = data.get('numbering_series_id') or data.get('series_id')
+        if not num or num_exists or series_name or series_id or services.has_document_number_series('PO', org=user_org):
             num = services.next_document_number(
                 'PO', org=user_org, date=dt,
-                customer_type='b2b' if cust_type == 'registered' else 'b2c',
+                customer_type='',
                 branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), user=user
+                business_location_id=business_location.pk if business_location else None,
+                gstin=getattr(user_org, 'gstin', ''), user=user,
+                series=series_name, series_id=series_id,
             )
         else:
             import re
@@ -7485,14 +7509,23 @@ class PurchaseOrderResource(Resource):
                 if seq.value < val:
                     seq.value = val
                     seq.save(update_fields=['value'])
+            services.sync_series_counter_from_manual_number(
+                user_org, 'PO', num, series=series_name, series_id=series_id,
+                branch=branch, business_location_id=business_location.pk if business_location else None,
+            )
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=user_org, document_type='purchase_orders', number=num
+        ).select_related('series').first() if user_org else None
         po = PurchaseOrder.objects.create(
             organization=user_org,
+            business_location=business_location,
             number=num, vendor=ven, date=dt, due_date=dt,
             place_of_supply=ven.state or (user_org.state if user_org else Organization.get().state),
             delivery_date=deliv, status='draft',
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             branch=branch, location=location,
+            transaction_series=allocation.series.name if allocation else series_name,
             billing_address_data=billing_addr, shipping_address_data=shipping_addr,
             custom_fields_data=cf_data
         )
@@ -7519,12 +7552,24 @@ class PurchaseOrderResource(Resource):
             elif pt_clean.isdigit():
                 data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
+        user_org = obj.organization or get_user_org(user)
         ven_id = c.integer('vendor', required=True, lo=1)
-        ven = Vendor.objects.filter(pk=ven_id).first()
+        ven = Vendor.objects.filter(pk=ven_id, organization=user_org).first() if user_org else None
         if not ven:
-            raise ApiError(404, 'Vendor not found.')
+            raise ApiError(404, 'Vendor not found in your organization.')
         dt = c.date('date', required=True)
         deliv = c.date('delivery_date')
+        business_location = obj.business_location
+        if 'business_location_id' in data:
+            business_location_id = c.integer('business_location_id', lo=1)
+            business_location = Branch.objects.filter(
+                pk=business_location_id, organization=user_org, active=True,
+                location_type=Branch.LOCATION_TYPE_BUSINESS,
+            ).first() if business_location_id and user_org else None
+            if business_location_id and not business_location:
+                c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not _user_can_access_business_location(user, business_location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
         c.done()
 
         obj.vendor = ven
@@ -7539,7 +7584,34 @@ class PurchaseOrderResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
-        user_org = obj.organization or get_user_org(user)
+        if 'business_location_id' in data:
+            obj.business_location = business_location
+            if business_location:
+                obj.branch = business_location.name
+                obj.location = business_location.name
+        if 'transaction_series' in data or 'series' in data or 'numbering_series_id' in data or 'series_id' in data:
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            selected_series = services._select_document_number_series(
+                'PO', user_org, branch=obj.branch,
+                series=series_name, series_id=series_id,
+                business_location_id=obj.business_location_id, user=user,
+            )
+            if not selected_series:
+                raise ApiError(400, 'Select an active purchase order series for this branch.')
+            if series_id:
+                try:
+                    requested_series_id = int(series_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, 'Select a valid transaction series.')
+                if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                    raise ApiError(400, 'Select a valid transaction series.')
+            if series_name and series_name.casefold() not in {
+                selected_series.name.casefold(),
+                selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+            }:
+                raise ApiError(400, 'Select a valid transaction series.')
+            obj.transaction_series = selected_series.name
         if 'billing_address_data' in data or hasattr(obj, 'billing_address_data'):
             billing_fallback = obj.billing_address_data or _party_address_snapshot(obj.vendor, 'billing')
             obj.billing_address_data = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -7975,6 +8047,11 @@ class CreditNoteResource(Resource):
             'customer_name': o.customer.name, 'party': o.customer.name, 'date': o.date,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
+            'branch': o.branch,
+            'location': o.location,
+            'business_location_id': o.business_location_id,
+            'business_location_name': o.business_location.name if o.business_location_id else '',
+            'transaction_series': o.transaction_series,
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
             'total': o.total, 'balance': remaining, 'applied_amount': applied_sum, 'refunded_amount': refunded_sum,
             'reason': o.reason, 'status': o.status,
@@ -8001,41 +8078,65 @@ class CreditNoteResource(Resource):
         ]
         return r
 
+    @transaction.atomic
     def create(self, data, user):
         c = Cleaner(data)
+        user_org = get_user_org(user)
         cid = c.integer('customer', required=True, lo=1)
-        cust = Customer.objects.filter(pk=cid).first()
+        cust = Customer.objects.filter(pk=cid, organization=user_org).first() if user_org else None
         if not cust:
-            raise ApiError(404, 'Customer not found.')
+            raise ApiError(404, 'Customer not found in your organization.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = Branch.objects.filter(
+            pk=business_location_id, organization=user_org, active=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first() if business_location_id and user_org else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = business_location.name
+            location = business_location.name
         c.done()
 
-        user_org = get_user_org(user) if user else None
         num = (data.get('number') or '').strip()
         series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
         series_id = data.get('numbering_series_id') or data.get('series_id')
-        cust_type = str(data.get('customer_type') or 'b2b').strip().lower()
+        cust_type = services._customer_type_from_party(cust) or str(data.get('customer_type') or '').strip().lower()
         if num:
             if user_org and CreditNote.objects.filter(number=num, organization=user_org).exists():
                 raise ApiError(400, f'Credit note number "{num}" already exists in your organization.')
-            services.sync_series_counter_from_manual_number(user_org, 'CN', num, series=series_name, series_id=series_id)
+            services.sync_series_counter_from_manual_number(
+                user_org, 'CN', num, series=series_name, series_id=series_id,
+                branch=branch, customer_type=cust_type, party=cust,
+                business_location_id=business_location.pk if business_location else None,
+            )
         else:
             num = services.next_document_number(
                 'CN', org=user_org, date=dt, customer_type=cust_type,
                 branch=branch, location=location,
-                gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id, user=user
+                business_location_id=business_location.pk if business_location else None,
+                gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id,
+                user=user, party=cust,
             )
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=user_org, document_type='credit_notes', number=num
+        ).select_related('series').first() if user_org else None
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         cn = CreditNote.objects.create(
             organization=user_org,
+            business_location=business_location,
             number=num, customer=cust, date=dt, due_date=dt,
             place_of_supply=cust.state or (user_org.state if user_org else Organization.get().state),
             reason=reason, status='open',
             tax_pricing_type=tax_pricing, customer_type=cust_type,
-            branch=branch, location=location
+            branch=branch, location=location,
+            transaction_series=allocation.series.name if allocation else series_name,
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(cn.place_of_supply, Organization.get().state)
@@ -8060,13 +8161,13 @@ class CreditNoteResource(Resource):
             elif pt_clean.isdigit():
                 data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
+        user_org = obj.organization or get_user_org(user)
         cid = c.integer('customer', required=True, lo=1)
-        cust = Customer.objects.filter(pk=cid).first()
+        cust = Customer.objects.filter(pk=cid, organization=user_org).first() if user_org else None
         if not cust:
-            raise ApiError(404, 'Customer not found.')
+            raise ApiError(404, 'Customer not found in your organization.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
-        c.done()
 
         obj.customer = cust
         obj.date = dt
@@ -8081,6 +8182,44 @@ class CreditNoteResource(Resource):
             obj.branch = c.text('branch', max_len=120)
         if 'location' in data:
             obj.location = c.text('location', max_len=120) or 'HO Kottayam'
+        if 'business_location_id' in data:
+            business_location_id = c.integer('business_location_id', lo=1)
+            business_location = Branch.objects.filter(
+                pk=business_location_id, organization=user_org, active=True,
+                location_type=Branch.LOCATION_TYPE_BUSINESS,
+            ).first() if business_location_id and user_org else None
+            if business_location_id and not business_location:
+                c.err('business_location_id', 'Select an active business location in your organization.')
+            elif business_location and not _user_can_access_business_location(user, business_location):
+                c.err('business_location_id', 'You are not assigned to this business location.')
+            obj.business_location = business_location
+            if business_location:
+                obj.branch = business_location.name
+                obj.location = business_location.name
+        if 'transaction_series' in data or 'series' in data or 'numbering_series_id' in data or 'series_id' in data:
+            series_name = (data.get('transaction_series') or data.get('series') or '').strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            selected_series = services._select_document_number_series(
+                'CN', user_org, customer_type=services._customer_type_from_party(obj.customer),
+                branch=obj.branch, series=series_name, series_id=series_id,
+                business_location_id=obj.business_location_id, user=user, party=obj.customer,
+            )
+            if not selected_series:
+                raise ApiError(400, 'Select an active credit note series for this branch.')
+            if series_id:
+                try:
+                    requested_series_id = int(series_id)
+                except (TypeError, ValueError):
+                    raise ApiError(400, 'Select a valid transaction series.')
+                if selected_series.pk != requested_series_id and selected_series.series_group_id != requested_series_id:
+                    raise ApiError(400, 'Select a valid transaction series.')
+            if series_name and series_name.casefold() not in {
+                selected_series.name.casefold(),
+                selected_series.series_group.name.casefold() if selected_series.series_group_id else '',
+            }:
+                raise ApiError(400, 'Select a valid transaction series.')
+            obj.transaction_series = selected_series.name
+        c.done()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
@@ -8197,10 +8336,24 @@ class CreditNoteResource(Resource):
                 if amt > inv_bal:
                     raise ApiError(400, f'Amount for {inv.number} (₹{amt}) exceeds the invoice balance due (₹{inv_bal}).')
 
-                pay_num = services.next_document_number('PR', org=user_org, date=dt)
+                pay_num = services.next_document_number(
+                    'PR', org=user_org, date=dt,
+                    customer_type=services._customer_type_from_party(obj.customer),
+                    branch=obj.branch, location=obj.location,
+                    business_location_id=obj.business_location_id,
+                    party=obj.customer, user=request.user,
+                )
+                payment_series = DocumentNumberAllocation.objects.filter(
+                    organization=user_org,
+                    document_type='payments_received',
+                    number=pay_num,
+                ).select_related('series').first()
                 pay = PaymentReceived.objects.create(
                     organization=user_org,
                     customer=obj.customer,
+                    business_location=obj.business_location,
+                    branch=obj.branch,
+                    transaction_series=payment_series.series.name if payment_series else '',
                     number=pay_num,
                     date=dt,
                     mode='credit_note',
@@ -8312,6 +8465,10 @@ class VendorCreditResource(Resource):
         return {
             'id': o.pk, 'number': o.number, 'vendor_id': o.vendor_id,
             'vendor_name': o.vendor.name, 'party': o.vendor.name, 'date': o.date,
+            'branch': o.branch, 'location': o.location,
+            'business_location_id': o.business_location_id,
+            'business_location_name': o.business_location.name if o.business_location_id else '',
+            'transaction_series': o.transaction_series,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'bill_id': o.bill_id, 'bill_number': o.bill.number if o.bill else '',
@@ -8345,17 +8502,30 @@ class VendorCreditResource(Resource):
         ]
         return r
 
+    @transaction.atomic
     def create(self, data, user):
         c = Cleaner(data)
+        user_org = get_user_org(user) if user else None
         vid = c.integer('vendor', required=True, lo=1)
-        ven = Vendor.objects.filter(pk=vid).first()
+        ven = Vendor.objects.filter(pk=vid, organization=user_org).first() if user_org else None
         if not ven:
-            raise ApiError(404, 'Vendor not found.')
+            raise ApiError(404, 'Vendor not found in your organization.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120) or 'HO Kottayam'
-        user_org = get_user_org(user) if user else None
+        business_location_id = c.integer('business_location_id', lo=1)
+        business_location = Branch.objects.filter(
+            pk=business_location_id, organization=user_org, active=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first() if business_location_id and user_org else None
+        if business_location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = business_location.name
+            location = business_location.name
         billing_fallback = _party_address_snapshot(ven, 'billing')
         shipping_fallback = _party_address_snapshot(ven, 'shipping')
         billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -8366,21 +8536,28 @@ class VendorCreditResource(Resource):
         num = (data.get('number') or '').strip()
         series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
         series_id = data.get('numbering_series_id') or data.get('series_id')
-        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         if num:
             if user_org and VendorCredit.objects.filter(number=num, organization=user_org).exists():
                 raise ApiError(400, f'Vendor credit number "{num}" already exists in your organization.')
-            services.sync_series_counter_from_manual_number(user_org, 'VC', num, series=series_name, series_id=series_id)
+            services.sync_series_counter_from_manual_number(
+                user_org, 'VC', num, series=series_name, series_id=series_id,
+                branch=branch, business_location_id=business_location.pk if business_location else None,
+            )
         else:
             num = services.next_document_number(
                 'VC', org=user_org, date=dt,
-                customer_type='b2b' if cust_type == 'registered' else 'b2c',
                 branch=branch, location=location,
+                business_location_id=business_location.pk if business_location else None,
                 gstin=getattr(user_org, 'gstin', ''), series=series_name, series_id=series_id, user=user
             )
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=user_org, document_type='vendor_credits', number=num
+        ).select_related('series').first() if user_org else None
+        cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         vc_kwargs = {
             'organization': user_org,
+            'business_location': business_location,
             'number': num,
             'vendor': ven,
             'date': dt,
@@ -8392,6 +8569,7 @@ class VendorCreditResource(Resource):
             'customer_type': cust_type,
             'branch': branch,
             'location': location,
+            'transaction_series': allocation.series.name if allocation else series_name,
         }
         if hasattr(VendorCredit, 'billing_address_data'):
             vc_kwargs['billing_address_data'] = billing_addr
@@ -8429,13 +8607,27 @@ class VendorCreditResource(Resource):
             elif pt_clean.isdigit():
                 data['payment_terms'] = int(pt_clean)
         c = Cleaner(data)
+        user_org = get_user_org(user) if user else None
         vid = c.integer('vendor', required=True, lo=1)
-        ven = Vendor.objects.filter(pk=vid).first()
+        ven = Vendor.objects.filter(pk=vid, organization=user_org).first() if user_org else None
         if not ven:
-            raise ApiError(404, 'Vendor not found.')
+            raise ApiError(404, 'Vendor not found in your organization.')
         dt = c.date('date', required=True)
         reason = c.text('reason', max_len=150)
-        user_org = get_user_org(user) if user else None
+        branch = c.text('branch', max_len=120) if 'branch' in data else obj.branch
+        location = c.text('location', max_len=120) if 'location' in data else obj.location
+        location_id = c.integer('business_location_id', lo=1) if 'business_location_id' in data else obj.business_location_id
+        business_location = Branch.objects.filter(
+            pk=location_id, organization=user_org,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).filter(Q(active=True) | Q(pk=obj.business_location_id)).first() if location_id and user_org else None
+        if location_id and not business_location:
+            c.err('business_location_id', 'Select an active business location in your organization.')
+        elif business_location and not _user_can_access_business_location(user, business_location):
+            c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = business_location.name
+            location = business_location.name
         billing_fallback = getattr(obj, 'billing_address_data', None) or _party_address_snapshot(ven, 'billing')
         shipping_fallback = getattr(obj, 'shipping_address_data', None) or _party_address_snapshot(ven, 'shipping')
         billing_addr = _clean_transaction_address(c, 'billing_address_data', billing_fallback)
@@ -8449,15 +8641,28 @@ class VendorCreditResource(Resource):
         obj.date = dt
         obj.due_date = dt
         obj.reason = reason
+        obj.business_location = business_location
+        obj.branch = branch
+        obj.location = location
         obj.place_of_supply = ven.state or Organization.get().state
+        if any(key in data for key in ('transaction_series', 'series', 'numbering_series', 'series_id', 'numbering_series_id')):
+            series_name = str(
+                data.get('transaction_series') or data.get('series')
+                or data.get('numbering_series') or ''
+            ).strip()
+            series_id = data.get('numbering_series_id') or data.get('series_id')
+            selected_series = services._select_document_number_series(
+                'VC', org=user_org, date=dt, branch=branch, series=series_name,
+                series_id=series_id, user=user,
+                business_location_id=business_location.pk if business_location else None,
+            )
+            if not selected_series:
+                raise ApiError(400, 'Select an active transaction series for vendor credits.')
+            obj.transaction_series = selected_series.name
         if 'tax_pricing_type' in data:
             obj.tax_pricing_type = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
         if 'customer_type' in data:
             obj.customer_type = str(data.get('customer_type') or 'registered').strip().lower()
-        if 'branch' in data:
-            obj.branch = c.text('branch', max_len=120)
-        if 'location' in data:
-            obj.location = c.text('location', max_len=120) or 'HO Kottayam'
         if hasattr(obj, 'billing_address_data'):
             obj.billing_address_data = billing_addr
         if hasattr(obj, 'shipping_address_data'):
@@ -9210,6 +9415,7 @@ class DeliveryChallanResource(Resource):
     def create_import_record(self, data, user):
         return self._create(data, user, get_user_org(user), allow_unmatched_items=True)
 
+    @transaction.atomic
     def _create(self, data, user, user_org, allow_unmatched_items=False):
         c = Cleaner(data)
         cid = c.integer('customer', required=True, lo=1)
@@ -9228,11 +9434,17 @@ class DeliveryChallanResource(Resource):
         branch = c.text('branch', max_len=120)
         location = c.text('location', max_len=120)
         business_location_id = c.integer('business_location_id', lo=1)
-        business_location = BusinessLocation.objects.filter(pk=business_location_id, organization=user_org, active=True).first() if business_location_id and user_org else None
+        business_location = BusinessLocation.objects.filter(
+            pk=business_location_id, organization=user_org, active=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first() if business_location_id and user_org else None
         if business_location_id and not business_location:
             c.err('business_location_id', 'Select an active business location in your organization.')
         elif business_location and not _user_can_access_business_location(user, business_location):
             c.err('business_location_id', 'You are not assigned to this business location.')
+        if business_location:
+            branch = business_location.name
+            location = business_location.name
         source_warehouse_id = c.integer('source_warehouse_id', lo=1)
         destination_warehouse_id = c.integer('destination_warehouse_id', lo=1)
         source_warehouse = Warehouse.objects.filter(pk=source_warehouse_id, organization=user_org, active=True).first() if source_warehouse_id and user_org else None
@@ -9256,7 +9468,7 @@ class DeliveryChallanResource(Resource):
         if not user_org:
             raise ApiError(403, 'Organization required.')
         currency = (cust.currency or getattr(user_org, 'base_currency', '') or 'INR').upper()
-        customer_type = 'b2b' if cust.gstin or cust.customer_type == 'business' else 'b2c'
+        customer_type = services._customer_type_from_party(cust)
         lines = self._parse_lines(
             data.get('lines'), user_org, ctype, source_warehouse,
             allow_unmatched_items=allow_unmatched_items,
@@ -9267,7 +9479,11 @@ class DeliveryChallanResource(Resource):
         if num:
             if DeliveryChallan.objects.filter(number=num, organization=user_org).exists():
                 raise ApiError(400, f'Delivery challan number "{num}" already exists in your organization.')
-            services.sync_series_counter_from_manual_number(user_org, 'DC', num, series=series_name, series_id=series_id)
+            services.sync_series_counter_from_manual_number(
+                user_org, 'DC', num, series=series_name, series_id=series_id,
+                branch=branch, customer_type=customer_type, party=cust,
+                business_location_id=business_location.pk if business_location else None,
+            )
         else:
             num = services.next_document_number(
                 'DC', org=user_org, date=dt, customer_type=customer_type,
@@ -9275,8 +9491,11 @@ class DeliveryChallanResource(Resource):
                 gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or user_org.gstin),
                 business_location_id=business_location.pk if business_location else None,
                 series=series_name, series_id=series_id,
-                user=user,
+                user=user, party=cust,
             )
+        allocation = DocumentNumberAllocation.objects.filter(
+            organization=user_org, document_type='delivery_challans', number=num
+        ).select_related('series').first()
         subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
         total = max(Decimal('0.00'), subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + adjustment)
         dc_status = 'open' if (data.get('status') == 'open' or data.get('action') in ('submit', 'save_and_submit')) else 'draft'
@@ -9286,6 +9505,7 @@ class DeliveryChallanResource(Resource):
             challan_type=ctype, branch=branch, location=location or (business_location.name if business_location else ''),
             business_location=business_location, source_warehouse=source_warehouse,
             destination_warehouse=destination_warehouse, customer_type=customer_type,
+            transaction_series=allocation.series.name if allocation else series_name,
             gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or ''),
             currency=currency, subtotal=subtotal,
             adjustment=adjustment, total=total, vehicle_number=vnum, notes=notes,
@@ -11941,14 +12161,7 @@ def lookup(request, name):
         data = [{'id': item.pk, 'code': item.code, 'name': item.name, 'symbol': item.symbol}
                 for item in currency_qs]
     elif name in ('branches', 'business-locations', 'retainer-locations'):
-        document_type = request.GET.get('document_type', '').strip()
-        if document_type and document_type not in {
-            item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES
-        }:
-            raise ApiError(400, 'Unsupported transaction document type.')
-        location_qs = org_filter(
-            Branch.objects.filter(active=True)
-        ).filter(location_type='business').prefetch_related('transaction_series__series_group')
+        location_qs = org_filter(Branch.objects.filter(active=True)).filter(location_type='business')
         profile = getattr(request.user, 'profile', None)
         if profile and not request.user.is_superuser and profile.role != UserProfile.ADMIN:
             location_qs = location_qs.filter(
@@ -11962,13 +12175,6 @@ def lookup(request, name):
             'gstin': item.gstin,
             'state': item.state,
             'is_default': item.is_default,
-            'transaction_series_ids': [
-                series.pk for series in item.transaction_series.all()
-                if (not document_type or series.document_type == document_type)
-                and series.active
-                and (not series.series_group_id or series.series_group.is_active)
-            ],
-            'default_transaction_series_id': item.default_transaction_series_id,
         } for item in locations]
     elif name == 'price-lists':
         data = [{'id': o.pk, 'name': o.name, 'percentage': o.percentage}
@@ -11990,45 +12196,12 @@ def lookup(request, name):
                 data.append({'id': f"u_{u.pk}", 'name': uname, 'email': u.email, 'phone': getattr(u.profile, 'phone', '') if hasattr(u, 'profile') else ''})
     elif name == 'transaction-series':
         services.ensure_default_transaction_series(user_org)
-        document_type = request.GET.get('document_type', '').strip()
-        if document_type:
-            supported_types = {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}
-            if document_type not in supported_types:
-                raise ApiError(400, 'Unsupported transaction document type.')
-            series_qs = DocumentNumberSeries.objects.filter(
-                organization=user_org,
-                document_type=document_type,
-                active=True,
-            ).filter(
-                Q(series_group__isnull=True) | Q(series_group__is_active=True)
-            ).select_related('series_group').order_by('name') if user_org else DocumentNumberSeries.objects.none()
-            data = [
-                {
-                    'id': s.pk,
-                    'name': s.name,
-                    'branch': s.branch,
-                    'location': s.location,
-                    'business_location_id': s.business_location_id,
-                    'series_group_id': s.series_group_id,
-                    'is_default': s.is_default or bool(s.series_group_id and s.series_group.is_default),
-                }
-                for s in series_qs
-            ]
-        else:
-            series_qs = TransactionSeries.objects.filter(
-                organization=user_org, is_active=True
-            ).order_by('-is_default', 'name') if user_org else TransactionSeries.objects.none()
-            data = [
-                {
-                    'id': s.pk,
-                    'name': s.name,
-                    'branch': s.branch,
-                    'location': s.location,
-                    'business_location_id': s.business_location_id,
-                    'is_default': s.is_default,
-                }
-                for s in series_qs
-            ]
+        from .models import TransactionSeries
+        series_qs = TransactionSeries.objects.filter(organization=user_org, is_active=True).order_by('-is_default', 'name') if user_org else TransactionSeries.objects.filter(is_active=True).order_by('-is_default', 'name')
+        data = [
+            {'id': s.pk, 'name': s.name, 'branch': s.branch, 'location': s.location, 'is_default': s.is_default}
+            for s in series_qs
+        ]
     elif name == 'employees':
         from django.contrib.auth import get_user_model
         User = get_user_model()
@@ -12042,7 +12215,7 @@ def lookup(request, name):
         data = services.preview_document_number(
             'QTN', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
-            branch=business_location.name if business_location else request.GET.get('branch'),
+            branch=request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
             business_location_id=business_location.pk if business_location else None,
@@ -12056,7 +12229,7 @@ def lookup(request, name):
         data = services.preview_document_number(
             'SO', org=org, date=request.GET.get('date'),
             customer_type=request.GET.get('customer_type'),
-            branch=business_location.name if business_location else request.GET.get('branch'),
+            branch=request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             gstin=business_location.gstin if business_location else request.GET.get('gstin'),
             business_location_id=business_location.pk if business_location else None,
@@ -12208,7 +12381,7 @@ def lookup(request, name):
         business_location = preview_business_location(org)
         data = services.preview_document_number(
             'PM', org=org, date=request.GET.get('date'),
-            branch=business_location.name if business_location else request.GET.get('branch'),
+            branch=request.GET.get('branch'),
             location=business_location.name if business_location else request.GET.get('location'),
             business_location_id=business_location.pk if business_location else None,
             series=request.GET.get('series') or request.GET.get('transaction_series'),
@@ -15968,24 +16141,58 @@ def settings_number_series_view(request):
 
 
 @api_view
-def settings_transaction_series_preview_view(request, series_id):
+def settings_transaction_series_preview_view(request, series_id=None):
     """Preview an unsaved numbering configuration using the backend numbering engine."""
     from copy import copy
     check_permission(request, allowed_roles=[UserProfile.ADMIN])
     org = get_user_org(request.user) or Organization.get()
     from .models import TransactionSeries, DocumentNumberSeries
 
-    grp = TransactionSeries.objects.filter(organization=org, pk=series_id).first()
-    if not grp:
-        raise ApiError(404, 'Transaction series not found.')
     data = body(request) if request.method in ('POST', 'PUT', 'PATCH') else {}
     doc_type = str(data.get('document_type') or '').strip().lower()
     doc_type = services._number_series_doc_type(doc_type)
-    s_item = DocumentNumberSeries.objects.filter(
-        organization=org, series_group=grp, document_type=doc_type
-    ).first()
-    if not s_item:
-        raise ApiError(404, 'Numbering configuration for this transaction type was not found.')
+    if doc_type not in {item['key'] for item in services.SUPPORTED_TRANSACTION_TYPES}:
+        raise ApiError(400, 'Choose a supported transaction type.')
+
+    grp = None
+    s_item = None
+    branch_location = None
+    if series_id:
+        grp = TransactionSeries.objects.filter(organization=org, pk=series_id).first()
+        if not grp:
+            raise ApiError(404, 'Transaction series not found.')
+        s_item = DocumentNumberSeries.objects.filter(
+            organization=org, series_group=grp, document_type=doc_type
+        ).first()
+        if not s_item:
+            raise ApiError(404, 'Numbering configuration for this transaction type was not found.')
+        branch_location = grp.business_location
+    else:
+        branch_id = data.get('branch_id') or data.get('business_location_id')
+        if branch_id not in (None, '', 0):
+            branch_location = Branch.objects.filter(
+                organization=org, pk=branch_id, active=True
+            ).first()
+            if not branch_location:
+                raise ApiError(400, 'Choose an active branch belonging to your organization.')
+        branch_name = branch_location.name if branch_location else str(data.get('branch') or '').strip()
+        location_name = branch_location.name if branch_location else str(data.get('location') or '').strip()
+        grp = TransactionSeries(
+            organization=org,
+            name='Preview',
+            branch=branch_name,
+            location=location_name,
+            business_location=branch_location,
+        )
+        s_item = DocumentNumberSeries(
+            organization=org,
+            series_group=grp,
+            name='Preview',
+            document_type=doc_type,
+            branch=branch_name,
+            location=location_name,
+            business_location=branch_location,
+        )
 
     format_pattern = services.validate_document_number_format_pattern(
         data.get('format_pattern') if 'format_pattern' in data else s_item.format_pattern
@@ -15998,8 +16205,32 @@ def settings_transaction_series_preview_view(request, series_id):
         prefix = s_item.prefix
     separator = str(data.get('separator') if 'separator' in data else s_item.separator or '/').strip()[:5] or '/'
     current_date = timezone.localdate()
-    counter = services._series_counter_for_date(s_item, org, date=current_date, module_or_pfx=doc_type)
-    raw_next = str(data.get('next_number', counter.next_number)).strip()
+    customer_type = str(data.get('customer_type') or 'b2b').strip().lower()
+    if customer_type not in ('', 'b2b', 'b2c'):
+        raise ApiError(400, 'Preview customer type must be B2B, B2C, or blank.')
+    b2b_prefix = _transaction_series_customer_prefix(data, 'b2b_prefix', s_item.b2b_prefix)
+    b2c_prefix = _transaction_series_customer_prefix(data, 'b2c_prefix', s_item.b2c_prefix)
+    preview_series = copy(s_item)
+    preview_series.prefix = prefix
+    preview_series.padding = data.get('padding', s_item.padding)
+    preview_series.format_pattern = format_pattern
+    preview_series.separator = separator
+    preview_series.b2b_prefix = b2b_prefix
+    preview_series.b2c_prefix = b2c_prefix
+    preview_series.branch = grp.branch
+    preview_series.location = grp.location
+    preview_series.business_location = branch_location
+    if series_id:
+        counter = services._series_counter_for_date(
+            preview_series, org, date=current_date, module_or_pfx=doc_type,
+            branch=grp.branch, customer_type=customer_type,
+            business_location_id=grp.business_location_id,
+        )
+        default_next = counter.next_number
+    else:
+        counter = None
+        default_next = s_item.next_number or 1
+    raw_next = str(data.get('next_number', default_next)).strip()
     padding = data.get('padding', s_item.padding)
     if not raw_next.isdigit() or int(raw_next) < 1:
         raise ApiError(400, 'Next number must be a positive whole number.')
@@ -16011,16 +16242,9 @@ def settings_transaction_series_preview_view(request, series_id):
         raise ApiError(400, 'Padding must be between 1 and 12.')
 
     seq = int(raw_next)
-    if seq < counter.next_number:
+    if counter and seq < counter.next_number:
         raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
-    preview_series = copy(s_item)
-    preview_series.prefix = prefix
     preview_series.padding = padding
-    preview_series.format_pattern = format_pattern
-    preview_series.separator = separator
-    preview_series.branch = grp.branch
-    preview_series.location = grp.location
-    preview_series.business_location = grp.business_location
     formatted = services._format_series_number(
         preview_series,
         seq,
@@ -16028,14 +16252,18 @@ def settings_transaction_series_preview_view(request, series_id):
         date=current_date,
         branch=grp.branch,
         location=grp.location,
-        customer_type='b2b',
+        customer_type=customer_type,
         format_pattern=format_pattern or prefix,
         separator=separator,
+        business_location_id=grp.business_location_id,
     )
     return j({'status': 'ok', 'preview': {
         'formatted': formatted,
         'prefix': prefix,
         'format_pattern': format_pattern,
+        'b2b_prefix': b2b_prefix,
+        'b2c_prefix': b2c_prefix,
+        'customer_type': customer_type,
         'separator': separator,
         'next_sequence': seq,
         'padding': padding,
@@ -16043,8 +16271,20 @@ def settings_transaction_series_preview_view(request, series_id):
         'org_code': org.get_code(),
         'branch': grp.branch,
         'location': grp.location,
-        'branch_prefix': grp.business_location.prefix if grp.business_location_id and grp.business_location else '',
+        'branch_prefix': branch_location.prefix if branch_location else '',
     }})
+
+
+def _transaction_series_customer_prefix(data, key, current):
+    if key not in data:
+        return current
+    value = data[key]
+    if not isinstance(value, str):
+        raise ApiError(400, f'{key} must be a text value.')
+    value = value.strip()
+    if len(value) > 20 or not re.fullmatch(r'[A-Za-z0-9_-]*', value):
+        raise ApiError(400, f'{key} must contain at most 20 letters, numbers, hyphens, or underscores.')
+    return value
 
 
 def _transaction_series_boolean(data, key, default):
@@ -16126,9 +16366,14 @@ def settings_transaction_series_view(request, series_id=None):
                         is_default=current_series.is_default,
                         branch=current_series.branch,
                         location=current_series.location,
+                        business_location=current_series.business_location,
                     )
                 prev = services.preview_document_number(
-                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk, allow_inactive=True
+                    t['pfx'], org=org, series=current_series.name, series_id=current_series.pk,
+                    customer_type='b2b', branch=s_item.branch,
+                    location=s_item.location,
+                    business_location_id=s_item.business_location_id,
+                    allow_inactive=True
                 )
                 current_next = max(int(t['default_next']), int(prev.get('next_sequence') or s_item.next_number))
                 items.append({
@@ -16136,6 +16381,8 @@ def settings_transaction_series_view(request, series_id=None):
                     'module': t['pfx'],
                     'label': t['label'],
                     'prefix': s_item.prefix,
+                    'b2b_prefix': s_item.b2b_prefix,
+                    'b2c_prefix': s_item.b2c_prefix,
                     'format_pattern': s_item.format_pattern or '',
                     'next_number': prev.get('next_sequence', s_item.next_number),
                     'padding': s_item.padding,
@@ -16148,6 +16395,8 @@ def settings_transaction_series_view(request, series_id=None):
                     'separator': s_item.separator or '/',
                     'current_year': timezone.localdate().year,
                     'default_prefix': services.default_document_number_prefix(org, t['pfx']),
+                    'default_b2b_prefix': 'D',
+                    'default_b2c_prefix': 'C',
                     'default_format_pattern': '',
                     'default_padding': t['padding'],
                     'default_next': current_next,
@@ -16174,6 +16423,8 @@ def settings_transaction_series_view(request, series_id=None):
                 'base_prefix': services.default_document_number_prefix(org, item['pfx']),
                 'next_number': item['default_next'],
                 'padding': item['padding'],
+                'b2b_prefix': 'D',
+                'b2c_prefix': 'C',
             } for item in services.SUPPORTED_TRANSACTION_TYPES],
         })
 
@@ -16242,6 +16493,8 @@ def settings_transaction_series_view(request, series_id=None):
                 format_pattern = str(cfg.get('format_pattern') or '').strip()
                 format_pattern = services.validate_document_number_format_pattern(format_pattern)
                 separator = str(cfg.get('separator') or '/').strip()[:5] or '/'
+                b2b_prefix = _transaction_series_customer_prefix(cfg, 'b2b_prefix', 'D')
+                b2c_prefix = _transaction_series_customer_prefix(cfg, 'b2c_prefix', 'C')
                 raw_next = str(cfg.get('next_number', t['default_next'])).strip()
                 if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
                     raise ApiError(400, f'A valid prefix is required for {t["label"]}.')
@@ -16264,6 +16517,8 @@ def settings_transaction_series_view(request, series_id=None):
                     document_type=doc_key,
                     prefix=prefix,
                     format_pattern=format_pattern,
+                    b2b_prefix=b2b_prefix,
+                    b2c_prefix=b2c_prefix,
                     separator=separator,
                     starting_number=1,
                     next_number=next_val,
@@ -16340,6 +16595,7 @@ def settings_transaction_series_view(request, series_id=None):
                 name=grp.name,
                 branch=grp.branch,
                 location=grp.location,
+                business_location=grp.business_location,
                 active=grp.is_active,
                 is_default=grp.is_default
             )
@@ -16389,6 +16645,7 @@ def settings_transaction_series_view(request, series_id=None):
                         is_default=grp.is_default,
                         branch=grp.branch,
                         location=grp.location,
+                        business_location=grp.business_location,
                     )
                 if 'prefix' in item_data and item_data['prefix'] is not None:
                     prefix = str(item_data['prefix']).strip()
@@ -16401,12 +16658,27 @@ def settings_transaction_series_view(request, series_id=None):
                 if 'separator' in item_data and item_data['separator'] is not None:
                     sep = str(item_data['separator']).strip()[:5] or '/'
                     s_item.separator = sep
+                if 'b2b_prefix' in item_data:
+                    s_item.b2b_prefix = _transaction_series_customer_prefix(
+                        item_data, 'b2b_prefix', s_item.b2b_prefix
+                    )
+                if 'b2c_prefix' in item_data:
+                    s_item.b2c_prefix = _transaction_series_customer_prefix(
+                        item_data, 'b2c_prefix', s_item.b2c_prefix
+                    )
                 if 'next_number' in item_data:
                     raw_next = str(item_data['next_number']).strip()
                     if not raw_next.isdigit() or int(raw_next) < 1:
                         raise ApiError(400, 'Next number must be a positive whole number.')
                     requested_next = int(raw_next)
-                    counter = services._series_counter_for_date(s_item, org, module_or_pfx=doc_type)
+                    counter_customer_type = str(item_data.get('customer_type') or 'b2b').strip().lower()
+                    if counter_customer_type not in ('', 'b2b', 'b2c'):
+                        raise ApiError(400, 'Preview customer type must be B2B, B2C, or blank.')
+                    counter = services._series_counter_for_date(
+                        s_item, org, module_or_pfx=doc_type, branch=grp.branch,
+                        customer_type=counter_customer_type,
+                        business_location_id=grp.business_location_id,
+                    )
                     counter = type(counter).objects.select_for_update().get(pk=counter.pk)
                     if requested_next < counter.next_number:
                         raise ApiError(409, f'Next number cannot be lower than the sequence already reached ({counter.next_number}).')
@@ -16469,6 +16741,8 @@ def _number_series_payload(series):
         'business_location_id': series.business_location_id,
         'gstin': series.gstin,
         'prefix': series.prefix,
+        'b2b_prefix': series.b2b_prefix,
+        'b2c_prefix': series.b2c_prefix,
         'separator': series.separator,
         'starting_number': series.starting_number,
         'next_number': series.next_number,
@@ -16575,6 +16849,8 @@ def settings_document_number_series_view(request, series_id=None, retainer_only=
     prefix = str(data.get('prefix') or '').strip()
     if not prefix or len(prefix) > 100 or any(ord(char) < 32 for char in prefix):
         raise ApiError(400, 'Prefix must be 1-100 printable characters.')
+    b2b_prefix = _transaction_series_customer_prefix(data, 'b2b_prefix', 'D')
+    b2c_prefix = _transaction_series_customer_prefix(data, 'b2c_prefix', 'C')
     separator = str(data.get('separator') or '/').strip()
     if separator not in ('/', '-', '.', '_'):
         raise ApiError(400, 'Choose slash, hyphen, period, or underscore as the separator.')
@@ -16657,6 +16933,10 @@ def settings_document_number_series_view(request, series_id=None, retainer_only=
             'gst_compliant': gst_compliant, 'allow_manual_selection': allow_manual_selection,
             'is_default': is_default,
         }
+        if not series_id or 'b2b_prefix' in data:
+            defaults['b2b_prefix'] = b2b_prefix
+        if not series_id or 'b2c_prefix' in data:
+            defaults['b2c_prefix'] = b2c_prefix
         if document_type == 'retainer_invoices' and is_default:
             DocumentNumberSeries.objects.filter(
                 organization=org, document_type='retainer_invoices', is_default=True

@@ -3083,7 +3083,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
                 <td><b>${esc(String(item.next_number).padStart(item.padding || 1, '0'))}</b></td>
                 <td><span class="pastel-chip chip-sky"><b>${esc(item.sample_preview)}</b></span></td>
                 <td style="text-align:right;">
-                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}" data-edit-item-default-prefix="${esc(item.default_prefix || item.prefix || '')}" data-edit-item-default-format="${esc(item.default_format_pattern || '')}" data-edit-item-default-next="${item.default_next || 1}" data-edit-item-default-pad="${item.default_padding || 5}" data-edit-item-default-sep="${esc(item.default_separator || '/')}">
+                  <button type="button" class="btn-table-action" data-edit-item-doc="${esc(item.document_type)}" data-edit-item-label="${esc(item.label)}" data-edit-item-prefix="${esc(item.prefix)}" data-edit-item-format="${esc(item.format_pattern || '')}" data-edit-item-next="${item.next_number}" data-edit-item-pad="${item.padding}" data-edit-item-b2b="${esc(item.b2b_prefix || 'D')}" data-edit-item-b2c="${esc(item.b2c_prefix || 'C')}" data-edit-item-preview="${esc(item.sample_preview)}" data-edit-item-fy="${esc(item.financial_year)}" data-edit-item-year="${item.current_year}" data-edit-item-org="${esc(item.org_code)}" data-edit-item-branch="${esc(item.branch)}" data-edit-item-location="${esc(item.location)}" data-edit-item-separator="${esc(item.separator)}" data-edit-item-default-prefix="${esc(item.default_prefix || item.prefix || '')}" data-edit-item-default-format="${esc(item.default_format_pattern || '')}" data-edit-item-default-next="${item.default_next || 1}" data-edit-item-default-pad="${item.default_padding || 5}" data-edit-item-default-sep="${esc(item.default_separator || '/')}" data-edit-item-default-b2b="${esc(item.default_b2b_prefix || 'D')}" data-edit-item-default-b2c="${esc(item.default_b2c_prefix || 'C')}">
                     Configure
                   </button>
                 </td>
@@ -3175,6 +3175,8 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         label: btn.dataset.editItemLabel,
         prefix: btn.dataset.editItemPrefix,
         format_pattern: btn.dataset.editItemFormat || '',
+        b2b_prefix: btn.dataset.editItemB2b || 'D',
+        b2c_prefix: btn.dataset.editItemB2c || 'C',
         next_number: btn.dataset.editItemNext,
         padding: btn.dataset.editItemPad,
         sample_preview: btn.dataset.editItemPreview,
@@ -3188,20 +3190,30 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         default_format_pattern: btn.dataset.editItemDefaultFormat,
         default_next: btn.dataset.editItemDefaultNext,
         default_padding: btn.dataset.editItemDefaultPad,
-        default_separator: btn.dataset.editItemDefaultSep
+        default_separator: btn.dataset.editItemDefaultSep,
+        default_b2b_prefix: btn.dataset.editItemDefaultB2b,
+        default_b2c_prefix: btn.dataset.editItemDefaultB2c
       });
     });
   });
 }
 
-function openEditSeriesItemModal(container, currentSeries, item) {
-  document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());
+function openEditSeriesItemModal(container, currentSeries, item, options = {}) {
+  const localOnly = Boolean(options.localOnly);
+  const customerNumberTypes = new Set([
+    'invoices', 'recurring_invoices', 'retainer_invoices', 'sales_orders',
+    'quotes', 'credit_notes', 'payments_received'
+  ]);
+  const supportsCustomerPrefixes = customerNumberTypes.has(item.document_type);
+  document.querySelectorAll('.transaction-series-item-modal').forEach(existing => existing.remove());
   const modal = document.createElement('div');
-  modal.className = 'modal-backdrop transaction-series-modal';
+  modal.className = 'modal-backdrop transaction-series-modal transaction-series-item-modal';
   const paddingVal = Number(item.padding) || 5;
   const paddedNext = String(item.next_number || 1).padStart(paddingVal, '0');
   const currentFormat = item.format_pattern || '';
   const currentPrefix = item.prefix || '';
+  const currentB2bPrefix = item.b2b_prefix ?? 'D';
+  const currentB2cPrefix = item.b2c_prefix ?? 'C';
   const currentSeparator = item.separator || '/';
   const isCustomSep = !['/', '-', '_'].includes(currentSeparator) && currentSeparator !== '';
 
@@ -3212,7 +3224,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
         <button type="button" class="modal-close-btn" data-close-item>✕</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
-        <div style="font-size:12.5px;color:#64748b;">Series: <b>${esc(currentSeries.name)}</b></div>
+        <div style="font-size:12.5px;color:#64748b;">Series: <b>${esc(currentSeries?.name || options.seriesName || 'New Series')}</b></div>
 
         <!-- Transaction Prefix -->
         <div class="form-group" style="margin-bottom:0;">
@@ -3220,6 +3232,16 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           <input type="text" id="seriesPrefixInput" value="${esc(currentPrefix)}" class="form-control" placeholder="e.g. INV">
           <small style="font-size:11px;color:#64748b;margin-top:2px;display:block;">Base prefix or standard identifier for this module.</small>
         </div>
+        ${supportsCustomerPrefixes ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <label class="form-group" style="margin-bottom:0;">B2B Customer Prefix
+              <input type="text" id="seriesB2bPrefixInput" value="${esc(currentB2bPrefix)}" class="form-control" maxlength="20" placeholder="D">
+            </label>
+            <label class="form-group" style="margin-bottom:0;">B2C Customer Prefix
+              <input type="text" id="seriesB2cPrefixInput" value="${esc(currentB2cPrefix)}" class="form-control" maxlength="20" placeholder="C">
+            </label>
+          </div>
+        ` : ''}
 
         <!-- Format Pattern Builder -->
         <div class="form-group" style="margin-bottom:0;">
@@ -3278,6 +3300,15 @@ function openEditSeriesItemModal(container, currentSeries, item) {
         <!-- Live Interactive Sample Preview -->
         <div style="background:#f0fdf4;border:1.5px solid #86efac;padding:12px 14px;border-radius:6px;">
           <div style="font-size:11px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Live Interactive Sample Preview</div>
+          ${supportsCustomerPrefixes ? `
+            <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#166534;margin-bottom:6px;">
+              Preview customer type
+              <select id="seriesPreviewCustomerType" class="form-control" style="width:auto;padding:3px 8px;font-size:11px;">
+                <option value="b2b">B2B</option>
+                <option value="b2c">B2C</option>
+              </select>
+            </label>
+          ` : ''}
           <div style="font-size:17px;font-family:monospace;font-weight:700;color:#15803d;word-break:break-all;" id="seriesSamplePreview">${esc(item.sample_preview || '')}</div>
         </div>
 
@@ -3293,7 +3324,7 @@ function openEditSeriesItemModal(container, currentSeries, item) {
               </tr>
             </thead>
             <tbody style="color:#334155;">
-              <tr><td style="padding:3px 4px;"><code>{CUSTOMERTYPE}</code></td><td style="padding:3px 4px;">Customer type from Master</td><td style="padding:3px 4px;">B2B</td></tr>
+              <tr><td style="padding:3px 4px;"><code>{CUSTOMERTYPE}</code></td><td style="padding:3px 4px;">Configured customer prefix</td><td style="padding:3px 4px;">D / C</td></tr>
               <tr><td style="padding:3px 4px;"><code>{LOCATION}</code></td><td style="padding:3px 4px;">Customer / transaction location</td><td style="padding:3px 4px;">KOTTAYAM</td></tr>
               <tr><td style="padding:3px 4px;"><code>{FY}</code></td><td style="padding:3px 4px;">Financial Year</td><td style="padding:3px 4px;">26-27</td></tr>
               <tr><td style="padding:3px 4px;"><code>{ORG}</code></td><td style="padding:3px 4px;">Organization short code</td><td style="padding:3px 4px;">CONVO</td></tr>
@@ -3314,6 +3345,9 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   document.body.appendChild(modal);
 
   const prefixInp = modal.querySelector('#seriesPrefixInput');
+  const b2bPrefixInp = modal.querySelector('#seriesB2bPrefixInput');
+  const b2cPrefixInp = modal.querySelector('#seriesB2cPrefixInput');
+  const previewCustomerType = modal.querySelector('#seriesPreviewCustomerType');
   const formatInp = modal.querySelector('#seriesFormatInput');
   const sepSelect = modal.querySelector('#seriesSeparatorSelect');
   const customSepInp = modal.querySelector('#seriesCustomSeparatorInput');
@@ -3325,14 +3359,17 @@ function openEditSeriesItemModal(container, currentSeries, item) {
   const resetFormatBtn = modal.querySelector('#btnResetFormatPattern');
 
   const closeModal = () => {
-    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keydown', onKeyDown, localOnly);
     modal.remove();
-    document.body.classList.remove('modal-open');
+    if (!localOnly) document.body.classList.remove('modal-open');
   };
   const onKeyDown = (e) => {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') {
+      if (localOnly) e.stopImmediatePropagation();
+      closeModal();
+    }
   };
-  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keydown', onKeyDown, localOnly);
   document.body.classList.add('modal-open');
   modal.addEventListener('click', e => {
     if (e.target === modal) closeModal();
@@ -3370,6 +3407,9 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       const defaultFormat = item.default_format_pattern || '';
 
       prefixInp.value = defaultPfx;
+      if (b2bPrefixInp) b2bPrefixInp.value = item.default_b2b_prefix ?? 'D';
+      if (b2cPrefixInp) b2cPrefixInp.value = item.default_b2c_prefix ?? 'C';
+      if (previewCustomerType) previewCustomerType.value = 'b2b';
       formatInp.value = defaultFormat;
       sepSelect.value = ['/', '-', '_'].includes(defaultSep) ? defaultSep : 'custom';
       customSepInp.value = sepSelect.value === 'custom' ? defaultSep : '';
@@ -3452,11 +3492,21 @@ function openEditSeriesItemModal(container, currentSeries, item) {
     window.clearTimeout(updatePreview._timer);
     updatePreview._timer = window.setTimeout(async () => {
       try {
-        const result = await api(`/settings/transaction-series/${currentSeries.id}/preview/`, {
+        const branchId = localOnly
+          ? (typeof options.branchId === 'function' ? options.branchId() : '')
+          : currentSeries?.branch_id;
+        const endpoint = localOnly
+          ? '/settings/transaction-series/preview/'
+          : `/settings/transaction-series/${currentSeries.id}/preview/`;
+        const result = await api(endpoint, {
           method: 'POST',
           body: JSON.stringify({
             document_type: item.document_type,
+            branch_id: branchId || null,
             prefix: prefixInp.value.trim(),
+            b2b_prefix: b2bPrefixInp?.value.trim() ?? 'D',
+            b2c_prefix: b2cPrefixInp?.value.trim() ?? 'C',
+            customer_type: previewCustomerType?.value || 'b2b',
             format_pattern: pattern,
             separator: sep || '/',
             next_number: Number(raw),
@@ -3476,11 +3526,14 @@ function openEditSeriesItemModal(container, currentSeries, item) {
 
   ['input', 'change', 'keyup', 'paste'].forEach(ev => {
     prefixInp.addEventListener(ev, updatePreview);
+    b2bPrefixInp?.addEventListener(ev, updatePreview);
+    b2cPrefixInp?.addEventListener(ev, updatePreview);
     formatInp.addEventListener(ev, updatePreview);
     nextInp.addEventListener(ev, updatePreview);
     paddingInp.addEventListener(ev, updatePreview);
     customSepInp.addEventListener(ev, updatePreview);
   });
+  previewCustomerType?.addEventListener('change', updatePreview);
 
   // Calculate live preview immediately upon modal open
   updatePreview();
@@ -3504,6 +3557,14 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       prefixInp.focus();
       return;
     }
+    const b2bPrefix = b2bPrefixInp?.value.trim() ?? item.b2b_prefix ?? 'D';
+    const b2cPrefix = b2cPrefixInp?.value.trim() ?? item.b2c_prefix ?? 'C';
+    const validCustomerPrefix = value => value.length <= 20 && /^[A-Za-z0-9_-]*$/.test(value);
+    if (!validCustomerPrefix(b2bPrefix) || !validCustomerPrefix(b2cPrefix)) {
+      toast('Customer prefixes may contain up to 20 letters, numbers, hyphens, or underscores.', 'error');
+      (b2bPrefixInp && !validCustomerPrefix(b2bPrefix) ? b2bPrefixInp : b2cPrefixInp)?.focus();
+      return;
+    }
     if (!/^\d{1,12}$/.test(rawNext) || Number(rawNext) < 1) {
       toast('Next number must be a positive whole number of at most 12 digits.', 'error');
       nextInp.focus();
@@ -3523,6 +3584,24 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       return;
     }
     const next_number = Number(rawNext);
+    const customer_type = previewCustomerType?.value || 'b2b';
+
+    if (localOnly) {
+      const updatedItem = {
+        ...item,
+        prefix,
+        format_pattern: formatPattern,
+        separator: sep || '/',
+        next_number,
+        padding,
+        b2b_prefix: b2bPrefix,
+        b2c_prefix: b2cPrefix,
+        customer_type
+      };
+      if (typeof options.onSave === 'function') options.onSave(updatedItem);
+      closeModal();
+      return;
+    }
 
     saveItemBtn.disabled = true;
     saveItemBtn.textContent = 'Saving...';
@@ -3533,6 +3612,9 @@ function openEditSeriesItemModal(container, currentSeries, item) {
           items: [{
             document_type: item.document_type,
             prefix: prefix,
+            b2b_prefix: b2bPrefix,
+            b2c_prefix: b2cPrefix,
+            customer_type: customer_type,
             format_pattern: formatPattern,
             separator: sep || '/',
             next_number: next_number,
@@ -3544,9 +3626,11 @@ function openEditSeriesItemModal(container, currentSeries, item) {
       const savedItem = saved.items?.find(savedConfig => savedConfig.document_type === item.document_type);
       if (!savedItem ||
           savedItem.prefix !== prefix ||
+          savedItem.b2b_prefix !== b2bPrefix ||
+          savedItem.b2c_prefix !== b2cPrefix ||
           (savedItem.format_pattern || '') !== formatPattern ||
           (savedItem.separator || '/') !== (sep || '/') ||
-          Number(savedItem.next_number) !== next_number ||
+          Number(savedItem.next_number) < next_number ||
           Number(savedItem.padding) !== padding) {
         throw new Error('The saved numbering configuration could not be verified. Please retry.');
       }
@@ -3571,7 +3655,18 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     prefix: item.prefix || '',
     base_prefix: item.base_prefix || item.prefix || '',
     next_number: item.next_number || 1,
-    padding: item.padding || 5
+    padding: item.padding || 5,
+    format_pattern: item.format_pattern || '',
+    separator: item.separator || '/',
+    b2b_prefix: item.b2b_prefix ?? 'D',
+    b2c_prefix: item.b2c_prefix ?? 'C',
+    default_prefix: item.base_prefix || item.prefix || '',
+    default_format_pattern: item.default_format_pattern || '',
+    default_separator: item.default_separator || '/',
+    default_b2b_prefix: item.default_b2b_prefix ?? 'D',
+    default_b2c_prefix: item.default_b2c_prefix ?? 'C',
+    default_next: item.default_next || item.next_number || 1,
+    default_padding: item.default_padding || item.padding || 5
   }));
 
   const modal = document.createElement('div');
@@ -3608,6 +3703,7 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
                 <th>MODULE</th>
                 <th>PREFIX</th>
                 <th>NEXT NUMBER</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="newSeriesItemsTbody">
@@ -3616,6 +3712,7 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
                   <td><b>${esc(item.label)}</b></td>
                   <td><input type="text" class="form-control s-pfx" data-base-prefix="${esc(item.base_prefix)}" value="${esc(item.base_prefix)}" style="padding:4px 8px;font-size:12px;"></td>
                   <td><input type="text" class="form-control s-nxt" value="${esc(String(item.next_number).padStart(item.padding || 1, '0'))}" style="padding:4px 8px;font-size:12px;font-family:monospace;"></td>
+                  <td><button type="button" class="btn s" data-configure-new-item="${esc(item.document_type)}" style="font-size:11px;padding:4px 8px;">Configure</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -3706,6 +3803,32 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
     });
   });
 
+  modal.querySelectorAll('[data-configure-new-item]').forEach(button => {
+    button.addEventListener('click', () => {
+      const item = typesList.find(type => type.document_type === button.dataset.configureNewItem);
+      const row = button.closest('tr');
+      if (!item || !row) return;
+      openEditSeriesItemModal(container, null, {
+        ...item,
+        prefix: row.querySelector('.s-pfx').value.trim(),
+        next_number: Number(row.querySelector('.s-nxt').value) || item.next_number,
+        sample_preview: ''
+      }, {
+        localOnly: true,
+        seriesName: nameInput.value.trim() || 'New Series',
+        branchId: () => modal.querySelector('#newSeriesLocation').value,
+        onSave: updated => {
+          Object.assign(item, updated);
+          const prefixInput = row.querySelector('.s-pfx');
+          prefixInput.value = updated.prefix;
+          prefixInput.dataset.userEdited = '1';
+          row.querySelector('.s-nxt').value = String(updated.next_number).padStart(updated.padding || 1, '0');
+          button.textContent = 'Configured';
+        }
+      });
+    });
+  });
+
   const closeModal = () => {
     document.removeEventListener('keydown', onKeyDown);
     modal.remove();
@@ -3764,8 +3887,18 @@ function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null
         return;
       }
       const nxt = Number(rawNxt);
-      const pad = rawNxt.length > 1 ? rawNxt.length : 1;
-      items.push({ document_type: type, prefix: pfx, next_number: nxt, padding: pad });
+      const typeConfig = typesList.find(config => config.document_type === type);
+      const pad = rawNxt.length > 1 ? rawNxt.length : (typeConfig?.padding || 5);
+      items.push({
+        document_type: type,
+        prefix: pfx,
+        format_pattern: typeConfig?.format_pattern || '',
+        separator: typeConfig?.separator || '/',
+        b2b_prefix: typeConfig?.b2b_prefix ?? 'D',
+        b2c_prefix: typeConfig?.b2c_prefix ?? 'C',
+        next_number: nxt,
+        padding: pad
+      });
     });
 
     if (hasError || items.length !== typesList.length) return;

@@ -447,6 +447,7 @@ class PaymentReceived(Payment):
     tax_amount = models.DecimalField(default=Decimal('0.00'), **MONEY)
     place_of_supply = models.CharField(max_length=80, blank=True, default='')
     branch = models.CharField(max_length=120, blank=True, default='')
+    transaction_series = models.CharField(max_length=120, blank=True, default='')
     custom_fields_data = models.JSONField(default=dict, blank=True)
     draft_allocations = models.JSONField(default=list, blank=True)
     thank_you_enabled = models.BooleanField(default=False)
@@ -2364,6 +2365,8 @@ class DocumentNumberSeries(models.Model):
     business_location = models.ForeignKey('Branch', null=True, blank=True, on_delete=models.PROTECT, related_name='document_number_series')
     gstin = models.CharField(max_length=15, blank=True, default='')
     prefix = models.CharField(max_length=100, blank=True, default='')
+    b2b_prefix = models.CharField(max_length=20, blank=True, default='D')
+    b2c_prefix = models.CharField(max_length=20, blank=True, default='C')
     separator = models.CharField(max_length=5, default='/')
     format_pattern = models.CharField(max_length=160, blank=True, default='')
     starting_number = models.PositiveIntegerField(default=1)
@@ -2396,12 +2399,17 @@ class DocumentNumberSeries(models.Model):
 class DocumentNumberSeriesCounter(models.Model):
     series = models.ForeignKey(DocumentNumberSeries, on_delete=models.PROTECT, related_name='counters')
     financial_year = models.CharField(max_length=10, default='*')
+    branch_prefix = models.CharField(max_length=120, blank=True, default='')
+    customer_type_prefix = models.CharField(max_length=20, blank=True, default='')
     next_number = models.PositiveIntegerField(default=1)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['series', 'financial_year'], name='uniq_doc_num_series_counter_fy'),
+            models.UniqueConstraint(
+                fields=['series', 'financial_year', 'branch_prefix', 'customer_type_prefix'],
+                name='uniq_doc_num_series_counter_scope_fy',
+            ),
         ]
 
 

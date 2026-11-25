@@ -3058,6 +3058,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
             <button type="button" class="btn s" id="btnToggleActive" style="font-size:12px;color:${currentSeries.is_active ? '#ef4444' : '#10b981'};">
               ${currentSeries.is_active ? 'Deactivate' : 'Activate'}
             </button>
+            <button type="button" class="btn s" id="btnDeleteSeries" style="font-size:12px;color:#ef4444;">Delete Series</button>
           ` : ''}
           <button type="button" class="btn s" id="btnEditSeriesMeta" style="font-size:12px;">Edit Series Info</button>
         </div>
@@ -3143,14 +3144,10 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
       btn.textContent = newActive ? 'Activating...' : 'Deactivating...';
     }
     try {
-      if (!newActive) {
-        await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
-      } else {
-        await api(`/settings/transaction-series/${currentSeries.id}/`, {
-          method: 'PUT',
-          body: JSON.stringify({ is_active: true })
-        });
-      }
+      await api(`/settings/transaction-series/${currentSeries.id}/`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_active: newActive })
+      });
       toast(`Series "${currentSeries.name}" ${newActive ? 'activated' : 'deactivated'}.`, 'success');
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (e) {
@@ -3159,6 +3156,28 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
         btn.textContent = currentSeries.is_active ? 'Deactivate' : 'Activate';
       }
       toast(e.message || 'Action failed.', 'error');
+    }
+  });
+
+  container.querySelector('#btnDeleteSeries')?.addEventListener('click', async () => {
+    if (!currentSeries) return;
+    if (!window.confirm(`Permanently delete "${currentSeries.name}"? Series used by transactions or assigned to a branch cannot be deleted; deactivate it instead.`)) return;
+    const btn = container.querySelector('#btnDeleteSeries');
+    if (btn && btn.disabled) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Deleting...';
+    }
+    try {
+      const result = await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
+      toast(result.message || `Series "${currentSeries.name}" deleted.`, 'success');
+      await renderNumberSeriesPage(container);
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Delete Series';
+      }
+      toast(e.message || 'Failed to delete series.', 'error');
     }
   });
 

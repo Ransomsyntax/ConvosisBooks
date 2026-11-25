@@ -4,10 +4,12 @@ from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.utils import timezone
 from books.models import (
-    Organization, UserProfile, Customer, Vendor, Item,
-    Quote, SalesOrder, Invoice, Bill, PurchaseOrder, RecurringInvoice, RetainerInvoice,
-    RetainerInvoiceAllocation
+    Branch, DeliveryChallan, DeliveryChallanLine, DocumentNumberSeries,
+    Organization, UserProfile, Customer, Vendor, Item, TransactionSeries,
+    Quote, SalesOrder, Invoice, Bill, PurchaseOrder, RecurringInvoice,
+    RetainerInvoice, RetainerInvoiceAllocation
 )
+from books import services
 
 class DocumentWorkflowIntegrationTests(TestCase):
     def setUp(self):
@@ -55,7 +57,40 @@ class DocumentWorkflowIntegrationTests(TestCase):
         )
         self.today = timezone.now().date()
 
+    def create_branch_series(self, branch_name, number_types):
+        branch = Branch.objects.create(
+            organization=self.org,
+            name=branch_name,
+        )
+        series = TransactionSeries.objects.create(
+            organization=self.org,
+            name=f'{branch_name} Series',
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            is_active=True,
+        )
+        for document_type, prefix in number_types.items():
+            DocumentNumberSeries.objects.create(
+                organization=self.org,
+                series_group=series,
+                name=series.name,
+                document_type=document_type,
+                prefix=prefix,
+                format_pattern=f'{prefix}/{{SEQUENCE}}',
+                branch=branch.name,
+                location=branch.name,
+                business_location=branch,
+                active=True,
+                padding=4,
+            )
+        return branch, series
+
     def test_quote_to_sales_order_conversion(self):
+        branch, series = self.create_branch_series(
+            'Quote Branch',
+            {'sales_orders': 'BR-SO'},
+        )
         # 1. Create a Quote
         quote = Quote.objects.create(
             organization=self.org,
@@ -66,7 +101,11 @@ class DocumentWorkflowIntegrationTests(TestCase):
             place_of_supply='Kerala',
             status='sent',
             subtotal=Decimal('5000.00'),
-            total=Decimal('5900.00')
+            total=Decimal('5900.00'),
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            transaction_series=series.name,
         )
         quote.lines.create(
             item=self.item,
@@ -96,6 +135,9 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(so.customer, self.customer)
         self.assertEqual(so.lines.count(), 1)
         self.assertEqual(so.total, Decimal('5900.00'))
+        self.assertEqual(so.business_location, branch)
+        self.assertEqual(so.transaction_series, series.name)
+        self.assertTrue(so.number.startswith('BR-SO/'))
 
         # Quote should be marked as ordered
         quote.refresh_from_db()
@@ -112,19 +154,77 @@ class DocumentWorkflowIntegrationTests(TestCase):
         so_data = so_resp.json()
         self.assertTrue(any(doc['id'] == quote.id and doc['kind'] == 'quotes' for doc in so_data.get('related_documents', [])))
 
+    def test_quote_to_invoice_conversion_preserves_branch_and_series(self):
+        branch, series = self.create_branch_series(
+            'Quote Invoice Branch',
+            {'invoices': 'QINV'},
+        )
+        quote = Quote.objects.create(
+            organization=self.org,
+            number='QT-BRANCH-INV',
+            customer=self.customer,
+            date=self.today,
+            due_date=self.today,
+            place_of_supply='Kerala',
+            status='accepted',
+            subtotal=Decimal('5000.00'),
+            total=Decimal('5900.00'),
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            transaction_series=series.name,
+        )
+
+        response = self.client.post(
+            f'/api/quotes/{quote.pk}/convert-to-invoice/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        invoice = Invoice.objects.get(pk=response.json()['invoice_id'])
+        self.assertEqual(invoice.business_location, branch)
+        self.assertEqual(invoice.transaction_series, series.name)
+        self.assertTrue(invoice.number.startswith('QINV/'))
+
     def test_sales_order_to_invoice_conversion(self):
+        branch, series = self.create_branch_series(
+            'Sales Branch',
+            {
+                'sales_orders': 'BR-SO',
+                'invoices': 'BR-INV',
+            },
+        )
+        original_series_name = series.name
+        sales_order_number = services.next_document_number(
+            'SO',
+            org=self.org,
+            date=self.today,
+            customer_type='b2b',
+            branch=branch.name,
+            location=branch.name,
+            series=series.name,
+            business_location_id=branch.pk,
+        )
         # 1. Create a Sales Order
         so = SalesOrder.objects.create(
             organization=self.org,
-            number='SO-000001',
+            number=sales_order_number,
             customer=self.customer,
             date=self.today,
             due_date=self.today,
             place_of_supply='Kerala',
             status='confirmed',
             subtotal=Decimal('10000.00'),
-            total=Decimal('11800.00')
+            total=Decimal('11800.00'),
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            transaction_series=series.name,
         )
+        series.name = 'Renamed Sales Branch Series'
+        series.save(update_fields=['name', 'updated_at'])
+        DocumentNumberSeries.objects.filter(series_group=series).update(name=series.name)
         so.lines.create(
             item=self.item,
             description='Cloud ERP License x2',
@@ -152,6 +252,11 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(inv.source_sales_order, so)
         self.assertEqual(inv.customer, self.customer)
         self.assertEqual(inv.total, Decimal('11800.00'))
+        self.assertEqual(inv.business_location, branch)
+        self.assertEqual(inv.transaction_series, series.name)
+        self.assertTrue(inv.number.startswith('BR-INV/'))
+        self.assertNotEqual(so.transaction_series, series.name)
+        self.assertEqual(so.transaction_series, original_series_name)
 
         # SO updated
         so.refresh_from_db()
@@ -175,6 +280,10 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(Invoice.objects.filter(source_sales_order=so).count(), 1)
 
     def test_purchase_order_to_bill_conversion(self):
+        branch, series = self.create_branch_series(
+            'Purchase Branch',
+            {'bills': 'BR-BILL'},
+        )
         # 1. Create a Purchase Order
         po = PurchaseOrder.objects.create(
             organization=self.org,
@@ -186,7 +295,11 @@ class DocumentWorkflowIntegrationTests(TestCase):
             status='confirmed',
             subtotal=Decimal('5000.00'),
             total=Decimal('5900.00'),
-            terms='Net 30 payment'
+            terms='Net 30 payment',
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            transaction_series=series.name,
         )
         po.lines.create(
             item=self.item,
@@ -216,6 +329,9 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(bill.vendor, self.vendor)
         self.assertEqual(bill.total, Decimal('5900.00'))
         self.assertEqual(bill.terms, 'Net 30 payment')
+        self.assertEqual(bill.business_location, branch)
+        self.assertEqual(bill.transaction_series, series.name)
+        self.assertTrue(bill.number.startswith('BR-BILL/'))
 
         # PO updated
         po.refresh_from_db()
@@ -237,6 +353,115 @@ class DocumentWorkflowIntegrationTests(TestCase):
         )
         self.assertEqual(duplicate.status_code, 400, duplicate.content)
         self.assertEqual(Bill.objects.filter(source_purchase_order=po).count(), 1)
+
+    def test_sales_order_conversions_preserve_branch_and_series(self):
+        branch, series = self.create_branch_series(
+            'Sales Conversion Branch',
+            {
+                'purchase_orders': 'BR-PO',
+                'delivery_challans': 'BR-DC',
+            },
+        )
+        order = SalesOrder.objects.create(
+            organization=self.org,
+            number='SO-CONVERT-BRANCH',
+            customer=self.customer,
+            date=self.today,
+            due_date=self.today,
+            place_of_supply='Kerala',
+            status='confirmed',
+            subtotal=Decimal('5000.00'),
+            total=Decimal('5900.00'),
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            transaction_series=series.name,
+        )
+        order.lines.create(
+            item=self.item,
+            description='Cloud ERP License',
+            quantity=1,
+            rate=Decimal('5000.00'),
+            taxable=Decimal('5000.00'),
+            tax_amount=Decimal('900.00'),
+            gst_rate=18,
+            line_total=Decimal('5900.00'),
+        )
+
+        po_response = self.client.post(
+            f'/api/sales-orders/{order.pk}/convert-to-purchase-order/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(po_response.status_code, 200, po_response.content)
+        purchase_order = PurchaseOrder.objects.get(pk=po_response.json()['purchase_order_id'])
+        self.assertEqual(purchase_order.business_location, branch)
+        self.assertEqual(purchase_order.transaction_series, series.name)
+        self.assertTrue(purchase_order.number.startswith('BR-PO/'))
+
+        dc_response = self.client.post(
+            f'/api/sales-orders/{order.pk}/convert-to-delivery-challan/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+        self.assertEqual(dc_response.status_code, 200, dc_response.content)
+        challan = DeliveryChallan.objects.get(pk=dc_response.json()['delivery_challan_id'])
+        self.assertEqual(challan.business_location, branch)
+        self.assertTrue(challan.number.startswith('BR-DC/'))
+
+    def test_delivery_challan_to_invoice_uses_allocated_series_and_branch(self):
+        branch, series = self.create_branch_series(
+            'Challan Invoice Branch',
+            {
+                'delivery_challans': 'BR-DC',
+                'invoices': 'BR-INV',
+            },
+        )
+        challan_number = services.next_document_number(
+            'DC',
+            org=self.org,
+            date=self.today,
+            branch=branch.name,
+            location=branch.name,
+            series=series.name,
+            business_location_id=branch.pk,
+        )
+        challan = DeliveryChallan.objects.create(
+            organization=self.org,
+            customer=self.customer,
+            number=challan_number,
+            date=self.today,
+            branch=branch.name,
+            location=branch.name,
+            business_location=branch,
+            challan_type='delivering_goods',
+            status='open',
+            subtotal=Decimal('5000.00'),
+            total=Decimal('5900.00'),
+        )
+        DeliveryChallanLine.objects.create(
+            challan=challan,
+            item=self.item,
+            description='Cloud ERP License',
+            quantity=1,
+            rate=Decimal('5000.00'),
+            taxable=Decimal('5000.00'),
+            tax_amount=Decimal('900.00'),
+            gst_rate=18,
+            line_total=Decimal('5900.00'),
+        )
+
+        response = self.client.post(
+            f'/api/delivery-challans/{challan.pk}/convert-to-invoice/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        invoice = Invoice.objects.get(pk=response.json()['invoice_id'])
+        self.assertEqual(invoice.business_location, branch)
+        self.assertEqual(invoice.transaction_series, series.name)
+        self.assertTrue(invoice.number.startswith('BR-INV/'))
 
     def test_recurring_invoice_generation(self):
         # 1. Create a Recurring Invoice Profile

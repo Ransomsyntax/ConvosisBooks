@@ -49,7 +49,7 @@ from .models import (
     BankRule, BankStatementBatch, BankTransaction, BankDeposit, BankTransfer, BankReconciliation,
     Bill, BillAllocation, BillLine,
     Branch, BusinessLocation, CreditNote, CreditNoteLine, CurrencySetting, CustomField, Customer, CustomerPortalAccess, DeliveryChallan,
-    DeliveryChallanLine, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
+    DeliveryChallanLine, Document, DocumentFolder, DocumentNumberAllocation, DocumentNumberSeries, EInvoiceRecord, EWayBill, Expense, FinancialAnomaly,
     GSTRReturn, Invoice, InvoiceLine, Item, ItemCategory, Journal, JournalItem, LockDate,
     ManagedDocument, MODES, Organization, PaymentMade, PaymentReceived, PaymentTermSetting, PaymentTransaction,
     PriceList, Project, ProjectMilestone, ProjectStaff, ProjectTask, ProjectTaskAssignment,
@@ -86,6 +86,32 @@ def normalize_branch_payload(data):
         data = dict(data)
         data['business_location_id'] = data.get('branch_id')
     return data
+
+def _conversion_number_series_context(org, source_document_type, source_number, target_document_type, fallback_name=''):
+    source_allocation = DocumentNumberAllocation.objects.filter(
+        organization=org,
+        document_type=services._number_series_doc_type(source_document_type),
+        number=source_number,
+    ).select_related('series__series_group').first()
+    if not source_allocation:
+        return {'series': fallback_name or '', 'series_id': None}
+
+    source_series = source_allocation.series
+    series_group = source_series.series_group
+    target_series = DocumentNumberSeries.objects.filter(
+        organization=org,
+        document_type=services._number_series_doc_type(target_document_type),
+        **(
+            {'series_group': series_group}
+            if series_group
+            else {'name': source_series.name}
+        ),
+    ).first()
+    if target_series:
+        return {'series': target_series.name, 'series_id': target_series.pk}
+    if series_group:
+        return {'series': series_group.name, 'series_id': None}
+    return {'series': source_series.name or fallback_name or '', 'series_id': None}
 
 def body(request):
     try:
@@ -3460,6 +3486,7 @@ class QuoteResource(DocResource):
             'converted_at': o.converted_at,
         }
 
+    @transaction.atomic
     def action(self, request, obj, name):
         if name == 'send':
             if obj.status in ('invoiced', 'ordered'):
@@ -3503,6 +3530,10 @@ class QuoteResource(DocResource):
                 raise ApiError(400, f'Quote {obj.number} has already been converted to Sales Order {target}. A quote cannot be converted multiple times.')
             if obj.status == 'declined':
                 raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'quotes', obj.number, 'invoices',
+                getattr(obj, 'transaction_series', ''),
+            )
             inv = Invoice.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
@@ -3511,7 +3542,9 @@ class QuoteResource(DocResource):
                     'INV', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
-                    series=getattr(obj, 'transaction_series', None),
+                    series=numbering_context['series'],
+                    series_id=numbering_context['series_id'],
+                    business_location_id=obj.business_location_id,
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -3528,6 +3561,8 @@ class QuoteResource(DocResource):
                 order_number=obj.order_number or obj.reference_number or obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
+                transaction_series=numbering_context['series'],
                 salesperson=obj.salesperson,
                 project_name=obj.project_name,
                 subject=obj.subject,
@@ -3573,6 +3608,10 @@ class QuoteResource(DocResource):
                 raise ApiError(400, f'Quote {obj.number} has already been converted to Invoice {target}. A quote cannot be converted multiple times.')
             if obj.status == 'declined':
                 raise ApiError(400, f'Cannot convert declined quote {obj.number}.')
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'quotes', obj.number, 'sales_orders',
+                getattr(obj, 'transaction_series', ''),
+            )
             so = SalesOrder.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
@@ -3581,7 +3620,9 @@ class QuoteResource(DocResource):
                     'SO', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
-                    series=getattr(obj, 'transaction_series', None),
+                    series=numbering_context['series'],
+                    series_id=numbering_context['series_id'],
+                    business_location_id=obj.business_location_id,
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -3599,6 +3640,8 @@ class QuoteResource(DocResource):
                 order_number=obj.order_number or obj.reference_number or obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
+                transaction_series=numbering_context['series'],
                 salesperson=obj.salesperson,
                 project_name=obj.project_name,
                 subject=obj.subject,
@@ -7100,6 +7143,10 @@ class SalesOrderResource(Resource):
             if obj.status == 'closed' or obj.converted_to_invoice_id:
                 target = obj.converted_to_invoice.number if obj.converted_to_invoice else ''
                 raise ApiError(400, f'Sales order {obj.number} has already been converted to an invoice {target}.')
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'sales_orders', obj.number, 'invoices',
+                getattr(obj, 'transaction_series', ''),
+            )
             inv = Invoice.objects.create(
                 organization=obj.organization,
                 customer=obj.customer,
@@ -7109,7 +7156,9 @@ class SalesOrderResource(Resource):
                     'INV', org=obj.organization, date=timezone.localdate(),
                     customer_type=getattr(obj, 'customer_type', 'b2b'),
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
-                    series=getattr(obj, 'transaction_series', None),
+                    series=numbering_context['series'],
+                    series_id=numbering_context['series_id'],
+                    business_location_id=obj.business_location_id,
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -7126,6 +7175,8 @@ class SalesOrderResource(Resource):
                 order_number=obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
+                transaction_series=numbering_context['series'],
                 notes=obj.notes,
                 terms=obj.terms,
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
@@ -7214,10 +7265,16 @@ class SalesOrderResource(Resource):
                 raise ApiError(400, 'No active vendor found. Please specify a vendor for the Purchase Order.')
 
             po_date = timezone.localdate()
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'sales_orders', obj.number, 'purchase_orders',
+                getattr(obj, 'transaction_series', ''),
+            )
             po_num = services.next_document_number(
                 'PO', org=obj.organization, date=po_date,
                 customer_type='registered', branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
-                series=getattr(obj, 'transaction_series', None),
+                series=numbering_context['series'],
+                series_id=numbering_context['series_id'],
+                business_location_id=obj.business_location_id,
                 gstin=getattr(obj.organization, 'gstin', ''), user=request.user
             )
             po = PurchaseOrder.objects.create(
@@ -7239,6 +7296,8 @@ class SalesOrderResource(Resource):
                 order_number=obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
+                transaction_series=numbering_context['series'],
                 notes=f"Generated from Sales Order {obj.number}\n{obj.notes or ''}".strip(),
                 terms=obj.terms
             )
@@ -7266,10 +7325,16 @@ class SalesOrderResource(Resource):
             if obj.status == 'void':
                 raise ApiError(400, f'Cannot convert void sales order {obj.number}.')
             dc_date = timezone.localdate()
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'sales_orders', obj.number, 'delivery_challans',
+                getattr(obj, 'transaction_series', ''),
+            )
             dc_num = services.next_document_number(
                 'DC', org=obj.organization, date=dc_date,
                 branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
-                series=getattr(obj, 'transaction_series', None),
+                series=numbering_context['series'],
+                series_id=numbering_context['series_id'],
+                business_location_id=obj.business_location_id,
                 gstin=getattr(obj.organization, 'gstin', ''), user=request.user
             )
             dc = DeliveryChallan.objects.create(
@@ -7280,6 +7345,7 @@ class SalesOrderResource(Resource):
                 reference_number=obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
                 challan_type='delivering_goods',
                 status='draft',
                 subtotal=obj.subtotal,
@@ -7655,6 +7721,10 @@ class PurchaseOrderResource(Resource):
             if obj.status == 'closed' or obj.converted_to_bill_id:
                 target = obj.converted_to_bill.number if obj.converted_to_bill else ''
                 raise ApiError(400, f'Purchase order {obj.number} has already been converted to Bill {target}.')
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'purchase_orders', obj.number, 'bills',
+                getattr(obj, 'transaction_series', ''),
+            )
             bill = Bill.objects.create(
                 organization=obj.organization,
                 vendor=obj.vendor,
@@ -7663,6 +7733,9 @@ class PurchaseOrderResource(Resource):
                     'BILL', org=obj.organization, date=timezone.localdate(),
                     customer_type='b2b' if getattr(obj, 'customer_type', '') == 'registered' else 'b2c',
                     branch=getattr(obj, 'branch', ''), location=getattr(obj, 'location', ''),
+                    series=numbering_context['series'],
+                    series_id=numbering_context['series_id'],
+                    business_location_id=obj.business_location_id,
                     gstin=getattr(obj.organization, 'gstin', ''), user=request.user
                 ),
                 date=timezone.localdate(),
@@ -7680,6 +7753,8 @@ class PurchaseOrderResource(Resource):
                 vendor_ref=obj.number,
                 branch=getattr(obj, 'branch', ''),
                 location=getattr(obj, 'location', 'HO Kottayam') or 'HO Kottayam',
+                business_location=obj.business_location,
+                transaction_series=numbering_context['series'],
                 notes=obj.notes,
                 terms=obj.terms,
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
@@ -9541,9 +9616,6 @@ class DeliveryChallanResource(Resource):
                 series=series_name, series_id=series_id,
                 user=user, party=cust,
             )
-        allocation = DocumentNumberAllocation.objects.filter(
-            organization=user_org, document_type='delivery_challans', number=num
-        ).select_related('series').first()
         subtotal = sum((line['taxable'] for line in lines), Decimal('0.00'))
         total = max(Decimal('0.00'), subtotal + sum((line['tax_amount'] for line in lines), Decimal('0.00')) + adjustment)
         dc_status = 'open' if (data.get('status') == 'open' or data.get('action') in ('submit', 'save_and_submit')) else 'draft'
@@ -9553,7 +9625,6 @@ class DeliveryChallanResource(Resource):
             challan_type=ctype, branch=branch, location=location or (business_location.name if business_location else ''),
             business_location=business_location, source_warehouse=source_warehouse,
             destination_warehouse=destination_warehouse, customer_type=customer_type,
-            transaction_series=allocation.series.name if allocation else series_name,
             gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or ''),
             currency=currency, subtotal=subtotal,
             adjustment=adjustment, total=total, vehicle_number=vnum, notes=notes,
@@ -9762,6 +9833,7 @@ class DeliveryChallanResource(Resource):
         obj.save(update_fields=['status', 'returned_at', 'updated_at'])
         services.log_audit(user, 'return', 'DeliveryChallan', obj.number, f'Recorded returned goods for delivery challan {obj.number}')
 
+    @transaction.atomic
     def action(self, request, obj, name):
         if name not in ('sign', 'unsign'):
             obj = DeliveryChallan.objects.select_for_update().get(
@@ -9904,11 +9976,17 @@ class DeliveryChallanResource(Resource):
                 raise ApiError(409, 'There are no uninvoiced quantities remaining.')
             customer = obj.customer
             org_state = getattr(obj.organization, 'state', '')
+            numbering_context = _conversion_number_series_context(
+                obj.organization, 'delivery_challans', obj.number, 'invoices'
+            )
             invoice = InvoiceResource().create_for_request({
                 'customer': customer.pk, 'date': obj.date.isoformat(),
                 'due_date': (obj.date + timedelta(days=customer.payment_terms or 30)).isoformat(),
                 'place_of_supply': customer.state or org_state, 'branch': obj.branch,
                 'location': obj.location, 'customer_type': obj.customer_type,
+                'business_location_id': obj.business_location_id,
+                'transaction_series': numbering_context['series'],
+                'numbering_series_id': numbering_context['series_id'],
                 'notes': obj.notes, 'terms': obj.terms, 'number': '',
                 'lines': invoice_lines,
             }, request.user, request)
@@ -16807,16 +16885,60 @@ def settings_transaction_series_view(request, series_id=None):
         if not grp:
             raise ApiError(404, 'Transaction series not found.')
         if grp.is_default:
-            raise ApiError(400, 'Cannot deactivate the default transaction series. Please designate another series as default first.')
+            raise ApiError(400, 'Cannot delete the default transaction series. Designate another series as default first.')
+        from django.apps import apps
+        from .models import (
+            DocumentNumberPreference,
+            DocumentNumberSeriesCounter,
+            PaymentMade,
+            PaymentReceived,
+        )
         with transaction.atomic():
             Organization.objects.select_for_update().get(pk=org.pk)
             grp = TransactionSeries.objects.select_for_update().get(pk=grp.pk, organization=org)
-            grp.is_active = False
-            grp.save(update_fields=['is_active', 'updated_at'])
-            DocumentNumberSeries.objects.filter(organization=org, series_group=grp).update(active=False)
-            DocumentNumberSeries.objects.filter(organization=org, name=grp.name).update(active=False)
-        services.log_audit(request.user, 'deactivate', 'TransactionSeries', grp.pk, f"Deactivated transaction series {grp.name}", org=org)
-        return j({'status': 'ok', 'message': f'Series "{grp.name}" deactivated.'})
+            if grp.is_default:
+                raise ApiError(400, 'Cannot delete the default transaction series. Designate another series as default first.')
+
+            child_series = list(
+                DocumentNumberSeries.objects.filter(
+                    organization=org, series_group=grp
+                ).select_for_update()
+            )
+            if Branch.objects.filter(
+                Q(transaction_series__series_group=grp)
+                | Q(default_transaction_series__series_group=grp)
+            ).exists():
+                raise ApiError(409, 'This series is assigned to a branch. Remove the branch assignment before deleting it.')
+            if DocumentNumberSeries.objects.filter(
+                organization=org, name=grp.name
+            ).exclude(series_group=grp).exists():
+                raise ApiError(409, 'This series has legacy numbering configurations. Reconcile them before deleting it.')
+            if DocumentNumberAllocation.objects.filter(
+                organization=org, series__series_group=grp
+            ).exists():
+                raise ApiError(409, 'This series has allocated transaction numbers and cannot be deleted. Deactivate it instead.')
+
+            for model in apps.get_models():
+                if not (
+                    issubclass(model, Document)
+                    or model in (PaymentMade, PaymentReceived)
+                ):
+                    continue
+                if model.objects.filter(
+                    organization=org,
+                    transaction_series__iexact=grp.name,
+                ).exists():
+                    raise ApiError(409, 'This series is referenced by existing transactions and cannot be deleted. Deactivate it instead.')
+
+            series_id_value = grp.pk
+            series_name = grp.name
+            DocumentNumberPreference.objects.filter(
+                organization=org, transaction_series__iexact=series_name
+            ).delete()
+            DocumentNumberSeriesCounter.objects.filter(series__in=child_series).delete()
+            grp.delete()
+        services.log_audit(request.user, 'delete', 'TransactionSeries', series_id_value, f"Deleted transaction series {series_name}", org=org)
+        return j({'status': 'ok', 'message': f'Series "{series_name}" deleted.'})
 
 
 def _number_series_payload(series):

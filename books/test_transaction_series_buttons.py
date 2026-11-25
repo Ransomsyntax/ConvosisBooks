@@ -5,7 +5,9 @@ from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.utils import timezone
 from books.models import (
-    Organization, UserProfile, TransactionSeries, DocumentNumberSeries
+    Branch, Customer, DocumentNumberAllocation, DocumentNumberSeries,
+    DocumentNumberSeriesCounter, Organization, SalesOrder, TransactionSeries,
+    UserProfile,
 )
 from books import services
 
@@ -140,12 +142,18 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             self.assertIn("saveBtn.disabled = true", content)
             self.assertIn("saveMetaBtn.disabled = true", content)
             self.assertIn("btn.textContent = 'Setting default...'", content)
+            self.assertIn('id="btnDeleteSeries"', content)
+            self.assertIn("body: JSON.stringify({ is_active: newActive })", content)
 
     def test_activate_and_deactivate_series_synchronizes_all_child_document_series(self):
         """Toggling active status synchronizes both TransactionSeries and child DocumentNumberSeries."""
         # 1. Deactivate secondary series
-        del_res = self.client.delete(f'/api/settings/transaction-series/{self.secondary_series.pk}/')
-        self.assertEqual(del_res.status_code, 200)
+        deactivate_res = self.client.put(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/',
+            data=json.dumps({'is_active': False}),
+            content_type='application/json'
+        )
+        self.assertEqual(deactivate_res.status_code, 200)
 
         self.secondary_series.refresh_from_db()
         self.assertFalse(self.secondary_series.is_active)
@@ -191,10 +199,10 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             self.assertFalse(item.is_default)
 
     def test_cannot_deactivate_default_series(self):
-        """Backend must reject deactivating the default series via DELETE or PUT."""
+        """Backend must reject deleting or deactivating the default series."""
         res = self.client.delete(f'/api/settings/transaction-series/{self.default_series.pk}/')
         self.assertEqual(res.status_code, 400)
-        self.assertIn('Cannot deactivate the default transaction series', res.json().get('error', ''))
+        self.assertIn('Cannot delete the default transaction series', res.json().get('error', ''))
 
         res_put = self.client.put(
             f'/api/settings/transaction-series/{self.default_series.pk}/',
@@ -297,7 +305,7 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             content_type='application/json'
         )
         self.assertEqual(preview_res.status_code, 200, preview_res.content.decode())
-        expected = f"INV/B2B/{services.get_financial_year(org=self.org)}/020"
+        expected = f"INV/D/{services.get_financial_year(org=self.org)}/020"
         self.assertEqual(preview_res.json()['preview']['formatted'], expected)
 
         generated = services.next_document_number(
@@ -340,7 +348,10 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
             series_group=self.default_series,
             document_type='invoices'
         )
-        counter = services._series_counter_for_date(item, self.org, module_or_pfx='invoices')
+        counter = services._series_counter_for_date(
+            item, self.org, module_or_pfx='invoices',
+            branch=self.default_series.branch, customer_type='b2b'
+        )
         counter.next_number = 37
         counter.save(update_fields=['next_number'])
 
@@ -374,7 +385,7 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
         )
         self.assertEqual(res.status_code, 200)
         preview = res.json()['preview']['formatted']
-        self.assertTrue(preview.startswith('INV/B2B/'))
+        self.assertTrue(preview.startswith('INV/D/'))
         self.assertTrue(preview.endswith('/020'))
 
     def test_unsupported_placeholder_is_rejected(self):
@@ -447,3 +458,101 @@ class TransactionSeriesButtonsFunctionalTestCase(TestCase):
         # Attempt to delete other org's series
         res_del = self.client.delete(f'/api/settings/transaction-series/{other_series.pk}/')
         self.assertEqual(res_del.status_code, 404)
+
+    def test_delete_unused_series_removes_configuration_and_unused_counters(self):
+        item = DocumentNumberSeries.objects.get(
+            organization=self.org,
+            series_group=self.secondary_series,
+            document_type='invoices',
+        )
+        DocumentNumberSeriesCounter.objects.create(
+            series=item,
+            financial_year='*',
+            next_number=12,
+        )
+
+        response = self.client.delete(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/'
+        )
+
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        self.assertFalse(
+            TransactionSeries.objects.filter(pk=self.secondary_series.pk).exists()
+        )
+        self.assertFalse(
+            DocumentNumberSeries.objects.filter(series_group_id=self.secondary_series.pk).exists()
+        )
+        self.assertFalse(DocumentNumberSeriesCounter.objects.filter(series=item).exists())
+
+    def test_delete_series_is_blocked_when_numbers_have_been_allocated(self):
+        item = DocumentNumberSeries.objects.get(
+            organization=self.org,
+            series_group=self.secondary_series,
+            document_type='invoices',
+        )
+        DocumentNumberAllocation.objects.create(
+            organization=self.org,
+            series=item,
+            document_type='invoices',
+            number='KOC-INV/USED',
+        )
+
+        response = self.client.delete(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/'
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('allocated transaction numbers', response.json()['error'])
+        self.assertTrue(
+            TransactionSeries.objects.filter(pk=self.secondary_series.pk).exists()
+        )
+
+    def test_delete_series_is_blocked_when_referenced_by_a_transaction(self):
+        customer = Customer.objects.create(
+            organization=self.org,
+            name='Series Reference Customer',
+            state='Kerala',
+        )
+        SalesOrder.objects.create(
+            organization=self.org,
+            number='SO-SERIES-REFERENCE',
+            customer=customer,
+            date=timezone.localdate(),
+            due_date=timezone.localdate(),
+            place_of_supply='Kerala',
+            transaction_series=self.secondary_series.name,
+        )
+
+        response = self.client.delete(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/'
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('referenced by existing transactions', response.json()['error'])
+
+    def test_delete_series_is_blocked_while_assigned_to_a_branch(self):
+        branch = Branch.objects.create(
+            organization=self.org,
+            name='Series Assigned Branch',
+        )
+        child = DocumentNumberSeries.objects.get(
+            organization=self.org,
+            series_group=self.secondary_series,
+            document_type='invoices',
+        )
+        branch.transaction_series.add(child)
+
+        response = self.client.delete(
+            f'/api/settings/transaction-series/{self.secondary_series.pk}/'
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('assigned to a branch', response.json()['error'])
+
+    def test_delete_default_series_is_rejected(self):
+        response = self.client.delete(
+            f'/api/settings/transaction-series/{self.default_series.pk}/'
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Cannot delete the default transaction series', response.json()['error'])

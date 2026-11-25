@@ -291,7 +291,32 @@ class ItemTableDiscountTestCase(TestCase):
         cn_id = resp.json()['id']
 
         cn_resp = self.client.get(f'/api/credit-notes/{cn_id}/')
-        cn_line = cn_resp.json()['lines'][0]
+        cn_data = cn_resp.json()
+        cn_line = cn_data['lines'][0]
         self.assertEqual(Decimal(str(cn_line['discount_amount'])), Decimal('200.00'))
         self.assertEqual(cn_line['discount_type'], 'amount')
         self.assertEqual(Decimal(str(cn_line['taxable'])), Decimal('1800.00'))
+        self.assertEqual(cn_data['party_details']['name'], self.customer.name)
+        self.assertEqual(Decimal(str(cn_data['subtotal'])), Decimal('1800.00'))
+        self.assertEqual(Decimal(str(cn_data['tax_amount'])), Decimal('324.00'))
+        self.assertEqual(cn_data['notes'], 'Damaged Goods')
+
+        vc_resp = self.client.post('/api/vendor-credits/', data=json.dumps({
+            'vendor': self.vendor.pk,
+            'number': 'VC-DISC-001',
+            'date': timezone.localdate().isoformat(),
+            'reason': 'Damaged Goods Return',
+            'lines': [{
+                'item': self.item2.pk,
+                'description': 'Mouse return',
+                'quantity': 1,
+                'rate': 700,
+                'gst_rate': 18
+            }]
+        }), content_type='application/json')
+        self.assertIn(vc_resp.status_code, (200, 201))
+        vc_data = self.client.get(f"/api/vendor-credits/{vc_resp.json()['id']}/").json()
+        self.assertEqual(vc_data['party_details']['name'], self.vendor.name)
+        self.assertEqual(Decimal(str(vc_data['subtotal'])), Decimal('700.00'))
+        self.assertEqual(Decimal(str(vc_data['tax_amount'])), Decimal('126.00'))
+        self.assertEqual(vc_data['notes'], 'Damaged Goods Return')

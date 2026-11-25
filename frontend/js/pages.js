@@ -2088,7 +2088,8 @@ const LISTS = {
       return acts;
     },
     onAction: async (a, r) => {
-      if (a === 'view' || a === 'edit') return docForm('credit-notes', r.id);
+      if (a === 'view') return openDocumentPreview('credit-notes', r.id);
+      if (a === 'edit') return docForm('credit-notes', r.id);
       if (a === 'sign') return openSignatureModal(r, 'credit-notes', () => refresh());
       if (a === 'send') {
         try {
@@ -2121,7 +2122,7 @@ const LISTS = {
     api: 'expenses', title: 'Expenses', bc: 'Purchases', newLabel: 'Record expense', onNew: () => typeof navigateOrRun === 'function' ? navigateOrRun('purchases/expenses/new', () => expenseForm()) : expenseForm(), ordering: '-date', empty: 'No expenses recorded yet.',
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
-      { h: 'Expense#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}">${esc(r.number)}</button>` },
+      { h: 'Expense#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` },
       { h: 'Account', f: r => esc(r.expense_account_name) },
       { h: 'Vendor', f: r => esc(r.vendor_name || '—') },
       { h: 'Paid Through', f: r => esc(r.paid_through) },
@@ -2129,8 +2130,8 @@ const LISTS = {
       { h: 'Amount', s: 'total', ...money(r => inr(r.total)) },
       { h: 'Tax Deductible', f: r => r.is_tax_deductible ? badge('Deductible', 'up') : badge('Non-deductible') }
     ],
-    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
-    onAction: (a, r) => a === 'edit' ? expenseForm(r.id) : a === 'delete' ? deleteRecord('expenses', r, 'Expense') : null,
+    actions: () => [['view', 'View'], ['edit', 'Edit'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => a === 'view' ? expenseDetail(r.id) : a === 'edit' ? expenseForm(r.id) : a === 'delete' ? deleteRecord('expenses', r, 'Expense') : null,
   },
   'purchase-orders': {
     api: 'purchase-orders', title: 'Purchase Orders', bc: 'Purchases', newLabel: 'New purchase order', onNew: () => docForm('purchase-orders'), ordering: '-date', empty: 'No purchase orders yet.',
@@ -2143,7 +2144,7 @@ const LISTS = {
     api: 'vendor-credits', title: 'Vendor Credits', bc: 'Purchases', newLabel: 'New vendor credit', onNew: () => docForm('vendor-credits'), ordering: '-date', empty: 'No vendor credits yet.',
     cols: [{ h: 'Date', s: 'date', f: r => fd(r.date) }, { h: 'Credit#', s: 'number', f: r => `<button class="lk" type="button" data-act="view" data-id="${r.id}">${esc(r.number)}</button>` }, { h: 'Vendor', f: r => esc(r.party || r.vendor_name) }, { h: 'Status', f: r => badge(r.status) }, { h: 'Total', ...money(r => inr(r.total)) }, { h: 'Balance', ...money(r => inr(r.balance || r.total)) }],
     actions: r => [['view', 'View'], ['edit', 'Edit'], ['sign', r.signature_data ? 'Signed ✓' : 'Sign']],
-    onAction: (a, r) => (a === 'edit' || a === 'view') ? docForm('vendor-credits', r.id) : (a === 'sign' ? openSignatureModal(r, 'vendor-credits', () => refresh()) : null),
+    onAction: (a, r) => a === 'view' ? openDocumentPreview('vendor-credits', r.id) : a === 'edit' ? docForm('vendor-credits', r.id) : (a === 'sign' ? openSignatureModal(r, 'vendor-credits', () => refresh()) : null),
   },
   projects: {
     api: 'projects', title: 'Projects', bc: 'Time Tracking', newLabel: 'New project', onNew: () => projectModal(), ordering: 'name', empty: 'No projects yet.',
@@ -2306,9 +2307,11 @@ const kvBox = pairs => `<div class="kv">${pairs.map(([k, v]) => `<div><span>${es
 function renderDocSheet(d, kind, customOpts = {}) {
   const isRetainer = kind === 'retainer-invoices';
   const isBill = kind === 'bills';
+  const isVendorDocument = ['bills', 'purchase-orders', 'vendor-credits'].includes(kind);
+  const isCreditDocument = kind === 'credit-notes' || kind === 'vendor-credits';
   const inv = kind === 'invoices' || isRetainer;
   const org = APP.org || {};
-  const theme = customOpts.theme || org.template_theme || (!isBill ? 'convosis' : 'modern');
+  const theme = customOpts.theme || org.template_theme || (isVendorDocument ? 'modern' : 'convosis');
   const color = customOpts.color || org.template_color || '#1877f2';
   const showLogo = customOpts.show_logo !== false;
   const showSig = customOpts.show_signature !== false;
@@ -2332,12 +2335,14 @@ function renderDocSheet(d, kind, customOpts = {}) {
   const signedBy = d.signed_by || '';
   const signedAt = d.signed_at ? fd(d.signed_at) : '';
 
-  const isPaid = d.status === 'Paid' || (d.raw_status !== 'draft' && num(d.balance) <= 0);
-  const isOverdue = d.status === 'Overdue';
-  const isDraft = d.raw_status === 'draft';
-  const isPartial = d.raw_status === 'partial';
+  const rawStatus = String(d.raw_status || d.status || '').toLowerCase();
+  const isPaid = rawStatus === 'paid' || rawStatus === 'closed' ||
+    (['invoices', 'bills', 'retainer-invoices'].includes(kind) && rawStatus !== 'draft' && num(d.balance) <= 0);
+  const isOverdue = rawStatus === 'overdue';
+  const isDraft = rawStatus === 'draft';
+  const isPartial = rawStatus === 'partial' || rawStatus === 'partially_refunded';
   const ribClass = isPaid ? 'paid' : isOverdue ? 'overdue' : isDraft ? 'draft' : isPartial ? 'open' : 'open';
-  const ribText = isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDraft ? 'Draft' : isPartial ? 'Partially Paid' : (isBill ? 'Open' : 'Sent');
+  const ribText = rawStatus ? rawStatus.replace(/_/g, ' ').replace(/\b\w/g, value => value.toUpperCase()) : (isBill ? 'Open' : 'Sent');
 
   const linesHtml = (d.lines || []).map((l, i) => isRetainer ? `
     <tr>
@@ -2360,7 +2365,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
   `).join('');
 
   const party = d.party_details || {};
-  const partyName = esc(d.party || party.name || (!isBill ? 'Customer' : 'Vendor'));
+  const partyName = esc(d.party || party.name || (isVendorDocument ? 'Vendor' : 'Customer'));
   const partyAddr = esc(party.billing_address || '');
   const partyGstin = party.gstin ? `<div style="margin-top:2px;">GSTIN <b>${esc(party.gstin)}</b></div>` : '';
   const partyState = party.state ? `<div>State: ${esc(party.state)}</div>` : '';
@@ -2379,13 +2384,42 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
   const orderNum = d.reference_number || d.order_number || d.vendor_ref || '';
   const isDarkHead = theme === 'modern' || (!inv && theme !== 'convosis');
+  const dateLabels = {
+    invoices: 'Invoice Date',
+    'retainer-invoices': 'Retainer Date',
+    quotes: 'Quote Date',
+    'sales-orders': 'Order Date',
+    'delivery-challans': 'Challan Date',
+    'credit-notes': 'Credit Note Date',
+    bills: 'Bill Date',
+    'purchase-orders': 'Purchase Order Date',
+    'vendor-credits': 'Vendor Credit Date'
+  };
+  const numberLabels = {
+    invoices: 'Invoice #',
+    'retainer-invoices': 'Retainer Invoice #',
+    quotes: 'Quote #',
+    'sales-orders': 'Sales Order #',
+    'delivery-challans': 'Challan #',
+    'credit-notes': 'Credit Note #',
+    bills: 'Bill #',
+    'purchase-orders': 'Purchase Order #',
+    'vendor-credits': 'Vendor Credit #'
+  };
+  const displaySubtotal = d.subtotal != null
+    ? d.subtotal
+    : (d.lines || []).reduce((sum, line) => sum + num(line.taxable), 0);
+  const displayTax = d.tax_amount != null
+    ? d.tax_amount
+    : (d.lines || []).reduce((sum, line) => sum + num(line.tax_amount), 0);
+  const branchName = d.business_location_name || d.branch || d.location || '';
   const taxPricingLabel = d.tax_pricing_type === 'tax_inclusive' ? 'Tax Inclusive' : 'Tax Exclusive';
   const partyTypeLabel = d.customer_type ? (
     d.customer_type === 'b2b' ? 'B2B (Registered)' :
     d.customer_type === 'b2c' ? 'B2C (Consumer)' :
     d.customer_type === 'registered' ? 'Registered Supplier' :
     d.customer_type === 'unregistered' ? 'Unregistered Supplier' : esc(d.customer_type)
-  ) : (party.gstin ? (isBill ? 'Registered Supplier' : 'B2B (Registered)') : (isBill ? 'Unregistered Supplier' : 'B2C (Consumer)'));
+  ) : (party.gstin ? (isVendorDocument ? 'Registered Supplier' : 'B2B (Registered)') : (isVendorDocument ? 'Unregistered Supplier' : 'B2C (Consumer)'));
 
   return `
     <div class="doc-sheet theme-${theme}" style="--theme-color:${color};position:relative;">
@@ -2413,19 +2447,20 @@ function renderDocSheet(d, kind, customOpts = {}) {
 
           ${isRetainer ? `<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:#0f172a;">Retainer Invoice# ${esc(d.number)}</div>` : ''}
           <table class="doc-meta-grid">
-            ${kind === 'invoices' ? `<tr><td>#</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
-            ${isRetainer ? `<tr><td>Retainer Date</td><td>: ${fd(d.date)}</td></tr>` : kind === 'invoices' ? `<tr><td>Invoice Date</td><td>: ${fd(d.date)}</td></tr>` : `<tr><td>Bill Date</td><td>: ${fd(d.date)}</td></tr>`}
-            ${!isRetainer ? `<tr><td>Terms</td><td>: ${esc(d.terms || 'Due on Receipt')}</td></tr>` : ''}
-
-            <tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>
-
-            ${!isBill ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply || org.state || 'Kerala')}</td></tr>` : ''}
+            ${!isBill && !isRetainer ? `<tr><td>${esc(numberLabels[kind] || 'Document #')}</td><td>: <b>${esc(d.number)}</b></td></tr>` : ''}
+            <tr><td>${esc(dateLabels[kind] || 'Date')}</td><td>: ${fd(d.date)}</td></tr>
+            ${d.terms ? `<tr><td>Terms</td><td>: ${esc(d.terms)}</td></tr>` : ''}
+            ${d.due_date ? `<tr><td>Due Date</td><td>: ${fd(d.due_date)}</td></tr>` : ''}
+            ${!isVendorDocument && d.place_of_supply ? `<tr><td>Place Of Supply</td><td>: ${esc(d.place_of_supply)}</td></tr>` : ''}
+            ${branchName ? `<tr><td>Branch / Location</td><td>: ${esc(branchName)}</td></tr>` : ''}
+            ${d.invoice_number ? `<tr><td>Related Invoice</td><td>: ${esc(d.invoice_number)}</td></tr>` : ''}
+            ${d.bill_number ? `<tr><td>Related Bill</td><td>: ${esc(d.bill_number)}</td></tr>` : ''}
             ${orderNum ? `<tr><td>${(isRetainer || kind === 'sales-orders') ? 'Reference Number' : 'Order Number'}</td><td>: ${esc(orderNum)}</td></tr>` : ''}
             ${isRetainer && d.project_name ? `<tr><td>Project Name</td><td>: ${esc(d.project_name)}</td></tr>` : ''}
             ${(isRetainer && (d.purpose || d.subject)) ? `<tr><td>Purpose</td><td>: <b>${esc(d.purpose || d.subject)}</b></td></tr>` : ''}
             ${d.source_label && d.source_label !== 'Direct / Manual Creation' ? `<tr><td>Source / Ref</td><td>: <span style="color:#2563eb;font-weight:600;">${esc(d.source_label)}</span></td></tr>` : ''}
             <tr><td>Tax Pricing</td><td>: <span style="font-weight:600;color:${d.tax_pricing_type === 'tax_inclusive' ? '#16a34a' : '#2563eb'};">${taxPricingLabel}</span></td></tr>
-            <tr><td>${!isBill ? 'Customer Type' : 'Supplier Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
+            <tr><td>${isVendorDocument ? 'Supplier Type' : 'Customer Type'}</td><td>: <span style="font-weight:600;">${partyTypeLabel}</span></td></tr>
           </table>
 
         </div>
@@ -2433,7 +2468,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
       </div>
 
       <div class="doc-party-sec">
-        <div class="doc-party-title">${!isBill ? 'Bill To' : 'Bill From'}</div>
+        <div class="doc-party-title">${isVendorDocument ? 'Bill From' : 'Bill To'}</div>
 
         <div class="doc-party-name" style="color:${color};">${partyName}</div>
 
@@ -2484,10 +2519,10 @@ function renderDocSheet(d, kind, customOpts = {}) {
               <div class="doc-words-val">${numToWordsINR(d.total)}</div>
             </div>
           ` : ''}
-          ${d.notes ? `
+          ${(d.notes || d.reason) ? `
             <div class="doc-notes-block">
-              <div class="doc-notes-label">${isRetainer ? 'Customer Notes' : 'Notes'}</div>
-              <div>${esc(d.notes)}</div>
+              <div class="doc-notes-label">${d.reason ? 'Reason' : isRetainer ? 'Customer Notes' : 'Notes'}</div>
+              <div>${esc(d.notes || d.reason)}</div>
             </div>
           ` : ''}
           ${d.terms ? `
@@ -2514,9 +2549,11 @@ function renderDocSheet(d, kind, customOpts = {}) {
             ${!hideAmounts ? `
               <div class="doc-totals-row">
                 <span>Taxable Amount (${taxPricingLabel})</span>
-                <span style="font-weight:600;">${inr(d.subtotal).replace('₹', '')}</span>
+                <span style="font-weight:600;">${inr(displaySubtotal).replace('₹', '')}</span>
               </div>
-              ${d.intra_state ? `
+              ${isCreditDocument ? `
+                <div class="doc-totals-row"><span>GST</span><span>${inr(displayTax)}</span></div>
+              ` : d.intra_state ? `
                 <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
                 <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
               ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
@@ -2530,10 +2567,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
                   <span style="color:#10b981;font-weight:600;">(-) ${inr(d.paid)}</span>
                 </div>
               ` : ''}
-              <div class="doc-totals-row bal-due" style="color:${color};">
-                <span>Balance Due</span>
-                <span>${inr(d.balance)}</span>
-              </div>
+              ${['invoices', 'bills', 'retainer-invoices', 'credit-notes', 'vendor-credits'].includes(kind) ? `
+                <div class="doc-totals-row bal-due" style="color:${color};">
+                  <span>${isCreditDocument ? 'Available Credit' : 'Balance Due'}</span>
+                  <span>${inr(d.balance)}</span>
+                </div>
+              ` : ''}
               ${isRetainer && num(d.applied_amount) > 0 ? `
                 <div class="doc-totals-row" style="margin-top:6px;border-top:1px dashed var(--bd-glass);padding-top:6px;">
                   <span>Retainer Applied</span>
@@ -2678,6 +2717,29 @@ function renderDocSheet(d, kind, customOpts = {}) {
       ` : ''}
     </div>
   `;
+}
+
+async function openDocumentPreview(kind, id) {
+  const titles = {
+    'credit-notes': 'Credit Note',
+    'vendor-credits': 'Vendor Credit'
+  };
+  try {
+    const doc = await api(`${kind}/${id}/`);
+    const previewDoc = { ...doc, notes: doc.notes || doc.reason || '' };
+    const modal = Modal.open({
+      title: `Preview ${titles[kind] || 'Document'} ${doc.number || ''}`,
+      wide: true,
+      dialog: true,
+      body: `<div id="document-preview-sheet" style="display:flex;justify-content:center;background:rgba(0,0,0,0.02);padding:14px;border-radius:6px;max-height:75vh;overflow-y:auto;">${renderDocSheet(previewDoc, kind)}</div>`,
+      footer: `<button class="btn" type="button" data-close>Close</button><button class="btn p" type="button" data-preview-print><i class="fa-solid fa-print"></i> PDF / Print</button>`
+    });
+    modal.el.addEventListener('click', event => {
+      if (event.target.closest('[data-preview-print]')) printDocument(previewDoc, kind, 'standard', true);
+    });
+  } catch (error) {
+    toast(error.message || `Could not preview ${titles[kind] || 'document'}.`, 'err');
+  }
 }
 
 function openTemplateCustomizer(doc, kind, onUpdate) {
@@ -2878,8 +2940,6 @@ function printDocument(doc, kind, mode = 'standard', isPdf = false) {
       <head>
         <meta charset="utf-8">
         <title>${esc(docTitle)}</title>
-        <link rel="stylesheet" href="/static/books/css/tokens.css">
-        <link rel="stylesheet" href="/static/books/css/base.css">
         <link rel="stylesheet" href="/static/books/css/glass.css">
         <link rel="stylesheet" href="/static/books/css/app.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -5443,6 +5503,38 @@ async function viewRecurringInvoiceModal(id) {
     });
   } catch (err) {
     toast(err.message, 'err');
+  }
+}
+
+async function expenseDetail(id) {
+  try {
+    const expense = await api(`expenses/${id}/`);
+    const location = expense.business_location_name || expense.branch || expense.location || '—';
+    const modal = Modal.open({
+      title: `Expense ${expense.number || ''}`,
+      wide: true,
+      body: `${kvBox([
+        ['Date', fd(expense.date)],
+        ['Vendor / Payee', esc(expense.vendor_name || 'Direct Expense')],
+        ['Expense Account', esc(expense.expense_account_name || '—')],
+        ['Paid Through', esc(expense.paid_through || '—')],
+        ['Reference', esc(expense.reference || '—')],
+        ['Branch / Location', esc(location)],
+        ['Project', esc(expense.project_name || '—')],
+        ['Billable to Customer', expense.billable_to_customer ? 'Yes' : 'No'],
+        ['Taxable Amount', inr(expense.amount)],
+        ['GST', inr(expense.tax_amount)],
+        ['Total', inr(expense.total)]
+      ])}${expense.notes ? `<p><span class="sub">Notes:</span> ${esc(expense.notes)}</p>` : ''}${expense.has_receipt ? '<p class="sub">A receipt is attached to this expense.</p>' : ''}`,
+      footer: `<button class="btn" type="button" data-close>Close</button><button class="btn" type="button" data-expense-edit>Edit</button>`
+    });
+    modal.el.addEventListener('click', event => {
+      if (!event.target.closest('[data-expense-edit]')) return;
+      modal.close();
+      expenseForm(id);
+    });
+  } catch (error) {
+    toast(error.message || 'Could not load expense details.', 'err');
   }
 }
 

@@ -8066,6 +8066,17 @@ class CreditNoteResource(Resource):
         r['customer'] = o.customer_id
         r['party_id'] = o.customer_id
         r['place_of_supply'] = o.place_of_supply
+        r['party_details'] = {
+            'id': o.customer.pk,
+            'name': o.customer.name,
+            'company': getattr(o.customer, 'company_name', '') or getattr(o.customer, 'company', '') or '',
+            'billing_address': getattr(o.customer, 'billing_address', '') or '',
+            'gstin': getattr(o.customer, 'gstin', '') or '',
+            'email': getattr(o.customer, 'email', '') or '',
+            'phone': getattr(o.customer, 'phone', '') or '',
+            'state': getattr(o.customer, 'state', '') or '',
+        }
+        lines = list(o.lines.all())
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
@@ -8074,8 +8085,21 @@ class CreditNoteResource(Resource):
              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
              'line_total': l.line_total}
-            for l in o.lines.all()
+            for l in lines
         ]
+        r['subtotal'] = sum((line.taxable for line in lines), Decimal('0.00'))
+        r['tax_amount'] = sum((line.tax_amount for line in lines), Decimal('0.00'))
+        r['notes'] = o.reason or ''
+        r['related_documents'] = [{
+            'kind': 'invoices',
+            'type': 'Invoice',
+            'id': o.invoice_id,
+            'number': o.invoice.number,
+            'date': o.invoice.date,
+            'total': o.invoice.total,
+            'status': o.invoice.status,
+            'relation': 'Related Invoice',
+        }] if o.invoice_id else []
         return r
 
     @transaction.atomic
@@ -8484,12 +8508,23 @@ class VendorCreditResource(Resource):
         r['vendor'] = o.vendor_id
         r['party_id'] = o.vendor_id
         r['place_of_supply'] = o.place_of_supply
+        r['party_details'] = {
+            'id': o.vendor.pk,
+            'name': o.vendor.name,
+            'company': getattr(o.vendor, 'company_name', '') or getattr(o.vendor, 'company', '') or '',
+            'billing_address': getattr(o.vendor, 'billing_address', '') or '',
+            'gstin': getattr(o.vendor, 'gstin', '') or '',
+            'email': getattr(o.vendor, 'email', '') or '',
+            'phone': getattr(o.vendor, 'phone', '') or '',
+            'state': getattr(o.vendor, 'state', '') or '',
+        }
         if hasattr(o, 'billing_address_data'):
             r['billing_address_data'] = o.billing_address_data or {}
         if hasattr(o, 'shipping_address_data'):
             r['shipping_address_data'] = o.shipping_address_data or {}
         if hasattr(o, 'custom_fields_data'):
             r['custom_fields_data'] = o.custom_fields_data or {}
+        lines = list(o.lines.all())
         r['lines'] = [
             {'id': l.pk, 'item': l.item_id, 'description': l.description, 'hsn_sac': l.hsn_sac,
              'quantity': l.quantity, 'rate': l.rate, 'discount_percent': l.discount_percent,
@@ -8498,8 +8533,21 @@ class VendorCreditResource(Resource):
              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
              'line_total': l.line_total}
-            for l in o.lines.all()
+            for l in lines
         ]
+        r['subtotal'] = sum((line.taxable for line in lines), Decimal('0.00'))
+        r['tax_amount'] = sum((line.tax_amount for line in lines), Decimal('0.00'))
+        r['notes'] = o.reason or ''
+        r['related_documents'] = [{
+            'kind': 'bills',
+            'type': 'Bill',
+            'id': o.bill_id,
+            'number': o.bill.number,
+            'date': o.bill.date,
+            'total': o.bill.total,
+            'status': o.bill.status,
+            'relation': 'Related Bill',
+        }] if o.bill_id else []
         return r
 
     @transaction.atomic

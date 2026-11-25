@@ -5567,12 +5567,20 @@ async function renderBusinessLocationsPage(container) {
               </div>
             </div>
             <div class="settings-location-row" data-business-location-only>
-              <label class="settings-location-label" for="locationSeries">Transaction Number Series <span class="required">*</span></label>
+              <label class="settings-location-label" for="locationSeriesToggle">Transaction Number Series <span class="required">*</span></label>
               <div class="settings-location-field">
-                <input class="form-control" id="locationSeriesSearch" type="search" placeholder="Search transaction series" aria-label="Search transaction series">
-                <select class="form-control" id="locationSeries" multiple size="5" aria-label="Transaction Number Series">
-                  ${availableSeries.map(item => `<option value="${item.id}" ${location.transaction_series_ids.includes(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
-                </select>
+                <div class="settings-location-series-picker" id="locationSeriesPicker">
+                  <div class="form-control settings-location-series-control">
+                    <div class="settings-location-series-selected" id="locationSeriesSelected" aria-live="polite"></div>
+                    <button type="button" class="settings-location-series-toggle" id="locationSeriesToggle" aria-label="Select transaction number series" aria-haspopup="true" aria-expanded="false" aria-controls="locationSeriesDropdown">
+                      <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                  </div>
+                  <div class="settings-location-series-dropdown" id="locationSeriesDropdown" role="group" aria-label="Available transaction number series" hidden>
+                    <input class="form-control" id="locationSeriesSearch" type="search" placeholder="Search transaction series" aria-label="Search transaction series" ${availableSeries.length > 8 ? '' : 'hidden'}>
+                    <div class="settings-location-series-options" id="locationSeriesOptions"></div>
+                  </div>
+                </div>
                 <button type="button" class="btn-secondary" id="btnAddLocationSeries">+ Add Transaction Series</button>
                 <small class="settings-location-help">Select one or more series, then choose the default series below.</small>
               </div>
@@ -5580,9 +5588,8 @@ async function renderBusinessLocationsPage(container) {
             <div class="settings-location-row" data-business-location-only>
               <label class="settings-location-label" for="locationDefaultSeries">Default Transaction Number Series <span class="required">*</span></label>
               <div class="settings-location-field">
-                <select class="form-control" id="locationDefaultSeries">
+                <select class="form-control" id="locationDefaultSeries" required>
                   <option value="">Select default series</option>
-                  ${availableSeries.map(item => `<option value="${item.id}" ${String(item.id) === String(location.default_transaction_series_id || '') ? 'selected' : ''}>${esc(item.label || item.name)}</option>`).join('')}
                 </select>
               </div>
             </div>
@@ -5639,7 +5646,10 @@ async function renderBusinessLocationsPage(container) {
       root.querySelector('#locationPrimaryContact').required = isBusiness;
     };
     root.querySelectorAll('.locationUser').forEach(input => input.addEventListener('change', updateLocationAccessCount));
-    root.querySelectorAll('input[name="locationType"]').forEach(input => input.addEventListener('change', updateLocationTypeFields));
+    root.querySelectorAll('input[name="locationType"]').forEach(input => input.addEventListener('change', () => {
+      updateLocationTypeFields();
+      if (input.value !== 'business') closeSeriesDropdown();
+    }));
     updateLocationTypeFields();
     updateLocationAccessCount();
     root.querySelector('#locationChild').addEventListener('change', event => {
@@ -5659,28 +5669,139 @@ async function renderBusinessLocationsPage(container) {
       }
     });
     root.querySelector('#btnCancelLocation').addEventListener('click', () => renderBusinessLocationsPage(container));
-    const seriesSelect = root.querySelector('#locationSeries');
     const defaultSeriesSelect = root.querySelector('#locationDefaultSeries');
-    const updateDefaultSeriesOptions = () => {
-      const selectedIds = new Set(Array.from(seriesSelect.selectedOptions).map(option => Number(option.value)));
-      const selectedOptions = Array.from(seriesSelect.selectedOptions);
-      if (!defaultSeriesSelect.value && selectedOptions.length === 1) {
-        defaultSeriesSelect.value = selectedOptions[0].value;
-      }
-      if (defaultSeriesSelect.value && !selectedIds.has(Number(defaultSeriesSelect.value))) {
-        defaultSeriesSelect.value = '';
-      }
-      Array.from(defaultSeriesSelect.options).forEach(option => {
-        if (option.value) option.disabled = !selectedIds.has(Number(option.value));
-      });
+    const seriesPicker = root.querySelector('#locationSeriesPicker');
+    const seriesToggleButton = root.querySelector('#locationSeriesToggle');
+    const seriesDropdown = root.querySelector('#locationSeriesDropdown');
+    const seriesSearchInput = root.querySelector('#locationSeriesSearch');
+    const seriesOptionsList = root.querySelector('#locationSeriesOptions');
+    const selectedSeriesList = root.querySelector('#locationSeriesSelected');
+    const selectedSeriesIdSet = new Set((location.transaction_series_ids || []).map(Number).filter(Number.isFinite));
+    let seriesDropdownOpen = false;
+    const getSeriesLabel = item => String(item.label || item.name);
+    const closeSeriesDropdown = (restoreFocus = false) => {
+      if (!seriesDropdownOpen) return;
+      seriesDropdownOpen = false;
+      seriesDropdown.hidden = true;
+      seriesToggleButton.setAttribute('aria-expanded', 'false');
+      if (restoreFocus && seriesToggleButton.isConnected) seriesToggleButton.focus();
     };
-    seriesSelect.addEventListener('change', updateDefaultSeriesOptions);
-    root.querySelector('#locationSeriesSearch').addEventListener('input', event => {
-      const search = event.target.value.trim().toLowerCase();
-      Array.from(seriesSelect.options).forEach(option => {
-        option.hidden = Boolean(search) && !option.textContent.toLowerCase().includes(search);
-      });
+    const positionSeriesDropdown = () => {
+      if (!seriesDropdownOpen) return;
+      const rect = seriesPicker.getBoundingClientRect();
+      const viewportPadding = 8;
+      const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2);
+      const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding));
+      const availableBelow = window.innerHeight - rect.bottom - viewportPadding - 4;
+      const availableAbove = rect.top - viewportPadding - 4;
+      const maxHeight = Math.max(120, Math.min(300, Math.max(availableBelow, availableAbove)));
+      const searchHeight = seriesSearchInput.hidden ? 0 : seriesSearchInput.offsetHeight + 12;
+      seriesDropdown.style.width = `${width}px`;
+      seriesDropdown.style.left = `${left}px`;
+      seriesDropdown.style.maxHeight = `${maxHeight}px`;
+      seriesOptionsList.style.maxHeight = `${Math.max(64, maxHeight - searchHeight - 16)}px`;
+      const popupHeight = Math.min(seriesDropdown.scrollHeight, maxHeight);
+      seriesDropdown.style.top = availableBelow >= popupHeight
+        ? `${rect.bottom + 4}px`
+        : `${Math.max(viewportPadding, rect.top - popupHeight - 4)}px`;
+    };
+    const renderSelectedSeries = () => {
+      const selected = availableSeries.filter(item => selectedSeriesIdSet.has(Number(item.id)));
+      selectedSeriesList.innerHTML = selected.map(item => `
+        <span class="settings-location-series-chip">
+          <span>${esc(getSeriesLabel(item))}</span>
+          <button type="button" data-remove-series-id="${Number(item.id)}" aria-label="Remove ${esc(getSeriesLabel(item))}">×</button>
+        </span>`).join('') || '<span class="settings-location-series-placeholder">Select transaction series</span>';
+    };
+    const renderSeriesOptions = () => {
+      const search = seriesSearchInput.value.trim().toLowerCase();
+      const filtered = availableSeries.filter(item => getSeriesLabel(item).toLowerCase().includes(search));
+      seriesSearchInput.hidden = availableSeries.length <= 8;
+      seriesOptionsList.innerHTML = !availableSeries.length
+        ? '<div class="settings-location-series-empty">No transaction series available.</div>'
+        : filtered.length
+          ? filtered.map(item => `
+            <label class="settings-location-series-option">
+              <input type="checkbox" data-location-series-id="${Number(item.id)}" ${selectedSeriesIdSet.has(Number(item.id)) ? 'checked' : ''}>
+              <span>${esc(getSeriesLabel(item))}</span>
+            </label>`).join('')
+          : '<div class="settings-location-series-empty">No matching transaction series.</div>';
+      positionSeriesDropdown();
+    };
+    const updateDefaultSeriesOptions = preferredDefault => {
+      const previousDefault = preferredDefault === undefined ? defaultSeriesSelect.value : String(preferredDefault || '');
+      const selectedSeries = availableSeries.filter(item => selectedSeriesIdSet.has(Number(item.id)));
+      defaultSeriesSelect.innerHTML = `<option value="">Select default series</option>${selectedSeries.map(item =>
+        `<option value="${Number(item.id)}">${esc(getSeriesLabel(item))}</option>`
+      ).join('')}`;
+      if (selectedSeries.some(item => String(item.id) === previousDefault)) {
+        defaultSeriesSelect.value = previousDefault;
+      } else if (selectedSeries.length === 1) {
+        defaultSeriesSelect.value = String(selectedSeries[0].id);
+      }
+    };
+    const refreshSeriesPicker = preferredDefault => {
+      renderSelectedSeries();
+      renderSeriesOptions();
+      updateDefaultSeriesOptions(preferredDefault);
+    };
+    const openSeriesDropdown = () => {
+      seriesDropdownOpen = true;
+      seriesDropdown.hidden = false;
+      seriesToggleButton.setAttribute('aria-expanded', 'true');
+      positionSeriesDropdown();
+    };
+    const handleSeriesPickerOutsideClick = event => {
+      if (seriesDropdownOpen && !seriesDropdown.contains(event.target) && !seriesPicker.contains(event.target)) {
+        closeSeriesDropdown();
+      }
+    };
+    const handleSeriesPickerKeydown = event => {
+      if (event.key === 'Escape' && seriesDropdownOpen) closeSeriesDropdown(true);
+    };
+    seriesToggleButton.addEventListener('click', () => {
+      if (seriesDropdownOpen) closeSeriesDropdown();
+      else openSeriesDropdown();
     });
+    selectedSeriesList.addEventListener('click', event => {
+      const removeButton = event.target.closest('[data-remove-series-id]');
+      if (!removeButton) return;
+      const removedId = Number(removeButton.dataset.removeSeriesId);
+      selectedSeriesIdSet.delete(removedId);
+      const checkbox = seriesOptionsList.querySelector(`[data-location-series-id="${removedId}"]`);
+      if (checkbox) checkbox.checked = false;
+      renderSelectedSeries();
+      updateDefaultSeriesOptions();
+      positionSeriesDropdown();
+    });
+    seriesOptionsList.addEventListener('change', event => {
+      const checkbox = event.target.closest('[data-location-series-id]');
+      if (!checkbox) return;
+      const seriesId = Number(checkbox.dataset.locationSeriesId);
+      if (checkbox.checked) selectedSeriesIdSet.add(seriesId);
+      else selectedSeriesIdSet.delete(seriesId);
+      renderSelectedSeries();
+      updateDefaultSeriesOptions();
+      positionSeriesDropdown();
+    });
+    seriesSearchInput.addEventListener('input', renderSeriesOptions);
+    document.addEventListener('pointerdown', handleSeriesPickerOutsideClick);
+    document.addEventListener('keydown', handleSeriesPickerKeydown);
+    window.addEventListener('resize', positionSeriesDropdown);
+    window.addEventListener('scroll', positionSeriesDropdown, true);
+    document.body.appendChild(seriesDropdown);
+    const seriesPickerObserver = new MutationObserver(() => {
+      if (seriesPicker.isConnected) return;
+      closeSeriesDropdown();
+      seriesPickerObserver.disconnect();
+      seriesDropdown.remove();
+      document.removeEventListener('pointerdown', handleSeriesPickerOutsideClick);
+      document.removeEventListener('keydown', handleSeriesPickerKeydown);
+      window.removeEventListener('resize', positionSeriesDropdown);
+      window.removeEventListener('scroll', positionSeriesDropdown, true);
+    });
+    seriesPickerObserver.observe(document.body, { childList: true, subtree: true });
+    refreshSeriesPicker(location.default_transaction_series_id);
     root.querySelector('#locationCountry').addEventListener('change', event => {
       const stateControl = root.querySelector('#locationStateControl');
       const currentState = root.querySelector('#locationState').value;
@@ -5690,7 +5811,6 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#locationCountry').addEventListener('change', event => {
       root.querySelector('#locationPincode').setAttribute('inputmode', event.target.value.toLowerCase() === 'india' ? 'numeric' : 'text');
     });
-    updateDefaultSeriesOptions();
     let selectedLogoData = location.logo_data || '';
     const logoSelect = root.querySelector('#locationLogo');
     const logoFile = root.querySelector('#locationLogoFile');
@@ -5755,20 +5875,13 @@ async function renderBusinessLocationsPage(container) {
       try {
         const seriesConfig = await api('/settings/transaction-series/');
         openAddTransactionSeriesModal(container, seriesConfig.supported_types || [], async () => {
-          const previousSeriesIds = new Set(Array.from(seriesSelect.selectedOptions).map(option => Number(option.value)));
           const previousDefaultId = defaultSeriesSelect.value;
           const locationData = await api('/settings/branches/');
           series = locationData.transaction_series_options || [];
           availableSeries = series.filter(item =>
             !item.business_location_id || String(item.business_location_id) === String(location.id || '')
           );
-          seriesSelect.innerHTML = availableSeries.map(item =>
-            `<option value="${item.id}" ${previousSeriesIds.has(item.id) ? 'selected' : ''}>${esc(item.label || item.name)}</option>`
-          ).join('');
-          defaultSeriesSelect.innerHTML = `<option value="">Select default series</option>${availableSeries.map(item =>
-            `<option value="${item.id}" ${String(item.id) === previousDefaultId ? 'selected' : ''}>${esc(item.label || item.name)}</option>`
-          ).join('')}`;
-          updateDefaultSeriesOptions();
+          refreshSeriesPicker(previousDefaultId);
         });
       } catch (error) {
         toast(error.message || 'Could not open transaction series configuration.', 'error');
@@ -5781,7 +5894,9 @@ async function renderBusinessLocationsPage(container) {
       const locationType = root.querySelector('input[name="locationType"]:checked')?.value || 'business';
       const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
-      const selectedSeriesIds = Array.from(root.querySelector('#locationSeries').selectedOptions).map(option => Number(option.value));
+      const selectedSeriesIds = availableSeries
+        .filter(item => selectedSeriesIdSet.has(Number(item.id)))
+        .map(item => Number(item.id));
       const defaultSeriesId = root.querySelector('#locationDefaultSeries').value;
       if (locationType === 'business' && !primaryContactId) {
         toast('Choose a primary contact for this branch.', 'error');
@@ -5790,7 +5905,7 @@ async function renderBusinessLocationsPage(container) {
       }
       if (locationType === 'business' && (!selectedSeriesIds.length || !defaultSeriesId || !selectedSeriesIds.includes(Number(defaultSeriesId)))) {
         toast('Choose at least one transaction series and a default series assigned to this branch.', 'error');
-        root.querySelector('#locationSeries').focus();
+        seriesToggleButton.focus();
         return;
       }
       if (!active && locationType === 'business' && root.querySelector('#locationIsDefault').checked) {

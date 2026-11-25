@@ -15609,6 +15609,10 @@ def settings_locations_view(request, location_id=None):
     if request.method not in ('POST', 'PUT', 'PATCH'):
         raise ApiError(405, 'Method not allowed.')
 
+    if location_id and request.method in ('PUT', 'PATCH'):
+        if not queryset.filter(pk=location_id).exists():
+            raise ApiError(404, 'Business location not found.')
+
     data = body(request)
     name = str(data.get('name') or '').strip()
     if not name or len(name) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in name):
@@ -15694,8 +15698,8 @@ def settings_locations_view(request, location_id=None):
             or parsed_website.password
         ):
             raise ApiError(400, 'Enter a valid website URL using http or https.')
-    active = bool(data.get('active', True))
-    is_default = bool(data.get('is_default', False))
+    active = _transaction_series_boolean(data, 'active', True)
+    is_default = _transaction_series_boolean(data, 'is_default', False)
     if is_default and not active:
         raise ApiError(400, 'An inactive business location cannot be the default location.')
 

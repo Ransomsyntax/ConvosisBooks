@@ -5754,6 +5754,7 @@ async function renderBusinessLocationsPage(container) {
           </div>
         </div>
         <footer class="settings-location-editor-footer">
+          ${locationId ? '<button type="button" class="btn-secondary" id="btnDeleteLocation" style="color:#dc2626;border-color:#fecaca;">Delete</button>' : ''}
           <button type="button" class="btn-primary" id="btnSaveLocation">Save</button>
           <button type="button" class="btn-secondary" id="btnCancelLocation">Cancel</button>
         </footer>
@@ -5802,6 +5803,22 @@ async function renderBusinessLocationsPage(container) {
       }
     });
     root.querySelector('#btnCancelLocation').addEventListener('click', () => renderBusinessLocationsPage(container));
+    if (locationId) {
+      root.querySelector('#btnDeleteLocation').addEventListener('click', async () => {
+        if (!window.confirm(`Delete "${location.name}"? This action cannot be undone.`)) return;
+        const deleteButton = root.querySelector('#btnDeleteLocation');
+        deleteButton.disabled = true;
+        try {
+          await api(`/settings/branches/${locationId}/`, { method: 'DELETE' });
+          toast('Branch deleted successfully.', 'success');
+          await renderBusinessLocationsPage(container);
+        } catch (error) {
+          toast(error.message || 'This branch could not be deleted.', 'error');
+        } finally {
+          if (deleteButton.isConnected) deleteButton.disabled = false;
+        }
+      });
+    }
     const defaultSeriesSelect = root.querySelector('#locationDefaultSeries');
     const seriesPicker = root.querySelector('#locationSeriesPicker');
     const seriesToggleButton = root.querySelector('#locationSeriesToggle');
@@ -6027,6 +6044,11 @@ async function renderBusinessLocationsPage(container) {
       const locationType = root.querySelector('input[name="locationType"]:checked')?.value || 'business';
       const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
+      if (!root.querySelector('#locationName').value.trim()) {
+        toast('Location name is required.', 'error');
+        root.querySelector('#locationName').focus();
+        return;
+      }
       const selectedSeriesIds = availableSeries
         .filter(item => selectedSeriesIdSet.has(Number(item.id)))
         .map(item => Number(item.id));

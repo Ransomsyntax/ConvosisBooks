@@ -455,3 +455,114 @@ class LocationBranchIntegrationTests(TestCase):
         ids = {row['id'] for row in lookup.json()}
         self.assertIn(other_location.id, ids)
         self.assertNotIn(self.location.id, ids)
+
+        detail = other_client.get(f'/api/settings/branches/{self.location.id}/')
+        self.assertEqual(detail.status_code, 404)
+        update = other_client.put(
+            f'/api/settings/branches/{self.location.id}/',
+            data=json.dumps({
+                'name': 'Unauthorized Rename',
+                'location_type': 'business',
+                'primary_contact_id': other_user.id,
+                'active': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(update.status_code, 404)
+        deletion = other_client.delete(f'/api/settings/branches/{self.location.id}/')
+        self.assertEqual(deletion.status_code, 404)
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.name, 'Kochi Branch')
+
+    def test_branch_validation_and_repeat_create_are_safe(self):
+        series = DocumentNumberSeries.objects.create(
+            organization=self.org,
+            name='Validation Series',
+            document_type='invoices',
+            prefix='VAL',
+        )
+        invalid_payload = {
+            'name': '   ',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
+        }
+        invalid = self.post_json('/api/settings/branches/', invalid_payload)
+        self.assertEqual(invalid.status_code, 400)
+
+        invalid_gstin = self.post_json('/api/settings/branches/', {
+            'name': 'Invalid GSTIN Branch',
+            'gstin': 'NOT-A-GSTIN',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
+        })
+        self.assertEqual(invalid_gstin.status_code, 400)
+
+        invalid_pin = self.post_json('/api/settings/branches/', {
+            'name': 'Invalid PIN Branch',
+            'pincode': 'AB12',
+            'country': 'India',
+            'location_type': 'business',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
+        })
+        self.assertEqual(invalid_pin.status_code, 400)
+
+        payload = {
+            'name': '  Repeat Safe Branch  ',
+            'prefix': 'RS',
+            'location_type': 'business',
+            'city': 'Kottayam',
+            'pincode': '686001',
+            'country': 'India',
+            'phone': '+91 9999999999',
+            'primary_contact_id': self.user.id,
+            'transaction_series_ids': [series.id],
+            'default_transaction_series_id': series.id,
+            'active': True,
+        }
+        first = self.post_json('/api/settings/branches/', payload)
+        second = self.post_json('/api/settings/branches/', payload)
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(
+            BusinessLocation.objects.filter(
+                organization=self.org,
+                name__iexact='Repeat Safe Branch',
+            ).count(),
+            1,
+        )
+
+    def test_delete_unused_branch_and_protect_used_branch(self):
+        unused = BusinessLocation.objects.create(
+            organization=self.org,
+            name='Unused Browser Branch',
+            location_type=BusinessLocation.LOCATION_TYPE_BUSINESS,
+            active=True,
+        )
+        deleted = self.client.delete(f'/api/settings/branches/{unused.id}/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertFalse(BusinessLocation.objects.filter(pk=unused.id).exists())
+
+        used = self.post_json('/api/invoices/', {
+            'customer': self.customer.id,
+            'number': 'LOC-INV-DELETE-PROTECT',
+            'date': '2026-11-24',
+            'due_date': '2026-11-24',
+            'branch_id': self.location.id,
+            'lines': [{
+                'item': self.item.id,
+                'description': 'Protected branch reference',
+                'quantity': 1,
+                'rate': '100.00',
+                'gst_rate': 18,
+            }],
+        })
+        self.assertEqual(used.status_code, 201, used.content)
+        protected = self.client.delete(f'/api/settings/branches/{self.location.id}/')
+        self.assertEqual(protected.status_code, 409)
+        self.assertTrue(BusinessLocation.objects.filter(pk=self.location.id).exists())

@@ -2248,24 +2248,6 @@ async function partyForm(kind, id, onDone, onCancel) {
         </div>
       </div>
 
-        <!-- Vendor Name & Addresses Row -->
-        <div class="transaction-party-row">
-          <div class="customer-select-outer">
-            <label class="customer-select-outer-label" for="pay-vendor">Vendor Name*</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <select class="in" id="pay-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
-                <option value="">Select Vendor…</option>
-                <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
-                ${parties.map(item => `<option value="${item.id}" ${String(vendorId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
-              </select>
-              <button type="button" class="btn p" id="btn-pay-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
-                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
-              </button>
-            </div>
-          </div>
-          <div class="transaction-party-addresses" id="paym-vendor-addresses" aria-live="polite"></div>
-        </div>
-
       ${isCust ? `
         <div class="zb-form-row">
           <label class="zb-form-label">Customer Type <span class="zb-info-tip" title="Choose whether customer is a registered business or an individual consumer">ⓘ</span></label>
@@ -7560,6 +7542,24 @@ async function paymentMadeForm(pre = {}) {
     wide: true,
     headerActions: `<button type="button" class="btn ic" id="btn-paym-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>`,
     body: `
+      <!-- Vendor Name & Addresses Row -->
+      <div class="transaction-party-row">
+        <div class="customer-select-outer">
+          <label class="customer-select-outer-label" for="pay-vendor">Vendor Name*</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <select class="in" id="pay-vendor" name="vendor" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+              <option value="">Select Vendor…</option>
+              <option value="__new_vendor__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Vendor…</option>
+              ${parties.map(item => `<option value="${item.id}" ${String(vendorId) === String(item.id) ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn p" id="btn-pay-vendor-lookup" title="Search / Add Vendor" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+            </button>
+          </div>
+        </div>
+        <div class="transaction-party-addresses" id="paym-vendor-addresses" aria-live="polite"></div>
+      </div>
+
       <div class="transaction-two-cards-grid">
       <div class="transaction-card">
         <div class="transaction-card-field">

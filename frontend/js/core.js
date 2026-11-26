@@ -227,17 +227,26 @@ window.APP = APP;
 window.csrf = csrf;
 window.qty = qty;
 window.r2 = r2;
-window.partyForm = function(kind, id, onDone) {
-  if (typeof window._partyFormImpl === 'function') {
-    return window._partyFormImpl(kind, id, onDone);
+function partyForm(kind, id, onDone, onCancel) {
+  if (typeof window._partyFormImpl === 'function' && window._partyFormImpl !== partyForm) {
+    return window._partyFormImpl(kind, id, onDone, onCancel);
+  }
+  if (typeof window.partyForm === 'function' && window.partyForm !== partyForm) {
+    return window.partyForm(kind, id, onDone, onCancel);
   }
   console.warn('partyForm implementation not yet ready');
-};
-window.partyDetail = function(kind, id) {
-  if (typeof window._partyDetailImpl === 'function') {
+}
+window.partyForm = partyForm;
+
+function partyDetail(kind, id) {
+  if (typeof window._partyDetailImpl === 'function' && window._partyDetailImpl !== partyDetail) {
     return window._partyDetailImpl(kind, id);
   }
+  if (typeof window.partyDetail === 'function' && window.partyDetail !== partyDetail) {
+    return window.partyDetail(kind, id);
+  }
   console.warn('partyDetail implementation not yet ready');
-};
+}
+window.partyDetail = partyDetail;
 
 

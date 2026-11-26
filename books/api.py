@@ -421,10 +421,9 @@ def api_view(fn):
                 return j({'error': 'Conflict', 'message': str(e), 'errors': {}}, 409)
             if isinstance(e, IdempotencyPayloadMismatchError):
                 return j({'error': 'Idempotency Payload Mismatch', 'message': str(e), 'errors': {}}, 409)
-            if settings.DEBUG:
-                import traceback
-                traceback.print_exc()
-            return j({'error': 'Internal server error.', 'message': str(e) if settings.DEBUG else 'An unexpected error occurred.', 'errors': {}}, 500)
+            import traceback
+            traceback.print_exc()
+            return j({'error': 'Internal server error.', 'message': str(e), 'errors': {}}, 500)
     return wrapper
 
 def safe_cell(v):
@@ -9670,7 +9669,6 @@ class DeliveryChallanResource(Resource):
             challan_type=ctype, branch=branch, location=location or (business_location.name if business_location else ''),
             business_location=business_location, source_warehouse=source_warehouse,
             destination_warehouse=destination_warehouse, customer_type=customer_type,
-            transaction_series=allocation.series.name if allocation else series_name,
             gstin=(business_location.gstin if business_location and business_location.gstin else cust.gstin or ''),
             currency=currency, subtotal=subtotal,
             adjustment=adjustment, total=total, vehicle_number=vnum, notes=notes,

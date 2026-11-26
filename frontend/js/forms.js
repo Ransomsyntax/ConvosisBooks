@@ -7560,26 +7560,32 @@ async function paymentMadeForm(pre = {}) {
     wide: true,
     headerActions: `<button type="button" class="btn ic" id="btn-paym-top-pref" title="Settings" style="border:none;background:transparent;color:#3b82f6;font-size:16px;cursor:pointer;"><i class="fa-solid fa-gear"></i></button>`,
     body: `
+      <div class="transaction-two-cards-grid">
+      <div class="transaction-card">
+        <div class="transaction-card-field">
+          <label class="transaction-card-label required" for="paym-series">Transaction Series*</label>
+          <select class="in" id="paym-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Series">
+            ${transactionSeriesOptionsHtml(paymAvailableSeries, paySeriesOption?.id)}
+          </select>
+        </div>
+        <div class="transaction-card-field">
+          <label class="transaction-card-label required" for="paym-number">Payment#*</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1;min-width:0;padding:0 12px;">
+            <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
+              <i class="fa-solid fa-gear" style="font-size:13px;"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="transaction-card">
+        ${businessLocationSelectHtml(paymLocations, paymBusinessLocationId, 'paym-business-location')}
+      </div>
+      </div>
 
       <div class="transaction-three-cards-grid">
         <!-- Card 1: Transaction Information -->
         <div class="transaction-card">
-          <div class="transaction-card-field">
-            <label class="transaction-card-label required" for="paym-series">Transaction Series*</label>
-            <select class="in" id="paym-series" name="transaction_series" required style="width:100%;box-sizing:border-box;padding:0 8px;" title="Transaction Series">
-              ${transactionSeriesOptionsHtml(paymAvailableSeries, paySeriesOption?.id)}
-            </select>
-          </div>
-          <div class="transaction-card-field">
-            <label class="transaction-card-label required" for="paym-number">Payment#*</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1;min-width:0;padding:0 12px;">
-              <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
-                <i class="fa-solid fa-gear" style="font-size:13px;"></i>
-              </button>
-            </div>
-          </div>
-
           <div class="transaction-card-field">
             <label class="transaction-card-label required" for="paym-date">Payment Date*</label>
             <input class="in" type="date" id="paym-date" name="date" value="${dataObj.date || APP.today}" required style="width:100%;box-sizing:border-box;padding:0 12px;">
@@ -7593,8 +7599,6 @@ async function paymentMadeForm(pre = {}) {
 
         <!-- Card 2: Account Details -->
         <div class="transaction-card">
-          ${businessLocationSelectHtml(paymLocations, paymBusinessLocationId, 'paym-business-location')}
-
           <div class="transaction-card-field">
             <label class="transaction-card-label required" for="paym-bank-account">Paid from Bank Account</label>
             <select class="in" id="paym-bank-account" name="bank_account_id" required>
@@ -13736,7 +13740,6 @@ ${renderStockQuantityCell(l, items, whList)}
           }
         </style>
 
-
         <div class="quote-customer-row">
           <div class="customer-select-outer">
             <label class="customer-select-outer-label" for="q-customer">Customer Name*</label>
@@ -14849,15 +14852,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <form id="so-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
-
-        <div class="transaction-three-cards-grid">
-          <!-- Hidden Inputs for Auto-populated Customer Type and Location from Customer Master -->
-          <input type="hidden" id="so-customer-type" name="customer_type" value="${soCustType}">
-          <input type="hidden" id="so-location" name="location" value="${esc(soLocation)}">
-          <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
-          <span id="so-customer-gstin" style="display:none;">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || ''}</span>
-
-          <!-- Card 1: Transaction Information -->
+        <div class="transaction-two-cards-grid">
           <div class="transaction-card">
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="so-series">Transaction Series*</label>
@@ -14874,7 +14869,21 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
                 </button>
               </div>
             </div>
+          </div>
+          <div class="transaction-card">
+            ${businessLocationSelectHtml(soLocations, soBusinessLocationId, 'so-business-location')}
+          </div>
+        </div>
 
+        <div class="transaction-three-cards-grid">
+          <!-- Hidden Inputs for Auto-populated Customer Type and Location from Customer Master -->
+          <input type="hidden" id="so-customer-type" name="customer_type" value="${soCustType}">
+          <input type="hidden" id="so-location" name="location" value="${esc(soLocation)}">
+          <input type="hidden" id="so-pos" name="place_of_supply" value="${esc(soPos)}">
+          <span id="so-customer-gstin" style="display:none;">${(rec && rec.party_details && rec.party_details.gstin) || (parties.find(p => String(p.id) === String(soCustomer))?.gstin) || ''}</span>
+
+          <!-- Card 1: Transaction Information -->
+          <div class="transaction-card">
             <div class="transaction-card-field">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
@@ -14896,8 +14905,6 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
 
           <!-- Card 2: Additional Information -->
           <div class="transaction-card">
-            ${businessLocationSelectHtml(soLocations, soBusinessLocationId, 'so-business-location')}
-
             <div class="transaction-card-field">
               <label class="transaction-card-label">Source of Supply</label>
               <div id="so-source-of-supply" style="font-size:11.5px;color:#64748b;">

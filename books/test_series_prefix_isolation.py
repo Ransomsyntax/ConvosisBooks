@@ -314,11 +314,7 @@ class TransactionSeriesPrefixIsolationTests(TestCase):
         self.assertEqual(res_def.status_code, 200)
 
         # 5. Attempt to deactivate the default series -> must fail
-        res_deact = self.client.put(
-            f'/api/settings/transaction-series/{delta_id}/',
-            data=json.dumps({'is_active': False}),
-            content_type='application/json',
-        )
+        res_deact = self.client.delete(f'/api/settings/transaction-series/{delta_id}/')
         self.assertEqual(res_deact.status_code, 400)
         self.assertIn('Cannot deactivate the default transaction series', res_deact.json()['message'])
 

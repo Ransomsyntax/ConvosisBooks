@@ -1237,15 +1237,24 @@ def preview_document_numbers_for_series(series_by_type, org, preference_map=None
             create=False, counter_cache=counters_by_series.get(series_obj.pk, []),
         )
         sequence = counter.next_number
+        high_water_mark = max(
+            [series_obj.next_number]
+            + [
+                counter_row.next_number
+                for counter_row in counters_by_series.get(series_obj.pk, [])
+            ]
+        )
         preference = preferences.get(doc_type)
         if preference and not preference.auto_generate:
             previews[doc_type] = {
                 'formatted': '',
                 'next_sequence': sequence,
                 'financial_year': financial_year,
+                'high_water_mark': high_water_mark,
             }
             continue
         sequences[doc_type] = sequence
+        previews[doc_type] = {'high_water_mark': high_water_mark}
 
     batch_size = 32
     type_config_by_key = {item['key']: item for item in SUPPORTED_TRANSACTION_TYPES}
@@ -1334,6 +1343,7 @@ def preview_document_numbers_for_series(series_by_type, org, preference_map=None
                         'formatted': candidate,
                         'next_sequence': sequence,
                         'financial_year': financial_year,
+                        'high_water_mark': previews[doc_type]['high_water_mark'],
                     }
                     del sequences[doc_type]
                     break

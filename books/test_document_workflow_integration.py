@@ -7,7 +7,7 @@ from books.models import (
     Branch, DeliveryChallan, DeliveryChallanLine, DocumentNumberSeries,
     Organization, UserProfile, Customer, Vendor, Item, TransactionSeries,
     Quote, SalesOrder, Invoice, Bill, PurchaseOrder, RecurringInvoice,
-    RetainerInvoice, RetainerInvoiceAllocation
+    RetainerInvoice, RetainerInvoiceAllocation, DocumentNumberAllocation
 )
 from books import services
 
@@ -462,6 +462,123 @@ class DocumentWorkflowIntegrationTests(TestCase):
         self.assertEqual(invoice.business_location, branch)
         self.assertEqual(invoice.transaction_series, series.name)
         self.assertTrue(invoice.number.startswith('BR-INV/'))
+
+    def test_conversions_keep_destination_series_and_branch(self):
+        branch = Branch.objects.create(
+            organization=self.org,
+            name='North Branch',
+            city='Kochi',
+            state='Kerala',
+        )
+        group = TransactionSeries.objects.create(
+            organization=self.org,
+            name='Integration Series',
+            business_location=branch,
+        )
+        child_series = {}
+        for document_type, prefix in (
+            ('quotes', 'QT/'),
+            ('sales_orders', 'SO/'),
+            ('invoices', 'INV/'),
+            ('purchase_orders', 'PO/'),
+            ('bills', 'BILL/'),
+            ('delivery_challans', 'DC/'),
+        ):
+            child_series[document_type] = DocumentNumberSeries.objects.create(
+                organization=self.org,
+                series_group=group,
+                name=f'{document_type} child',
+                document_type=document_type,
+                prefix=prefix,
+                branch=branch.name,
+                location=branch.city,
+                business_location=None if document_type == 'invoices' else branch,
+            )
+
+        source_documents = (
+            ('quotes', Quote, 'QT-SOURCE-1', 'convert-to-invoice', '/api/quotes/', 'invoices', 'invoice_id', 'number', 200),
+            ('sales_orders', SalesOrder, 'SO-SOURCE-1', 'convert-to-invoice', '/api/sales-orders/', 'invoices', 'invoice_id', 'number', 200),
+            ('purchase_orders', PurchaseOrder, 'PO-SOURCE-1', 'convert-to-bill', '/api/purchase-orders/', 'bills', 'bill_id', 'number', 200),
+            ('sales_orders', SalesOrder, 'SO-PO-SOURCE', 'convert-to-purchase-order', '/api/sales-orders/', 'purchase_orders', 'purchase_order_id', 'number', 200),
+            ('sales_orders', SalesOrder, 'SO-DC-SOURCE', 'convert-to-delivery-challan', '/api/sales-orders/', 'delivery_challans', 'delivery_challan_id', 'number', 200),
+            ('delivery_challans', DeliveryChallan, 'DC-SOURCE-1', 'convert-to-invoice', '/api/delivery-challans/', 'invoices', 'invoice_id', 'invoice_number', 201),
+        )
+
+        for source_type, model, number, action, endpoint, target_type, target_id_key, target_number_key, expected_status in source_documents:
+            with self.subTest(source_type=source_type, number=number, target_type=target_type):
+                source_kwargs = {
+                    'organization': self.org,
+                    'number': number,
+                    'date': self.today,
+                    'status': 'draft',
+                    'branch': branch.name,
+                    'location': branch.city,
+                    'business_location': branch,
+                }
+                if model is DeliveryChallan:
+                    source_kwargs.update(
+                        customer=self.customer,
+                        challan_type='delivering_goods',
+                        subtotal=Decimal('5000.00'),
+                        total=Decimal('5900.00'),
+                    )
+                else:
+                    source_kwargs.update(
+                        due_date=self.today,
+                        place_of_supply='Kerala',
+                        transaction_series=group.name,
+                        customer_type='registered' if source_type == 'purchase_orders' else 'b2b',
+                    )
+                if source_type == 'purchase_orders':
+                    source_kwargs['vendor'] = self.vendor
+                elif model is not DeliveryChallan:
+                    source_kwargs['customer'] = self.customer
+                source = model.objects.create(**source_kwargs)
+                if model is DeliveryChallan:
+                    DeliveryChallanLine.objects.create(
+                        challan=source,
+                        item=self.item,
+                        description='Cloud ERP License',
+                        quantity=1,
+                        rate=Decimal('5000.00'),
+                        gst_rate=18,
+                        taxable=Decimal('5000.00'),
+                        tax_amount=Decimal('900.00'),
+                        line_total=Decimal('5900.00'),
+                    )
+                DocumentNumberAllocation.objects.create(
+                    organization=self.org,
+                    series=child_series[source_type],
+                    document_type=source_type,
+                    number=number,
+                )
+
+                response = self.client.post(
+                    f'{endpoint}{source.pk}/{action}/',
+                    data=json.dumps({}),
+                    content_type='application/json',
+                )
+                self.assertEqual(response.status_code, expected_status, response.content)
+                data = response.json()
+                target_id = data.get(target_id_key)
+                self.assertIsNotNone(target_id)
+                target_series = child_series[target_type]
+                allocation = DocumentNumberAllocation.objects.get(
+                    organization=self.org,
+                    document_type=target_type,
+                    number=data[target_number_key],
+                )
+                self.assertEqual(allocation.series_id, target_series.pk)
+                target_model = {
+                    'invoices': Invoice,
+                    'bills': Bill,
+                    'purchase_orders': PurchaseOrder,
+                    'delivery_challans': DeliveryChallan,
+                }[target_type]
+                target = target_model.objects.get(pk=target_id)
+                self.assertEqual(target.business_location_id, branch.pk)
+                if hasattr(target, 'transaction_series'):
+                    self.assertEqual(target.transaction_series, group.name)
 
     def test_recurring_invoice_generation(self):
         # 1. Create a Recurring Invoice Profile

@@ -3144,10 +3144,14 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
       btn.textContent = newActive ? 'Activating...' : 'Deactivating...';
     }
     try {
-      await api(`/settings/transaction-series/${currentSeries.id}/`, {
-        method: 'PUT',
-        body: JSON.stringify({ is_active: newActive })
-      });
+      if (!newActive) {
+        await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
+      } else {
+        await api(`/settings/transaction-series/${currentSeries.id}/`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_active: true })
+        });
+      }
       toast(`Series "${currentSeries.name}" ${newActive ? 'activated' : 'deactivated'}.`, 'success');
       await renderNumberSeriesPage(container, currentSeries.id);
     } catch (e) {
@@ -3160,8 +3164,7 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
   });
 
   container.querySelector('#btnDeleteSeries')?.addEventListener('click', async () => {
-    if (!currentSeries) return;
-    if (!window.confirm(`Permanently delete "${currentSeries.name}"? Series used by transactions or assigned to a branch cannot be deleted; deactivate it instead.`)) return;
+    if (!currentSeries || !window.confirm(`Delete "${currentSeries.name}"? This cannot be undone. Referenced series can only be deactivated.`)) return;
     const btn = container.querySelector('#btnDeleteSeries');
     if (btn && btn.disabled) return;
     if (btn) {
@@ -3169,15 +3172,18 @@ async function renderNumberSeriesPage(container, selectedSeriesId = null) {
       btn.textContent = 'Deleting...';
     }
     try {
-      const result = await api(`/settings/transaction-series/${currentSeries.id}/`, { method: 'DELETE' });
-      toast(result.message || `Series "${currentSeries.name}" deleted.`, 'success');
+      await api(`/settings/transaction-series/${currentSeries.id}/`, {
+        method: 'DELETE',
+        body: JSON.stringify({ action: 'delete' })
+      });
+      toast(`Series "${currentSeries.name}" deleted.`, 'success');
       await renderNumberSeriesPage(container);
-    } catch (e) {
+    } catch (error) {
       if (btn) {
         btn.disabled = false;
         btn.textContent = 'Delete Series';
       }
-      toast(e.message || 'Failed to delete series.', 'error');
+      toast(error.message || 'This series could not be deleted. Deactivate it if it has transaction history.', 'error');
     }
   });
 

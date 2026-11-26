@@ -582,6 +582,118 @@ async function taxRateModal(onDone, onCancel) {
 }
 window.taxRateModal = taxRateModal;
 
+const TDS_RATES_CONFIG = [
+  { value: '0', label: 'Select TDS Rate / Section' },
+  { value: '0.1', label: '0.1% - Sec 194Q (Purchase of Goods)', section: '194Q', rate: 0.1 },
+  { value: '1', label: '1.0% - Sec 194C (Contractors - Indv/HUF)', section: '194C', rate: 1.0 },
+  { value: '2', label: '2.0% - Sec 194C/J (Contractors Co / Tech)', section: '194C/194J', rate: 2.0 },
+  { value: '5', label: '5.0% - Sec 194H (Commission / Brokerage)', section: '194H', rate: 5.0 },
+  { value: '10', label: '10.0% - Sec 194J/I (Professional / Rent)', section: '194J/194I', rate: 10.0 },
+  { value: '20', label: '20.0% - Sec 206AA (Higher Non-PAN Rate)', section: '206AA', rate: 20.0 }
+];
+
+const TdsEngine = {
+  RATES: TDS_RATES_CONFIG,
+
+  getRateOptionsHtml(selectedRate) {
+    const sRate = String(selectedRate == null ? '0' : selectedRate);
+    return TDS_RATES_CONFIG.map(opt =>
+      `<option value="${opt.value}" ${String(opt.value) === sRate ? 'selected' : ''}>${opt.label}</option>`
+    ).join('');
+  },
+
+  renderTotalsSection(pfx, currentMode, currentRate) {
+    const mode = currentMode === 'line' ? 'line' : (currentMode === 'transaction' || (Number(currentRate) > 0) ? 'transaction' : 'none');
+    const rate = Number(currentRate) || 0;
+    return `
+      <div class="tds-controls-wrap" style="margin-bottom:14px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid var(--bd-glass);border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:12.5px;font-weight:600;color:var(--tx);">TDS Option</span>
+          <div style="display:flex;align-items:center;gap:12px;font-size:12px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="${pfx}_tds_mode" value="none" ${mode === 'none' ? 'checked' : ''}> None
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="${pfx}_tds_mode" value="transaction" ${mode === 'transaction' ? 'checked' : ''}> Transaction-Level
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="radio" name="${pfx}_tds_mode" value="line" ${mode === 'line' ? 'checked' : ''}> Line-Level
+            </label>
+          </div>
+        </div>
+        <div class="${pfx}-tds-txn-box" style="display:${mode === 'transaction' ? 'flex' : 'none'};align-items:center;justify-content:space-between;padding-top:8px;border-top:1px dashed var(--bd-glass);">
+          <select class="in ${pfx}-tds-rate-select" name="tds_tax_rate" style="width:230px;font-size:12px;padding:4px 8px;">
+            ${TdsEngine.getRateOptionsHtml(rate)}
+          </select>
+          <span class="${pfx}-tds-amt" style="font-weight:700;font-size:13px;color:#dc2626;min-width:70px;text-align:right;">- 0.00</span>
+        </div>
+        <div class="${pfx}-tds-line-box" style="display:${mode === 'line' ? 'flex' : 'none'};align-items:center;justify-content:space-between;padding-top:8px;border-top:1px dashed var(--bd-glass);">
+          <span style="font-size:12px;color:var(--tx-muted);font-weight:500;">Total Line-Level TDS:</span>
+          <span class="${pfx}-tds-line-amt" style="font-weight:700;font-size:13px;color:#dc2626;min-width:70px;text-align:right;">- 0.00</span>
+        </div>
+      </div>
+    `;
+  },
+
+  renderLineCell(lineData, currentMode) {
+    const lRate = Number(lineData && (lineData.tds_rate != null ? lineData.tds_rate : 0)) || 0;
+    const isLine = currentMode === 'line';
+    return `
+      <td class="td-tds" style="width:130px;padding:10px 8px;vertical-align:top;${isLine ? '' : 'display:none;'}">
+        <select class="in l-tds" aria-label="Line TDS" style="width:100%;font-size:12px;padding:3px 4px;">
+          <option value="0">None (0%)</option>
+          <option value="0.1" ${lRate === 0.1 ? 'selected' : ''}>0.1% (194Q)</option>
+          <option value="1" ${lRate === 1 ? 'selected' : ''}>1% (194C)</option>
+          <option value="2" ${lRate === 2 ? 'selected' : ''}>2% (194C/J)</option>
+          <option value="5" ${lRate === 5 ? 'selected' : ''}>5% (194H)</option>
+          <option value="10" ${lRate === 10 ? 'selected' : ''}>10% (194J/I)</option>
+          <option value="20" ${lRate === 20 ? 'selected' : ''}>20% (206AA)</option>
+        </select>
+        <div class="l-tds-amt" style="font-size:11px;color:#dc2626;text-align:right;margin-top:2px;font-weight:600;display:${lRate > 0 && isLine ? 'block' : 'none'};">- ₹0.00</div>
+      </td>
+    `;
+  },
+
+  bindControls(form, pfx, tableEl, onRecalc) {
+    const getMode = () => form.querySelector(`input[name="${pfx}_tds_mode"]:checked`)?.value || 'none';
+    form.querySelectorAll(`input[name="${pfx}_tds_mode"]`).forEach(radio => {
+      radio.addEventListener('change', () => {
+        const mode = getMode();
+        const txnBox = form.querySelector(`.${pfx}-tds-txn-box`);
+        const lineBox = form.querySelector(`.${pfx}-tds-line-box`);
+        if (txnBox) txnBox.style.display = (mode === 'transaction') ? 'flex' : 'none';
+        if (lineBox) lineBox.style.display = (mode === 'line') ? 'flex' : 'none';
+
+        if (tableEl) {
+          tableEl.querySelectorAll('.th-tds').forEach(th => th.style.display = (mode === 'line') ? '' : 'none');
+          tableEl.querySelectorAll('.td-tds').forEach(td => td.style.display = (mode === 'line') ? '' : 'none');
+          tableEl.querySelectorAll('.l-tds-amt').forEach(amt => {
+            if (mode !== 'line') amt.style.display = 'none';
+          });
+        }
+        if (typeof onRecalc === 'function') onRecalc();
+      });
+    });
+
+    const txnSelect = form.querySelector(`.${pfx}-tds-rate-select`);
+    if (txnSelect) {
+      txnSelect.addEventListener('change', () => {
+        if (typeof onRecalc === 'function') onRecalc();
+      });
+    }
+
+    if (tableEl) {
+      tableEl.addEventListener('change', e => {
+        if (e.target.classList.contains('l-tds')) {
+          if (typeof onRecalc === 'function') onRecalc();
+        }
+      });
+    }
+  }
+};
+window.TdsEngine = TdsEngine;
+
+
 async function handleQuickCreateSelect(selectEl, customCallback, customCancelCallback) {
   if (!selectEl || selectEl._quickCreating) return false;
   const val = selectEl.value;
@@ -5133,7 +5245,10 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
   const r = rec || { date: APP.today, lines: [{}], place_of_supply: '', notes: defaultDocNotes, terms: APP.org.terms_default || 'Due on Receipt', order_number: '' };
   if (!r.lines || !r.lines.length) r.lines = [{}];
   const byId = Object.fromEntries(items.map(i => [String(i.id), i]));
-  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td>${renderDiscountCell(l)}<td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td><td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
+  const row = l => `<tr class="ln"><td><select class="in l-item" aria-label="Item">${opts(itemOpts, l.item)}</select><input class="in l-desc" aria-label="Description" placeholder="Description" maxlength="500" value="${esc(l.description || '')}"></td><td><input class="in l-hsn" aria-label="HSN/SAC" maxlength="10" value="${esc(l.hsn_sac || '')}"></td><td><input class="in l-qty" type="number" step="0.001" min="0" aria-label="Quantity" value="${esc(l.quantity || 1)}"></td><td><input class="in l-rate" type="number" step="0.01" min="0" aria-label="Rate" value="${esc(l.rate == null ? '' : l.rate)}"></td>${renderDiscountCell(l)}<td><select class="in l-gst" aria-label="GST rate">${opts(GST_SLABS.map(x => [x, x + '%']), l.gst_rate != null ? num(l.gst_rate) : 18)}</select></td>${TdsEngine.renderLineCell(l, docTdsMode)}
+      <td class="r l-amt">—</td><td><button type="button" class="btn ic" data-rm aria-label="Remove line">×</button></td></tr>`;
+  const docTdsMode = r ? (r.tds_mode || 'none') : 'none';
+  const docTdsRate = r ? num(r.tds_tax_rate || 0) : 0;
   const partyId = r.party_id || r.customer_id || r.vendor_id || r.customer || r.vendor || '';
   const due0 = r.due_date || r.delivery_date || '';
   const pendingFiles = [];
@@ -5229,6 +5344,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
                   <th>Rate (₹)</th>
                   <th>Discount</th>
                   <th class="th-tax-explainer" data-doc-kind="${kind}" style="cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">GST <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
+                  <th class="th-tds" style="width:130px;text-align:left;display:${docTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th class="r">Amount</th>
                   <th></th>
                 </tr>
@@ -5244,6 +5360,7 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
             <div data-t-row="cgst"><span>CGST</span><b data-t="cgst">₹0.00</b></div>
             <div data-t-row="sgst"><span>SGST</span><b data-t="sgst">₹0.00</b></div>
             <div data-t-row="igst"><span>IGST</span><b data-t="igst">₹0.00</b></div>
+            ${TdsEngine.renderTotalsSection('doc', docTdsMode, docTdsRate)}
             <div class="gt"><span>Total</span><b data-t="total">₹0.00</b></div>
           </div>
 
@@ -5297,7 +5414,10 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
     const calc = () => {
       const intra = norm(form.elements.place_of_supply.value) === norm(APP.org.state);
       const isTaxInclusive = ($('#doc-tax-pricing', form)?.value === 'tax_inclusive');
+      const tdsMode = form.querySelector('input[name="doc_tds_mode"]:checked')?.value || 'none';
       const t = { sub: 0, cgst: 0, sgst: 0, igst: 0 };
+      let totalLineTds = 0;
+
       $$('tr.ln', form).forEach(tr => {
         const qtyVal = num($('.l-qty', tr).value) || 0;
         const rateVal = num($('.l-rate', tr).value) || 0;
@@ -5333,9 +5453,45 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         const ig = intra ? 0 : taxAmt;
 
         t.sub += taxable; t.cgst += cg; t.sgst += sg; t.igst += ig;
+
+        if (tdsMode === 'line') {
+          const lTdsRate = num($('.l-tds', tr)?.value) || 0;
+          let lineTds = 0;
+          if (lTdsRate > 0) {
+            lineTds = Math.round((taxable * (lTdsRate / 100)) * 100) / 100;
+          }
+          totalLineTds += lineTds;
+          const lAmtEl = $('.l-tds-amt', tr);
+          if (lAmtEl) {
+            lAmtEl.style.display = lineTds > 0 ? 'block' : 'none';
+            lAmtEl.textContent = lineTds > 0 ? `- ₹${inr(lineTds).replace('₹', '').trim()}` : '';
+          }
+        } else {
+          const lAmtEl = $('.l-tds-amt', tr);
+          if (lAmtEl) lAmtEl.style.display = 'none';
+        }
+
         $('.l-amt', tr).textContent = inr(lineTot);
       });
-      $$('[data-t]', form).forEach(el => { const k = el.dataset.t; el.textContent = inr(k === 'total' ? t.sub + t.cgst + t.sgst + t.igst : t[k]); });
+
+      let finalTdsDeduction = 0;
+      if (tdsMode === 'line') {
+        finalTdsDeduction = totalLineTds;
+        const lineAmtEl = form.querySelector('.doc-tds-line-amt');
+        if (lineAmtEl) lineAmtEl.textContent = `- ${inr(totalLineTds).replace('₹', '').trim()}`;
+      } else if (tdsMode === 'transaction') {
+        const txnRate = num(form.querySelector('.doc-tds-rate-select')?.value) || 0;
+        finalTdsDeduction = Math.round((t.sub * (txnRate / 100)) * 100) / 100;
+        const txnAmtEl = form.querySelector('.doc-tds-amt');
+        if (txnAmtEl) txnAmtEl.textContent = `- ${inr(finalTdsDeduction).replace('₹', '').trim()}`;
+      }
+
+      const totalGrand = Math.max(0, Math.round((t.sub + t.cgst + t.sgst + t.igst - finalTdsDeduction) * 100) / 100);
+
+      $$('[data-t]', form).forEach(el => {
+        const k = el.dataset.t;
+        el.textContent = inr(k === 'total' ? totalGrand : t[k]);
+      });
       $('[data-t-row=cgst]', form).style.display = $('[data-t-row=sgst]', form).style.display = intra ? '' : 'none';
       $('[data-t-row=igst]', form).style.display = intra ? 'none' : '';
     };
@@ -5534,9 +5690,13 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
         d.tax_pricing_type = (form.elements.tax_pricing_type ? form.elements.tax_pricing_type.value : 'tax_exclusive') || 'tax_exclusive';
         d.customer_type = (form.elements.customer_type ? form.elements.customer_type.value : (inv ? 'b2b' : 'registered')) || (inv ? 'b2b' : 'registered');
         d.is_tax_inclusive = (d.tax_pricing_type === 'tax_inclusive');
+        const docMode = form.querySelector('input[name="doc_tds_mode"]:checked')?.value || 'none';
+        d.tds_mode = docMode;
+        d.tds_tax_rate = (docMode === 'transaction') ? (num(form.querySelector('.doc-tds-rate-select')?.value) || 0) : 0;
         d.lines = $$('tr.ln', form).map(tr => {
           const discVal = num($('.l-disc', tr).value) || 0;
           const discType = $('.l-disc-type', tr)?.value || 'percent';
+          const lineTdsRate = docMode === 'line' ? (num(tr.querySelector('.l-tds')?.value) || 0) : 0;
           return {
             item: $('.l-item', tr).value || null,
             description: $('.l-desc', tr).value,
@@ -5547,7 +5707,9 @@ async function docForm(kind, id, targetEl, onDone, extraOpts = {}) {
             discount_amount: discType === 'amount' ? discVal : 0,
             discount_type: discType,
             discount: discVal,
-            gst_rate: $('.l-gst', tr).value
+            gst_rate: $('.l-gst', tr).value,
+            tds_applicable: docMode === 'line' && lineTdsRate > 0,
+            tds_rate: lineTdsRate
           };
         });
 
@@ -11808,8 +11970,8 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
         <input class="in l-rate" type="number" step="0.01" min="0" value="${esc(l.rate == null ? '0.00' : l.rate)}" style="text-align:right;width:100%;">
       </td>
       ${renderDiscountCell(l)}
-      <td style="width:160px;padding:10px 8px;vertical-align:top;">
-        <select class="in l-gst" aria-label="TDS" style="width:100%;">
+      <td style="width:140px;padding:10px 8px;vertical-align:top;">
+        <select class="in l-gst" aria-label="Tax Rate" style="width:100%;">
           <option value="0">Select a Tax</option>
           <option value="0" ${num(l.gst_rate) === 0 ? 'selected' : ''}>GST [0%]</option>
           <option value="5" ${num(l.gst_rate) === 5 ? 'selected' : ''}>GST [5%]</option>
@@ -11818,6 +11980,7 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
+      ${TdsEngine.renderLineCell(l, invTdsMode)}
       <td style="width:120px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
@@ -11990,7 +12153,8 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                     RATE <i class="fa-solid fa-calculator" style="font-size:11px;color:#64748b;margin-left:2px;"></i>
                   </th>
                   <th style="width:125px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">DISCOUNT</th>
-                  <th style="width:160px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">TDS</th>
+                  <th class="th-tax-explainer" data-doc-kind="invoices" style="width:140px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;cursor:pointer;" title="Click for GST Rates">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
+                  <th class="th-tds" style="width:130px;text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;display:${invTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th style="width:120px;text-align:right;padding:10px 12px;font-size:11.5px;font-weight:600;color:#64748b;letter-spacing:0.5px;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -12057,6 +12221,9 @@ async function recurringInvoiceForm(id, targetEl, onDone) {
                 <span id="rec-adj-display" style="font-weight:600;min-width:65px;text-align:right;color:#0f172a;font-size:13px;">0.00</span>
               </div>
             </div>
+
+            <!-- TDS Options -->
+            ${TdsEngine.renderTotalsSection('inv', invTdsMode, invTdsRate)}
 
             <!-- TCS -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -13565,6 +13732,7 @@ async function quoteForm(id, targetEl, onDone) {
   const qNotes = rec ? (rec.notes != null ? rec.notes : '') : '';
   const qTerms = rec ? (rec.terms != null ? rec.terms : (window.APP && window.APP.org && window.APP.org.terms_default ? window.APP.org.terms_default : '')) : '';
   const qTaxType = rec ? (rec.tax_type || 'tds') : 'tds';
+  const qTdsMode = rec ? (rec.tds_mode || (qTaxType === 'tds' && num(rec.tds_tcs_tax || 0) > 0 ? 'transaction' : 'none')) : 'none';
   const qTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const qCustType = rec ? (rec.customer_type || 'b2b') : 'b2b';
   const qTdsTax = rec ? num(rec.tds_tcs_tax || 0) : 0;
@@ -14082,6 +14250,7 @@ ${renderStockQuantityCell(l, items, whList)}
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th class="th-tax-explainer" data-doc-kind="quotes" style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;cursor:pointer;" title="Click for GST Rates, Tax Exclusive & B2B/B2C Rules">TAX <i class="fa-solid fa-circle-info" style="font-size:11px;color:#2563eb;"></i></th>
+                  <th class="th-tds" style="width:130px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;display:${qTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -14121,6 +14290,7 @@ ${renderStockQuantityCell(l, items, whList)}
               <span id="q-subtotal-val" style="font-size:16px;font-weight:700;">0.00</span>
             </div>
 
+            ${TdsEngine.renderTotalsSection('q', qTdsMode, qTdsTax)}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
               <div style="display:flex;align-items:center;gap:14px;">
                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:500;font-size:13px;">
@@ -14554,6 +14724,7 @@ ${renderStockQuantityCell(l, items, whList)}
   });
 
   $('#q-tds-tax', form)?.addEventListener('change', calcQuote);
+  TdsEngine.bindControls(form, 'q', tbody.closest('table'), calcQuote);
   $$('.btn-tax-mode', form).forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -14844,6 +15015,8 @@ ${renderStockQuantityCell(l, items, whList)}
       terms: $('#q-terms', form).value.trim(),
       tax_type: form.querySelector('input[name="tax_type"]:checked')?.value || 'tds',
       tds_tcs_tax: num($('#q-tds-tax', form).value) || 0,
+      tds_mode: form.querySelector('input[name="q_tds_mode"]:checked')?.value || 'none',
+      tds_tax_rate: (form.querySelector('input[name="q_tds_mode"]:checked')?.value === 'transaction') ? (num(form.querySelector('.q-tds-rate-select')?.value) || 0) : 0,
       adjustment: num($('#q-adj-val', form).value) || 0,
       adjustment_label: ($('#q-adj-label', form)?.value || 'Adjustment').trim(),
       signature_data: $('#q-signature-data', form)?.value || '',
@@ -14998,6 +15171,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const soTerms = rec ? (rec.terms != null ? rec.terms : (APP.org.terms_default || 'Payment within 30 days.')) : (srcQuote ? srcQuote.terms : (APP.org.terms_default || 'Payment within 30 days.'));
   const soTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcQuote ? (srcQuote.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive');
   const soCustType = rec ? (rec.customer_type || 'b2b') : (srcQuote ? (srcQuote.customer_type || 'b2b') : 'b2b');
+  const soTdsMode = rec ? (rec.tds_mode || 'none') : (srcQuote ? (srcQuote.tds_mode || 'none') : 'none');
+  const soTdsRate = rec ? num(rec.tds_tax_rate || 0) : (srcQuote ? num(srcQuote.tds_tax_rate || 0) : 0);
   const soLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcQuote && srcQuote.lines && srcQuote.lines.length) ? srcQuote.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]);
   const pendingFiles = [];
 
@@ -15033,6 +15208,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
+      ${TdsEngine.renderLineCell(l, soTdsMode)}
       <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
@@ -15175,6 +15351,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th class="th-tds" style="width:130px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;display:${soTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -15227,6 +15404,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
                 <span id="so-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
               </div>
               <div id="so-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              ${TdsEngine.renderTotalsSection('so', soTdsMode, soTdsRate)}
               <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
                 <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
                 <span id="so-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
@@ -15256,6 +15434,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#so-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcSo());
+  TdsEngine.bindControls(form, 'so', tbody.closest('table'), calcSo);
 
   createSalespersonCustomDropdown($('#so-salesperson-container', form), soSalesperson, () => {});
   const soAddrMgr = initTransactionAddressManager({
@@ -15625,6 +15804,8 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       signature_title: $('#so-signature-title', form)?.value || '',
       source_quote: srcQuote ? srcQuote.id : (rec ? rec.source_quote_id : null),
       custom_fields_data: collectCustomFieldsData(form),
+      tds_mode: form.querySelector('input[name="so_tds_mode"]:checked')?.value || 'none',
+      tds_tax_rate: (form.querySelector('input[name="so_tds_mode"]:checked')?.value === 'transaction') ? (num(form.querySelector('.so-tds-rate-select')?.value) || 0) : 0,
       lines: lines
     };
 
@@ -15733,6 +15914,8 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   const billNotes = rec ? (rec.notes != null ? rec.notes : (APP.org.notes_default || 'Thanks for the service.')) : (srcPO ? srcPO.notes : (APP.org.notes_default || 'Thanks for the service.'));
   const billTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : (srcPO ? (srcPO.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive');
   const billCustType = rec ? (rec.customer_type || 'registered') : (srcPO ? (srcPO.customer_type || 'registered') : 'registered');
+  const billTdsMode = rec ? (rec.tds_mode || 'none') : (srcPO ? (srcPO.tds_mode || 'none') : 'none');
+  const billTdsRate = rec ? num(rec.tds_tax_rate || 0) : (srcPO ? num(srcPO.tds_tax_rate || 0) : 0);
   const billLines = (rec && rec.lines && rec.lines.length) ? rec.lines : ((srcPO && srcPO.lines && srcPO.lines.length) ? srcPO.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }]);
 
   const rowHtml = (l = {}) => `
@@ -15767,6 +15950,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
+      ${TdsEngine.renderLineCell(l, billTdsMode)}
       <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
@@ -15937,6 +16121,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th class="th-tds" style="width:130px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;display:${billTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -15989,6 +16174,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
                 <span id="bill-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
               </div>
               <div id="bill-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              ${TdsEngine.renderTotalsSection('bill', billTdsMode, billTdsRate)}
               <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
                 <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
                 <span id="bill-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
@@ -16013,6 +16199,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#bill-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcBill());
+  TdsEngine.bindControls(form, 'bill', tbody.closest('table'), calcBill);
 
   const billAddrMgr = initTransactionAddressManager({
     form,
@@ -16380,6 +16567,8 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       signature_title: $('#bill-signature-title', form)?.value || '',
       source_purchase_order: srcPO ? srcPO.id : (rec ? rec.source_purchase_order_id : null),
       custom_fields_data: collectCustomFieldsData(form),
+      tds_mode: form.querySelector('input[name="bill_tds_mode"]:checked')?.value || 'none',
+      tds_tax_rate: (form.querySelector('input[name="bill_tds_mode"]:checked')?.value === 'transaction') ? (num(form.querySelector('.bill-tds-rate-select')?.value) || 0) : 0,
       lines: lines
     };
 
@@ -16472,6 +16661,8 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const poTerms = rec ? (rec.terms != null ? rec.terms : (APP.org.terms_default || 'Standard terms apply.')) : (APP.org.terms_default || 'Standard terms apply.');
   const poTaxPricing = rec ? (rec.tax_pricing_type || 'tax_exclusive') : 'tax_exclusive';
   const poCustType = rec ? (rec.customer_type || 'registered') : 'registered';
+  const poTdsMode = rec ? (rec.tds_mode || 'none') : 'none';
+  const poTdsRate = rec ? num(rec.tds_tax_rate || 0) : 0;
   const poLines = (rec && rec.lines && rec.lines.length) ? rec.lines : [{ quantity: 1, rate: 0, discount_percent: 0, gst_rate: 18 }];
 
   const rowHtml = (l = {}) => `
@@ -16506,6 +16697,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
           <option value="28" ${num(l.gst_rate) === 28 ? 'selected' : ''}>GST [28%]</option>
         </select>
       </td>
+      ${TdsEngine.renderLineCell(l, poTdsMode)}
       <td style="width:100px;padding:10px 8px;text-align:right;font-weight:600;vertical-align:top;" class="l-amt">
         ${(l.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </td>
@@ -16657,6 +16849,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
                   <th style="width:110px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">RATE (₹)</th>
                   <th style="width:120px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">DISCOUNT</th>
                   <th style="width:140px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">TAX</th>
+                  <th class="th-tds" style="width:130px;text-align:left;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;display:${poTdsMode === 'line' ? '' : 'none'};">TDS</th>
                   <th style="width:100px;text-align:right;padding:12px 8px;font-size:12px;font-weight:600;color:#64748b;">AMOUNT</th>
                   <th style="width:36px;"></th>
                 </tr>
@@ -16709,6 +16902,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
                 <span id="po-subtotal-val" style="font-weight:600;color:#0f172a;">0.00</span>
               </div>
               <div id="po-tax-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              ${TdsEngine.renderTotalsSection('po', poTdsMode, poTdsRate)}
               <div style="border-top:2px solid #0f172a;padding-top:12px;margin-top:4px;display:flex;justify-content:space-between;align-items:baseline;">
                 <span style="font-size:16px;font-weight:700;color:#0f172a;">Total (₹)</span>
                 <span id="po-grandtotal-val" style="font-size:22px;font-weight:800;color:#0f172a;">0.00</span>
@@ -16733,6 +16927,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const tbody = $('#po-line-tbody', form);
   const byId = Object.fromEntries(items.map(it => [String(it.id), it]));
   const stockTracker = initItemTableStockTracker(tbody, items, warehouses, () => calcPo());
+  TdsEngine.bindControls(form, 'po', tbody.closest('table'), calcPo);
 
   const poAddrMgr = initTransactionAddressManager({
     form,
@@ -17089,6 +17284,8 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       signed_by: $('#po-signed-by', form)?.value || '',
       signature_title: $('#po-signature-title', form)?.value || '',
       custom_fields_data: collectCustomFieldsData(form),
+      tds_mode: form.querySelector('input[name="po_tds_mode"]:checked')?.value || 'none',
+      tds_tax_rate: (form.querySelector('input[name="po_tds_mode"]:checked')?.value === 'transaction') ? (num(form.querySelector('.po-tds-rate-select')?.value) || 0) : 0,
       lines: lines
     };
 
@@ -17647,12 +17844,57 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
       $('.l-amt', tr).textContent = lineTot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     });
 
+    const tdsMode = form.querySelector('input[name="inv_tds_mode"]:checked')?.value || 'none';
+    let totalLineTds = 0;
+    $$('.ln-invoice', tbody).forEach(tr => {
+      const q = num($('.l-qty', tr).value) || 0;
+      const r = num($('.l-rate', tr).value) || 0;
+      const discVal = num($('.l-disc', tr)?.value) || 0;
+      const discType = $('.l-disc-type', tr)?.value || 'percent';
+      const gross = q * r;
+      const dAmt = discType === 'amount' ? Math.min(gross, Math.max(0, discVal)) : (gross * Math.min(100, Math.max(0, discVal)) / 100);
+      const net = Math.max(0, gross - dAmt);
+      const dLine = discPct > 0 ? (net * (100 - discPct) / 100) : net;
+      const gst = num($('.l-gst', tr).value) || 0;
+      const isTaxInc = ($('#inv-tax-pricing', form)?.value === 'tax_inclusive');
+      const lineTaxable = (isTaxInc && gst > 0) ? r2(dLine / (1 + gst / 100)) : r2(dLine);
+
+      if (tdsMode === 'line') {
+        const lTdsRate = num($('.l-tds', tr)?.value) || 0;
+        let lineTds = 0;
+        if (lTdsRate > 0) {
+          lineTds = r2(lineTaxable * (lTdsRate / 100));
+        }
+        totalLineTds += lineTds;
+        const lAmtEl = $('.l-tds-amt', tr);
+        if (lAmtEl) {
+          lAmtEl.style.display = lineTds > 0 ? 'block' : 'none';
+          lAmtEl.textContent = lineTds > 0 ? `- ₹${inr(lineTds).replace('₹', '').trim()}` : '';
+        }
+      } else {
+        const lAmtEl = $('.l-tds-amt', tr);
+        if (lAmtEl) lAmtEl.style.display = 'none';
+      }
+    });
+
+    let finalTdsDeduction = 0;
+    if (tdsMode === 'line') {
+      finalTdsDeduction = totalLineTds;
+      const lineAmtEl = form.querySelector('.inv-tds-line-amt');
+      if (lineAmtEl) lineAmtEl.textContent = `- ${inr(totalLineTds).replace('₹', '').trim()}`;
+    } else if (tdsMode === 'transaction') {
+      const txnRate = num(form.querySelector('.inv-tds-rate-select')?.value) || 0;
+      finalTdsDeduction = r2(subtotal * (txnRate / 100));
+      const txnAmtEl = form.querySelector('.inv-tds-amt');
+      if (txnAmtEl) txnAmtEl.textContent = `- ${inr(finalTdsDeduction).replace('₹', '').trim()}`;
+    }
+
     const discAmt = totalRowDiscount + (discPct > 0 ? r2((grossTotal - totalRowDiscount) * discPct / 100) : 0);
     const adj = num($('#inv-adj-val', form)?.value) || 0;
     const tcsRate = num($('#inv-tcs-tax', form)?.value) || 0;
     const tcsAmt = r2(subtotal * tcsRate / 100);
 
-    let grand = subtotal + totalLineTax + tcsAmt + adj;
+    let grand = subtotal + totalLineTax + tcsAmt + adj - finalTdsDeduction;
     grand = Math.max(0, r2(grand));
 
     $('#inv-subtotal-val', form).textContent = subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -17752,6 +17994,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#inv-discount-pct', form)?.addEventListener('input', calcInvoice);
   $('#inv-adj-val', form)?.addEventListener('input', calcInvoice);
   $('#inv-tcs-tax', form)?.addEventListener('change', calcInvoice);
+  TdsEngine.bindControls(form, 'inv', tbody.closest('table'), calcInvoice);
 
   $$('.btn-tax-mode', form).forEach(btn => {
     btn.addEventListener('click', (e) => {

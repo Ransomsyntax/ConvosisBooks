@@ -2384,6 +2384,7 @@ function renderDocSheet(d, kind, customOpts = {}) {
       <td style="width:36px;color:#64748b;font-weight:600;">${i + 1}</td>
       <td>
         <div style="font-weight:600;color:#0f172a;">${esc(l.description)}</div>
+        ${d.tds_mode === 'line' && num(l.tds_amount) > 0 ? `<div style="font-size:11px;color:#dc2626;font-weight:500;">TDS (${l.tds_rate}%): -${inr(l.tds_amount)}</div>` : ''}
       </td>
       ${showHsn ? `<td style="color:#475569;">${esc(l.hsn_sac || '—')}</td>` : ''}
       <td class="r" style="font-weight:600;">${qty(l.quantity)}</td>
@@ -2587,6 +2588,12 @@ function renderDocSheet(d, kind, customOpts = {}) {
                 <div class="doc-totals-row"><span>CGST</span><span>${inr(d.cgst)}</span></div>
                 <div class="doc-totals-row"><span>SGST</span><span>${inr(d.sgst)}</span></div>
               ` : (num(d.igst) > 0 ? `<div class="doc-totals-row"><span>IGST</span><span>${inr(d.igst)}</span></div>` : '')}
+              ${num(d.tds_amount) > 0 ? `
+                <div class="doc-totals-row" style="color:#dc2626;font-weight:600;">
+                  <span>TDS Deduction ${d.tds_mode === 'line' ? '(Line-Level)' : (num(d.tds_tax_rate) > 0 ? `(${d.tds_tax_rate}%)` : '')}</span>
+                  <span>(-) ${inr(d.tds_amount)}</span>
+                </div>
+              ` : ''}
               <div class="doc-totals-row main-total">
                 <span>Total</span>
                 <span>${inr(d.total)}</span>

@@ -1931,6 +1931,12 @@ def parse_lines(raw, org=None):
             gst = c.number('tax_rate', default=Decimal('0'))
         if gst < Decimal('0') or gst > Decimal('100'):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
+        raw_tds_r = c.number('tds_rate', lo=Decimal('0'), hi=Decimal('100'), default=Decimal('0'))
+        tds_rate = raw_tds_r if raw_tds_r is not None else Decimal('0')
+        tds_applicable = bool(c.boolean('tds_applicable', default=False) or tds_rate > Decimal('0'))
+        tds_section = c.text('tds_section', max_len=50) or ''
+        raw_tds_amt = c.number('tds_amount', lo=Decimal('0'), default=Decimal('0.00'))
+        tds_amount = raw_tds_amt if raw_tds_amt is not None else Decimal('0.00')
         wh_id = c.integer('warehouse_id', lo=1, default=None)
         if not wh_id:
             wh_id = c.integer('warehouse', lo=1, default=None)
@@ -1955,7 +1961,9 @@ def parse_lines(raw, org=None):
             out.append({'item': item, 'warehouse': warehouse, 'warehouse_code': wh_code,
                         'description': desc, 'hsn_sac': hsn, 'quantity': qty, 'rate': rate,
                         'discount_percent': disc, 'discount_amount': discount_amount,
-                        'gst_rate': gst, 'position': i})
+                        'gst_rate': gst, 'position': i,
+                        'tds_applicable': tds_applicable, 'tds_rate': tds_rate,
+                        'tds_section': tds_section, 'tds_amount': tds_amount})
     if errors:
         raise ApiError(400, 'Please correct the line items.', {'lines': ' | '.join(errors)})
     return out
@@ -2376,6 +2384,10 @@ class DocResource(Resource):
              'accounts_payable': getattr(o, 'accounts_payable', 'Accounts Payable') or 'Accounts Payable',
              'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
              'customer_type': getattr(o, 'customer_type', 'b2b') or 'b2b',
+             'tds_mode': getattr(o, 'tds_mode', 'none') or 'none',
+             'tds_tax_rate': getattr(o, 'tds_tax_rate', Decimal('0.00')) or Decimal('0.00'),
+             'tds_amount': getattr(o, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
+             'tds_section': getattr(o, 'tds_section', '') or '',
              'status': (o.status if isinstance(o, Quote) else display_status(o, self.posted, timezone.localdate())), 'raw_status': o.status,
              'subtotal': o.subtotal, 'total': o.total, 'paid': paid,
              'balance': max(Z, o.total - paid) if o.status != 'void' else Z,
@@ -2590,6 +2602,10 @@ class DocResource(Resource):
                              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
                              'source_delivery_challan_line_id': getattr(l, 'source_delivery_challan_line_id', None),
                              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+                             'tds_applicable': getattr(l, 'tds_applicable', False),
+                             'tds_rate': getattr(l, 'tds_rate', Decimal('0.00')) or Decimal('0.00'),
+                             'tds_section': getattr(l, 'tds_section', '') or '',
+                             'tds_amount': getattr(l, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
                              'line_total': l.line_total,
                              'warehouse_id': getattr(l, 'warehouse_id', None) or (l.item.warehouse_id if l.item else None),
                              'warehouse_code': getattr(l, 'warehouse_code', '') or (l.item.warehouse_code if l.item else ''),
@@ -2679,6 +2695,17 @@ class DocResource(Resource):
         for num_fld in ('adjustment', 'tcs_rate', 'tcs_amount', 'discount_percent'):
             if num_fld in data:
                 head[num_fld] = str(data.get(num_fld) or '0').strip()
+        tds_mode = str(data.get('tds_mode') or 'none').lower().strip()
+        if tds_mode not in ('line', 'transaction'):
+            if str(data.get('tax_type') or '').lower() == 'tds' and data.get('tds_tcs_tax'):
+                tds_mode = 'transaction'
+            else:
+                tds_mode = 'none'
+        tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or data.get('tds_tcs_tax') or 0))
+        tds_section = str(data.get('tds_section') or '').strip()
+        head['tds_mode'] = tds_mode
+        head['tds_tax_rate'] = tds_tax_rate
+        head['tds_section'] = tds_section
         if 'signature_data' in data:
             head['signature_data'] = str(data.get('signature_data') or '')
         if 'signed_by' in data:
@@ -2694,7 +2721,11 @@ class DocResource(Resource):
         org_state = user_org.state if user_org else (Organization.get().state if Organization.get() else '')
         intra = is_intra_state(head['place_of_supply'], org_state)
         is_tax_inclusive = (head.get('tax_pricing_type') or getattr(obj, 'tax_pricing_type', 'tax_exclusive')) == 'tax_inclusive'
-        comp, tot = compute(lines, intra, is_tax_inclusive=is_tax_inclusive)
+        tds_mode = head.get('tds_mode', 'none')
+        tds_tax_rate = Decimal(str(head.get('tds_tax_rate') or 0))
+        tds_section = head.get('tds_section', '')
+        comp, tot = compute(lines, intra, is_tax_inclusive=is_tax_inclusive,
+                            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section)
         model_fields = {f.name for f in obj._meta.fields}
         for k, v in head.items():
             if k in model_fields:
@@ -2708,7 +2739,15 @@ class DocResource(Resource):
             setattr(obj, k, v)
         if isinstance(obj, Quote):
             adj = getattr(obj, 'adjustment', Decimal('0.00')) or Decimal('0.00')
-            obj.total = max(Decimal('0.00'), obj.total + adj)
+            tax_type = getattr(obj, 'tax_type', 'tds')
+            if tax_type == 'tcs':
+                tcs_rate = getattr(obj, 'tds_tcs_tax', Decimal('0.00')) or Decimal('0.00')
+                tcs_amt = q2(tot['subtotal'] * tcs_rate / Decimal('100'))
+                obj.total = max(Decimal('0.00'), tot['subtotal'] + tot['cgst'] + tot['sgst'] + tot['igst'] + tcs_amt + adj)
+            else:
+                obj.total = max(Decimal('0.00'), obj.total + adj)
+                if tds_mode == 'transaction':
+                    obj.tds_tcs_tax = obj.tds_tax_rate
         elif isinstance(obj, Invoice):
             adj = Decimal(str(head.get('adjustment') or 0)) if head.get('adjustment') else Decimal('0.00')
             tcs = Decimal(str(head.get('tcs_amount') or 0)) if head.get('tcs_amount') else Decimal('0.00')
@@ -2725,6 +2764,10 @@ class DocResource(Resource):
                                                  discount_amount=l.get('discount_amount', Z),
                                                  gst_rate=l['gst_rate'],
                                                  taxable=l['taxable'], tax_amount=l['tax_amount'],
+                                                 tds_applicable=l.get('tds_applicable', False),
+                                                 tds_rate=l.get('tds_rate', Decimal('0.00')),
+                                                 tds_section=l.get('tds_section', ''),
+                                                 tds_amount=l.get('tds_amount', Decimal('0.00')),
                                                  line_total=l['line_total'], position=l['position']) for l in comp])
 
     def create(self, data, user):
@@ -3604,6 +3647,10 @@ class QuoteResource(DocResource):
                 subject=obj.subject,
                 notes=obj.notes,
                 terms=obj.terms,
+                tds_mode=getattr(obj, 'tds_mode', 'none'),
+                tds_tax_rate=getattr(obj, 'tds_tax_rate', Z),
+                tds_section=getattr(obj, 'tds_section', ''),
+                tds_amount=getattr(obj, 'tds_amount', Z),
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
                 shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
                 custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
@@ -3621,6 +3668,10 @@ class QuoteResource(DocResource):
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
+                    tds_applicable=getattr(l, 'tds_applicable', False),
+                    tds_rate=getattr(l, 'tds_rate', Z),
+                    tds_section=getattr(l, 'tds_section', ''),
+                    tds_amount=getattr(l, 'tds_amount', Z),
                     line_total=l.line_total,
                     position=l.position
                 )
@@ -3684,6 +3735,10 @@ class QuoteResource(DocResource):
                 subject=obj.subject,
                 notes=obj.notes,
                 terms=obj.terms,
+                tds_mode=getattr(obj, 'tds_mode', 'none'),
+                tds_tax_rate=getattr(obj, 'tds_tax_rate', Z),
+                tds_section=getattr(obj, 'tds_section', ''),
+                tds_amount=getattr(obj, 'tds_amount', Z),
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
                 shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
                 custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
@@ -3701,6 +3756,10 @@ class QuoteResource(DocResource):
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
+                    tds_applicable=getattr(l, 'tds_applicable', False),
+                    tds_rate=getattr(l, 'tds_rate', Z),
+                    tds_section=getattr(l, 'tds_section', ''),
+                    tds_amount=getattr(l, 'tds_amount', Z),
                     line_total=l.line_total,
                     position=l.position
                 )
@@ -3709,7 +3768,7 @@ class QuoteResource(DocResource):
             obj.converted_at = timezone.now()
             obj.save(update_fields=['status', 'converted_to_sales_order', 'converted_at'])
             services.log_audit(request.user, 'create', 'sales_order', so.pk, f'Converted Quote {obj.number} to Sales Order {so.number}')
-            return j({'order_id': so.pk, 'sales_order_id': so.pk, 'number': so.number})
+            return j({'id': so.pk, 'order_id': so.pk, 'sales_order_id': so.pk, 'number': so.number})
         else:
             return super().action(request, obj, name)
 
@@ -6860,6 +6919,10 @@ class SalesOrderResource(Resource):
             'cgst': o.cgst, 'sgst': o.sgst, 'igst': o.igst,
             'order_number': o.order_number or '',
             'reference_number': o.order_number or '',
+            'tds_mode': getattr(o, 'tds_mode', 'none') or 'none',
+            'tds_tax_rate': getattr(o, 'tds_tax_rate', Z),
+            'tds_section': getattr(o, 'tds_section', '') or '',
+            'tds_amount': getattr(o, 'tds_amount', Z),
             'lines_count': o.lines.count(),
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
@@ -6923,6 +6986,10 @@ class SalesOrderResource(Resource):
                     'taxable': l.taxable,
                     'tax_amount': l.tax_amount,
                     'line_total': l.line_total,
+                    'tds_applicable': getattr(l, 'tds_applicable', False),
+                    'tds_rate': getattr(l, 'tds_rate', Z),
+                    'tds_section': getattr(l, 'tds_section', '') or '',
+                    'tds_amount': getattr(l, 'tds_amount', Z),
                     'position': l.position,
                 }
                 for l in o.lines.all().order_by('position', 'id')
@@ -7008,6 +7075,15 @@ class SalesOrderResource(Resource):
         allocation = DocumentNumberAllocation.objects.filter(
             organization=user_org, document_type='sales_orders', number=num
         ).select_related('series').first() if user_org else None
+        tds_mode = str(data.get('tds_mode') or 'none').strip().lower()
+        if tds_mode not in ('none', 'line', 'transaction'):
+            tds_mode = 'none'
+        try:
+            tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or '0.00'))
+        except Exception:
+            tds_tax_rate = Z
+        tds_section = str(data.get('tds_section') or '').strip()
+
         so = SalesOrder.objects.create(
             organization=user_org,
             business_location=business_location,
@@ -7019,11 +7095,15 @@ class SalesOrderResource(Resource):
             transaction_series=allocation.series.name if allocation else series_name,
             salesperson=salesperson, project_name=project_name, subject=subject,
             billing_address_data=billing_addr, shipping_address_data=shipping_addr,
-            custom_fields_data=cf_data
+            custom_fields_data=cf_data,
+            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section
         )
         lines = parse_lines(data.get('lines', []), org=user_org)
         intra = is_intra_state(so.place_of_supply, user_org.state if user_org else Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(so.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(
+            lines, intra, is_tax_inclusive=(so.tax_pricing_type == 'tax_inclusive'),
+            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section
+        )
         for k, v in tot.items():
             setattr(so, k, v)
         so.save()
@@ -7032,7 +7112,11 @@ class SalesOrderResource(Resource):
                 order=so, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                 discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'],
+                tds_applicable=l.get('tds_applicable', False),
+                tds_section=l.get('tds_section', ''),
+                tds_rate=l.get('tds_rate', Z),
+                tds_amount=l.get('tds_amount', Z)
             )
         services.log_audit(user, 'create', 'SalesOrder', so.number, f"Created sales order {so.number} for {cust.name} (₹{so.total})")
         return so
@@ -7132,10 +7216,24 @@ class SalesOrderResource(Resource):
         obj.custom_fields_data = _clean_module_custom_fields(c, user_org, user, 'sales_orders', previous_values=prev_cf)
         c.done()
 
+        if 'tds_mode' in data:
+            tm = str(data.get('tds_mode') or 'none').strip().lower()
+            obj.tds_mode = tm if tm in ('none', 'line', 'transaction') else 'none'
+        if 'tds_tax_rate' in data:
+            try:
+                obj.tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or '0.00'))
+            except Exception:
+                obj.tds_tax_rate = Z
+        if 'tds_section' in data:
+            obj.tds_section = str(data.get('tds_section') or '').strip()
+
         if 'lines' in data:
             lines = parse_lines(data.get('lines', []))
             intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-            comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
+            comp, tot = compute(
+                lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'),
+                tds_mode=obj.tds_mode, tds_tax_rate=obj.tds_tax_rate, tds_section=obj.tds_section
+            )
             for k, v in tot.items():
                 setattr(obj, k, v)
             obj.save()
@@ -7145,7 +7243,11 @@ class SalesOrderResource(Resource):
                     order=obj, item=l['item'], description=l['description'],
                     hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                     discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                    taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                    taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'],
+                    tds_applicable=l.get('tds_applicable', False),
+                    tds_section=l.get('tds_section', ''),
+                    tds_rate=l.get('tds_rate', Z),
+                    tds_amount=l.get('tds_amount', Z)
                 )
         else:
             obj.save()
@@ -7217,6 +7319,10 @@ class SalesOrderResource(Resource):
                 transaction_series=numbering_context['transaction_series'],
                 notes=obj.notes,
                 terms=obj.terms,
+                tds_mode=getattr(obj, 'tds_mode', 'none'),
+                tds_tax_rate=getattr(obj, 'tds_tax_rate', Z),
+                tds_section=getattr(obj, 'tds_section', ''),
+                tds_amount=getattr(obj, 'tds_amount', Z),
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
                 shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
                 custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
@@ -7234,6 +7340,10 @@ class SalesOrderResource(Resource):
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
+                    tds_applicable=getattr(l, 'tds_applicable', False),
+                    tds_rate=getattr(l, 'tds_rate', Z),
+                    tds_section=getattr(l, 'tds_section', ''),
+                    tds_amount=getattr(l, 'tds_amount', Z),
                     line_total=l.line_total,
                     position=l.position
                 )
@@ -7509,6 +7619,10 @@ class PurchaseOrderResource(Resource):
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
             'subtotal': o.subtotal, 'total': o.total, 'lines_count': o.lines.count(),
+            'tds_mode': getattr(o, 'tds_mode', 'none') or 'none',
+            'tds_tax_rate': getattr(o, 'tds_tax_rate', Z),
+            'tds_section': getattr(o, 'tds_section', '') or '',
+            'tds_amount': getattr(o, 'tds_amount', Z),
             'signature_data': getattr(o, 'signature_data', '') or '',
             'signed_by': getattr(o, 'signed_by', '') or '',
             'signed_at': o.signed_at.isoformat() if getattr(o, 'signed_at', None) else None,
@@ -7553,6 +7667,10 @@ class PurchaseOrderResource(Resource):
              'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+             'tds_applicable': getattr(l, 'tds_applicable', False),
+             'tds_rate': getattr(l, 'tds_rate', Decimal('0.00')) or Decimal('0.00'),
+             'tds_section': getattr(l, 'tds_section', '') or '',
+             'tds_amount': getattr(l, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
              'line_total': l.line_total}
             for l in o.lines.all()
         ]
@@ -7623,6 +7741,15 @@ class PurchaseOrderResource(Resource):
         allocation = DocumentNumberAllocation.objects.filter(
             organization=user_org, document_type='purchase_orders', number=num
         ).select_related('series').first() if user_org else None
+        po = tds_mode = str(data.get('tds_mode') or 'none').strip().lower()
+        if tds_mode not in ('none', 'line', 'transaction'):
+            tds_mode = 'none'
+        try:
+            tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or '0.00'))
+        except Exception:
+            tds_tax_rate = Z
+        tds_section = str(data.get('tds_section') or '').strip()
+
         po = PurchaseOrder.objects.create(
             organization=user_org,
             business_location=business_location,
@@ -7633,19 +7760,30 @@ class PurchaseOrderResource(Resource):
             branch=branch, location=location,
             transaction_series=allocation.series.name if allocation else series_name,
             billing_address_data=billing_addr, shipping_address_data=shipping_addr,
-            custom_fields_data=cf_data
+            custom_fields_data=cf_data,
+            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(po.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(po.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(
+            lines, intra, is_tax_inclusive=(po.tax_pricing_type == 'tax_inclusive'),
+            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section
+        )
         for k, v in tot.items():
             setattr(po, k, v)
         po.save()
         for l in comp:
-            PurchaseOrderLine.objects.create(order=po, item=l['item'], description=l['description'],
-                                            hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
-                                            discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                                            taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
+            PurchaseOrderLine.objects.create(
+                order=po, item=l['item'], description=l['description'],
+                hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
+                discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z),
+                gst_rate=l['gst_rate'], taxable=l['taxable'], tax_amount=l['tax_amount'],
+                line_total=l['line_total'], position=l['position'],
+                tds_applicable=l.get('tds_applicable', False),
+                tds_section=l.get('tds_section', ''),
+                tds_rate=l.get('tds_rate', Z),
+                tds_amount=l.get('tds_amount', Z)
+            )
         services.log_audit(user, 'create', 'PurchaseOrder', po.number, f"Created purchase order {po.number} for {ven.name} (₹{po.total})")
         return po
 
@@ -7739,7 +7877,12 @@ class PurchaseOrderResource(Resource):
                 order=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                 discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                taxable=l['taxable'], tax_amount=l['tax_amount'],
+                tds_applicable=l.get('tds_applicable', False),
+                tds_rate=l.get('tds_rate', Z),
+                tds_section=l.get('tds_section', ''),
+                tds_amount=l.get('tds_amount', Z),
+                line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'PurchaseOrder', obj.number, f"Updated purchase order {obj.number}")
         return obj
@@ -7798,6 +7941,10 @@ class PurchaseOrderResource(Resource):
                 transaction_series=numbering_context['transaction_series'],
                 notes=obj.notes,
                 terms=obj.terms,
+                tds_mode=getattr(obj, 'tds_mode', 'none'),
+                tds_tax_rate=getattr(obj, 'tds_tax_rate', Z),
+                tds_section=getattr(obj, 'tds_section', ''),
+                tds_amount=getattr(obj, 'tds_amount', Z),
                 billing_address_data=getattr(obj, 'billing_address_data', None) or {},
                 shipping_address_data=getattr(obj, 'shipping_address_data', None) or {},
                 custom_fields_data=getattr(obj, 'custom_fields_data', None) or {}
@@ -7815,6 +7962,10 @@ class PurchaseOrderResource(Resource):
                     gst_rate=l.gst_rate,
                     taxable=l.taxable,
                     tax_amount=l.tax_amount,
+                    tds_applicable=getattr(l, 'tds_applicable', False),
+                    tds_rate=getattr(l, 'tds_rate', Z),
+                    tds_section=getattr(l, 'tds_section', ''),
+                    tds_amount=getattr(l, 'tds_amount', Z),
                     line_total=l.line_total,
                     position=l.position
                 )
@@ -8168,6 +8319,10 @@ class CreditNoteResource(Resource):
             'business_location_id': o.business_location_id,
             'business_location_name': o.business_location.name if o.business_location_id else '',
             'transaction_series': o.transaction_series,
+            'tds_mode': getattr(o, 'tds_mode', 'none') or 'none',
+            'tds_tax_rate': getattr(o, 'tds_tax_rate', Decimal('0.00')) or Decimal('0.00'),
+            'tds_amount': getattr(o, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
+            'tds_section': getattr(o, 'tds_section', '') or '',
             'invoice_id': o.invoice_id, 'invoice_number': o.invoice.number if o.invoice else '',
             'total': o.total, 'balance': remaining, 'applied_amount': applied_sum, 'refunded_amount': refunded_sum,
             'reason': o.reason, 'status': o.status,
@@ -8200,6 +8355,10 @@ class CreditNoteResource(Resource):
              'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+             'tds_applicable': getattr(l, 'tds_applicable', False),
+             'tds_rate': getattr(l, 'tds_rate', Decimal('0.00')) or Decimal('0.00'),
+             'tds_section': getattr(l, 'tds_section', '') or '',
+             'tds_amount': getattr(l, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
              'line_total': l.line_total}
             for l in lines
         ]
@@ -8268,6 +8427,11 @@ class CreditNoteResource(Resource):
             organization=user_org, document_type='credit_notes', number=num
         ).select_related('series').first() if user_org else None
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        tds_mode = str(data.get('tds_mode') or 'none').lower().strip()
+        if tds_mode not in ('line', 'transaction'):
+            tds_mode = 'none'
+        tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or 0))
+        tds_section = str(data.get('tds_section') or '').strip()
         cn = CreditNote.objects.create(
             organization=user_org,
             business_location=business_location,
@@ -8277,10 +8441,12 @@ class CreditNoteResource(Resource):
             tax_pricing_type=tax_pricing, customer_type=cust_type,
             branch=branch, location=location,
             transaction_series=allocation.series.name if allocation else series_name,
+            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section,
         )
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(cn.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(cn.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(lines, intra, is_tax_inclusive=(cn.tax_pricing_type == 'tax_inclusive'),
+                            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section)
         for k, v in tot.items():
             setattr(cn, k, v)
         cn.save()
@@ -8288,7 +8454,12 @@ class CreditNoteResource(Resource):
             CreditNoteLine.objects.create(credit_note=cn, item=l['item'], description=l['description'],
                                          hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                                          discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                                         taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
+                                         taxable=l['taxable'], tax_amount=l['tax_amount'],
+                                         tds_applicable=l.get('tds_applicable', False),
+                                         tds_rate=l.get('tds_rate', Z),
+                                         tds_section=l.get('tds_section', ''),
+                                         tds_amount=l.get('tds_amount', Z),
+                                         line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'CreditNote', cn.number, f"Created credit note {cn.number} for {cust.name} (₹{cn.total})")
         return cn
 
@@ -8359,10 +8530,18 @@ class CreditNoteResource(Resource):
             }:
                 raise ApiError(400, 'Select a valid transaction series.')
             obj.transaction_series = selected_series.name
+        if 'tds_mode' in data:
+            tds_mode = str(data.get('tds_mode') or 'none').lower().strip()
+            obj.tds_mode = tds_mode if tds_mode in ('line', 'transaction') else 'none'
+        if 'tds_tax_rate' in data:
+            obj.tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or 0))
+        if 'tds_section' in data:
+            obj.tds_section = str(data.get('tds_section') or '').strip()
         c.done()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'),
+                            tds_mode=obj.tds_mode, tds_tax_rate=obj.tds_tax_rate, tds_section=obj.tds_section)
         for k, v in tot.items():
             setattr(obj, k, v)
         obj.save()
@@ -8372,7 +8551,12 @@ class CreditNoteResource(Resource):
                 credit_note=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                 discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                taxable=l['taxable'], tax_amount=l['tax_amount'],
+                tds_applicable=l.get('tds_applicable', False),
+                tds_rate=l.get('tds_rate', Z),
+                tds_section=l.get('tds_section', ''),
+                tds_amount=l.get('tds_amount', Z),
+                line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'CreditNote', obj.number, f"Updated credit note {obj.number}")
         return obj
@@ -8611,6 +8795,10 @@ class VendorCreditResource(Resource):
             'transaction_series': o.transaction_series,
             'tax_pricing_type': getattr(o, 'tax_pricing_type', 'tax_exclusive') or 'tax_exclusive',
             'customer_type': getattr(o, 'customer_type', 'registered') or 'registered',
+            'tds_mode': getattr(o, 'tds_mode', 'none') or 'none',
+            'tds_tax_rate': getattr(o, 'tds_tax_rate', Decimal('0.00')) or Decimal('0.00'),
+            'tds_amount': getattr(o, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
+            'tds_section': getattr(o, 'tds_section', '') or '',
             'bill_id': o.bill_id, 'bill_number': o.bill.number if o.bill else '',
             'total': o.total, 'balance': o.total, 'reason': o.reason, 'status': o.status,
             'signature_data': getattr(o, 'signature_data', '') or '',
@@ -8648,6 +8836,10 @@ class VendorCreditResource(Resource):
              'discount_type': 'amount' if (l.discount_amount and l.discount_amount > 0) else 'percentage',
              'discount': l.discount_amount if (l.discount_amount and l.discount_amount > 0) else l.discount_percent,
              'gst_rate': l.gst_rate, 'taxable': l.taxable, 'tax_amount': l.tax_amount,
+             'tds_applicable': getattr(l, 'tds_applicable', False),
+             'tds_rate': getattr(l, 'tds_rate', Decimal('0.00')) or Decimal('0.00'),
+             'tds_section': getattr(l, 'tds_section', '') or '',
+             'tds_amount': getattr(l, 'tds_amount', Decimal('0.00')) or Decimal('0.00'),
              'line_total': l.line_total}
             for l in lines
         ]
@@ -8719,6 +8911,11 @@ class VendorCreditResource(Resource):
         ).select_related('series').first() if user_org else None
         cust_type = str(data.get('customer_type') or 'registered').strip().lower()
         tax_pricing = str(data.get('tax_pricing_type') or 'tax_exclusive').strip().lower()
+        tds_mode = str(data.get('tds_mode') or 'none').lower().strip()
+        if tds_mode not in ('line', 'transaction'):
+            tds_mode = 'none'
+        tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or 0))
+        tds_section = str(data.get('tds_section') or '').strip()
         vc_kwargs = {
             'organization': user_org,
             'business_location': business_location,
@@ -8734,6 +8931,9 @@ class VendorCreditResource(Resource):
             'branch': branch,
             'location': location,
             'transaction_series': allocation.series.name if allocation else series_name,
+            'tds_mode': tds_mode,
+            'tds_tax_rate': tds_tax_rate,
+            'tds_section': tds_section,
         }
         if hasattr(VendorCredit, 'billing_address_data'):
             vc_kwargs['billing_address_data'] = billing_addr
@@ -8750,7 +8950,8 @@ class VendorCreditResource(Resource):
             vc.custom_fields_data = cf_data
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(vc.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(vc.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(lines, intra, is_tax_inclusive=(vc.tax_pricing_type == 'tax_inclusive'),
+                            tds_mode=tds_mode, tds_tax_rate=tds_tax_rate, tds_section=tds_section)
         for k, v in tot.items():
             setattr(vc, k, v)
         vc.save()
@@ -8758,7 +8959,12 @@ class VendorCreditResource(Resource):
             VendorCreditLine.objects.create(vendor_credit=vc, item=l['item'], description=l['description'],
                                            hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                                            discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                                           taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position'])
+                                           taxable=l['taxable'], tax_amount=l['tax_amount'],
+                                           tds_applicable=l.get('tds_applicable', False),
+                                           tds_rate=l.get('tds_rate', Z),
+                                           tds_section=l.get('tds_section', ''),
+                                           tds_amount=l.get('tds_amount', Z),
+                                           line_total=l['line_total'], position=l['position'])
         services.log_audit(user, 'create', 'VendorCredit', vc.number, f"Created vendor credit {vc.number} for {ven.name} (₹{vc.total})")
         return vc
 
@@ -8833,9 +9039,17 @@ class VendorCreditResource(Resource):
             obj.shipping_address_data = shipping_addr
         if hasattr(obj, 'custom_fields_data'):
             obj.custom_fields_data = cf_data
+        if 'tds_mode' in data:
+            tds_mode = str(data.get('tds_mode') or 'none').lower().strip()
+            obj.tds_mode = tds_mode if tds_mode in ('line', 'transaction') else 'none'
+        if 'tds_tax_rate' in data:
+            obj.tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or 0))
+        if 'tds_section' in data:
+            obj.tds_section = str(data.get('tds_section') or '').strip()
         lines = parse_lines(data.get('lines', []))
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
-        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
+        comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'),
+                            tds_mode=obj.tds_mode, tds_tax_rate=obj.tds_tax_rate, tds_section=obj.tds_section)
         for k, v in tot.items():
             setattr(obj, k, v)
         obj.save()
@@ -8845,7 +9059,12 @@ class VendorCreditResource(Resource):
                 vendor_credit=obj, item=l['item'], description=l['description'],
                 hsn_sac=l['hsn_sac'], quantity=l['quantity'], rate=l['rate'],
                 discount_percent=l['discount_percent'], discount_amount=l.get('discount_amount', Z), gst_rate=l['gst_rate'],
-                taxable=l['taxable'], tax_amount=l['tax_amount'], line_total=l['line_total'], position=l['position']
+                taxable=l['taxable'], tax_amount=l['tax_amount'],
+                tds_applicable=l.get('tds_applicable', False),
+                tds_rate=l.get('tds_rate', Z),
+                tds_section=l.get('tds_section', ''),
+                tds_amount=l.get('tds_amount', Z),
+                line_total=l['line_total'], position=l['position']
             )
         services.log_audit(user, 'update', 'VendorCredit', obj.number, f"Updated vendor credit {obj.number}")
         return obj

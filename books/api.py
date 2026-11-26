@@ -3017,9 +3017,9 @@ class InvoiceResource(DocResource):
 
     @transaction.atomic
     def action(self, request, obj, name):
-        if name == 'send':
+        if name in ('send', 'mark-sent', 'mark-as-sent'):
             services.send_invoice(obj, request.user)
-            return j({'status': 'ok', 'message': f'Invoice {obj.number} sent.'})
+            return j({'status': 'ok', 'raw_status': obj.status, 'number': obj.number, 'sent_at': obj.sent_at.isoformat() if obj.sent_at else None, 'message': f'Invoice {obj.number} marked as sent.'})
         elif name == 'void':
             services.void_invoice(obj, request.user)
             if obj.project_id:
@@ -3972,7 +3972,9 @@ class PaymentResource(Resource):
             a, created = self.Alloc.objects.get_or_create(payment=pay, **{self.doc_attr: doc}, defaults={'amount': amt})
             if not created:
                 a.amount += amt
-                a.save(update_fields=['amount'])
+                a.save()
+            else:
+                a.sync_invoice_status() if hasattr(a, 'sync_invoice_status') else (a.sync_bill_status() if hasattr(a, 'sync_bill_status') else None)
 
     @transaction.atomic
     def create(self, data, user):
@@ -4240,7 +4242,20 @@ class PaymentResource(Resource):
         ).update(business_location=obj.business_location)
 
         if 'allocations' in data and data.get('allocations') is not None:
-            obj.allocations.all().delete()
+            prev_docs = [getattr(a, self.doc_attr) for a in obj.allocations.all() if getattr(a, self.doc_attr, None)]
+            for a in list(obj.allocations.all()):
+                a.delete()
+            for pd in prev_docs:
+                try:
+                    pd.refresh_from_db()
+                    paid = pd.paid_amount
+                    if pd.status != 'void':
+                        new_st = 'paid' if paid >= pd.total and pd.total > 0 else ('partial' if paid > 0 else (self.posted or 'sent'))
+                        if pd.status != new_st:
+                            pd.status = new_st
+                            pd.save(update_fields=['status'])
+                except Exception:
+                    pass
             self.allocate(obj, data.get('allocations'))
 
         if isinstance(obj, PaymentReceived):
@@ -4253,6 +4268,12 @@ class PaymentResource(Resource):
     def destroy(self, obj):
         services.check_transaction_lock(obj.date)
         with transaction.atomic():
+            affected_docs = []
+            for a in obj.allocations.all():
+                d = getattr(a, self.doc_attr, None)
+                if d:
+                    affected_docs.append(d)
+                a.delete()
             if obj.bank_account:
                 is_rec = isinstance(obj, PaymentReceived)
                 if is_rec:
@@ -4267,6 +4288,22 @@ class PaymentResource(Resource):
             Journal.objects.filter(reference=obj.number).delete()
             services.log_audit(getattr(obj, 'created_by', None), 'delete', self.Model.__name__, obj.number, f"Reversed/deleted payment {obj.number}")
             obj.delete()
+            for doc in affected_docs:
+                try:
+                    doc.refresh_from_db()
+                    paid = doc.paid_amount
+                    if doc.status != 'void':
+                        if paid >= doc.total and doc.total > 0:
+                            new_st = 'paid'
+                        elif paid > 0:
+                            new_st = 'partial'
+                        else:
+                            new_st = self.posted or ('sent' if isinstance(doc, Invoice) else 'open')
+                        if doc.status != new_st:
+                            doc.status = new_st
+                            doc.save(update_fields=['status'])
+                except Exception:
+                    pass
 
     def action(self, request, obj, name):
         if name != 'apply':

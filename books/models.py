@@ -478,6 +478,48 @@ class ReceivedAllocation(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['payment', 'invoice'], name='uniq_received_alloc')]
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.sync_invoice_status()
+
+    def delete(self, *args, **kwargs):
+        inv = self.invoice
+        super().delete(*args, **kwargs)
+        if inv and inv.pk:
+            try:
+                inv.refresh_from_db()
+                paid = inv.paid_amount
+                if inv.status != 'void':
+                    if paid >= inv.total and inv.total > 0:
+                        new_st = 'paid'
+                    elif paid > 0:
+                        new_st = 'partial'
+                    else:
+                        new_st = 'sent'
+                    if inv.status != new_st:
+                        inv.status = new_st
+                        inv.save(update_fields=['status'])
+            except Exception:
+                pass
+
+    def sync_invoice_status(self):
+        inv = self.invoice
+        if inv and inv.pk and inv.status != 'void':
+            try:
+                inv.refresh_from_db()
+                paid = inv.paid_amount
+                if paid >= inv.total and inv.total > 0:
+                    new_st = 'paid'
+                elif paid > 0:
+                    new_st = 'partial'
+                else:
+                    new_st = 'sent'
+                if inv.status != new_st:
+                    inv.status = new_st
+                    inv.save(update_fields=['status'])
+            except Exception:
+                pass
+
 class BillAllocation(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True, db_index=True)
     payment = models.ForeignKey(PaymentMade, on_delete=models.CASCADE, related_name='allocations')
@@ -486,6 +528,48 @@ class BillAllocation(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['payment', 'bill'], name='uniq_bill_alloc')]
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.sync_bill_status()
+
+    def delete(self, *args, **kwargs):
+        b = self.bill
+        super().delete(*args, **kwargs)
+        if b and b.pk:
+            try:
+                b.refresh_from_db()
+                paid = b.paid_amount
+                if b.status != 'void':
+                    if paid >= b.total and b.total > 0:
+                        new_st = 'paid'
+                    elif paid > 0:
+                        new_st = 'partial'
+                    else:
+                        new_st = 'open'
+                    if b.status != new_st:
+                        b.status = new_st
+                        b.save(update_fields=['status'])
+            except Exception:
+                pass
+
+    def sync_bill_status(self):
+        b = self.bill
+        if b and b.pk and b.status != 'void':
+            try:
+                b.refresh_from_db()
+                paid = b.paid_amount
+                if paid >= b.total and b.total > 0:
+                    new_st = 'paid'
+                elif paid > 0:
+                    new_st = 'partial'
+                else:
+                    new_st = 'open'
+                if b.status != new_st:
+                    b.status = new_st
+                    b.save(update_fields=['status'])
+            except Exception:
+                pass
 
 class StockMovement(models.Model):
     organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name='stock_movements')

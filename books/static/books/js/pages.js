@@ -1649,10 +1649,25 @@ const LISTS = {
     ],
     actions: r => {
       const acts = [['view', 'View'], ['edit', 'Edit']];
+      if (r.raw_status === 'draft') acts.push(['mark-sent', 'Mark as Sent']);
       if (num(r.balance) > 0 && r.raw_status !== 'void') acts.push(['pay', 'Record Payment']);
       return acts;
     },
-    onAction: (a, r) => a === 'view' ? docMasterDetail($('#pg'), 'invoices', r.id) : a === 'edit' ? invoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); }) : a === 'pay' ? (window.recordInvoicePaymentModal ? recordInvoicePaymentModal(r, () => refresh()) : paymentForm('payments-received', { party: r.party_id, doc: r.id, amount: r.balance })) : null,
+    onAction: async (a, r) => {
+      if (a === 'view') return docMasterDetail($('#pg'), 'invoices', r.id);
+      if (a === 'edit') return invoiceForm(r.id, $('#pg'), () => { location.hash = '#/sales/invoices'; route(); });
+      if (a === 'mark-sent') {
+        try {
+          await api(`invoices/${r.id}/mark-sent/`, { method: 'POST', body: {} });
+          toast(`Invoice ${r.number} marked as sent!`, 'ok');
+          PAGE.reload && PAGE.reload();
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
+      if (a === 'pay') {
+        return (window.recordInvoicePaymentModal ? recordInvoicePaymentModal(r, () => (PAGE.reload ? PAGE.reload() : refresh())) : paymentForm('payments-received', { party: r.party_id, doc: r.id, amount: r.balance }));
+      }
+    },
   },
   bills: {
     api: 'bills', title: 'Bills', bc: 'Purchases', newLabel: 'New bill', onNew: () => docMasterDetail($('#pg'), 'bills', 'new'), ordering: '-date', empty: 'No bills yet.',
@@ -3692,6 +3707,7 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
               <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
                 <button class="btn" type="button" data-pop-toggle="send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
                 <div class="pop right tb-pop-menu" id="send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+                  ${(d.raw_status === 'draft' || d.status === 'Draft') ? `<button type="button" class="btn" data-act="mark-sent" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-check" style="color:#059669;"></i> Mark as Sent</button>` : ''}
                   <button type="button" class="btn" data-act="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
                   <button type="button" class="btn" data-act="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
                 </div>
@@ -4201,6 +4217,15 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       if (act === 'print') return printDocument(d, kind, 'standard');
       if (act === 'print-delivery') return printDocument(d, kind, 'delivery');
       if (act === 'print-packing') return printDocument(d, kind, 'packing');
+      if (act === 'mark-sent') {
+        try {
+          await api(`invoices/${d.id}/mark-sent/`, { method: 'POST', body: {} });
+          toast(`Invoice ${d.number} marked as sent!`, 'ok');
+          loadList();
+          loadDetail(d.id);
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
       if (act === 'send-email') return openSendEmailModal(d, kind, () => loadDetail(d.id));
       if (act === 'send-sms') return openSendSmsModal(d, kind, () => loadDetail(d.id));
       if (act === 'share') return openShareLinkModal(d, kind);
@@ -4521,6 +4546,7 @@ async function docDetail(kind, id) {
           <div class="tb-dropdown-wrap" style="position:relative;display:inline-block;">
             <button class="btn" type="button" data-pop-toggle="modal-send-pop"><i class="fa-regular fa-envelope" style="font-size:11px;margin-right:4px;"></i> Send ▾</button>
             <div class="pop right tb-pop-menu" id="modal-send-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;z-index:120;padding:6px;background:var(--surface-glass-solid,#fff);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd-glass,#cbd5e1);">
+              ${(d.raw_status === 'draft' || d.status === 'Draft') ? `<button type="button" class="btn" data-do="mark-sent" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-check" style="color:#059669;"></i> Mark as Sent</button>` : ''}
               <button type="button" class="btn" data-do="send-email" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-envelope" style="color:#2563eb;"></i> Send Email</button>
               <button type="button" class="btn" data-do="send-sms" style="width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:8px;"><i class="fa-solid fa-comment-sms" style="color:#10b981;"></i> Send SMS</button>
             </div>
@@ -4645,6 +4671,17 @@ async function docDetail(kind, id) {
       if (act === 'print') return printDocument(d, kind, 'standard');
       if (act === 'print-delivery') return printDocument(d, kind, 'delivery');
       if (act === 'print-packing') return printDocument(d, kind, 'packing');
+      if (act === 'mark-sent') {
+        try {
+          await api(`invoices/${d.id}/mark-sent/`, { method: 'POST', body: {} });
+          toast(`Invoice ${d.number} marked as sent!`, 'ok');
+          const fresh = await api(`${kind}/${id}/`);
+          Object.assign(d, fresh);
+          $('#modal-sheet-viewport', m.el).innerHTML = renderDocSheet(d, kind);
+          PAGE.reload && PAGE.reload();
+        } catch (err) { toast(err.message, 'err'); }
+        return;
+      }
       if (act === 'send-email') return openSendEmailModal(d, kind, async () => {
         const fresh = await api(`${kind}/${id}/`);
         Object.assign(d, fresh);

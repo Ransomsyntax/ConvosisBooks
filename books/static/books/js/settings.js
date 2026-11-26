@@ -5840,14 +5840,14 @@ async function renderBusinessLocationsPage(container) {
                 </div>
               </div>
             </div>
-            <div class="settings-location-row" id="locationChildWrap" data-business-location-only>
+            <div class="settings-location-row" id="locationChildWrap" data-business-location-only ${location.is_default || location.is_head_office ? 'style="display:none;"' : ''}>
               <span class="settings-location-label" aria-hidden="true"></span>
               <label class="settings-location-field settings-location-checkbox">
-                <input type="checkbox" id="locationChild" ${location.parent_id ? 'checked' : ''}>
+                <input type="checkbox" id="locationChild" ${location.parent_id && !location.is_default && !location.is_head_office ? 'checked' : ''}>
                 <span>This is a Child Location</span>
               </label>
             </div>
-            <div class="settings-location-row" id="parentLocationWrap" ${location.location_type === 'warehouse' || location.parent_id ? '' : 'hidden'}>
+            <div class="settings-location-row" id="parentLocationWrap" ${location.location_type === 'warehouse' || (location.parent_id && !location.is_default && !location.is_head_office) ? '' : 'hidden'}>
               <label class="settings-location-label" for="locationParent"><span id="parentLocationLabel">Parent Location</span> <span class="required">*</span></label>
               <div class="settings-location-field">
                 <select class="form-control" id="locationParent">
@@ -6336,7 +6336,7 @@ async function renderBusinessLocationsPage(container) {
         prefix: prefixInput.value,
         gstin: root.querySelector('#locationGstin').value.trim(),
         logo_data: selectedLogoData,
-        parent_id: locationType === 'warehouse' || root.querySelector('#locationChild').checked ? (parentId || null) : null,
+        parent_id: (location.is_default || location.is_head_office) ? null : (locationType === 'warehouse' || root.querySelector('#locationChild')?.checked ? (parentId || null) : null),
         attention: root.querySelector('#locationAttention').value.trim(),
         street1: root.querySelector('#locationStreet1').value.trim(),
         street2: root.querySelector('#locationStreet2').value.trim(),
@@ -6357,7 +6357,7 @@ async function renderBusinessLocationsPage(container) {
         }, {}),
         assigned_user_ids: Array.from(root.querySelectorAll('.locationUser:checked')).map(input => Number(input.value)),
         warehouse_ids: location.warehouse_ids || [],
-        is_default: locationType === 'business' && root.querySelector('#locationIsDefault').checked,
+        is_default: (location.is_default || location.is_head_office) ? true : (locationType === 'business' && root.querySelector('#locationIsDefault').checked),
         active
       };
       saveButton.disabled = true;
@@ -6389,7 +6389,12 @@ async function renderBusinessLocationsPage(container) {
         <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
       </select>
     </div>
-    <table class="table"><thead><tr><th>Name</th><th>Type</th><th>Parent</th><th>Default</th><th>Status</th><th></th></tr></thead>
+    <table class="table settings-branches-table"><thead><tr>
+      <th style="color:#64748b;font-weight:600;font-size:12px;letter-spacing:0.04em;">NAME</th>
+      <th style="color:#64748b;font-weight:600;font-size:12px;letter-spacing:0.04em;">DEFAULT TRANSACTION NUMBER SERIES</th>
+      <th style="color:#64748b;font-weight:600;font-size:12px;letter-spacing:0.04em;">TYPE</th>
+      <th style="color:#64748b;font-weight:600;font-size:12px;letter-spacing:0.04em;">ADDRESS DETAILS</th>
+    </tr></thead>
       <tbody id="locationRows"></tbody>
     </table>
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px;">
@@ -6404,7 +6409,7 @@ async function renderBusinessLocationsPage(container) {
     const search = container.querySelector('#locationListSearch').value.trim().toLowerCase();
     const status = container.querySelector('#locationListStatus').value;
     const filtered = locations.filter(location => {
-      const matchesSearch = [location.name, location.location_type, location.parent_name]
+      const matchesSearch = [location.name, location.location_type, location.parent_name, location.address, location.city, location.state]
         .some(value => String(value || '').toLowerCase().includes(search));
       const matchesStatus = status === 'all' || (location.active ? 'active' : 'inactive') === status;
       return matchesSearch && matchesStatus;
@@ -6412,14 +6417,32 @@ async function renderBusinessLocationsPage(container) {
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
     currentPage = Math.min(currentPage, pageCount - 1);
     const pageLocations = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-    container.querySelector('#locationRows').innerHTML = pageLocations.map(location => `
-      <tr><td><b>${esc(location.name)}</b></td>
-        <td>${location.location_type === 'warehouse' ? 'Warehouse Only Location' : 'Branch'}</td>
-        <td>${esc(location.parent_name || '')}</td>
-        <td>${location.is_default ? 'Default' : ''}</td>
-        <td>${location.active ? 'Active' : 'Inactive'}</td>
-        <td><button type="button" class="btn-table-action" data-location-id="${location.id}">Edit</button></td>
-      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b;">No branches found.</td></tr>';
+    container.querySelector('#locationRows').innerHTML = pageLocations.map(location => {
+      const defaultSeries = series.find(s => String(s.id) === String(location.default_transaction_series_id))?.name
+        || location.default_transaction_series_name
+        || (location.is_default || location.is_head_office ? 'Default Transaction Series' : '-');
+      const typeLabel = location.location_type === 'warehouse' ? 'Warehouse' : 'Business';
+      const addrParts = [];
+      if (location.address) addrParts.push(location.address);
+      else {
+        if (location.street1) addrParts.push(location.street1);
+        if (location.city) addrParts.push(location.city);
+        if (location.state) addrParts.push(location.state);
+        if (location.country) addrParts.push(location.country);
+      }
+      const addrDetails = addrParts.filter(Boolean).join(' ') || [location.state, location.country].filter(Boolean).join(' ') || '-';
+      const isHeadOffice = Boolean(location.is_default || location.is_head_office);
+      return `
+        <tr>
+          <td>
+            <a href="javascript:void(0)" class="location-name-link" data-location-id="${location.id}" style="color:#2563eb;text-decoration:none;font-weight:500;cursor:pointer;">${esc(location.name)}</a>
+            ${isHeadOffice ? ' <span class="head-office-star" style="color:#f59e0b;font-size:14px;vertical-align:middle;margin-left:4px;" title="Head Office">⭐</span>' : ''}
+          </td>
+          <td>${esc(defaultSeries)}</td>
+          <td>${esc(typeLabel)}</td>
+          <td>${esc(addrDetails)}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="4" style="text-align:center;color:#64748b;">No branches found.</td></tr>';
     container.querySelector('#locationPageInfo').textContent = `Page ${currentPage + 1} of ${pageCount} (${filtered.length} branches)`;
     container.querySelector('#locationPrevPage').disabled = currentPage === 0;
     container.querySelector('#locationNextPage').disabled = currentPage >= pageCount - 1;

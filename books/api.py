@@ -5223,7 +5223,12 @@ class StockAdjustmentResource(StockMovementResource):
         mode = (str(data.get('mode_of_adjustment') or data.get('mode') or 'quantity')).strip()
         ref = (str(data.get('reference_number') or data.get('reference') or '')).strip()
         if not ref:
-            ref = next_number('ADJ', org=user_org)
+            wh_loc = getattr(wh, 'business_location', None) if wh else None
+            ref = services.next_document_number(
+                'ADJ', org=user_org,
+                business_location_id=wh_loc.pk if wh_loc else None,
+                branch=wh_loc.name if wh_loc else '',
+            )
 
         account = (str(data.get('account') or 'Cost of Goods Sold')).strip()
         reason = (str(data.get('reason') or 'Stock recount')).strip()
@@ -15948,7 +15953,9 @@ def _business_location_payload(location):
         'assigned_user_ids': [user.pk for user in location.assigned_users.all()],
         'transaction_series_ids': [series.pk for series in location.transaction_series.all()],
         'default_transaction_series_id': location.default_transaction_series_id,
+        'default_transaction_series_name': location.default_transaction_series.name if location.default_transaction_series else ('Default Transaction Series' if location.is_default else ''),
         'is_default': location.is_default,
+        'is_head_office': bool(location.is_default or (not location.parent_id and (location.is_default or str(location.name or '').strip().lower() == 'head office'))),
         'active': location.active,
         'warehouse_ids': [warehouse.pk for warehouse in location.warehouses.all()],
         'warehouses': [{
@@ -15991,6 +15998,11 @@ def settings_locations_view(request, location_id=None):
         'parent', 'primary_contact', 'default_transaction_series'
     ).prefetch_related('assigned_users', 'transaction_series', 'warehouses')
     if request.method == 'GET':
+        if not queryset.filter(is_default=True).exists():
+            default_cand = queryset.filter(location_type=BusinessLocation.LOCATION_TYPE_BUSINESS, parent__isnull=True).order_by('pk').first()
+            if default_cand:
+                default_cand.is_default = True
+                default_cand.save(update_fields=['is_default', 'updated_at'])
         if location_id:
             location = queryset.filter(pk=location_id).first()
             if not location:
@@ -16136,6 +16148,8 @@ def settings_locations_view(request, location_id=None):
     parent_id = data.get('parent_id')
     parent = None
     if parent_id not in (None, '', 0):
+        if is_default:
+            raise ApiError(400, 'The default Head Office location cannot be a child location.')
         try:
             parent_id = int(parent_id)
         except (TypeError, ValueError):
@@ -16213,7 +16227,7 @@ def settings_locations_view(request, location_id=None):
         raise ApiError(400, 'A warehouse-only location cannot be the default business location.')
 
     with transaction.atomic():
-        location = queryset.select_for_update().filter(pk=location_id).first() if location_id else None
+        location = BusinessLocation.objects.select_for_update().filter(pk=location_id, organization=org).first() if location_id else None
         if location_id and not location:
             raise ApiError(404, 'Business location not found.')
         if location and location.location_type != location_type:
@@ -16238,6 +16252,8 @@ def settings_locations_view(request, location_id=None):
                     409,
                     f'The location type cannot be changed because this location is used by: {used_by}.',
                 )
+        if (is_default or (location and location.is_default and (is_default or not queryset.exclude(pk=location.pk).filter(is_default=True).exists()))) and parent:
+            raise ApiError(400, 'The default Head Office location cannot be a child location.')
         series = list(DocumentNumberSeries.objects.select_for_update().filter(
             organization=org, pk__in=series_ids, active=True
         ).order_by('pk'))

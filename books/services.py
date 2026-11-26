@@ -751,6 +751,18 @@ def _series_numbering_scope(series_obj, org, branch='', customer_type='', party=
             name__iexact=branch_value,
             location_type=Branch.LOCATION_TYPE_BUSINESS,
         ).first()
+    if not branch_object and not branch_value and org:
+        branch_object = Branch.objects.filter(
+            organization=org,
+            is_default=True,
+            location_type=Branch.LOCATION_TYPE_BUSINESS,
+        ).first()
+        if not branch_object:
+            branch_object = Branch.objects.filter(
+                organization=org,
+                location_type=Branch.LOCATION_TYPE_BUSINESS,
+                parent__isnull=True,
+            ).order_by('pk').first()
     if branch_object and org and branch_object.organization_id != org.pk:
         branch_object = None
     if branch_object and not branch_value:
@@ -771,11 +783,17 @@ def _series_numbering_scope(series_obj, org, branch='', customer_type='', party=
             resolved_customer_type = 'b2c'
 
     if resolved_customer_type == 'b2b':
-        customer_prefix = str(getattr(series_obj, 'b2b_prefix', 'D') or '').strip()
+        customer_prefix = str(getattr(series_obj, 'b2b_prefix', 'D') or 'D').strip()
     elif resolved_customer_type == 'b2c':
-        customer_prefix = str(getattr(series_obj, 'b2c_prefix', 'C') or '').strip()
+        customer_prefix = str(getattr(series_obj, 'b2c_prefix', 'C') or 'C').strip()
     else:
-        customer_prefix = ''
+        raw_ct = str(customer_type or '').strip()
+        if raw_ct.lower() in ('b2b', 'business', 'registered'):
+            customer_prefix = str(getattr(series_obj, 'b2b_prefix', 'D') or 'D').strip()
+        elif raw_ct.lower() in ('b2c', 'individual', 'consumer'):
+            customer_prefix = str(getattr(series_obj, 'b2c_prefix', 'C') or 'C').strip()
+        else:
+            customer_prefix = raw_ct.upper()
     return branch_value, branch_object, branch_code.upper(), branch_token, resolved_customer_type, customer_prefix
 
 
@@ -10125,7 +10143,11 @@ def create_stock_transfer(data, user):
     series_name = (data.get('transaction_series') or data.get('series') or data.get('numbering_series') or '').strip()
     series_id = data.get('numbering_series_id') or data.get('series_id')
     if not num:
-        num = next_document_number('ST', org=user_org, date=transfer_date, series=series_name, series_id=series_id)
+        num = next_document_number(
+            'ST', org=user_org, date=transfer_date, series=series_name, series_id=series_id,
+            business_location_id=business_location.pk if business_location else None,
+            branch=business_location.name if business_location else '',
+        )
     elif StockTransfer.objects.filter(number=num, organization=user_org).exists():
         raise ApiError(400, f'Stock transfer number {num} already exists in your organization.')
     else:

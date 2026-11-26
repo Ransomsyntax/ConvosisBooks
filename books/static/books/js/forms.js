@@ -13048,12 +13048,18 @@ function bulkItemPickerModal(items, onSelect) {
     wide: true,
     body: `
       <div style="padding:10px 0;">
-        <input class="in" type="search" id="bulk-item-search" placeholder="Search items by name, SKU, or category…" style="margin-bottom:14px;width:100%;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;">
+          <input class="in" type="search" id="bulk-item-search" placeholder="Search items by name, SKU, or category…" style="flex:1;">
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button type="button" class="btn" id="btn-bulk-select-all" style="padding:5px 10px;font-size:12px;">Select All</button>
+            <button type="button" class="btn" id="btn-bulk-deselect-all" style="padding:5px 10px;font-size:12px;">Deselect All</button>
+          </div>
+        </div>
         <div class="tw" style="max-height:360px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px;">
           <table>
             <thead>
               <tr>
-                <th style="width:40px;"><input type="checkbox" id="bulk-item-select-all"></th>
+                <th style="width:40px;"><input type="checkbox" id="bulk-item-select-all" title="Select / Deselect all visible"></th>
                 <th>Item Details</th>
                 <th>SKU</th>
                 <th class="r">Rate (₹)</th>
@@ -13107,10 +13113,31 @@ function bulkItemPickerModal(items, onSelect) {
   function updateCount() {
     const cnt = selectedMap.size;
     $('#bulk-selected-count', m.el).textContent = `${cnt} item${cnt === 1 ? '' : 's'} selected`;
+    const selAllHeader = $('#bulk-item-select-all', m.el);
+    if (selAllHeader) {
+      const q = searchQ.toLowerCase().trim();
+      const visible = items.filter(it => !q || it.name.toLowerCase().includes(q) || (it.sku && it.sku.toLowerCase().includes(q)));
+      selAllHeader.checked = visible.length > 0 && visible.every(it => selectedMap.has(it.id));
+    }
   }
 
   $('#bulk-item-search', m.el).addEventListener('input', e => {
     searchQ = e.target.value;
+    renderList();
+  });
+
+  $('#btn-bulk-select-all', m.el).addEventListener('click', () => {
+    const q = searchQ.toLowerCase().trim();
+    const targetItems = items.filter(it => !q || it.name.toLowerCase().includes(q) || (it.sku && it.sku.toLowerCase().includes(q)));
+    targetItems.forEach(it => {
+      const qtyInp = $(`.bulk-qty-input[data-id="${it.id}"]`, m.el);
+      selectedMap.set(it.id, Number(qtyInp ? qtyInp.value : 1) || 1);
+    });
+    renderList();
+  });
+
+  $('#btn-bulk-deselect-all', m.el).addEventListener('click', () => {
+    selectedMap.clear();
     renderList();
   });
 
@@ -13160,10 +13187,13 @@ function bulkItemPickerModal(items, onSelect) {
       if (itemObj) {
         chosen.push({
           item: itemObj.id,
+          id: itemObj.id,
+          name: itemObj.name,
           description: itemObj.name,
           hsn_sac: itemObj.hsn_sac || '',
           quantity,
           rate: itemObj.selling_price || 0,
+          selling_price: itemObj.selling_price || 0,
           discount_percent: 0,
           gst_rate: num(itemObj.gst_rate) || 0
         });
@@ -13175,6 +13205,8 @@ function bulkItemPickerModal(items, onSelect) {
 
   renderList();
 }
+window.openBulkItemModal = bulkItemPickerModal;
+window.bulkItemPickerModal = bulkItemPickerModal;
 
 function openBarcodeScannerModal(items, onScan) {
   const m = Modal.open({
@@ -14331,17 +14363,25 @@ ${renderStockQuantityCell(l, items, whList)}
   });
 
   $('#btn-quote-bulk-items', form)?.addEventListener('click', () => {
-    openBulkItemModal(items, selectedItems => {
+    const modalFn = typeof bulkItemPickerModal === 'function' ? bulkItemPickerModal : (typeof openBulkItemModal === 'function' ? openBulkItemModal : null);
+    if (!modalFn) {
+      toast('Bulk item picker is unavailable.', 'err');
+      return;
+    }
+    modalFn(items, selectedItems => {
       selectedItems.forEach(it => {
         tbody.insertAdjacentHTML('beforeend', rowHtml({
-          item: it.id,
-          description: it.name,
+          item: it.item || it.id,
+          description: it.description || it.name,
           hsn_sac: it.hsn_sac || '',
-          quantity: 1,
-          rate: it.selling_price || 0,
-          discount_percent: 0,
-          gst_rate: num(it.gst_rate) || 18
+          quantity: it.quantity || 1,
+          rate: it.rate != null ? it.rate : (it.selling_price || 0),
+          discount_percent: it.discount_percent || 0,
+          gst_rate: num(it.gst_rate) != null ? num(it.gst_rate) : 18
         }));
+        if (tbody.lastElementChild && typeof stockTracker !== 'undefined' && stockTracker.updateRow) {
+          stockTracker.updateRow(tbody.lastElementChild, false);
+        }
       });
       calcQuote();
     });

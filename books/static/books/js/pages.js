@@ -1432,7 +1432,26 @@ function listPage(root, cfg) {
       const pop = moreBtn.nextElementSibling;
       const isOpen = pop && pop.style.display === 'block';
       root.querySelectorAll('.rowa-menu-pop').forEach(p => { p.style.display = 'none'; });
-      if (pop && !isOpen) pop.style.display = 'block';
+      if (pop && !isOpen) {
+        pop.style.display = 'block';
+        pop.style.position = 'fixed';
+        pop.style.zIndex = '99999';
+        const rect = moreBtn.getBoundingClientRect();
+        const popHeight = pop.offsetHeight || 150;
+        const popWidth = Math.max(145, pop.offsetWidth || 145);
+        let left = rect.right - popWidth;
+        if (left < 8) left = 8;
+        if (left + popWidth > window.innerWidth - 8) left = window.innerWidth - popWidth - 8;
+        pop.style.left = `${left}px`;
+        pop.style.right = 'auto';
+
+        const spaceBelow = window.innerHeight - rect.bottom;
+        if (spaceBelow < popHeight + 10 && rect.top > popHeight + 10) {
+          pop.style.top = `${rect.top - popHeight - 4}px`;
+        } else {
+          pop.style.top = `${rect.bottom + 4}px`;
+        }
+      }
       return;
     }
     root.querySelectorAll('.rowa-menu-pop').forEach(p => { p.style.display = 'none'; });

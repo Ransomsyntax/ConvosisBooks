@@ -247,6 +247,9 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
 
     # 2. If Brevo REST API key is explicitly configured, attempt REST dispatch first
     api_key = getattr(settings, 'BREVO_API_KEY', '').strip()
+    email_backend = getattr(settings, 'EMAIL_BACKEND', '')
+    is_test_or_console = any(b in email_backend for b in ('locmem', 'console', 'filebased', 'dummy'))
+
     smtp_configured = all((
         getattr(settings, 'EMAIL_HOST', '').strip(),
         getattr(settings, 'EMAIL_HOST_USER', '').strip(),
@@ -288,13 +291,23 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
                 type(api_err).__name__,
             )
 
-    if not smtp_configured:
+    if not smtp_configured and not is_test_or_console:
+        missing_vars = []
+        if not api_key:
+            missing_vars.append("BREVO_API_KEY")
+        if not getattr(settings, 'EMAIL_HOST', '').strip():
+            missing_vars.append("EMAIL_HOST")
+        if not getattr(settings, 'EMAIL_HOST_USER', '').strip():
+            missing_vars.append("EMAIL_HOST_USER")
+        if not getattr(settings, 'EMAIL_HOST_PASSWORD', '').strip():
+            missing_vars.append("EMAIL_HOST_PASSWORD")
+        missing_desc = f" Missing required email environment variables: {', '.join(missing_vars)}." if missing_vars else ""
         if api_error:
             raise RuntimeError(
-                "Brevo API delivery failed and SMTP fallback is not configured."
+                f"Brevo API delivery failed ({api_error}) and SMTP fallback is not configured.{missing_desc}"
             ) from api_error
         raise RuntimeError(
-            "Email delivery is not configured. Set BREVO_API_KEY or complete SMTP credentials."
+            f"Email delivery is not configured.{missing_desc} Please set BREVO_API_KEY or complete SMTP credentials (EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)."
         )
 
     # 3. Deliver via the configured SMTP backend.
@@ -318,6 +331,10 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
             mask_identifier(to_email, 'email'),
             type(exc).__name__,
         )
+        if api_error:
+            raise RuntimeError(
+                f"Both Brevo REST API ({api_error}) and SMTP delivery ({exc}) failed."
+            ) from exc
         raise
 
 
@@ -428,13 +445,20 @@ def create_and_send_otp(
         except Exception as exc:
             # Clean up pending record so invalid/unreceived OTP is not stored
             record.delete()
+            err_msg = str(exc)
             logger.exception(
-                "Verification email dispatch failed for %s with %s.",
+                "Verification email dispatch failed for %s with %s: %s.",
                 mask_identifier(target_value, 'email'),
                 type(exc).__name__,
+                err_msg,
+            )
+            detail_msg = (
+                f"Verification email delivery failed: {err_msg}"
+                if getattr(settings, 'DEBUG', False)
+                else "We couldn't send your verification email. Please try again later."
             )
             raise OTPServiceError(
-                "We couldn't send your verification email. Please try again later.",
+                detail_msg,
                 code="email_delivery_failed",
                 status_code=502,
             ) from exc

@@ -1842,12 +1842,12 @@ body.in-settings .pg {
 
 .settings-location-series-dropdown {
   position: fixed;
-  z-index: 1100;
+  z-index: 100020;
   display: flex;
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--bd, #cbd5e1);
   border-radius: 6px;
   background: var(--surface, #fff);
@@ -1876,11 +1876,18 @@ body.in-settings .pg {
   align-items: center;
   gap: 9px;
   min-height: 34px;
-  padding: 5px 7px;
+  padding: 6px 8px;
   border-radius: 4px;
   color: var(--tx, #334155);
   cursor: pointer;
   font-size: 13px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.settings-location-series-option span {
+  flex: 1 1 auto;
+  line-height: 1.4;
 }
 
 .settings-location-series-option:hover {
@@ -2060,12 +2067,20 @@ body.in-settings .pg {
   display: flex;
   flex: 0 0 auto;
   position: relative;
-  z-index: 100001;
+  z-index: 10;
   align-items: center;
   gap: 10px;
   padding: 12px 24px;
   border-top: 1px solid var(--bd, #e2e8f0);
   background: var(--surface, #fff);
+}
+
+.transaction-series-modal {
+  z-index: 100050 !important;
+}
+
+.transaction-series-item-modal {
+  z-index: 100060 !important;
 }
 
 @media (max-width: 760px) {
@@ -2726,6 +2741,48 @@ body.in-settings .pg {
 }
 
 /* Forms & Modal Dialogs */
+.settings-form-card {
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--bd, #e2e8f0);
+  border-radius: 8px;
+  padding: 24px;
+  margin-top: 16px;
+}
+
+.settings-form-card .form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+}
+
+.settings-form-card .form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 24px;
+}
+
+.settings-form-card .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 2px;
+}
+
+.settings-form-card .form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+  .settings-form-card .form-grid-2,
+  .settings-form-card .form-grid-3 {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
 .form-group {
   display: flex;
   flex-direction: column;

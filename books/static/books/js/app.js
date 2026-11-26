@@ -158,7 +158,10 @@ const ROUTES = {
 
   'accountant': r => listPage(r, LISTS['manual-journals']),
   'accountant/manual-journals': r => listPage(r, LISTS['manual-journals']),
-  'accountant/manual-journals/new': () => journalForm(),
+  'accountant/manual-journals/new': r => {
+    listPage(r, LISTS['manual-journals']);
+    journalForm();
+  },
   'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
   'accountant/chart-of-accounts/new': () => accountForm(),
   'accountant/bulk-update': r => bulkUpdatePage(r),
@@ -182,6 +185,8 @@ const ROUTES = {
   'settings/roles/new': r => typeof renderRoleEditorPage === 'function' ? renderRoleEditorPage(r, 'new') : null,
   'settings/profile': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'profile', 'Organization Profile', renderOrgProfilePage) : null,
   'settings/branding': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'branding', 'Company Branding', renderBrandingPage) : null,
+  'settings/custom-domain': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'custom-domain', 'Custom Domain', renderCustomDomainPage) : null,
+  'settings/networking': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'networking', 'Networking & Security', renderNetworkingPage) : null,
   'settings/ai': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'ai', 'AI Control Center', renderAiControlCenterPage) : null,
   'settings/taxes': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'taxes', 'Taxes', renderTaxesPage) : null,
   'settings/direct-taxes': r => typeof renderSettingsShell === 'function' ? renderSettingsShell(r, 'direct-taxes', 'Direct Taxes', renderDirectTaxesPage) : null,
@@ -314,7 +319,12 @@ const NAV_NEW_ACTIONS = {
   'time/projects': () => projectModal(),
   'time/timesheets': () => timelogModal(),
   'banking/bank-accounts': () => bankAccountForm(),
-  'accountant/manual-journals': () => journalForm(),
+  'accountant/manual-journals': () => {
+    if (location.hash !== '#/accountant/manual-journals') {
+      location.hash = '#/accountant/manual-journals';
+    }
+    journalForm();
+  },
   'accountant/chart-of-accounts': () => accountForm(),
   'documents/all-documents': () => documentUploadModal(),
   'documents/files': () => documentUploadModal(),

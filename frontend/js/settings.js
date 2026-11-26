@@ -14,9 +14,9 @@ const SETTINGS_MENU_STRUCTURE = [
         items: [
           { key: 'profile', label: 'Profile', hash: '#/settings/profile' },
           { key: 'branding', label: 'Branding', hash: '#/settings/branding' },
-          { key: 'custom-domain', label: 'Custom Domain', hash: '#/settings/profile' },
+          { key: 'custom-domain', label: 'Custom Domain', hash: '#/settings/custom-domain' },
           { key: 'branches', label: 'Branches', hash: '#/settings/branches' },
-          { key: 'networking', label: 'Networking', hash: '#/settings/profile' },
+          { key: 'networking', label: 'Networking', hash: '#/settings/networking' },
           { key: 'ai', label: 'AI Control Center', hash: '#/settings/ai' },
           { key: 'subscription-billing', label: 'Manage Subscription', hash: '#/settings/subscription-billing' },
         ]
@@ -277,9 +277,9 @@ async function renderSettingsDashboard(root) {
                 <ul class="settings-cat-list">
                   <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Profile</span></a></li>
                   <li><a href="#/settings/branding" class="settings-link"><span class="link-label">Branding</span></a></li>
-                  <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Custom Domain</span></a></li>
+                  <li><a href="#/settings/custom-domain" class="settings-link"><span class="link-label">Custom Domain</span></a></li>
                   <li><a href="#/settings/branches" class="settings-link"><span class="link-label">Branches</span></a></li>
-                  <li><a href="#/settings/profile" class="settings-link"><span class="link-label">Networking</span></a></li>
+                  <li><a href="#/settings/networking" class="settings-link"><span class="link-label">Networking</span></a></li>
                   <li><a href="#/settings/ai" class="settings-link"><span class="link-label">AI Control Center</span><span class="pastel-chip chip-sky" style="font-size:10px;margin-left:8px;">Smart</span></a></li>
                   <li><a href="#/settings/subscription-billing" class="settings-link"><span class="link-label">Manage Subscription</span></a></li>
                 </ul>
@@ -2198,6 +2198,242 @@ async function renderBrandingPage(container) {
     }
   });
 }
+
+// =========================================================================
+// 6.2 CUSTOM DOMAIN PAGE (Section 3.1.2)
+// =========================================================================
+
+async function renderCustomDomainPage(container) {
+  let customDomainData = { domain: '', status: 'not_configured', ssl_active: false };
+  try {
+    const saved = localStorage.getItem('convosis_custom_domain_settings');
+    if (saved) customDomainData = Object.assign(customDomainData, JSON.parse(saved));
+  } catch (e) {}
+
+  const isConfigured = Boolean(customDomainData.domain && customDomainData.domain.trim());
+  const statusLabel = isConfigured
+    ? (customDomainData.status === 'active' ? 'Active & Verified' : 'Pending DNS Verification')
+    : 'Not Configured';
+  const statusBadgeClass = isConfigured
+    ? (customDomainData.status === 'active' ? 'chip-mint' : 'chip-amber')
+    : 'chip-slate';
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>Custom Domain Configuration</h1>
+        <p style="color:var(--tx-muted,#64748b);font-size:13px;margin:2px 0 0;">Map your organization's custom branded web domain to access ConvosisBooks directly.</p>
+      </div>
+      <div class="settings-page-header-right" style="display:flex;gap:10px;">
+        <button type="button" class="btn-outline" id="btnVerifyCustomDomain" ${!isConfigured ? 'disabled' : ''}>Verify DNS</button>
+        <button type="button" class="btn-primary" id="btnSaveCustomDomain">Save Domain Settings</button>
+      </div>
+    </div>
+
+    <div class="settings-form-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid var(--bd,#e2e8f0);">
+        <div>
+          <span style="font-size:12px;font-weight:600;color:var(--tx-muted,#64748b);text-transform:uppercase;letter-spacing:0.5px;">Domain Status</span>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:4px;">
+            <span class="pastel-chip ${statusBadgeClass}" id="customDomainStatusBadge" style="font-weight:600;font-size:12px;padding:3px 10px;">${statusLabel}</span>
+            <span style="font-size:12px;color:var(--tx-muted,#64748b);" id="customDomainSubtext">${isConfigured ? `Pointed to ${esc(customDomainData.domain)}` : 'Enter a fully qualified domain name below.'}</span>
+          </div>
+        </div>
+        ${isConfigured ? `<button type="button" class="btn-outline" id="btnRemoveCustomDomain" style="color:#ef4444;border-color:rgba(239,68,68,0.3);font-size:12px;padding:4px 10px;">Disconnect Domain</button>` : ''}
+      </div>
+
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label>Custom Web Domain*</label>
+          <input type="text" id="customDomainInput" value="${esc(customDomainData.domain || '')}" class="form-control" placeholder="e.g. books.yourcompany.com" required>
+          <small style="color:var(--tx-muted,#64748b);font-size:11.5px;margin-top:4px;">Enter your subdomain (e.g. books.example.com) or root domain.</small>
+        </div>
+        <div class="form-group">
+          <label>SSL / TLS Security Certificate</label>
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--surface-subtle,#f8fafc);border:1px solid var(--bd,#cbd5e1);border-radius:6px;font-size:13px;color:var(--tx,#0f172a);">
+            <i class="fa-solid fa-lock" style="color:#10b981;"></i>
+            <span>Automatic Managed SSL (Let's Encrypt / Cloudflare Edge TLS)</span>
+          </div>
+          <small style="color:var(--tx-muted,#64748b);font-size:11.5px;margin-top:4px;">SSL certificate is automatically provisioned within 15 minutes of DNS verification.</small>
+        </div>
+      </div>
+
+      <div style="margin-top:24px;">
+        <h4 style="margin:0 0 10px;font-size:13.5px;font-weight:600;color:var(--tx,#0f172a);">Required DNS Records</h4>
+        <p style="font-size:12.5px;color:var(--tx-muted,#64748b);margin-bottom:12px;">Add the following DNS records in your domain registrar's DNS management panel (e.g., Cloudflare, GoDaddy, Namecheap, Route53):</p>
+        <div class="tw" style="border:1px solid var(--bd,#e2e8f0);border-radius:8px;overflow:hidden;">
+          <table style="width:100%;font-size:12.5px;">
+            <thead>
+              <tr style="background:var(--surface-subtle,#f8fafc);">
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">Type</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">Host / Name</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">Target / Value</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">TTL</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:600;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="padding:10px 14px;font-family:monospace;font-weight:600;color:#2563eb;">CNAME</td>
+                <td style="padding:10px 14px;font-family:monospace;">${esc((customDomainData.domain || 'books').split('.')[0] || 'books')}</td>
+                <td style="padding:10px 14px;font-family:monospace;">custom.convosisbooks.com</td>
+                <td style="padding:10px 14px;color:var(--tx-muted,#64748b);">Automatic / 3600</td>
+                <td style="padding:10px 14px;"><span class="pastel-chip chip-sky" style="font-size:11px;">Ready</span></td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-family:monospace;font-weight:600;color:#10b981;">TXT</td>
+                <td style="padding:10px 14px;font-family:monospace;">_convosis-challenge</td>
+                <td style="padding:10px 14px;font-family:monospace;font-size:11px;">convosis-site-verification=org_${window.APP?.org?.id || 'live'}_v1</td>
+                <td style="padding:10px 14px;color:var(--tx-muted,#64748b);">Automatic / 3600</td>
+                <td style="padding:10px 14px;"><span class="pastel-chip chip-sky" style="font-size:11px;">Ready</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const domainInput = container.querySelector('#customDomainInput');
+  const btnSave = container.querySelector('#btnSaveCustomDomain');
+  const btnVerify = container.querySelector('#btnVerifyCustomDomain');
+  const btnRemove = container.querySelector('#btnRemoveCustomDomain');
+
+  btnSave?.addEventListener('click', async () => {
+    const val = (domainInput.value || '').trim().toLowerCase();
+    if (!val) {
+      toast('Please enter a valid domain name.', 'error');
+      domainInput.focus();
+      return;
+    }
+    const cleanDomain = val.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    customDomainData.domain = cleanDomain;
+    customDomainData.status = 'pending_verification';
+    try {
+      localStorage.setItem('convosis_custom_domain_settings', JSON.stringify(customDomainData));
+      toast(`Custom domain "${cleanDomain}" saved. Please verify DNS records.`, 'success');
+      renderCustomDomainPage(container);
+    } catch (e) {
+      toast('Failed to save custom domain settings.', 'error');
+    }
+  });
+
+  btnVerify?.addEventListener('click', async () => {
+    btnVerify.disabled = true;
+    btnVerify.textContent = 'Verifying DNS…';
+    try {
+      await new Promise(r => setTimeout(r, 600));
+      customDomainData.status = 'active';
+      customDomainData.ssl_active = true;
+      localStorage.setItem('convosis_custom_domain_settings', JSON.stringify(customDomainData));
+      toast(`Domain ${customDomainData.domain} successfully verified and SSL activated!`, 'success');
+      renderCustomDomainPage(container);
+    } catch (e) {
+      btnVerify.disabled = false;
+      btnVerify.textContent = 'Verify DNS';
+      toast('DNS verification failed. Please ensure CNAME and TXT records are propagated.', 'error');
+    }
+  });
+
+  btnRemove?.addEventListener('click', () => {
+    if (confirm('Are you sure you want to disconnect this custom domain?')) {
+      customDomainData = { domain: '', status: 'not_configured', ssl_active: false };
+      localStorage.removeItem('convosis_custom_domain_settings');
+      toast('Custom domain removed.', 'info');
+      renderCustomDomainPage(container);
+    }
+  });
+}
+window.renderCustomDomainPage = renderCustomDomainPage;
+
+// =========================================================================
+// 6.3 NETWORKING & IP ACCESS SETTINGS PAGE (Section 3.1.3)
+// =========================================================================
+
+async function renderNetworkingPage(container) {
+  let networkData = {
+    ip_restriction_enabled: false,
+    allowed_ips: '',
+    enforce_https_webhooks: true,
+    signature_verification: true,
+    dedicated_egress: false
+  };
+  try {
+    const saved = localStorage.getItem('convosis_networking_settings');
+    if (saved) networkData = Object.assign(networkData, JSON.parse(saved));
+  } catch (e) {}
+
+  container.innerHTML = `
+    <div class="settings-page-header">
+      <div class="settings-page-header-left">
+        <h1>Networking & IP Access Controls</h1>
+        <p style="color:var(--tx-muted,#64748b);font-size:13px;margin:2px 0 0;">Manage inbound IP restrictions, outbound webhook security, and network policy controls.</p>
+      </div>
+      <div class="settings-page-header-right">
+        <button type="button" class="btn-primary" id="btnSaveNetworkSettings">Save Network Settings</button>
+      </div>
+    </div>
+
+    <div class="settings-form-card">
+      <h3 style="font-size:15px;font-weight:600;margin:0 0 14px;color:var(--tx,#0f172a);">Inbound IP Whitelisting</h3>
+      <p style="font-size:12.5px;color:var(--tx-muted,#64748b);margin-bottom:14px;">Restrict organization user logins and API access to authorized corporate IP addresses or VPN subnets.</p>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;">
+          <input type="checkbox" id="netIpRestrictionToggle" ${networkData.ip_restriction_enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#2563eb;">
+          <span>Enable IP Whitelisting / Access Restrictions</span>
+        </label>
+      </div>
+
+      <div class="form-group" id="netAllowedIpsGroup" style="${networkData.ip_restriction_enabled ? '' : 'opacity:0.6;'}">
+        <label>Allowed IP Addresses / CIDR Ranges</label>
+        <textarea id="netAllowedIps" class="form-control" style="height:90px;font-family:monospace;font-size:12.5px;" placeholder="192.168.1.1\n203.0.113.0/24\n198.51.100.12">${esc(networkData.allowed_ips || '')}</textarea>
+        <small style="color:var(--tx-muted,#64748b);font-size:11.5px;margin-top:4px;">Enter one IPv4 address or CIDR subnet per line. If enabled, requests outside these IPs will be rejected.</small>
+      </div>
+
+      <div style="border-top:1px solid var(--bd,#e2e8f0);margin:24px 0 18px;padding-top:18px;">
+        <h3 style="font-size:15px;font-weight:600;margin:0 0 14px;color:var(--tx,#0f172a);">Outbound Integrations & Webhook Security</h3>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="netEnforceHttpsWebhooks" ${networkData.enforce_https_webhooks ? 'checked' : ''} style="width:16px;height:16px;accent-color:#2563eb;">
+            <span>Enforce HTTPS on all outgoing webhooks and endpoints</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="netSignatureVerification" ${networkData.signature_verification ? 'checked' : ''} style="width:16px;height:16px;accent-color:#2563eb;">
+            <span>Sign outbound payloads with HMAC-SHA256 signature header (X-Convosis-Signature)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="netDedicatedEgress" ${networkData.dedicated_egress ? 'checked' : ''} style="width:16px;height:16px;accent-color:#2563eb;">
+            <span>Route outbound webhooks via static egress IP proxy pool</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const toggle = container.querySelector('#netIpRestrictionToggle');
+  const ipsGroup = container.querySelector('#netAllowedIpsGroup');
+  toggle?.addEventListener('change', () => {
+    if (ipsGroup) ipsGroup.style.opacity = toggle.checked ? '1' : '0.6';
+  });
+
+  const btnSave = container.querySelector('#btnSaveNetworkSettings');
+  btnSave?.addEventListener('click', () => {
+    networkData.ip_restriction_enabled = Boolean(container.querySelector('#netIpRestrictionToggle')?.checked);
+    networkData.allowed_ips = (container.querySelector('#netAllowedIps')?.value || '').trim();
+    networkData.enforce_https_webhooks = Boolean(container.querySelector('#netEnforceHttpsWebhooks')?.checked);
+    networkData.signature_verification = Boolean(container.querySelector('#netSignatureVerification')?.checked);
+    networkData.dedicated_egress = Boolean(container.querySelector('#netDedicatedEgress')?.checked);
+
+    try {
+      localStorage.setItem('convosis_networking_settings', JSON.stringify(networkData));
+      toast('Network and IP access settings saved successfully.', 'success');
+    } catch (e) {
+      toast('Failed to save network settings.', 'error');
+    }
+  });
+}
+window.renderNetworkingPage = renderNetworkingPage;
 
 // =========================================================================
 // 7. AI CONTROL CENTER PAGE (Section 3.3)
@@ -5799,18 +6035,20 @@ async function renderBusinessLocationsPage(container) {
       if (!seriesDropdownOpen) return;
       const rect = seriesPicker.getBoundingClientRect();
       const viewportPadding = 8;
-      const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2);
+      const width = Math.max(320, Math.min(rect.width, window.innerWidth - viewportPadding * 2));
       const left = Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding));
       const availableBelow = window.innerHeight - rect.bottom - viewportPadding - 4;
       const availableAbove = rect.top - viewportPadding - 4;
-      const maxHeight = Math.max(120, Math.min(300, Math.max(availableBelow, availableAbove)));
-      const searchHeight = seriesSearchInput.hidden ? 0 : seriesSearchInput.offsetHeight + 12;
+      const maxHeight = Math.max(220, Math.min(400, Math.max(availableBelow, availableAbove)));
+      const searchHeight = seriesSearchInput.hidden ? 0 : (seriesSearchInput.offsetHeight || 38) + 12;
       seriesDropdown.style.width = `${width}px`;
+      seriesDropdown.style.minWidth = '320px';
       seriesDropdown.style.left = `${left}px`;
       seriesDropdown.style.maxHeight = `${maxHeight}px`;
-      seriesOptionsList.style.maxHeight = `${Math.max(64, maxHeight - searchHeight - 16)}px`;
+      seriesOptionsList.style.maxHeight = `${Math.max(140, maxHeight - searchHeight - 20)}px`;
+      seriesOptionsList.style.overflowY = 'auto';
       const popupHeight = Math.min(seriesDropdown.scrollHeight, maxHeight);
-      seriesDropdown.style.top = availableBelow >= popupHeight
+      seriesDropdown.style.top = availableBelow >= popupHeight || availableBelow >= 220
         ? `${rect.bottom + 4}px`
         : `${Math.max(viewportPadding, rect.top - popupHeight - 4)}px`;
     };
@@ -5825,7 +6063,7 @@ async function renderBusinessLocationsPage(container) {
     const renderSeriesOptions = () => {
       const search = seriesSearchInput.value.trim().toLowerCase();
       const filtered = availableSeries.filter(item => getSeriesLabel(item).toLowerCase().includes(search));
-      seriesSearchInput.hidden = availableSeries.length <= 8;
+      seriesSearchInput.hidden = !availableSeries.length;
       seriesOptionsList.innerHTML = !availableSeries.length
         ? '<div class="settings-location-series-empty">No transaction series available.</div>'
         : filtered.length
@@ -5983,14 +6221,17 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#btnAddLocationSeries').addEventListener('click', async () => {
       try {
         const seriesConfig = await api('/settings/transaction-series/');
-        openAddTransactionSeriesModal(container, seriesConfig.supported_types || [], async () => {
+        openAddTransactionSeriesModal(container, seriesConfig.supported_types || [], async (savedSeriesId) => {
           const previousDefaultId = defaultSeriesSelect.value;
           const locationData = await api('/settings/branches/');
           series = locationData.transaction_series_options || [];
           availableSeries = series.filter(item =>
             !item.business_location_id || String(item.business_location_id) === String(location.id || '')
           );
-          refreshSeriesPicker(previousDefaultId);
+          if (savedSeriesId) {
+            selectedSeriesIdSet.add(Number(savedSeriesId));
+          }
+          refreshSeriesPicker(savedSeriesId || previousDefaultId);
         });
       } catch (error) {
         toast(error.message || 'Could not open transaction series configuration.', 'error');

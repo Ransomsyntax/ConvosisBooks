@@ -573,15 +573,32 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 5px 8px 5px 8px;
+  padding: 7px 10px;
+  min-height: 32px;
+  line-height: 1.35;
   border-radius: 7px;
   color: var(--tx2);
   font-size: 12.5px;
   border: 1px solid transparent;
   transition: all 0.18s ease;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
   text-decoration: none;
   position: relative;
+  box-sizing: border-box;
+}
+
+.ni[data-g="accountant"] .ch {
+  padding: 4px 0 6px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ni[data-g="accountant"] .ch a {
+  padding: 7px 10px;
+  min-height: 32px;
+  line-height: 1.35;
+  margin-bottom: 2px;
 }
 .ch a:hover, .nav-sub-item:hover {
   background: var(--surface-glass-subtle);

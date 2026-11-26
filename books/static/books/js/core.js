@@ -47,6 +47,7 @@ const pref = {
   get(k, d) { try { const v = localStorage.getItem('cvb_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('cvb_' + k, JSON.stringify(v)); } catch (e) { } },
 };
+window.pref = pref;
 
 function toast(msg, kind) {
   const t = $('#toast');

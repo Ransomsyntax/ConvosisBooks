@@ -4,8 +4,7 @@ if (typeof window !== 'undefined') {
   try {
     if (typeof partyForm === 'function') {
       window._partyFormImpl = partyForm;
-      window._partyFormImpl = partyForm;
-window.partyForm = partyForm;
+      window.partyForm = partyForm;
     }
   } catch (e) {}
 }
@@ -225,6 +224,10 @@ const Modal = (() => {
     const renderOnScreen = (onScreen === true || (hasFormElements && !dialog && onScreen !== false)) && Boolean(pg);
 
     if (renderOnScreen && pg) {
+      const existing = pg.querySelector('.on-screen-form-view');
+      if (existing) {
+        existing.remove();
+      }
       const prevChildren = Array.from(pg.children);
       prevChildren.forEach(child => {
         if (child._origDisplay === undefined) {
@@ -315,6 +318,13 @@ const Modal = (() => {
       const f = el.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
       if (f) f.focus();
       return m;
+    }
+
+    if (!renderOnScreen && pg && pg.querySelector('.on-screen-form-view') && !dialog) {
+      const existing = pg.querySelector('.on-screen-form-view');
+      const f = existing.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
+      if (f) f.focus();
+      return { el: existing, body: $('.mb', existing), close: () => {}, closed: false };
     }
 
     const el = document.createElement('div');
@@ -2183,6 +2193,17 @@ function openSignatureModal(doc = {}, kind = 'invoices', onSigned = null) {
 window.openSignatureModal = openSignatureModal;
 
 async function partyForm(kind, id, onDone, onCancel) {
+  if (partyForm._opening) return;
+  if (!onDone) {
+    const existing = document.querySelector('.on-screen-form-view');
+    if (existing) {
+      const firstInp = existing.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
+      if (firstInp) firstInp.focus();
+      return;
+    }
+  }
+  partyForm._opening = true;
+  try {
   const isCust = kind === 'customers';
   const entityLabel = isCust ? 'Customer' : 'Vendor';
   const r = id ? await api(`${kind}/${id}/`) : {
@@ -2663,9 +2684,10 @@ async function partyForm(kind, id, onDone, onCancel) {
   formModal({
     title: (id ? 'Edit ' : 'New ') + entityLabel,
     wide: true,
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
     body: formHtml,
     onClose: () => {
+      partyForm._opening = false;
       if (!saveCompleted && onCancel) onCancel();
       if (onDone) {
         return;
@@ -2679,6 +2701,7 @@ async function partyForm(kind, id, onDone, onCancel) {
       }
     },
     onReady: (form, modal) => {
+      partyForm._opening = false;
       modalInstance = modal;
       const partyBrowseDocs = $('#btn_party_browse_docs', modal.el);
       const partyFileInput = $('#party_file_input', modal.el);
@@ -3310,6 +3333,10 @@ async function partyForm(kind, id, onDone, onCancel) {
       }
     }
   });
+  } catch (err) {
+    partyForm._opening = false;
+    throw err;
+  }
 }
 window._partyFormImpl = partyForm;
 window.partyForm = partyForm;
@@ -3328,6 +3355,17 @@ function formatReorderPoint(val) {
 }
 
 async function itemForm(id, onDone) {
+  if (itemForm._opening) return;
+  if (!onDone) {
+    const existing = document.querySelector('.on-screen-form-view');
+    if (existing) {
+      const firstInp = existing.querySelector('input:not([type=hidden]):not([disabled]),select,textarea');
+      if (firstInp) firstInp.focus();
+      return;
+    }
+  }
+  itemForm._opening = true;
+  try {
   const [r, vendors, warehouses, nextSku] = await Promise.all([
     id ? api(`items/${id}/`) : {
       type: 'goods',
@@ -3531,7 +3569,10 @@ async function itemForm(id, onDone) {
   formModal({
     title: id ? 'Edit Item' : 'New Item',
     wide: true,
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
+    onClose: () => {
+      itemForm._opening = false;
+    },
     body: `
     <div class="convosis-item-modal convo-item-modal zb-form-wrap">
 
@@ -3811,6 +3852,7 @@ async function itemForm(id, onDone) {
     </div>
     `,
     onReady: (form, m) => {
+      itemForm._opening = false;
       const fileInput = $('#itemImageFileInput', form);
       const dataInput = $('#itemImageDataInput', form);
       const emptyState = $('#dropzoneEmpty', form);
@@ -4337,6 +4379,10 @@ async function itemForm(id, onDone) {
       }
     },
   });
+  } catch (err) {
+    itemForm._opening = false;
+    throw err;
+  }
 }
 
 /* =========================================================================
@@ -8546,7 +8592,7 @@ async function accountForm(id, onDone) {
   const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
   formModal({
     title: id ? 'Edit Account' : 'New Account',
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'code', label: 'Account Code', value: o.code, ph: 'Optional, e.g. 6095' })}
       ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
@@ -10204,7 +10250,7 @@ async function projectModal(id, onDone, defaultCustomerId = '', onClose) {
   };
   formModal({
     title: id ? 'Edit Project' : 'New Project',
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
     onClose,
     body: `<div class="g form-grid-aligned">
       ${fld({ name: 'name', label: 'Project Name', req: true, value: o.name, col: 's6', ph: 'e.g. Cloud ERP Implementation' })}
@@ -10406,7 +10452,7 @@ async function categoryModal(id, onDone) {
     const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
     formModal({
       title: id ? 'Edit Item Category' : 'New Item Category',
-      dialog: Boolean(onDone || Modal.count() > 0),
+      dialog: Boolean(onDone),
       body: `<div class="g category-modal-active">
         ${fld({ name: 'name', label: 'Category Name', req: true, value: o ? o.name : '', col: 's12', ph: 'e.g. Hardware Components' })}
         ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o ? (o.description || '') : '', col: 's12' })}
@@ -10436,7 +10482,7 @@ async function priceListModal(id, onDone) {
   const rec = id ? await api(`price-lists/${id}/`).catch(() => null) : null;
   formModal({
     title: id ? 'Edit Price List' : 'New Price List',
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'name', label: 'Price List Name', req: true, value: rec?.name || '', ph: 'e.g. Wholesale Discount 15%' })}
       ${fld({ name: 'pricing_scheme', label: 'Pricing Scheme', type: 'select', opts: [['percentage', 'Percentage Markup/Discount'], ['fixed', 'Fixed Rate Card']], value: rec?.pricing_scheme || 'percentage' })}
@@ -10475,7 +10521,7 @@ async function warehouseModal(id, onDone) {
 
   formModal({
     title: (id ? 'Edit ' : 'New ') + 'Inventory Warehouse',
-    dialog: Boolean(onDone || Modal.count() > 0),
+    dialog: Boolean(onDone),
     body: `<div class="g">
       ${fld({ name: 'name', label: 'Warehouse Name', req: true, col: 's6', value: rec?.name || '', ph: 'e.g. Kottayam Central Warehouse' })}
       ${fld({ name: 'code', label: 'Warehouse Code', req: true, col: 's6', value: rec?.code || '', ph: 'WH-KTY-01', attrs: 'maxlength="30" pattern="[A-Za-z0-9_-]+" title="Warehouse Code can contain only letters, numbers, hyphens and underscores."' })}

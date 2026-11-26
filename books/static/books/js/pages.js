@@ -4,7 +4,13 @@ function partyForm(kind, id, onDone, onCancel) {
   if (typeof window._partyFormImpl === 'function' && window._partyFormImpl !== partyForm) {
     return window._partyFormImpl(kind, id, onDone, onCancel);
   }
+  if (typeof window.partyForm === 'function' && window.partyForm !== partyForm) {
+    return window.partyForm(kind, id, onDone, onCancel);
+  }
   console.warn('partyForm not loaded');
+}
+if (typeof window !== 'undefined' && !window.partyForm) {
+  window.partyForm = partyForm;
 }
 
 var opts = (typeof window !== "undefined" && window.opts) ? window.opts : ((list, sel) => (list || []).map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(sel == null ? '' : sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join(''));
@@ -1464,7 +1470,12 @@ function listPage(root, cfg) {
     if (x) {
       const a = x.dataset.x;
       if (a === 'nx') { st.page++; load(); } else if (a === 'pv') { st.page--; load(); }
-      else if (a === 'new') cfg.onNew();
+      else if (a === 'new') {
+        if (x._busy) return;
+        x._busy = true;
+        setTimeout(() => { delete x._busy; }, 600);
+        cfg.onNew();
+      }
       else if (a === 'import') openUniversalImportModal(cfg.api, cfg.title);
       else if (a === 'export-toggle') {
         const pop = $('.export-menu-pop', root);

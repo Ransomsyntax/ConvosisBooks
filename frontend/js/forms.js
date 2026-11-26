@@ -455,11 +455,17 @@ function fld(o) {
   return `<div class="zb-form-row fg ${o.type === 'textarea' ? 'align-top' : ''} ${o.col || ''}"><label class="zb-form-label" for="${id}">${esc(o.label)}${o.req ? ' <span class="rq">*</span>' : ''}</label><div class="zb-form-ctrl">${ctl}<div class="er" data-err="${o.name}" role="alert"></div>${o.help ? `<div class="hp" style="font-size:11px;color:var(--tx-muted);margin-top:2px;">${esc(o.help)}</div>` : ''}</div></div>`;
 }
 
-async function salespersonModal(onDone) {
+async function salespersonModal(onDone, onCancel) {
+  let isSaved = false;
   formModal({
     title: 'New Salesperson',
     dialog: true,
     wide: false,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     body: `
       <div class="zb-form-wrap">
         ${fld({ name: 'name', label: 'Salesperson Name', req: true, ph: 'e.g. Rahul Sharma' })}
@@ -475,6 +481,7 @@ async function salespersonModal(onDone) {
       if (!nameValid) throw new ApiErr(400, { name: 'Enter a valid name' }, 'Enter a valid name');
       if (!emailValid) throw new ApiErr(400, { email: 'Enter a valid email address' }, 'Enter a valid email address');
       const res = await api('salespersons/', { method: 'POST', body: d });
+      isSaved = true;
       toast(`Salesperson "${res.name || name}" added successfully!`, 'ok');
       if (onDone) onDone(res);
       else refresh();
@@ -483,11 +490,17 @@ async function salespersonModal(onDone) {
 }
 window.salespersonModal = salespersonModal;
 
-async function employeeModal(onDone) {
+async function employeeModal(onDone, onCancel) {
+  let isSaved = false;
   formModal({
     title: 'New Employee / Staff',
     dialog: true,
     wide: false,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     body: `
       <div class="zb-form-wrap">
         ${fld({ name: 'name', label: 'Employee Name', req: true, ph: 'e.g. Anjali Nair' })}
@@ -500,6 +513,7 @@ async function employeeModal(onDone) {
       const name = (d.name || '').trim();
       if (!name) throw new ApiErr(400, { name: 'Employee Name is required.' }, 'Employee Name is required.');
       const res = await api('employees/', { method: 'POST', body: d });
+      isSaved = true;
       toast(`Employee "${res.name || name}" added successfully!`, 'ok');
       if (onDone) onDone(res);
       else refresh();
@@ -508,11 +522,17 @@ async function employeeModal(onDone) {
 }
 window.employeeModal = employeeModal;
 
-async function unitModal(onDone) {
+async function unitModal(onDone, onCancel) {
+  let isSaved = false;
   formModal({
     title: 'Add New Unit of Measurement',
     dialog: true,
     wide: false,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     body: `
       <div class="zb-form-wrap">
         ${fld({ name: 'unit_code', label: 'Unit Code', req: true, ph: 'e.g. roll, pkt, bundle' })}
@@ -524,6 +544,7 @@ async function unitModal(onDone) {
       if (!code) throw new ApiErr(400, { unit_code: 'Unit code is required.' }, 'Unit code is required.');
       const name = (d.unit_name || '').trim() || code;
       const res = { id: code, code, name: `${code} (${name})` };
+      isSaved = true;
       toast(`Unit "${code}" added!`, 'ok');
       if (onDone) onDone(res);
     }
@@ -531,11 +552,17 @@ async function unitModal(onDone) {
 }
 window.unitModal = unitModal;
 
-async function taxRateModal(onDone) {
+async function taxRateModal(onDone, onCancel) {
+  let isSaved = false;
   formModal({
     title: 'Add Custom Tax Rate',
     dialog: true,
     wide: false,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     body: `
       <div class="zb-form-wrap">
         ${fld({ name: 'tax_rate', label: 'Tax Rate (%)', type: 'number', req: true, ph: 'e.g. 12' })}
@@ -547,6 +574,7 @@ async function taxRateModal(onDone) {
       if (isNaN(rate) || rate < 0 || rate > 100) throw new ApiErr(400, { tax_rate: 'Valid tax rate between 0 and 100 is required.' }, 'Invalid tax rate.');
       const name = (d.tax_name || '').trim() || `GST${rate} [${rate}%]`;
       const res = { id: String(rate), rate, name };
+      isSaved = true;
       toast(`Tax rate "${name}" added!`, 'ok');
       if (onDone) onDone(res);
     }
@@ -554,7 +582,7 @@ async function taxRateModal(onDone) {
 }
 window.taxRateModal = taxRateModal;
 
-async function handleQuickCreateSelect(selectEl, customCallback) {
+async function handleQuickCreateSelect(selectEl, customCallback, customCancelCallback) {
   if (!selectEl || selectEl._quickCreating) return false;
   const val = selectEl.value;
   const opt = selectEl.options[selectEl.selectedIndex];
@@ -610,12 +638,43 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
   if (!entity) return false;
 
   selectEl._quickCreating = true;
-  const prevVal = selectEl.dataset.prevVal || '';
+  let prevVal = selectEl.dataset.prevVal || '';
+  if (prevVal.startsWith('__new_') || prevVal === '__add_new__') {
+    prevVal = '';
+  }
   selectEl.value = prevVal;
+  selectEl.dataset.prevVal = prevVal;
+  if (typeof selectEl._searchableSync === 'function') {
+    selectEl._searchableSync();
+  }
+
+  const onCancel = () => {
+    selectEl._quickCreating = false;
+    selectEl.value = prevVal;
+    selectEl.dataset.prevVal = prevVal;
+    if (typeof selectEl._searchableSync === 'function') {
+      selectEl._searchableSync();
+    } else {
+      const searchWrap = selectEl.nextElementSibling;
+      if (searchWrap && searchWrap.classList && searchWrap.classList.contains('searchable-select-wrap')) {
+        const inp = searchWrap.querySelector('.searchable-select-input');
+        if (inp) {
+          const curOpt = selectEl.options[selectEl.selectedIndex];
+          inp.value = curOpt ? curOpt.text : '';
+        }
+      }
+    }
+    if (typeof customCancelCallback === 'function') {
+      try { customCancelCallback(); } catch (e) {}
+    }
+  };
 
   const onCreated = (newRecord) => {
     selectEl._quickCreating = false;
-    if (!newRecord) return;
+    if (!newRecord) {
+      onCancel();
+      return;
+    }
 
     let idVal = newRecord.id;
     let labelVal = newRecord.name;
@@ -747,23 +806,23 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
 
   try {
     if (entity === 'customer') {
-      partyForm('customers', null, onCreated, () => { selectEl._quickCreating = false; });
+      partyForm('customers', null, onCreated, onCancel);
     } else if (entity === 'vendor') {
-      partyForm('vendors', null, onCreated, () => { selectEl._quickCreating = false; });
+      partyForm('vendors', null, onCreated, onCancel);
     } else if (entity === 'item') {
-      itemForm(null, onCreated);
+      itemForm(null, onCreated, onCancel);
     } else if (entity === 'salesperson') {
-      salespersonModal(onCreated);
+      salespersonModal(onCreated, onCancel);
     } else if (entity === 'warehouse') {
-      warehouseModal(null, onCreated);
+      warehouseModal(null, onCreated, onCancel);
     } else if (entity === 'employee') {
-      employeeModal(onCreated);
+      employeeModal(onCreated, onCancel);
     } else if (entity === 'category') {
-      categoryModal(null, onCreated);
+      categoryModal(null, onCreated, onCancel);
     } else if (entity === 'pricelist') {
-      priceListModal(null, onCreated);
+      priceListModal(null, onCreated, onCancel);
     } else if (entity === 'account') {
-      accountForm(null, onCreated);
+      accountForm(null, onCreated, onCancel);
     } else if (entity === 'project') {
       const customerId = selectEl.dataset.projectCustomerId || '';
       await projectModal(null, async newProject => {
@@ -771,17 +830,17 @@ async function handleQuickCreateSelect(selectEl, customCallback) {
         if (typeof selectEl._onQuickProjectCreated === 'function') {
           await selectEl._onQuickProjectCreated(newProject);
         }
-      }, customerId, () => { selectEl._quickCreating = false; });
+      }, customerId, onCancel);
     } else if (entity === 'unit') {
-      unitModal(onCreated);
+      unitModal(onCreated, onCancel);
     } else if (entity === 'tax') {
-      taxRateModal(onCreated);
+      taxRateModal(onCreated, onCancel);
     } else if (entity === 'bank_account') {
-      bankAccountForm(null, onCreated);
+      bankAccountForm(null, onCreated, onCancel);
     }
     return true;
   } catch (err) {
-    selectEl._quickCreating = false;
+    onCancel();
     console.error(err);
     toast(err.message, 'err');
     return false;
@@ -989,7 +1048,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('focusin', e => {
     if (e.target && e.target.tagName === 'SELECT') {
       const v = e.target.value || '';
-      if (!e.target.dataset.prevVal || (!v.startsWith('__new_') && v !== '__add_new__')) {
+      if (!v.startsWith('__new_') && v !== '__add_new__') {
         e.target.dataset.prevVal = v;
       }
     }
@@ -3354,7 +3413,7 @@ function formatReorderPoint(val) {
   return String(n);
 }
 
-async function itemForm(id, onDone) {
+async function itemForm(id, onDone, onCancel) {
   if (itemForm._opening) return;
   if (!onDone) {
     const existing = document.querySelector('.on-screen-form-view');
@@ -3365,6 +3424,7 @@ async function itemForm(id, onDone) {
     }
   }
   itemForm._opening = true;
+  let itemSaved = false;
   try {
   const [r, vendors, warehouses, nextSku] = await Promise.all([
     id ? api(`items/${id}/`) : {
@@ -3572,6 +3632,9 @@ async function itemForm(id, onDone) {
     dialog: Boolean(onDone),
     onClose: () => {
       itemForm._opening = false;
+      if (!itemSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
     },
     body: `
     <div class="convosis-item-modal convo-item-modal zb-form-wrap">
@@ -4367,6 +4430,8 @@ async function itemForm(id, onDone) {
       if (!id) d.active = true;
       if (!d.purchase_price) d.purchase_price = '0.00';
       const saved = await api(id ? `items/${id}/` : 'items/', { method: id ? 'PUT' : 'POST', body: d });
+      itemSaved = true;
+      itemForm._opening = false;
       toast('Item ' + (id ? 'updated' : 'created'));
       if (onDone) {
         onDone(saved || d);
@@ -4381,6 +4446,9 @@ async function itemForm(id, onDone) {
   });
   } catch (err) {
     itemForm._opening = false;
+    if (!itemSaved && typeof onCancel === 'function') {
+      try { onCancel(); } catch (e) {}
+    }
     throw err;
   }
 }
@@ -8583,13 +8651,14 @@ function orgForm() {
   });
 }
 
-async function accountForm(id, onDone) {
+async function accountForm(id, onDone, onCancel) {
   const [o, allAccounts] = await Promise.all([
     id ? api(`accounts/${id}/`) : Promise.resolve({ code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', parent_id: null, active: true }),
     api('accounts/?page_size=500').catch(() => ({ results: [] }))
   ]);
   const accountOptions = (allAccounts.results || allAccounts || []).filter(account => !id || String(account.id) !== String(id));
   const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
+  let isSaved = false;
   formModal({
     title: id ? 'Edit Account' : 'New Account',
     dialog: Boolean(onDone),
@@ -8600,11 +8669,17 @@ async function accountForm(id, onDone) {
       ${fld({ name: 'parent_id', label: 'Parent Account', type: 'select', opts: [['', 'No Parent'], ...accountOptions.map(account => [account.id, `${account.code ? account.code + ' - ' : ''}${account.name}`])], value: o.parent_id || '' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, rows: 2 })}
     </div>`,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     onSubmit: async d => {
       d.active = !!d.active;
       let res;
       if (id) res = await api(`accounts/${id}/`, { method: 'PUT', body: d });
       else res = await api('accounts/', { method: 'POST', body: d });
+      isSaved = true;
       toast(id ? 'Account updated' : 'Account created');
       if (onDone) onDone(res || d);
       else refresh();
@@ -9230,7 +9305,7 @@ async function expenseForm(id) {
   });
 }
 
-async function bankAccountForm(id, onDone) {
+async function bankAccountForm(id, onDone, onCancel) {
   const [o, accounts] = await Promise.all([
     id ? api(`bank-accounts/${id}/`) : Promise.resolve({
       name: '', bank_name: '', account_number: '', ifsc: '', account_type: '',
@@ -9252,9 +9327,16 @@ async function bankAccountForm(id, onDone) {
   ];
 
   const glOpts = [['', 'Select General Ledger Account...'], ...accounts.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name} (${a.account_type})`])];
+  let isSaved = false;
 
   formModal({
     title: id ? 'Edit Bank Account' : 'Add Bank Account',
+    dialog: Boolean(onDone),
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     body: `<div class="zb-form-wrap">
       ${fld({ name: 'name', label: 'Account / Display Name', req: true, value: o.name, ph: 'e.g. Kotak1 / Primary Current' })}
       ${fld({ name: 'bank_name', label: 'Bank Name', req: true, value: o.bank_name, ph: 'e.g. Kotak Mahindra Bank' })}
@@ -9367,6 +9449,7 @@ async function bankAccountForm(id, onDone) {
       let res;
       if (id) res = await api(`bank-accounts/${id}/`, { method: 'PUT', body: d });
       else res = await api('bank-accounts/', { method: 'POST', body: d });
+      isSaved = true;
       toast('Bank account saved successfully');
       refresh();
       if (typeof onDone === 'function') onDone(res);
@@ -10444,10 +10527,17 @@ function rejectTimesheetModal(row) {
 }
 
 let _categoryModalBusy = false;
-async function categoryModal(id, onDone) {
-  if (_categoryModalBusy) return;
-  if (document.querySelector('.category-modal-active')) return;
+async function categoryModal(id, onDone, onCancel) {
+  if (_categoryModalBusy) {
+    if (typeof onCancel === 'function') try { onCancel(); } catch (e) {}
+    return;
+  }
+  if (document.querySelector('.category-modal-active')) {
+    if (typeof onCancel === 'function') try { onCancel(); } catch (e) {}
+    return;
+  }
   _categoryModalBusy = true;
+  let isSaved = false;
   try {
     const o = id ? await api(`item-categories/${id}/`).catch(() => null) : null;
     formModal({
@@ -10459,11 +10549,15 @@ async function categoryModal(id, onDone) {
       </div>`,
       onClose: () => {
         _categoryModalBusy = false;
+        if (!isSaved && typeof onCancel === 'function') {
+          try { onCancel(); } catch (e) {}
+        }
       },
       onSubmit: async d => {
         let res;
         if (id) res = await api(`item-categories/${id}/`, { method: 'PUT', body: d });
         else res = await api('item-categories/', { method: 'POST', body: d });
+        isSaved = true;
         toast(id ? 'Category updated' : 'Category created');
         _categoryModalBusy = false;
         if (onDone) onDone(res || d);
@@ -10472,14 +10566,18 @@ async function categoryModal(id, onDone) {
     });
   } catch (err) {
     _categoryModalBusy = false;
+    if (!isSaved && typeof onCancel === 'function') {
+      try { onCancel(); } catch (e) {}
+    }
     throw err;
   } finally {
     setTimeout(() => { _categoryModalBusy = false; }, 300);
   }
 }
 
-async function priceListModal(id, onDone) {
+async function priceListModal(id, onDone, onCancel) {
   const rec = id ? await api(`price-lists/${id}/`).catch(() => null) : null;
+  let isSaved = false;
   formModal({
     title: id ? 'Edit Price List' : 'New Price List',
     dialog: Boolean(onDone),
@@ -10489,6 +10587,11 @@ async function priceListModal(id, onDone) {
       ${fld({ name: 'percentage', label: 'Percentage Adjustment (%)', type: 'number', value: rec ? rec.percentage : '-15.00', help: 'Negative for discount (e.g. -15%), positive for markup.' })}
       ${fld({ name: 'description', label: 'Description', type: 'textarea', value: rec?.description || '', ph: 'Optional notes regarding this price list...' })}
     </div>`,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     onSubmit: async d => {
       const n = (d.name || '').trim();
       if (!n) throw new ApiErr(400, { name: 'Price List Name is required.' }, 'Price List Name is required.');
@@ -10506,18 +10609,20 @@ async function priceListModal(id, onDone) {
         res = await api('price-lists/', { method: 'POST', body: d });
         toast('Price list created successfully!', 'ok');
       }
+      isSaved = true;
       if (onDone) onDone(res || d);
       else refresh();
     }
   });
 }
 
-async function warehouseModal(id, onDone) {
+async function warehouseModal(id, onDone, onCancel) {
   const [existingWh, rec] = await Promise.all([
     api('lookup/warehouses/').catch(() => []),
     id ? api(`warehouses/${id}/`).catch(() => null) : Promise.resolve(null)
   ]);
   const otherPrimary = existingWh.find(w => w.is_primary && String(w.id) !== String(id || ''));
+  let isSaved = false;
 
   formModal({
     title: (id ? 'Edit ' : 'New ') + 'Inventory Warehouse',
@@ -10532,6 +10637,11 @@ async function warehouseModal(id, onDone) {
       ${fld({ name: 'is_primary', label: 'Set as Primary Warehouse', type: 'checkbox', value: !!rec?.is_primary, col: 's6' })}
       ${fld({ name: 'shared_database', label: 'Shared Database Architecture (Unified inventory catalog)', type: 'checkbox', value: rec ? !!rec.shared_database : true, col: 's6' })}
     </div>`,
+    onClose: () => {
+      if (!isSaved && typeof onCancel === 'function') {
+        try { onCancel(); } catch (e) {}
+      }
+    },
     onReady: (form, modal) => {
       const isPrimaryCk = $('input[name="is_primary"]', form);
       if (isPrimaryCk && otherPrimary) {
@@ -11073,14 +11183,24 @@ async function challanModal(id) {
         const select = $('.dc-item', row);
         setupSearchableSelect(select, {
           placeholder: 'Search item…',
-          onNew: () => itemForm(null, newItem => {
-            if (!newItem || !newItem.id) return;
-            items.push(newItem);
-            itemOptions.push([newItem.id, `${newItem.name}${newItem.sku ? ` · ${newItem.sku}` : ''}`]);
-            select.add(new Option(newItem.name, newItem.id));
-            select.value = String(newItem.id);
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-          })
+          onNew: () => {
+            const prevVal = select.dataset.prevVal || '';
+            select.value = prevVal;
+            if (typeof select._searchableSync === 'function') select._searchableSync();
+            itemForm(null, newItem => {
+              if (!newItem || !newItem.id) return;
+              items.push(newItem);
+              itemOptions.push([newItem.id, `${newItem.name}${newItem.sku ? ` · ${newItem.sku}` : ''}`]);
+              select.add(new Option(newItem.name, newItem.id));
+              select.value = String(newItem.id);
+              select.dataset.prevVal = String(newItem.id);
+              if (typeof select._searchableSync === 'function') select._searchableSync();
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            }, () => {
+              select.value = prevVal;
+              if (typeof select._searchableSync === 'function') select._searchableSync();
+            });
+          }
         });
         select.addEventListener('change', () => {
           const item = items.find(value => String(value.id) === select.value);
@@ -19207,6 +19327,8 @@ async function stockTransferModal(id = null, onDone = null) {
     const tr = e.target.closest('.st-line-row');
     if (tr && e.target.matches('.st-item')) {
       if (e.target.value === '__new_item__') {
+        const prevVal = e.target.dataset.prevVal || '';
+        e.target.value = prevVal;
         itemForm(null, newItem => {
           if (newItem && newItem.id) {
             goodsItems.push(newItem);
@@ -19220,11 +19342,15 @@ async function stockTransferModal(id = null, onDone = null) {
               else sel.appendChild(opt);
             });
             e.target.value = newItem.id;
+            e.target.dataset.prevVal = newItem.id;
             updateStockBadge(tr);
           } else {
-            e.target.value = '';
+            e.target.value = prevVal;
             updateStockBadge(tr);
           }
+        }, () => {
+          e.target.value = prevVal;
+          updateStockBadge(tr);
         });
         return;
       }

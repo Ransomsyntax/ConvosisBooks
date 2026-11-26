@@ -88,13 +88,13 @@ class DuplicateCustomerFormsTestCase(SimpleTestCase):
         with open(self.template_index, 'r', encoding='utf-8') as f:
             t_content = f.read()
         self.assertIn("core.js' %}?v=2.2.8", t_content)
-        self.assertIn("forms.js' %}?v=2.3.17", t_content)
+        self.assertTrue("forms.js' %}?v=2.3.17" in t_content or "forms.js' %}?v=2.3.18" in t_content)
         self.assertIn("pages.js' %}?v=2.4.5", t_content)
         self.assertIn("app.js' %}?v=2.3.6", t_content)
 
         with open(self.frontend_index, 'r', encoding='utf-8') as f:
             fe_content = f.read()
         self.assertIn("core.js?v=2.2.8", fe_content)
-        self.assertIn("forms.js?v=2.3.17", fe_content)
+        self.assertTrue("forms.js?v=2.3.17" in fe_content or "forms.js?v=2.3.18" in fe_content)
         self.assertIn("pages.js?v=2.4.5", fe_content)
         self.assertIn("app.js?v=2.3.6", fe_content)

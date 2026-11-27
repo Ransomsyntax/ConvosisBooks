@@ -1872,6 +1872,23 @@ class ItemResource(Resource):
             setattr(obj, k, v)
         obj.save()
 
+def _parse_tds_tax_rate(val):
+    if not val:
+        return Decimal('0.00')
+    if isinstance(val, (int, float, Decimal)):
+        return Decimal(str(val))
+    val_str = str(val).strip()
+    m = re.search(r'(\d+(?:\.\d+)?)%', val_str)
+    if m:
+        return Decimal(m.group(1))
+    try:
+        return Decimal(val_str)
+    except Exception:
+        m2 = re.search(r'(\d+(?:\.\d+)?)', val_str)
+        if m2:
+            return Decimal(m2.group(1))
+        return Decimal('0.00')
+
 def parse_lines(raw, org=None):
     msg = 'Add at least one line item.'
     if not isinstance(raw, list) or not raw:
@@ -1933,7 +1950,11 @@ def parse_lines(raw, org=None):
             c.err('gst_rate', 'GST rate must be between 0% and 100%.')
         raw_tds_r = c.number('tds_rate', lo=Decimal('0'), hi=Decimal('100'), default=Decimal('0'))
         tds_rate = raw_tds_r if raw_tds_r is not None else Decimal('0')
-        tds_applicable = bool(c.boolean('tds_applicable', default=False) or tds_rate > Decimal('0'))
+        raw_tds_app = r.get('tds_applicable')
+        if raw_tds_app is None:
+            tds_applicable = None
+        else:
+            tds_applicable = bool(c.boolean('tds_applicable', default=False) or tds_rate > Decimal('0'))
         tds_section = c.text('tds_section', max_len=50) or ''
         raw_tds_amt = c.number('tds_amount', lo=Decimal('0'), default=Decimal('0.00'))
         tds_amount = raw_tds_amt if raw_tds_amt is not None else Decimal('0.00')
@@ -2701,7 +2722,7 @@ class DocResource(Resource):
                 tds_mode = 'transaction'
             else:
                 tds_mode = 'none'
-        tds_tax_rate = Decimal(str(data.get('tds_tax_rate') or data.get('tds_tcs_tax') or 0))
+        tds_tax_rate = _parse_tds_tax_rate(data.get('tds_tax_rate') or data.get('tds_tcs_tax') or 0)
         tds_section = str(data.get('tds_section') or '').strip()
         head['tds_mode'] = tds_mode
         head['tds_tax_rate'] = tds_tax_rate
@@ -2736,7 +2757,11 @@ class DocResource(Resource):
         elif 'business_location' in head:
             obj.business_location = None
         for k, v in tot.items():
+            if k == 'adjustment' and 'adjustment' in head:
+                continue
             setattr(obj, k, v)
+        if 'adjustment' in head:
+            obj.adjustment = head['adjustment']
         if isinstance(obj, Quote):
             adj = getattr(obj, 'adjustment', Decimal('0.00')) or Decimal('0.00')
             tax_type = getattr(obj, 'tax_type', 'tds')
@@ -7928,7 +7953,11 @@ class PurchaseOrderResource(Resource):
         intra = is_intra_state(obj.place_of_supply, Organization.get().state)
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'))
         for k, v in tot.items():
+            if k == 'adjustment' and 'adjustment' in head:
+                continue
             setattr(obj, k, v)
+        if 'adjustment' in head:
+            obj.adjustment = head['adjustment']
         obj.save()
         obj.lines.all().delete()
         for l in comp:
@@ -8602,7 +8631,11 @@ class CreditNoteResource(Resource):
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'),
                             tds_mode=obj.tds_mode, tds_tax_rate=obj.tds_tax_rate, tds_section=obj.tds_section)
         for k, v in tot.items():
+            if k == 'adjustment' and 'adjustment' in head:
+                continue
             setattr(obj, k, v)
+        if 'adjustment' in head:
+            obj.adjustment = head['adjustment']
         obj.save()
         obj.lines.all().delete()
         for l in comp:
@@ -9110,7 +9143,11 @@ class VendorCreditResource(Resource):
         comp, tot = compute(lines, intra, is_tax_inclusive=(obj.tax_pricing_type == 'tax_inclusive'),
                             tds_mode=obj.tds_mode, tds_tax_rate=obj.tds_tax_rate, tds_section=obj.tds_section)
         for k, v in tot.items():
+            if k == 'adjustment' and 'adjustment' in head:
+                continue
             setattr(obj, k, v)
+        if 'adjustment' in head:
+            obj.adjustment = head['adjustment']
         obj.save()
         obj.lines.all().delete()
         for l in comp:

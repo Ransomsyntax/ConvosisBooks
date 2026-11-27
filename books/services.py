@@ -3114,6 +3114,9 @@ def ensure_default_accounts(org=None):
         ('2240', 'Input CGST', 'asset', 'tax_credit', 'Central GST paid on eligible business purchases (ITC)'),
         ('2250', 'Input SGST', 'asset', 'tax_credit', 'State GST paid on eligible business purchases (ITC)'),
         ('2260', 'Input IGST', 'asset', 'tax_credit', 'Integrated GST paid on eligible business purchases (ITC)'),
+        ('2270', 'TDS Payable', 'liability', 'tax_payable', 'TDS withheld on vendor purchases and payments to be remitted'),
+        ('2280', 'TCS Payable', 'liability', 'tax_payable', 'Tax collected at source payable to government'),
+        ('1220', 'TCS Receivable', 'asset', 'tax_credit', 'Tax collected at source paid to vendors (TCS Credit)'),
         ('2300', 'GST Payable', 'liability', 'tax_payable', 'Net statutory GST due for remittance'),
         ('3000', "Owner's Equity", 'equity', 'equity', 'Capital contributed by owners/shareholders'),
         ('3100', 'Retained Earnings', 'equity', 'retained_earnings', 'Accumulated net profit retained in business'),
@@ -3499,22 +3502,30 @@ def post_bill_of_entry(boe, user=None):
     return boe
 
 def post_invoice_journal(inv, user):
-    """Debit AR, Credit Sales Revenue, Credit Output Taxes, balance Adjustment/TCS."""
+    """Debit AR, Debit TDS Receivable (if withheld), Credit Sales Revenue, Credit Output Taxes, balance Adjustment/TCS."""
     org = getattr(inv, 'organization', None)
+    ensure_default_accounts(org)
+    tds_amt = getattr(inv, 'tds_amount', Decimal('0.00')) or Decimal('0.00')
+    tcs_amt = getattr(inv, 'tcs_amount', Decimal('0.00')) or Decimal('0.00')
     items = [
         ('1200', inv.total, Decimal('0.00'), f'Invoice {inv.number} - {inv.customer.name}'),
         ('4000', Decimal('0.00'), inv.subtotal, f'Invoice {inv.number} Taxable Sales')
     ]
+    if tds_amt > 0:
+        items.append(('1210', tds_amt, Decimal('0.00'), f'Income TDS Receivable on {inv.number}'))
     if inv.cgst > 0:
         items.append(('2210', Decimal('0.00'), inv.cgst, f'Output CGST on {inv.number}'))
     if inv.sgst > 0:
         items.append(('2220', Decimal('0.00'), inv.sgst, f'Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', Decimal('0.00'), inv.igst, f'Output IGST on {inv.number}'))
-    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst
-    diff = inv.total - credits_sum
+    if tcs_amt > 0:
+        items.append(('2280', Decimal('0.00'), tcs_amt, f'Output TCS on {inv.number}'))
+    debits_sum = inv.total + tds_amt
+    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst + tcs_amt
+    diff = debits_sum - credits_sum
     if diff > 0:
-        items.append(('4900', Decimal('0.00'), diff, f'Adjustment / TCS on {inv.number}'))
+        items.append(('4900', Decimal('0.00'), diff, f'Adjustment on {inv.number}'))
     elif diff < 0:
         items.append(('4900', abs(diff), Decimal('0.00'), f'Adjustment discount on {inv.number}'))
     return post_journal_entry(
@@ -3525,20 +3536,28 @@ def post_invoice_journal(inv, user):
 def post_invoice_void_journal(inv, user):
     """Reversing journal entry on invoice void."""
     org = getattr(inv, 'organization', None)
+    ensure_default_accounts(org)
+    tds_amt = getattr(inv, 'tds_amount', Decimal('0.00')) or Decimal('0.00')
+    tcs_amt = getattr(inv, 'tcs_amount', Decimal('0.00')) or Decimal('0.00')
     items = [
         ('1200', Decimal('0.00'), inv.total, f'Void Invoice {inv.number} - {inv.customer.name}'),
         ('4000', inv.subtotal, Decimal('0.00'), f'Void Invoice {inv.number} Sales')
     ]
+    if tds_amt > 0:
+        items.append(('1210', Decimal('0.00'), tds_amt, f'Reversal of Income TDS Receivable on {inv.number}'))
     if inv.cgst > 0:
         items.append(('2210', inv.cgst, Decimal('0.00'), f'Reversal of Output CGST on {inv.number}'))
     if inv.sgst > 0:
         items.append(('2220', inv.sgst, Decimal('0.00'), f'Reversal of Output SGST on {inv.number}'))
     if inv.igst > 0:
         items.append(('2230', inv.igst, Decimal('0.00'), f'Reversal of Output IGST on {inv.number}'))
-    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst
-    diff = inv.total - credits_sum
+    if tcs_amt > 0:
+        items.append(('2280', tcs_amt, Decimal('0.00'), f'Reversal of Output TCS on {inv.number}'))
+    debits_sum = inv.total + tds_amt
+    credits_sum = inv.subtotal + inv.cgst + inv.sgst + inv.igst + tcs_amt
+    diff = debits_sum - credits_sum
     if diff > 0:
-        items.append(('4900', diff, Decimal('0.00'), f'Reversal of Adjustment / TCS on {inv.number}'))
+        items.append(('4900', diff, Decimal('0.00'), f'Reversal of Adjustment on {inv.number}'))
     elif diff < 0:
         items.append(('4900', Decimal('0.00'), abs(diff), f'Reversal of Adjustment discount on {inv.number}'))
     return post_journal_entry(
@@ -3596,8 +3615,10 @@ def post_credit_note_apply_journal(cn, invoice, amount, date_, user=None, org=No
     )
 
 def post_bill_journal(bill, user):
-    """Debit COGS/Expense, Debit Input Taxes, Credit AP."""
+    """Debit COGS/Expense, Debit Input Taxes, Credit AP, Credit TDS Payable."""
     org = getattr(bill, 'organization', None)
+    ensure_default_accounts(org)
+    tds_amt = getattr(bill, 'tds_amount', Decimal('0.00')) or Decimal('0.00')
     items = [
         ('5000', bill.subtotal, Decimal('0.00'), f'Bill {bill.number} - {bill.vendor.name}'),
         ('2000', Decimal('0.00'), bill.total, f'Bill {bill.number} Accounts Payable')
@@ -3608,6 +3629,15 @@ def post_bill_journal(bill, user):
         items.append(('2250', bill.sgst, Decimal('0.00'), f'Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', bill.igst, Decimal('0.00'), f'Input IGST ITC on {bill.number}'))
+    if tds_amt > 0:
+        items.append(('2270', Decimal('0.00'), tds_amt, f'TDS Withheld on {bill.number}'))
+    debits_sum = bill.subtotal + bill.cgst + bill.sgst + bill.igst
+    credits_sum = bill.total + tds_amt
+    diff = debits_sum - credits_sum
+    if diff > 0:
+        items.append(('4900', Decimal('0.00'), diff, f'Adjustment on {bill.number}'))
+    elif diff < 0:
+        items.append(('4900', abs(diff), Decimal('0.00'), f'Adjustment discount on {bill.number}'))
     return post_journal_entry(
         bill.date, 'bill', bill.number, f'Auto-posted bill {bill.number}',
         items, user, org=org, business_location=bill.business_location,
@@ -3616,6 +3646,8 @@ def post_bill_journal(bill, user):
 def post_bill_void_journal(bill, user):
     """Reversing journal entry on bill void."""
     org = getattr(bill, 'organization', None)
+    ensure_default_accounts(org)
+    tds_amt = getattr(bill, 'tds_amount', Decimal('0.00')) or Decimal('0.00')
     items = [
         ('5000', Decimal('0.00'), bill.subtotal, f'Void Bill {bill.number} Expense'),
         ('2000', bill.total, Decimal('0.00'), f'Void Bill {bill.number} Accounts Payable')
@@ -3626,6 +3658,15 @@ def post_bill_void_journal(bill, user):
         items.append(('2250', Decimal('0.00'), bill.sgst, f'Reversal of Input SGST ITC on {bill.number}'))
     if bill.igst > 0:
         items.append(('2260', Decimal('0.00'), bill.igst, f'Reversal of Input IGST ITC on {bill.number}'))
+    if tds_amt > 0:
+        items.append(('2270', tds_amt, Decimal('0.00'), f'Reversal of TDS Withheld on {bill.number}'))
+    debits_sum = bill.subtotal + bill.cgst + bill.sgst + bill.igst
+    credits_sum = bill.total + tds_amt
+    diff = debits_sum - credits_sum
+    if diff > 0:
+        items.append(('4900', diff, Decimal('0.00'), f'Reversal of Adjustment on {bill.number}'))
+    elif diff < 0:
+        items.append(('4900', Decimal('0.00'), abs(diff), f'Reversal of Adjustment discount on {bill.number}'))
     return post_journal_entry(
         bill.date, 'bill_void', bill.number, f'Reversal of voided bill {bill.number}',
         items, user, org=org, business_location=bill.business_location,

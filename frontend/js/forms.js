@@ -4634,7 +4634,6 @@ async function openDocNumberPreferencesModal({ kind, series = 'Default Transacti
   }
   window._docNumberPrefModalOpen = true;
 
-  const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : (kind === 'delivery-challans' ? 'delivery_challans' : (kind === 'expenses' ? 'expenses' : (kind === 'payments-made' ? 'payments_made' : (kind === 'payments-received' ? 'payments_received' : 'invoices')))))))));
   const docLabel = kind === 'quotes' ? 'Quote' : (kind === 'sales-orders' ? 'Sales Order' : (kind === 'bills' ? 'Bill' : (kind === 'purchase-orders' ? 'Purchase Order' : (kind === 'retainer-invoices' ? 'Retainer Invoice' : (kind === 'recurring-invoices' ? 'Recurring Invoice' : (kind === 'delivery-challans' ? 'Delivery Challan' : (kind === 'expenses' ? 'Expense' : (kind === 'payments-made' ? 'Payment Made' : (kind === 'payments-received' ? 'Payment Received' : 'Invoice')))))))));
 
   let pref = { auto_generate: true, prefix: 'INV/', next_number: 1, restart_yearly: true, preview_formatted: '' };

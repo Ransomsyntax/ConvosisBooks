@@ -3618,6 +3618,8 @@ async function docMasterDetail(root, kind, selectedId, openEdit, extraOpts = {})
       }
     } catch (e) {
       $('#master-list-box', root).innerHTML = errBox(e.message);
+      const detailBox = $('#detail-col-box', root);
+      if (detailBox) detailBox.innerHTML = errBox(e.message);
     }
   }
 

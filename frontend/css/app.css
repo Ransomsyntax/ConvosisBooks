@@ -2004,6 +2004,20 @@ body.in-settings .pg {
   height: 24px;
   margin: 0;
   padding: 0;
+  cursor: pointer;
+}
+
+.settings-location-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.settings-location-checkbox span {
+  cursor: pointer;
+  user-select: none;
 }
 
 .settings-location-status {
@@ -2067,7 +2081,7 @@ body.in-settings .pg {
   display: flex;
   flex: 0 0 auto;
   position: relative;
-  z-index: 10;
+  z-index: 1;
   align-items: center;
   gap: 10px;
   padding: 12px 24px;
@@ -2823,6 +2837,14 @@ body.in-settings .pg {
   z-index: 9999;
   padding: 20px;
   box-sizing: border-box;
+}
+
+.searchable-select-menu {
+  background: #fff !important;
+}
+
+[data-theme="dark"] .searchable-select-menu {
+  background: var(--surface, #1e293b) !important;
 }
 
 .modal-box {

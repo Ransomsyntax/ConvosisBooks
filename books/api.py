@@ -16116,7 +16116,9 @@ def settings_locations_view(request, location_id=None):
 
     data = body(request)
     name = str(data.get('name') or '').strip()
-    if not name or len(name) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in name):
+    if not name:
+        raise ApiError(400, 'Branch Name is required.')
+    if len(name) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in name):
         raise ApiError(400, 'Location name must be between 1 and 120 characters.')
     prefix = str(data['prefix']).strip().upper() if 'prefix' in data else None
     if prefix:

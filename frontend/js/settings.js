@@ -5862,12 +5862,13 @@ async function renderBusinessLocationsPage(container) {
                 <label class="settings-location-label" for="locationLogo">Logo</label>
                 <div class="settings-location-field">
                   <select class="form-control" id="locationLogo">
-                    <option value="">Same as Organization Logo</option>
-                    ${location.logo_data ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
+                    <option value="__no_logo__" ${!locationId || location.logo_data === '__no_logo__' ? 'selected' : ''}>No Logo</option>
+                    <option value="" ${locationId && !location.logo_data ? 'selected' : ''}>Same as Organization Logo</option>
+                    ${location.logo_data && location.logo_data !== '__no_logo__' ? `<option value="${esc(location.logo_data)}" selected>Location-specific Logo</option>` : ''}
                     <option value="__upload_new_logo__">Upload a New Logo</option>
                   </select>
                   <input type="file" id="locationLogoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
-                  <div id="locationLogoPreview" class="settings-location-logo-preview">${location.logo_data ? `<img src="${esc(location.logo_data)}" alt="Location logo">` : (organization && organization.logo_data ? `<img src="${esc(organization.logo_data)}" alt="Organization logo">` : '')}</div>
+                  <div id="locationLogoPreview" class="settings-location-logo-preview">${location.logo_data && location.logo_data !== '__no_logo__' ? `<img src="${esc(location.logo_data)}" alt="Location logo">` : (!locationId || location.logo_data === '__no_logo__' ? '<span style="color:#94a3b8;font-size:12px;">No logo configured for this branch.</span>' : (organization && organization.logo_data ? `<img src="${esc(organization.logo_data)}" alt="Organization logo">` : ''))}</div>
                 </div>
               </div>
             </div>
@@ -5877,6 +5878,7 @@ async function renderBusinessLocationsPage(container) {
                 <div>
                   <label class="settings-location-inline-label" for="locationName">Branch Name <span class="required">*</span></label>
                   <input class="form-control" id="locationName" value="${esc(location.name)}" maxlength="120" required placeholder="Enter branch name">
+                  <div id="locationNameErr" class="field-error" style="display:none;color:#ef4444;font-size:11px;margin-top:4px;">Branch Name is required.</div>
                 </div>
                 <div>
                   <label class="settings-location-inline-label" for="locationPrefix">Branch Prefix</label>
@@ -6025,6 +6027,9 @@ async function renderBusinessLocationsPage(container) {
     }));
     updateLocationTypeFields();
     updateLocationAccessCount();
+    if (window.setupSearchableSelect) {
+      setupSearchableSelect(root.querySelector('#locationPrimaryContact'), { placeholder: 'Search contacts…' });
+    }
     root.querySelector('#locationChild').addEventListener('change', event => {
       root.querySelector('#parentLocationWrap').hidden = !event.target.checked;
       root.querySelector('#locationParent').required = event.target.checked;
@@ -6202,24 +6207,34 @@ async function renderBusinessLocationsPage(container) {
     root.querySelector('#locationCountry').addEventListener('change', event => {
       root.querySelector('#locationPincode').setAttribute('inputmode', event.target.value.toLowerCase() === 'india' ? 'numeric' : 'text');
     });
-    let selectedLogoData = location.logo_data || '';
+    let selectedLogoData = !locationId ? '__no_logo__' : (location.logo_data || '');
     const logoSelect = root.querySelector('#locationLogo');
     const logoFile = root.querySelector('#locationLogoFile');
     const logoPreview = root.querySelector('#locationLogoPreview');
     let priorLogoData = selectedLogoData;
     const restoreLogoSelection = () => {
       selectedLogoData = priorLogoData;
-      logoSelect.value = priorLogoData || '';
-      logoPreview.innerHTML = priorLogoData
-        ? `<img src="${esc(priorLogoData)}" alt="Location logo" style="max-height:60px;max-width:180px;">`
-        : (organization && organization.logo_data
+      if (priorLogoData === '__no_logo__') {
+        logoSelect.value = '__no_logo__';
+        logoPreview.innerHTML = '<span style="color:#94a3b8;font-size:12px;">No logo will be displayed for this branch.</span>';
+      } else if (priorLogoData) {
+        logoSelect.value = priorLogoData;
+        logoPreview.innerHTML = `<img src="${esc(priorLogoData)}" alt="Location logo" style="max-height:60px;max-width:180px;">`;
+      } else {
+        logoSelect.value = '';
+        logoPreview.innerHTML = organization && organization.logo_data
           ? `<img src="${esc(organization.logo_data)}" alt="Organization logo" style="max-height:60px;max-width:180px;">`
-          : '');
+          : '';
+      }
     };
     logoSelect.addEventListener('change', () => {
       if (logoSelect.value === '__upload_new_logo__') {
         priorLogoData = selectedLogoData;
         logoFile.click();
+      } else if (logoSelect.value === '__no_logo__') {
+        selectedLogoData = '__no_logo__';
+        priorLogoData = '__no_logo__';
+        logoPreview.innerHTML = '<span style="color:#94a3b8;font-size:12px;">No logo will be displayed for this branch.</span>';
       } else if (!logoSelect.value) {
         selectedLogoData = '';
         priorLogoData = '';
@@ -6281,6 +6296,14 @@ async function renderBusinessLocationsPage(container) {
         toast(error.message || 'Could not open transaction series configuration.', 'error');
       }
     });
+    const locationNameInput = root.querySelector('#locationName');
+    const locationNameErr = root.querySelector('#locationNameErr');
+    locationNameInput.addEventListener('input', () => {
+      if (locationNameInput.value.trim()) {
+        locationNameErr.style.display = 'none';
+        locationNameInput.style.borderColor = '';
+      }
+    });
     root.querySelector('#btnSaveLocation').addEventListener('click', async () => {
       const saveButton = root.querySelector('#btnSaveLocation');
       if (saveButton.disabled) return;
@@ -6288,9 +6311,11 @@ async function renderBusinessLocationsPage(container) {
       const locationType = root.querySelector('input[name="locationType"]:checked')?.value || 'business';
       const active = root.querySelector('#locationActive').checked;
       const primaryContactId = root.querySelector('#locationPrimaryContact').value;
-      if (!root.querySelector('#locationName').value.trim()) {
-        toast('Location name is required.', 'error');
-        root.querySelector('#locationName').focus();
+      if (!locationNameInput.value.trim()) {
+        locationNameErr.style.display = 'block';
+        locationNameInput.style.borderColor = '#ef4444';
+        locationNameInput.focus();
+        toast('Branch Name is required.', 'error');
         return;
       }
       const selectedSeriesIds = availableSeries
@@ -6314,9 +6339,11 @@ async function renderBusinessLocationsPage(container) {
       if (location.active && !active && !window.confirm(`Deactivate "${location.name}"?`)) {
         return;
       }
-      if (!root.querySelector('#locationName').value.trim()) {
-        toast('Location name is required.', 'error');
-        root.querySelector('#locationName').focus();
+      if (!locationNameInput.value.trim()) {
+        locationNameErr.style.display = 'block';
+        locationNameInput.style.borderColor = '#ef4444';
+        locationNameInput.focus();
+        toast('Branch Name is required.', 'error');
         return;
       }
       const prefixInput = root.querySelector('#locationPrefix');
@@ -6379,7 +6406,7 @@ async function renderBusinessLocationsPage(container) {
         name: root.querySelector('#locationName').value.trim(),
         prefix: prefixInput.value,
         gstin: root.querySelector('#locationGstin').value.trim(),
-        logo_data: selectedLogoData,
+        logo_data: selectedLogoData === '__no_logo__' ? '' : selectedLogoData,
         parent_id: (location.is_default || location.is_head_office) ? null : (locationType === 'warehouse' || root.querySelector('#locationChild')?.checked ? (parentId || null) : null),
         attention: root.querySelector('#locationAttention').value.trim(),
         street1: root.querySelector('#locationStreet1').value.trim(),

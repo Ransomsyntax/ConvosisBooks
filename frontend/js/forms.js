@@ -11058,7 +11058,7 @@ async function challanModal(id) {
         color: #ef4444;
       }
       .customer-select-outer {
-        margin-bottom: 24px;
+        margin-bottom: 12px;
         width: 50%;
         min-width: 320px;
         max-width: 100%;
@@ -15296,6 +15296,24 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       <form id="so-form-element" style="padding:24px 28px;max-width:1240px;width:100%;box-sizing:border-box;margin:0 auto;" novalidate>
         <div class="fe" data-err="_" role="alert"></div>
 
+        <!-- Customer Name & Addresses Row -->
+        <div class="transaction-party-row">
+          <div class="customer-select-outer">
+            <label class="customer-select-outer-label" for="so-customer">Customer Name*</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <select class="in" id="so-customer" name="customer" required style="flex:1;min-width:0;padding:0 12px;height:38px !important;">
+                <option value="">Search or type customer name...</option>
+                <option value="__new_customer__" style="color:var(--accent,#0284c7);font-weight:600;">+ Add New Customer…</option>
+                ${parties.map(p => `<option value="${p.id}" ${String(soCustomer) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn p" id="btn-so-cust-lookup" title="Search / Add Customer" style="width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:#0284c7;color:#ffffff;border:none;border-radius:8px;cursor:pointer;flex-shrink:0;">
+                <i class="fa-solid fa-magnifying-glass" style="font-size:14px;"></i>
+              </button>
+            </div>
+          </div>
+          <div class="transaction-party-addresses" id="so-customer-addresses" aria-live="polite"></div>
+        </div>
+
         <div class="transaction-two-cards-grid">
           <div class="transaction-card">
             <div class="transaction-card-field">
@@ -15307,7 +15325,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="so-number">Sales Order#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="so-number" name="number" value="${esc(soNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="so-number" name="number" value="${esc(soNumber)}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-so-num-pref" title="Configure Sales Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -17566,7 +17584,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="inv-number">Invoice#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="inv-number" name="number" value="${esc(invNum)}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-inv-num-pref" title="Configure Invoice Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -18524,7 +18542,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
         box-shadow: 0 0 0 2px rgba(56,189,248,0.2) !important;
       }
       .customer-select-outer {
-        margin-bottom: 24px;
+        margin-bottom: 12px;
         width: 50%;
         min-width: 320px;
         max-width: 100%;

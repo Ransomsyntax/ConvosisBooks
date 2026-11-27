@@ -7900,7 +7900,7 @@ async function paymentMadeForm(pre = {}) {
         <div class="transaction-card-field">
           <label class="transaction-card-label required" for="paym-number">Payment#*</label>
           <div style="display:flex;align-items:center;gap:8px;">
-            <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required style="flex:1;min-width:0;padding:0 12px;">
+            <input class="in" id="paym-number" name="number" value="${esc(payNum)}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
             <button type="button" class="btn ic" id="btn-paym-num-pref" title="Configure Payment Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
               <i class="fa-solid fa-gear" style="font-size:13px;"></i>
             </button>
@@ -8256,7 +8256,7 @@ async function adjustForm(preItem, targetEl, onDone) {
         <!-- Reference Number -->
         <div style="display:flex;align-items:center;gap:24px;margin-bottom:18px;">
           <label style="width:160px;font-weight:500;font-size:13px;color:#334155;">Reference Number</label>
-          <input class="in" id="adj-ref-number" name="reference_number" value="${esc(curRef)}" placeholder="Auto-generated (e.g. ABC/ADJ/26-27/00001)" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;">
+          <input class="in" id="adj-ref-number" name="reference_number" value="${esc(curRef)}" placeholder="Auto-generated (e.g. ABC/ADJ/26-27/00001)" readonly aria-readonly="true" style="width:340px;height:36px;border-radius:6px;border:1px solid #cbd5e1;padding:0 12px;font-size:13px;background:#f8fafc;">
         </div>
 
         <!-- Date* -->
@@ -8947,7 +8947,7 @@ async function journalForm(id) {
           ${fld({ name: 'date', label: 'Date', type: 'date', req: true, value: rec ? rec.date : APP.today })}
           ${fld({ name: 'reverse_journal_date', label: 'Reverse Journal Date', type: 'date', value: rec ? (rec.reverse_journal_date || '') : '' })}
           <label class="zb-form-row fg"><span class="zb-form-label">Publish reverse journal only on reverse journal date</span><div class="zb-form-ctrl"><input type="checkbox" name="publish_reverse_on_date" ${rec?.publish_reverse_on_date ? 'checked' : ''}></div></label>
-          ${fld({ name: 'number', label: 'Journal#', req: true, value: rec ? rec.number : '', ph: 'Auto-generated if configured' })}
+          ${fld({ name: 'number', label: 'Journal#', req: true, value: rec ? rec.number : '', ph: 'Auto-generated if configured', attrs: 'readonly aria-readonly="true" style="background:#f8fafc;"' })}
           ${fld({ name: 'notes', label: 'Notes', type: 'textarea', req: true, value: rec ? rec.notes : '', ph: 'Maximum 500 characters', max: 500 })}
           ${fld({ name: 'reference', label: 'Reference#', value: rec ? (rec.reference || '') : '', ph: 'Reference number' })}
           ${fld({ name: 'reporting_method', label: 'Reporting Method', type: 'select', opts: [['accrual_cash','Accrual and Cash'],['accrual','Accrual Only'],['cash','Cash Only']], value: rec ? (rec.reporting_method || 'accrual_cash') : 'accrual_cash', req: true })}
@@ -9331,7 +9331,7 @@ async function expenseForm(id) {
               <select class="in" id="exp-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Series">
                 ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(expSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
-              <input class="in" id="exp-number" name="number" value="${esc(expNum)}" required style="flex:1.2;min-width:0;padding:0 12px;">
+              <input class="in" id="exp-number" name="number" value="${esc(expNum)}" required readonly aria-readonly="true" style="flex:1.2;min-width:0;padding:0 12px;background:#f8fafc;">
               <button type="button" class="btn ic" id="btn-exp-num-pref" title="Configure Expense Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                 <i class="fa-solid fa-gear" style="font-size:13px;"></i>
               </button>
@@ -11181,7 +11181,7 @@ async function challanModal(id) {
             <select class="in" id="dc-series" name="transaction_series" style="flex:1;min-width:0;padding:0 8px;" title="Transaction Number Series">
               ${activeSeries.map(s => `<option value="${esc(s.name)}" data-id="${s.id}" data-branch="${esc(s.branch || '')}" data-location="${esc(s.location || '')}" ${(dcSeries === s.name) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
             </select>
-            <input class="in" id="dc-number-preview" name="number" value="${esc(o.number || '')}" placeholder="Generating…" required style="flex:1.2;min-width:0;padding:0 12px;">
+            <input class="in" id="dc-number-preview" name="number" value="${esc(o.number || '')}" placeholder="Generating…" required readonly aria-readonly="true" style="flex:1.2;min-width:0;padding:0 12px;background:#f8fafc;">
             <button type="button" class="btn ic" id="btn-dc-num-pref" title="Configure Delivery Challan Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
               <i class="fa-solid fa-gear" style="font-size:13px;"></i>
             </button>
@@ -14194,7 +14194,7 @@ ${renderStockQuantityCell(l, items, whList)}
             <div class="quote-card-field">
               <label class="quote-card-label required" for="q-number">Quote Number*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="q-number" name="number" value="${esc(qNumber)}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-quote-num-pref" title="Configure Quote Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -16094,7 +16094,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="bill-number">Bill#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="bill-number" name="number" value="${billNum}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="bill-number" name="number" value="${billNum}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-bill-num-pref" title="Configure Bill Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -16844,7 +16844,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="po-number">Purchase Order#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="po-number" name="number" value="${poNumber}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="po-number" name="number" value="${poNumber}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-po-num-pref" title="Configure Purchase Order Preferences" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -18677,7 +18677,7 @@ async function retainerInvoiceForm(id, targetEl, onDone) {
             <div class="transaction-card-field">
               <label class="transaction-card-label required" for="ret-number">Retainer Invoice#*</label>
               <div style="display:flex;align-items:center;gap:8px;">
-                <input class="in" id="ret-number" name="number" value="${retNum}" required style="flex:1;min-width:0;padding:0 12px;">
+                <input class="in" id="ret-number" name="number" value="${retNum}" required readonly aria-readonly="true" style="flex:1;min-width:0;padding:0 12px;background:#f8fafc;">
                 <button type="button" class="btn ic" id="btn-ret-num-pref" title="Configure Retainer Invoice Number Series" style="width:38px;height:38px;border:1px solid #e2e8f0;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;color:#0284c7;background:#fff;cursor:pointer;flex-shrink:0;box-sizing:border-box;">
                   <i class="fa-solid fa-gear" style="font-size:13px;"></i>
                 </button>
@@ -19431,7 +19431,7 @@ async function stockTransferModal(id = null, onDone = null) {
           <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
             <div>
               <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Transfer Number</label>
-              <input class="in" id="st-number" value="${esc(o.number || '')}" placeholder="Auto-generated (e.g. ST-00001)" ${id ? 'readonly' : ''} style="width:100%;">
+              <input class="in" id="st-number" value="${esc(o.number || '')}" placeholder="Auto-generated (e.g. ST-00001)" readonly aria-readonly="true" style="width:100%;background:#f8fafc;">
             </div>
             <div>
               <label style="font-weight:600; font-size:12.5px; display:block; margin-bottom:4px; color:var(--tx);">Transfer Date <span style="color:#ef4444;">*</span></label>

@@ -36,6 +36,29 @@ function bindDocumentNumberPreview(form, options) {
       const value = el ? el.value : '';
       if (value) params.set(name, value);
     });
+
+    let partyId = '';
+    if (options.party) {
+      const partyEl = form.querySelector(options.party);
+      if (partyEl && partyEl.value) {
+        partyId = partyEl.value;
+        params.set('party_id', partyId);
+        params.set('customer_id', partyId);
+        params.set('vendor_id', partyId);
+      }
+    }
+
+    if (typeof options.getCustomerType === 'function') {
+      const ct = options.getCustomerType();
+      if (ct) params.set('customer_type', ct);
+    } else if (partyId && Array.isArray(options.parties)) {
+      const partyObj = options.parties.find(p => String(p.id) === String(partyId));
+      if (partyObj) {
+        const ct = partyObj.gstin || ['b2b', 'business', 'registered'].includes(String(partyObj.customer_type || '').toLowerCase()) ? 'b2b' : 'b2c';
+        params.set('customer_type', ct);
+      }
+    }
+
     const selectedSeriesId = options.series
       ? form.querySelector(options.series)?.selectedOptions?.[0]?.dataset.id
       : '';
@@ -51,7 +74,19 @@ function bindDocumentNumberPreview(form, options) {
 
     try {
       const preview = await api(`lookup/${options.endpoint}/?${params.toString()}`);
-      if (requestId !== latestRequest || !preview || !preview.next_number) return;
+      if (requestId !== latestRequest || !preview) return;
+
+      if (preview.requires_customer_type && !preview.next_number) {
+        if (!userManuallyEdited || !numberInput.value) {
+          numberInput.value = '';
+          numberInput.placeholder = options.placeholder || 'Select customer to generate number';
+          lastSuggestedNumber = '';
+        }
+        return;
+      }
+
+      if (!preview.next_number) return;
+
       if (forceUpdate || !numberInput.value || !userManuallyEdited || numberInput.value === lastSuggestedNumber) {
         numberInput.value = preview.next_number;
         lastSuggestedNumber = preview.next_number;
@@ -64,11 +99,15 @@ function bindDocumentNumberPreview(form, options) {
     }
   };
 
-  [options.date, options.customerType, options.location, options.businessLocation, options.party]
+  [options.date, options.customerType, options.location, options.businessLocation]
     .filter(Boolean)
     .forEach(selector => {
-      form.querySelector(selector)?.addEventListener('change', () => refresh(false));
+      form.querySelector(selector)?.addEventListener('change', () => refresh(true));
     });
+
+  if (options.party) {
+    form.querySelector(options.party)?.addEventListener('change', () => refresh(true));
+  }
 
   if (options.series) {
     form.querySelector(options.series)?.addEventListener('change', () => {
@@ -98,7 +137,7 @@ function bindDocumentNumberPreview(form, options) {
           return;
         }
       }
-      refresh(false);
+      refresh(true);
     };
 
     let branchTimer;
@@ -110,6 +149,7 @@ function bindDocumentNumberPreview(form, options) {
   }
 
   void refresh(false);
+  return { refresh };
 }
 window.bindDocumentNumberPreview = bindDocumentNumberPreview;
 
@@ -4569,7 +4609,21 @@ async function itemForm(id, onDone, onCancel) {
    CONVOSIS BOOKS - DOCUMENT NUMBER PREFERENCES, SALESPERSONS & SHARED HELPERS
    ========================================================================= */
 
-async function openDocNumberPreferencesModal({ kind, series = 'Default Transaction Series', location = 'HO Kottayam', currentNumber = '', onSave }) {
+async function openDocNumberPreferencesModal({ kind, series = 'Default Transaction Series', location = 'HO Kottayam', branch_id = '', currentNumber = '', onSave }) {
+  const canonDoc = kind === 'quotes' ? 'quotes' : (kind === 'sales-orders' ? 'sales_orders' : (kind === 'bills' ? 'bills' : (kind === 'purchase-orders' ? 'purchase_orders' : (kind === 'retainer-invoices' ? 'retainer_invoices' : (kind === 'recurring-invoices' ? 'recurring_invoices' : (kind === 'delivery-challans' ? 'delivery_challans' : (kind === 'expenses' ? 'expenses' : (kind === 'payments-made' ? 'payments_made' : (kind === 'payments-received' ? 'payments_received' : 'invoices')))))))));
+  if (typeof window.openTransactionSeriesModalForDoc === 'function') {
+    return window.openTransactionSeriesModalForDoc({
+      docType: canonDoc,
+      seriesName: series,
+      branchId: branch_id,
+      onSave: (savedItem) => {
+        if (typeof onSave === 'function') {
+          onSave(savedItem?.sample_preview || savedItem?.formatted || savedItem);
+        }
+      }
+    });
+  }
+
   if (window._docNumberPrefModalOpen || document.getElementById('doc-pref-modal-dialog')) {
     const existing = document.getElementById('doc-pref-modal-dialog');
     if (existing) {
@@ -13718,7 +13772,7 @@ async function quoteForm(id, targetEl, onDone) {
     rec?.numbering_series_id, false
   );
   const qSeries = qSeriesOption?.name || '';
-  const qNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'QT-000001');
+  const qNumber = rec ? rec.number : ((nextNum && !nextNum.requires_customer_type) ? (nextNum.next_number || '') : '');
   const qCustomer = rec ? (rec.party_id || rec.customer_id) : '';
   const qLocation = qBusinessLocation?.name || (rec ? (rec.location || 'HO Kottayam') : 'HO Kottayam');
   const qBranch = rec ? (rec.branch || '') : '';
@@ -15084,7 +15138,7 @@ ${renderStockQuantityCell(l, items, whList)}
   $('#btn-q-save-send', target)?.addEventListener('click', () => saveQuote(true));
 
   if (!id) {
-    bindDocumentNumberPreview(form, {
+    const docPreview = bindDocumentNumberPreview(form, {
       endpoint: 'next-quote-number',
       number: '#q-number',
       date: '#q-date',
@@ -15092,9 +15146,17 @@ ${renderStockQuantityCell(l, items, whList)}
       location: '#q-location',
       customerType: '#q-customer-type',
       party: '#q-customer',
+      parties: parties,
+      placeholder: 'Select customer to generate quote#',
+      getCustomerType: () => {
+        const cId = $('#q-customer', form)?.value;
+        const cust = parties.find(p => String(p.id) === String(cId));
+        return cust ? (cust.gstin || ['b2b', 'business', 'registered'].includes(String(cust.customer_type || '').toLowerCase()) ? 'b2b' : 'b2c') : '';
+      },
       getGstin: () => $('#q-customer-gstin', form)?.textContent?.trim() || '',
       businessLocation: '#q-business-location'
     });
+    form._docPreview = docPreview;
   }
 
   updateProjectFilter();
@@ -15157,7 +15219,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   const soLocation = soBusinessLocation?.name || (rec ? (rec.location || 'HO Kottayam') : (srcQuote ? (srcQuote.location || 'HO Kottayam') : 'HO Kottayam'));
   const soBranch = rec ? (rec.branch || '') : (srcQuote ? (srcQuote.branch || '') : '');
   const soSeries = soSeriesOption?.name || '';
-  const soNumber = rec ? rec.number : (nextNum ? nextNum.next_number : 'SO-000001');
+  const soNumber = rec ? rec.number : ((nextNum && !nextNum.requires_customer_type) ? (nextNum.next_number || '') : '');
   const soCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : '');
   const soDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const soShipDate = rec ? (rec.expected_shipment_date || '') : (srcQuote ? (srcQuote.expiry_date || '') : '');
@@ -15842,7 +15904,7 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-so-save-confirm', target).addEventListener('click', () => saveSo(false));
 
   if (!id) {
-    bindDocumentNumberPreview(form, {
+    const docPreview = bindDocumentNumberPreview(form, {
       endpoint: 'next-so-number',
       number: '#so-number',
       date: '#so-date',
@@ -15850,9 +15912,17 @@ async function salesOrderForm(id, targetEl, onDone, extraOpts = {}) {
       location: '#so-location',
       customerType: '#so-customer-type',
       party: '#so-customer',
+      parties: parties,
+      placeholder: 'Select customer to generate order#',
+      getCustomerType: () => {
+        const cId = $('#so-customer', form)?.value;
+        const cust = parties.find(p => String(p.id) === String(cId));
+        return cust ? (cust.gstin || ['b2b', 'business', 'registered'].includes(String(cust.customer_type || '').toLowerCase()) ? 'b2b' : 'b2c') : '';
+      },
       getGstin: () => $('#so-customer-gstin', form)?.textContent?.trim() || '',
       businessLocation: '#so-business-location'
     });
+    form._docPreview = docPreview;
   }
 
   calcSo();
@@ -16602,7 +16672,7 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-bill-save-approve', target).addEventListener('click', () => saveBill(false));
 
   if (!id) {
-    bindDocumentNumberPreview(form, {
+    const docPreview = bindDocumentNumberPreview(form, {
       endpoint: 'next-bill-number',
       number: '#bill-number',
       date: '#bill-date',
@@ -16610,9 +16680,12 @@ async function billForm(id, targetEl, onDone, extraOpts = {}) {
       customerType: '#bill-customer-type',
       location: '#bill-location',
       party: '#bill-vendor',
+      parties: parties,
+      placeholder: 'Select vendor to generate bill#',
       getGstin: () => parties.find(p => String(p.id) === String($('#bill-vendor', form)?.value))?.gstin || '',
       businessLocation: '#bill-business-location'
     });
+    form._docPreview = docPreview;
   }
   calcBill();
 }
@@ -17319,7 +17392,7 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-po-save-send', target).addEventListener('click', () => savePo(false));
 
   if (!id) {
-    bindDocumentNumberPreview(form, {
+    const docPreview = bindDocumentNumberPreview(form, {
       endpoint: 'next-po-number',
       number: '#po-number',
       date: '#po-date',
@@ -17327,9 +17400,12 @@ async function purchaseOrderForm(id, targetEl, onDone, extraOpts = {}) {
       customerType: '#po-customer-type',
       location: '#po-location',
       party: '#po-vendor',
+      parties: parties,
+      placeholder: 'Select vendor to generate PO#',
       getGstin: () => parties.find(p => String(p.id) === String($('#po-vendor', form)?.value))?.gstin || '',
       businessLocation: '#po-business-location'
     });
+    form._docPreview = docPreview;
   }
   calcPo();
 }
@@ -17383,7 +17459,7 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   );
   const invBusinessLocation = invBusinessLocations.find(item => String(item.id) === invBusinessLocationId);
   const invLocation = invBusinessLocation?.name || rec?.location || srcQuote?.location || srcSO?.location || 'HO Kottayam';
-  const invNum = rec ? rec.number : (nextNum ? nextNum.next_number : 'INV-000001');
+  const invNum = rec ? rec.number : ((nextNum && !nextNum.requires_customer_type) ? (nextNum.next_number || '') : '');
   const invCustomer = rec ? (rec.customer_id || rec.party_id) : (srcQuote ? (srcQuote.customer_id || srcQuote.party_id) : (srcSO ? srcSO.customer_id : ''));
   const invDate = rec ? rec.date : (window.APP && window.APP.today ? window.APP.today : new Date().toISOString().slice(0, 10));
   const invDueDate = rec ? (rec.due_date || '') : invDate;
@@ -18316,16 +18392,24 @@ async function invoiceForm(id, targetEl, onDone, extraOpts = {}) {
   $('#btn-inv-save-send', target).addEventListener('click', () => saveInvoice(false));
 
   if (!id) {
-    bindDocumentNumberPreview(form, {
+    const docPreview = bindDocumentNumberPreview(form, {
       endpoint: 'next-invoice-number',
       number: '#inv-number',
       date: '#inv-date',
       series: '#inv-series',
       location: '#inv-location',
       party: '#inv-customer',
+      parties: parties,
+      placeholder: 'Select customer to generate invoice#',
+      getCustomerType: () => {
+        const cId = $('#inv-customer', form)?.value;
+        const cust = parties.find(p => String(p.id) === String(cId));
+        return cust ? (cust.gstin || ['b2b', 'business', 'registered'].includes(String(cust.customer_type || '').toLowerCase()) ? 'b2b' : 'b2c') : '';
+      },
       getGstin: () => parties.find(p => String(p.id) === String($('#inv-customer', form)?.value))?.gstin || '',
       businessLocation: '#inv-business-location'
     });
+    form._docPreview = docPreview;
   }
 
   renderAttach();

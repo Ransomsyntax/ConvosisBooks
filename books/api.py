@@ -2797,6 +2797,23 @@ class DocResource(Resource):
         loc = str(head.get('location') or getattr(party, 'billing_city', '') or getattr(party, 'city', '') or getattr(party, 'state', '') or '').strip()
         business_location_id = getattr(head.get('business_location'), 'pk', None)
         if num:
+            series_obj = services._select_document_number_series(
+                pfx, user_org, date=head.get('date'), customer_type=customer_type,
+                branch=head.get('branch', ''), location=loc,
+                business_location_id=business_location_id,
+                series=series_name, series_id=series_id,
+                user=user, ensure_defaults=False,
+            )
+            if series_obj and services.series_pattern_requires_customer_type(series_obj) and customer_type:
+                candidate_without_ct = services._format_series_number(
+                    series_obj, series_obj.next_number, user_org, date=head.get('date'),
+                    branch=head.get('branch', ''), location=loc,
+                    business_location_id=business_location_id, customer_type='', party=None,
+                )
+                if num == candidate_without_ct:
+                    num = None
+
+        if num:
             num_exists = self.Model.objects.filter(number=num, organization=user_org).exists() if user_org else self.Model.objects.filter(number=num).exists()
             if num_exists:
                 raise ApiError(400, f'{self.Model.__name__} number "{num}" already exists in your organization.')
@@ -12471,6 +12488,12 @@ def lookup(request, name):
             raise ApiError(403, 'You are not assigned to this business location.')
         return location
 
+    def _preview_party(party_model=Customer):
+        pid = request.GET.get('customer_id') or request.GET.get('party_id') or request.GET.get('vendor_id')
+        if not pid or not user_org:
+            return None
+        return party_model.objects.filter(organization=user_org, pk=pid).first()
+
     if name == 'customers':
         data = [{'id': o.pk, 'name': o.name, 'state': o.state, 'payment_terms': o.payment_terms,
                  'company': o.company, 'gstin': o.gstin, 'gst_treatment': o.gst_treatment,
@@ -12644,13 +12667,16 @@ def lookup(request, name):
     elif name in ('next-quote-number', 'next-qtn-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'QTN', org=org, date=request.GET.get('date'),
-            customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12658,13 +12684,16 @@ def lookup(request, name):
     elif name in ('next-so-number', 'next-sales-order-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'SO', org=org, date=request.GET.get('date'),
-            customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12672,32 +12701,33 @@ def lookup(request, name):
     elif name in ('next-invoice-number', 'next-inv-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'INV', org=org, date=request.GET.get('date'),
-            customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
         )
     elif name in ('next-delivery-challan-number', 'next-dc-number'):
         org = user_org or Organization.get()
-        customer_id = request.GET.get('customer_id')
-        customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first() if customer_id and org else None
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'DC', org=org, date=request.GET.get('date'),
-            customer_type=(
-                'b2b' if customer and (customer.gstin or customer.customer_type == 'business')
-                else 'b2c' if customer else request.GET.get('customer_type', '')
-            ),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else (customer.gstin if customer else request.GET.get('gstin')),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12705,34 +12735,33 @@ def lookup(request, name):
     elif name in ('next-retainer-number', 'next-ret-number', 'next-retainer-invoice-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
-        customer_id = request.GET.get('customer_id')
-        customer = Customer.objects.filter(organization=org, pk=customer_id, active=True).first() if customer_id and org else None
-        customer_type = (
-            'b2c' if customer and customer.customer_type == 'individual'
-            else 'b2b' if customer
-            else request.GET.get('customer_type')
-        )
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'RET', org=org, date=request.GET.get('date'),
-            customer_type=customer_type,
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
-            business_location_id=business_location.pk if business_location else None,
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
         )
     elif name in ('next-recurring-invoice-number', 'next-rec-number', 'next-rinv-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'REC', org=org, date=request.GET.get('date'),
-            customer_type=request.GET.get('customer_type'),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12740,14 +12769,16 @@ def lookup(request, name):
     elif name in ('next-po-number', 'next-purchase-order-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
-        supplier_type = request.GET.get('customer_type', '')
+        vendor = _preview_party(Vendor)
+        supplier_type = request.GET.get('customer_type') or ('b2b' if vendor and getattr(vendor, 'gstin', '') else '')
         data = services.preview_document_number(
             'PO', org=org, date=request.GET.get('date'),
             customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
-            branch=request.GET.get('branch'),
+            party=vendor,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(vendor, 'gstin', '') if vendor else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12755,14 +12786,16 @@ def lookup(request, name):
     elif name in ('next-bill-number',):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
-        supplier_type = request.GET.get('customer_type', '')
+        vendor = _preview_party(Vendor)
+        supplier_type = request.GET.get('customer_type') or ('b2b' if vendor and getattr(vendor, 'gstin', '') else '')
         data = services.preview_document_number(
             'BILL', org=org, date=request.GET.get('date'),
             customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
-            branch=request.GET.get('branch'),
+            party=vendor,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            gstin=business_location.gstin if business_location else request.GET.get('gstin'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(vendor, 'gstin', '') if vendor else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user,
@@ -12799,11 +12832,16 @@ def lookup(request, name):
     elif name in ('next-payment-received-number', 'next-pr-number', 'next-pay-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'PR', org=org, date=request.GET.get('date'),
-            branch=request.GET.get('branch'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user
@@ -12811,29 +12849,50 @@ def lookup(request, name):
     elif name in ('next-payment-made-number', 'next-pm-number', 'next-vp-number'):
         org = user_org or Organization.get()
         business_location = preview_business_location(org)
+        vendor = _preview_party(Vendor)
+        supplier_type = request.GET.get('customer_type') or ('b2b' if vendor and getattr(vendor, 'gstin', '') else '')
         data = services.preview_document_number(
             'PM', org=org, date=request.GET.get('date'),
-            branch=request.GET.get('branch'),
+            customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
+            party=vendor,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
             location=business_location.name if business_location else request.GET.get('location'),
-            business_location_id=business_location.pk if business_location else None,
+            gstin=business_location.gstin if business_location else (getattr(vendor, 'gstin', '') if vendor else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user
         )
     elif name in ('next-credit-note-number', 'next-cn-number'):
         org = user_org or Organization.get()
+        business_location = preview_business_location(org)
+        customer = _preview_party(Customer)
+        cust_type = request.GET.get('customer_type') or (services._customer_type_from_party(customer) if customer else '')
         data = services.preview_document_number(
             'CN', org=org, date=request.GET.get('date'),
-            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            customer_type=cust_type,
+            party=customer,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
+            location=business_location.name if business_location else request.GET.get('location'),
+            gstin=business_location.gstin if business_location else (getattr(customer, 'gstin', '') if customer else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user
         )
     elif name in ('next-debit-note-number', 'next-dn-number', 'next-vc-number', 'next-vendor-credit-number'):
         org = user_org or Organization.get()
+        business_location = preview_business_location(org)
+        vendor = _preview_party(Vendor)
+        supplier_type = request.GET.get('customer_type') or ('b2b' if vendor and getattr(vendor, 'gstin', '') else '')
         data = services.preview_document_number(
             'DN', org=org, date=request.GET.get('date'),
-            branch=request.GET.get('branch'), location=request.GET.get('location'),
+            customer_type='b2b' if supplier_type in ('registered', 'b2b') else ('b2c' if supplier_type else ''),
+            party=vendor,
+            branch=request.GET.get('branch') or (business_location.prefix if business_location else ''),
+            location=business_location.name if business_location else request.GET.get('location'),
+            gstin=business_location.gstin if business_location else (getattr(vendor, 'gstin', '') if vendor else request.GET.get('gstin')),
+            business_location_id=business_location.pk if business_location else request.GET.get('business_location_id'),
             series=request.GET.get('series') or request.GET.get('transaction_series'),
             series_id=request.GET.get('series_id') or request.GET.get('numbering_series_id'),
             user=request.user

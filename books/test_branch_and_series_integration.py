@@ -1,4 +1,5 @@
 import datetime
+import json
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -267,3 +268,132 @@ class BranchAndSeriesIntegrationTest(TestCase):
             )
             # Child branch prefix is 'H'
             self.assertEqual(generated, f'{mod}/H/001')
+
+    def test_customer_type_prefix_in_invoice_number_and_persistence(self):
+        """
+        Verify that {BRANCH}{CUSTOMERTYPE}-{SEQUENCE} pattern:
+        - Resolves B2B prefix 'B' to HOB-0000021 for Head Office
+        - Resolves B2C prefix 'C' to HOC-0000021 (or next sequence)
+        - Dynamically reflects branch change (TVM) -> TVMB-..., TVMC-...
+        - Connects preview with actual number generation and database persistence
+        - Requires customer type when pattern contains {CUSTOMERTYPE}
+        """
+        series = DocumentNumberSeries.objects.filter(
+            organization=self.org,
+            document_type='invoices',
+            is_default=True
+        ).first()
+        series.prefix = '{BRANCH}{CUSTOMERTYPE}'
+        series.b2b_prefix = 'B'
+        series.b2c_prefix = 'C'
+        series.format_pattern = '{BRANCH}{CUSTOMERTYPE}-{SEQUENCE}'
+        series.separator = '-'
+        series.next_number = 21
+        series.starting_number = 1
+        series.padding = 7
+        series.business_location = None
+        series.save()
+
+        DocumentNumberSeriesCounter.objects.filter(series=series).delete()
+
+        # 1. Preview without customer when pattern has {CUSTOMERTYPE} -> requires_customer_type=True, next_number=''
+        prev_no_cust = self.client.get('/api/lookup/next-invoice-number/')
+        self.assertEqual(prev_no_cust.status_code, 200)
+        self.assertTrue(prev_no_cust.json().get('requires_customer_type'))
+        self.assertEqual(prev_no_cust.json().get('next_number'), '')
+
+        # 2. Create B2B Customer (Bharat Solutions) and B2C Customer
+        b2b_cust = Customer.objects.create(
+            organization=self.org,
+            name='Bharat Solutions',
+            customer_type='business',
+            gstin='08AAAAA0000A1Z5'
+        )
+        b2c_cust = Customer.objects.create(
+            organization=self.org,
+            name='Individual Consumer',
+            customer_type='individual'
+        )
+
+        # 3. Preview with B2B Customer -> HOB-0000021
+        prev_b2b = self.client.get(f'/api/lookup/next-invoice-number/?customer_id={b2b_cust.pk}&business_location_id={self.head_office.pk}')
+        self.assertEqual(prev_b2b.status_code, 200)
+        self.assertEqual(prev_b2b.json().get('next_number'), 'HOB-0000021')
+
+        # 4. Preview with B2C Customer -> HOC-0000021
+        prev_b2c = self.client.get(f'/api/lookup/next-invoice-number/?customer_id={b2c_cust.pk}&business_location_id={self.head_office.pk}')
+        self.assertEqual(prev_b2c.status_code, 200)
+        self.assertEqual(prev_b2c.json().get('next_number'), 'HOC-0000021')
+
+        # 5. Create actual Invoice via API for B2B -> HOB-0000021 saved to DB
+        inv_payload = {
+            'customer': b2b_cust.pk,
+            'business_location_id': self.head_office.pk,
+            'transaction_series': series.name,
+            'date': '2026-11-27',
+            'due_date': '2026-12-27',
+            'status': 'draft',
+            'lines': [
+                {
+                    'description': 'Consulting Service',
+                    'quantity': 1,
+                    'rate': 1000,
+                    'gst_rate': 18
+                }
+            ]
+        }
+        res_create = self.client.post('/api/invoices/', data=json.dumps(inv_payload), content_type='application/json')
+        self.assertEqual(res_create.status_code, 201, res_create.content)
+        created_inv = res_create.json()
+        self.assertEqual(created_inv['number'], 'HOB-0000021')
+
+        # Verify in DB
+        db_inv = Invoice.objects.get(pk=created_inv['id'])
+        self.assertEqual(db_inv.number, 'HOB-0000021')
+
+        # 6. Branch change to TVM
+        branch_tvm = Branch.objects.create(
+            organization=self.org,
+            name='Thiruvananthapuram Branch',
+            prefix='TVM'
+        )
+
+        num_tvm_b2b = services.next_document_number(
+            'INV',
+            org=self.org,
+            party=b2b_cust,
+            business_location_id=branch_tvm.pk,
+            series_id=series.pk
+        )
+        self.assertTrue(num_tvm_b2b.startswith('TVMB-'))
+
+        num_tvm_b2c = services.next_document_number(
+            'INV',
+            org=self.org,
+            party=b2c_cust,
+            business_location_id=branch_tvm.pk,
+            series_id=series.pk
+        )
+        self.assertTrue(num_tvm_b2c.startswith('TVMC-'))
+
+        # 7. Pattern change to INV/{SEQUENCE}
+        series.format_pattern = 'INV/{SEQUENCE}'
+        series.save()
+        num_pat1 = services.next_document_number(
+            'INV',
+            org=self.org,
+            party=b2b_cust,
+            series_id=series.pk
+        )
+        self.assertTrue(num_pat1.startswith('INV/'))
+
+        # 8. Pattern change to INV/{CUSTOMERTYPE}/{SEQUENCE}
+        series.format_pattern = 'INV/{CUSTOMERTYPE}/{SEQUENCE}'
+        series.save()
+        num_pat2 = services.next_document_number(
+            'INV',
+            org=self.org,
+            party=b2b_cust,
+            series_id=series.pk
+        )
+        self.assertTrue(num_pat2.startswith('INV/B/'))

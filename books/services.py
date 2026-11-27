@@ -797,6 +797,22 @@ def _series_numbering_scope(series_obj, org, branch='', customer_type='', party=
     return branch_value, branch_object, branch_code.upper(), branch_token, resolved_customer_type, customer_prefix
 
 
+def series_pattern_requires_customer_type(series_obj, pattern=None):
+    import re
+    raw_pattern = pattern if pattern is not None else (
+        getattr(series_obj, 'format_pattern', '')
+        or getattr(series_obj, 'prefix', '')
+        or ''
+    )
+    if not raw_pattern:
+        return False
+    return bool(re.search(
+        r'(?:\$\s*)?\{\s*CUSTOMER[-_]?TYPE\s*\}|%\s*CUSTOMER[-_]?TYPE\s*%',
+        str(raw_pattern),
+        re.IGNORECASE,
+    ))
+
+
 def _series_pattern_includes_financial_year(series_obj):
     import re
     pattern = str(
@@ -1175,6 +1191,33 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
     model = cfg.get('model')
     field = cfg.get('field', 'number')
 
+    requires_ct = (
+        doc_type in CUSTOMER_NUMBER_DOCUMENT_TYPES
+        and series_pattern_requires_customer_type(series_obj, format_pattern)
+    )
+    if requires_ct and not customer_type and not party:
+        return {
+            'next_number': '',
+            'formatted': '',
+            'requires_customer_type': True,
+            'prefix': normalize_document_prefix_output(series_obj.prefix),
+            'format_pattern': series_obj.format_pattern or '',
+            'separator': series_obj.separator or '/',
+            'next_sequence': series_obj.next_number,
+            'padding': series_obj.padding,
+            'auto_generate': True,
+            'series_id': series_obj.series_group_id or series_obj.pk,
+            'numbering_series_id': series_obj.pk,
+            'series_name': series_obj.name,
+            'is_default': series_obj.is_default,
+            'active': series_obj.active,
+            'document_type': doc_type,
+            'branch': series_obj.branch,
+            'location': series_obj.location,
+            'financial_year': get_financial_year(date, org=org),
+            'org_code': org.get_code(),
+        }
+
     counter = _series_counter_for_date(
         series_obj, org, date=date, module_or_pfx=module_or_pfx,
         branch=branch, customer_type=customer_type, party=party,
@@ -1206,6 +1249,7 @@ def preview_document_number(module_or_pfx, org=None, date=None, series=None, cus
             return {
                 'next_number': candidate,
                 'formatted': candidate,
+                'requires_customer_type': requires_ct,
                 'prefix': normalize_document_prefix_output(series_obj.prefix),
                 'format_pattern': series_obj.format_pattern or '',
                 'separator': series_obj.separator or '/',

@@ -3896,7 +3896,12 @@ function openEditSeriesItemModal(container, currentSeries, item, options = {}) {
         throw new Error('The saved numbering configuration could not be verified. Please retry.');
       }
       closeModal();
-      await renderNumberSeriesPage(container, currentSeries.id);
+      if (typeof options.onSave === 'function') {
+        options.onSave(savedItem);
+      }
+      if (container && typeof renderNumberSeriesPage === 'function' && document.body.contains(container)) {
+        await renderNumberSeriesPage(container, currentSeries.id);
+      }
       toast(`Number series for ${item.label} updated successfully.`, 'success');
     } catch (err) {
       saveItemBtn.disabled = false;
@@ -3905,6 +3910,45 @@ function openEditSeriesItemModal(container, currentSeries, item, options = {}) {
     }
   });
 }
+window.openEditSeriesItemModal = openEditSeriesItemModal;
+
+async function openTransactionSeriesModalForDoc({ docType, seriesId, seriesName, branchId, onSave } = {}) {
+  try {
+    const listRes = await api('/settings/transaction-series/');
+    const allSeries = listRes.series || [];
+    let currentSeries = null;
+    if (seriesId) {
+      currentSeries = allSeries.find(s => String(s.id) === String(seriesId));
+    }
+    if (!currentSeries && seriesName) {
+      currentSeries = allSeries.find(s => String(s.name).toLowerCase() === String(seriesName).toLowerCase());
+    }
+    if (!currentSeries) {
+      currentSeries = listRes.current_series || allSeries[0];
+    }
+    if (!currentSeries) {
+      toast('No transaction series found.', 'error');
+      return;
+    }
+    const seriesDetail = await api(`/settings/transaction-series/${currentSeries.id}/`);
+    const items = seriesDetail.items || [];
+    const item = items.find(it => it.document_type === docType) || items[0];
+    if (!item) {
+      toast(`No numbering configuration found for ${docType}.`, 'error');
+      return;
+    }
+    openEditSeriesItemModal(null, currentSeries, item, {
+      seriesName: currentSeries.name,
+      branchId: branchId,
+      onSave: (savedItem) => {
+        if (typeof onSave === 'function') onSave(savedItem);
+      }
+    });
+  } catch (err) {
+    toast(err.message || 'Failed to open transaction series configuration.', 'error');
+  }
+}
+window.openTransactionSeriesModalForDoc = openTransactionSeriesModalForDoc;
 
 function openAddTransactionSeriesModal(container, supportedTypes, onSaved = null) {
   document.querySelectorAll('.transaction-series-modal').forEach(existing => existing.remove());

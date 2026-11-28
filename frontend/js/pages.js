@@ -2247,31 +2247,67 @@ const LISTS = {
   },
   'manual-journals': {
     api: 'manual-journals', title: 'Manual Journals', bc: 'Accountant', newLabel: 'New journal', onNew: () => journalForm(), ordering: '-date', empty: 'No journal entries yet.',
+    toolbarExtra: `<button type="button" class="btn" id="mjFindAccountants" style="margin-right:4px;">Find Accountants</button>`,
     cols: [
       { h: 'Date', s: 'date', f: r => fd(r.date) },
       { h: 'Journal#', s: 'number', f: r => `<button class="lk" type="button" data-act="edit" data-id="${r.id}"><b>${esc(r.number)}</b></button>` },
       { h: 'Status', f: r => badge(r.status === 'draft' ? 'Draft' : 'Published') },
-      { h: 'Type', f: r => badge(r.entry_type) },
       { h: 'Reference', f: r => esc(r.reference || '—') },
-      { h: 'Notes', f: r => esc(r.notes || '—') },
+      { h: 'Notes', f: r => esc((r.notes || '').substring(0, 60) + ((r.notes || '').length > 60 ? '…' : '')) },
       { h: 'Total Debit', ...money(r => inr(r.total_debit)) },
-      { h: 'Total Credit', ...money(r => inr(r.total_credit)) }
+      { h: 'Total Credit', ...money(r => inr(r.total_credit)) },
     ],
-    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
-    onAction: (a, r) => a === 'edit' ? journalForm(r.id) : a === 'delete' ? deleteRecord('manual-journals', r, 'Manual Journal') : null,
+    actions: r => r.status === 'published' ? [['edit', 'Edit'], ['reverse', 'Reverse Journal'], ['delete', 'Delete', 'dn']] : [['edit', 'Edit'], ['publish', 'Publish'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => {
+      if (a === 'edit') return journalForm(r.id);
+      if (a === 'delete') return deleteRecord('manual-journals', r, 'Manual Journal');
+      if (a === 'publish') return api(`manual-journals/${r.id}/`, { method: 'PATCH', body: { status: 'published' } }).then(() => { toast('Journal published'); refresh(); });
+      if (a === 'reverse') return reverseJournalModal(r);
+    },
   },
   accounts: {
     api: 'accounts', title: 'Chart of Accounts', bc: 'Accountant', newLabel: 'New account', onNew: () => accountForm(), ordering: 'code', empty: 'No accounts in Chart of Accounts.',
-    filters: [{ name: 'type', label: 'Account Type', opts: [['', 'All Types'], ['asset', 'Assets'], ['liability', 'Liabilities'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expenses']] }],
-    cols: [
-      { h: 'Account Name', s: 'name', f: r => `<b>${esc(r.name)}</b>${r.is_system ? ' <span class="pastel-chip chip-sky" style="font-size:10px;padding:1px 6px;">System</span>' : ''}` },
-      { h: 'Account Code', s: 'code', f: r => r.code ? `<b>${esc(r.code)}</b>` : '—' },
-      { h: 'Account Type', f: r => badge((r.account_type || '').toUpperCase()) },
-      { h: 'Documents', f: r => esc(r.document_count || '—') },
-      { h: 'Parent Account Name', f: r => esc(r.parent_name || '—') }
+    viewSelector: {
+      opts: [
+        { label: 'All Accounts', value: '' },
+        { label: 'Active Accounts', value: 'active' },
+        { label: 'Inactive Accounts', value: 'inactive' },
+        { label: 'Asset Accounts', value: 'asset' },
+        { label: 'Liability Accounts', value: 'liability' },
+        { label: 'Equity Accounts', value: 'equity' },
+        { label: 'Income Accounts', value: 'income' },
+        { label: 'Expense Accounts', value: 'expense' },
+      ],
+      paramName: 'view',
+      defaultLabel: 'Active Accounts',
+      defaultValue: 'active',
+    },
+    toolbarExtra: `<button type="button" class="btn" id="chartFindAccountants" style="margin-right:4px;">Find Accountants</button>`,
+    sortOpts: [
+      { label: 'Account Name', value: 'name' },
+      { label: 'Account Code', value: 'code' },
+      { label: 'Account Type', value: 'account_type' },
     ],
-    actions: () => [['edit', 'Edit'], ['delete', 'Delete', 'dn']],
-    onAction: (a, r) => a === 'edit' ? accountForm(r.id) : a === 'delete' ? deleteRecord('accounts', r, 'Account') : null,
+    exportOpts: ['Export Chart of Accounts', 'Export Current View'],
+    importOpts: ['Import Chart of Accounts'],
+    cols: [
+      { h: 'Account Name', s: 'name', f: r => {
+        const indent = r.parent_id ? 'padding-left:22px;' : '';
+        const icon = r.has_children ? '<span style="display:inline-block;margin-right:4px;color:var(--tx-muted);">▶</span>' : (r.parent_id ? '<span style="display:inline-block;width:16px;"></span>' : '');
+        return `<span style="${indent}">${icon}<b>${esc(r.name)}</b>${r.is_system ? ' <span class="pastel-chip chip-sky" style="font-size:10px;padding:1px 6px;">System</span>' : ''}${r.watchlist ? ' <span style="color:var(--warn);font-size:11px;" title="On Watchlist">★</span>' : ''}</span>`;
+      }},
+      { h: 'Account Code', s: 'code', f: r => r.code ? `<b>${esc(r.code)}</b>` : '—' },
+      { h: 'Account Type', s: 'account_type', f: r => esc(r.account_type_display || (r.sub_type || r.account_type || '').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())) },
+      { h: 'Documents', f: r => esc(r.document_count != null ? r.document_count : '—') },
+      { h: 'Parent Account Name', f: r => esc(r.parent_name || '—') },
+    ],
+    actions: r => r.is_system ? [['view_tx', 'View Transactions']] : [['edit', 'Edit'], ['toggle_active', r.active ? 'Make Inactive' : 'Make Active'], ['view_tx', 'View Transactions'], ['delete', 'Delete', 'dn']],
+    onAction: (a, r) => {
+      if (a === 'edit') return accountForm(r.id);
+      if (a === 'delete') return deleteRecord('accounts', r, 'Account');
+      if (a === 'toggle_active') return api(`accounts/${r.id}/`, { method: 'PUT', body: { ...r, active: !r.active } }).then(() => { toast(r.active ? 'Account made inactive' : 'Account made active'); refresh(); });
+      if (a === 'view_tx') { location.hash = `#/accountant/chart-of-accounts`; toast('Filter by this account in the ledger view.'); }
+    },
   },
   budgets: {
     api: 'budgets', title: 'Budgets', bc: 'Accountant', newLabel: 'Create Budget', onNew: () => budgetForm(), empty: 'No budgets created yet.',
@@ -12215,6 +12251,233 @@ function renderSuperAdminUI(root, data) {
 }
 window.superAdminDashboard = superAdminDashboard;
 
+// ─── Reverse Journal Modal ───────────────────────────────────────────────────
+async function reverseJournalModal(r) {
+  formModal({
+    title: `Reverse Journal: ${esc(r.number)}`,
+    body: `<div class="zb-form-wrap">
+      <div class="zb-field">
+        <label class="zb-label required" for="reversal-date-input">Reversal Date<sup>*</sup></label>
+        <input class="in" id="reversal-date-input" name="reverse_journal_date" type="date" required value="${(window.APP && window.APP.today) || new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="zb-field" style="margin-top:10px;">
+        <label class="zb-label" for="reversal-notes-input">Notes</label>
+        <input class="in" id="reversal-notes-input" name="notes" type="text" placeholder="Reversal of ${esc(r.number)}" value="Reversal of ${esc(r.number)}">
+      </div>
+    </div>`,
+    submit: 'Reverse Journal',
+    onSubmit: async d => {
+      if (!d.reverse_journal_date) throw new Error('Reversal date is required.');
+      await api(`manual-journals/${r.id}/action/reverse/`, { method: 'POST', body: { reverse_journal_date: d.reverse_journal_date, notes: d.notes || `Reversal of ${r.number}` } });
+      toast(`Journal ${r.number} reversed successfully.`, 'ok');
+      if (window.PAGE && window.PAGE.reload) window.PAGE.reload(); else if (typeof refresh === 'function') refresh();
+    }
+  });
+}
+window.reverseJournalModal = reverseJournalModal;
+
+// ─── Lock Date Modal ──────────────────────────────────────────────────────────
+async function lockDateModal(module) {
+  const moduleLabels = { sales: 'Sales', purchases: 'Purchases', banking: 'Banking', accountant: 'Accountant', all: 'All Transactions' };
+  const label = moduleLabels[module] || (module ? module.charAt(0).toUpperCase() + module.slice(1) : 'All Transactions');
+  formModal({
+    title: module && module !== 'all' ? `Lock ${label} Transactions` : 'Lock All Transactions',
+    body: `<div class="zb-form-wrap">
+      <div class="zb-field">
+        <label class="zb-label required" for="lock-date-input">Lock Date<sup>*</sup></label>
+        <input class="in" id="lock-date-input" name="lock_date" type="date" required value="${(window.APP && window.APP.today) || new Date().toISOString().slice(0,10)}">
+        <div class="sub" style="margin-top:4px;font-size:11px;">Transactions on or before this date will be locked from editing.</div>
+      </div>
+      <div class="zb-field" style="margin-top:10px;">
+        <label class="zb-label" for="lock-reason-input">Reason</label>
+        <input class="in" id="lock-reason-input" name="reason" type="text" placeholder="Books closed for accounting period" value="Books closed for accounting period">
+      </div>
+    </div>`,
+    submit: 'Lock Transactions',
+    onSubmit: async d => {
+      if (!d.lock_date) throw new Error('Lock date is required.');
+      const body = { lock_date: d.lock_date, reason: d.reason || 'Books closed for accounting period' };
+      if (module) body.module = module;
+      await api('locking/', { method: 'POST', body });
+      toast(`${label} transactions locked through ${d.lock_date}.`, 'ok');
+      if (window.PAGE && window.PAGE.reload) window.PAGE.reload();
+    }
+  });
+}
+window.lockDateModal = lockDateModal;
+
+// ─── Chart of Accounts Page ───────────────────────────────────────────────────
+async function chartOfAccountsPage(root) {
+  PAGE.reload = () => chartOfAccountsPage(root);
+  let curView = 'active';
+  let curOrdering = 'code';
+  let curQ = '';
+
+  function renderPage() {
+    root.innerHTML = `
+      <div class="bc">Home / Accountant</div>
+      <div class="hd">
+        <div>
+          <h1>Chart of Accounts</h1>
+        </div>
+        <div class="act">
+          <button class="btn" id="coa-find-accountants" type="button"><i class="fa-solid fa-magnifying-glass"></i> Find Accountants</button>
+          <div class="export-dropdown-wrap" style="position:relative;display:inline-block;">
+            <button class="btn" id="coa-menu-btn" type="button"><i class="fa-solid fa-ellipsis-vertical"></i> More ▾</button>
+            <div class="pop right coa-menu-pop" id="coa-menu-pop" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:170px;z-index:90;padding:6px;background:var(--surface-glass-elevated);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);border:1px solid var(--bd);">
+              <div style="padding:4px 8px;font-size:11px;font-weight:600;color:var(--tx-muted);text-transform:uppercase;letter-spacing:.04em;">Sort By</div>
+              <button type="button" class="btn coa-sort-btn" data-sort="name" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;">Account Name</button>
+              <button type="button" class="btn coa-sort-btn" data-sort="code" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;">Account Code</button>
+              <button type="button" class="btn coa-sort-btn" data-sort="account_type" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;">Account Type</button>
+              <div style="border-top:1px solid var(--bd);margin:4px 0;"></div>
+              <button type="button" id="coa-import-btn" class="btn" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;"><i class="fa-solid fa-file-import"></i> Import</button>
+              <button type="button" id="coa-export-btn" class="btn" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;"><i class="fa-solid fa-file-export"></i> Export</button>
+              <div style="border-top:1px solid var(--bd);margin:4px 0;"></div>
+              <button type="button" id="coa-refresh-btn" class="btn" style="width:100%;text-align:left;padding:5px 10px;font-size:12px;background:transparent;border:none;"><i class="fa-solid fa-rotate-right"></i> Refresh List</button>
+            </div>
+          </div>
+          <button class="btn p" id="coa-new-btn" type="button"><i class="fa-solid fa-plus"></i> New Account</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <div class="tb" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);">
+          <select class="btn" id="coa-view-sel" style="min-width:160px;" aria-label="Account view">
+            <option value="active" ${curView==='active'?'selected':''}>Active Accounts</option>
+            <option value="" ${curView===''?'selected':''}>All Accounts</option>
+            <option value="inactive" ${curView==='inactive'?'selected':''}>Inactive Accounts</option>
+            <option value="asset" ${curView==='asset'?'selected':''}>Asset Accounts</option>
+            <option value="liability" ${curView==='liability'?'selected':''}>Liability Accounts</option>
+            <option value="equity" ${curView==='equity'?'selected':''}>Equity Accounts</option>
+            <option value="income" ${curView==='income'?'selected':''}>Income Accounts</option>
+            <option value="expense" ${curView==='expense'?'selected':''}>Expense Accounts</option>
+          </select>
+          <input class="in" id="coa-q" type="search" placeholder="Search accounts…" style="max-width:240px;" value="${esc(curQ)}">
+          <span class="sub" id="coa-cnt"></span>
+        </div>
+        <div id="coa-table-wrap">${spinner}</div>
+      </div>
+    `;
+
+    // Events
+    $('#coa-new-btn', root).addEventListener('click', () => { if (typeof accountForm === 'function') accountForm(null, () => chartOfAccountsPage(root)); });
+    $('#coa-find-accountants', root).addEventListener('click', () => { toast('Find Accountants feature coming soon.'); });
+    $('#coa-menu-btn', root).addEventListener('click', e => {
+      e.stopPropagation();
+      const pop = $('#coa-menu-pop', root);
+      pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { const p = $('#coa-menu-pop', root); if (p) p.style.display = 'none'; }, { once: true });
+    root.querySelectorAll('.coa-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        curOrdering = btn.dataset.sort;
+        const p = $('#coa-menu-pop', root); if (p) p.style.display = 'none';
+        loadAccounts();
+      });
+    });
+    $('#coa-refresh-btn', root)?.addEventListener('click', () => loadAccounts());
+    $('#coa-view-sel', root).addEventListener('change', e => { curView = e.target.value; loadAccounts(); });
+    let qTimer;
+    $('#coa-q', root).addEventListener('input', e => { clearTimeout(qTimer); curQ = e.target.value; qTimer = setTimeout(loadAccounts, 350); });
+    loadAccounts();
+  }
+
+  async function loadAccounts() {
+    const wrap = $('#coa-table-wrap', root);
+    if (wrap) wrap.innerHTML = spinner;
+    try {
+      const params = { ordering: curOrdering, page_size: 500 };
+      if (curView) params.view = curView;
+      if (curQ) params.q = curQ;
+      const res = await api('accounts/?' + qs(params));
+      const rows = res.results || res || [];
+      if (!root.isConnected) return;
+      const cnt = $('#coa-cnt', root);
+      if (cnt) cnt.textContent = `${rows.length} account${rows.length !== 1 ? 's' : ''}`;
+      if (!rows.length) {
+        wrap.innerHTML = `<div class="empty" style="padding:30px;text-align:center;"><div>No accounts found.</div><button class="btn p" style="margin-top:10px;" id="coa-empty-new">+ New Account</button></div>`;
+        $('#coa-empty-new', root)?.addEventListener('click', () => { if (typeof accountForm === 'function') accountForm(null, () => chartOfAccountsPage(root)); });
+        return;
+      }
+      wrap.innerHTML = `
+        <div class="tw" style="overflow-x:auto;">
+          <table class="tw" style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);cursor:pointer;" data-sort="name">ACCOUNT NAME</th>
+                <th style="text-align:left;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);">ACCOUNT CODE</th>
+                <th style="text-align:left;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);">ACCOUNT TYPE</th>
+                <th style="text-align:right;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);">DOCUMENTS</th>
+                <th style="text-align:left;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);">PARENT ACCOUNT</th>
+                <th style="text-align:center;padding:8px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--bd);">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r => {
+                const indent = r.parent_id ? 'padding-left:28px;' : '';
+                const childIcon = r.has_children ? '<span style="color:var(--tx-muted);margin-right:4px;font-size:10px;">▶</span>' : (r.parent_id ? '<span style="display:inline-block;width:14px;"></span>' : '');
+                const systemBadge = r.is_system ? '<span class="pastel-chip chip-sky" style="font-size:10px;padding:1px 5px;margin-left:4px;">System</span>' : '';
+                const watchStar = r.watchlist ? '<span style="color:var(--warn);font-size:11px;margin-left:4px;" title="On Watchlist">★</span>' : '';
+                const typDisplay = esc(r.account_type_display || (r.sub_type || r.account_type || '').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()));
+                const actions = r.is_system
+                  ? `<button class="btn" type="button" data-act="view_tx" data-id="${r.id}" title="View Transactions" style="font-size:11px;padding:2px 7px;">View Tx</button>`
+                  : `<div style="display:inline-flex;gap:4px;">
+                      <button class="btn" type="button" data-act="edit" data-id="${r.id}" style="font-size:11px;padding:2px 7px;">Edit</button>
+                      <button class="btn" type="button" data-act="toggle" data-id="${r.id}" data-active="${r.active}" style="font-size:11px;padding:2px 7px;">${r.active ? 'Deactivate' : 'Activate'}</button>
+                      <button class="btn dn" type="button" data-act="delete" data-id="${r.id}" data-name="${esc(r.name)}" style="font-size:11px;padding:2px 7px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;">Delete</button>
+                    </div>`;
+                return `<tr class="coa-row" style="border-bottom:1px solid var(--bd);" data-id="${r.id}">
+                  <td style="padding:8px 12px;${indent}">${childIcon}<b>${esc(r.name)}</b>${systemBadge}${watchStar}</td>
+                  <td style="padding:8px 12px;font-family:monospace;">${r.code ? esc(r.code) : '—'}</td>
+                  <td style="padding:8px 12px;">${typDisplay}</td>
+                  <td style="padding:8px 12px;text-align:right;">${r.document_count != null ? r.document_count : '—'}</td>
+                  <td style="padding:8px 12px;">${esc(r.parent_name || '—')}</td>
+                  <td style="padding:8px 12px;text-align:center;">${actions}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+
+      // Row action handlers
+      wrap.querySelectorAll('[data-act]').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          e.stopPropagation();
+          const act = btn.dataset.act;
+          const id = btn.dataset.id;
+          const row = rows.find(r => String(r.id) === String(id));
+          if (!row) return;
+          if (act === 'edit') { if (typeof accountForm === 'function') accountForm(id, () => chartOfAccountsPage(root)); }
+          else if (act === 'toggle') {
+            try {
+              await api(`accounts/${id}/`, { method: 'PATCH', body: { active: !row.active } });
+              toast(row.active ? 'Account made inactive.' : 'Account activated.', 'ok');
+              loadAccounts();
+            } catch (err) { toast(err.message, 'err'); }
+          } else if (act === 'delete') {
+            if (!confirm(`Delete account "${row.name}"? This cannot be undone.`)) return;
+            try {
+              await api(`accounts/${id}/`, { method: 'DELETE' });
+              toast('Account deleted.', 'ok');
+              loadAccounts();
+            } catch (err) { toast(err.message || 'Cannot delete this account.', 'err'); }
+          } else if (act === 'view_tx') {
+            toast(`Navigate to Ledger to view transactions for ${row.name}.`);
+          }
+        });
+      });
+      // Sort header click
+      wrap.querySelectorAll('th[data-sort]').forEach(th => {
+        th.addEventListener('click', () => { curOrdering = th.dataset.sort; loadAccounts(); });
+      });
+    } catch (e) {
+      if (root.isConnected) { const wrap2 = $('#coa-table-wrap', root); if (wrap2) wrap2.innerHTML = errBox(e.message, true); }
+    }
+  }
+
+  renderPage();
+}
+window.chartOfAccountsPage = chartOfAccountsPage;
+
 if (typeof window !== 'undefined') {
   window.partyDetail = partyDetail;
   window.listPage = listPage;
@@ -12231,5 +12494,8 @@ if (typeof window !== 'undefined') {
   window.fixedAssetForm = fixedAssetForm;
   window.tenantAdminPage = tenantAdminPage;
   window.securityCompliancePage = securityCompliancePage;
+  window.reverseJournalModal = reverseJournalModal;
+  window.lockDateModal = lockDateModal;
+  window.chartOfAccountsPage = chartOfAccountsPage;
 }
 

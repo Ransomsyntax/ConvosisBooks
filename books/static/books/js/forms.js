@@ -8868,38 +8868,291 @@ function orgForm() {
 
 async function accountForm(id, onDone, onCancel) {
   const [o, allAccounts] = await Promise.all([
-    id ? api(`accounts/${id}/`) : Promise.resolve({ code: '', name: '', account_type: 'expense', sub_type: 'operating_expense', description: '', parent_id: null, active: true }),
-    api('accounts/?page_size=500').catch(() => ({ results: [] }))
+    id ? api(`accounts/${id}/`) : Promise.resolve({ code: '', name: '', account_type: '', sub_type: '', description: '', parent_id: null, watchlist: false, active: true }),
+    api('accounts/?page_size=1000').catch(() => ({ results: [] }))
   ]);
-  const accountOptions = (allAccounts.results || allAccounts || []).filter(account => !id || String(account.id) !== String(id));
-  const typeOpts = [['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'], ['income', 'Income'], ['expense', 'Expense']];
+  const accountOptions = (allAccounts.results || allAccounts || []).filter(a => !id || String(a.id) !== String(id));
+
+  // Account type groups matching the reference screenshots exactly
+  const ACCOUNT_SUB_TYPES = {
+    asset: [
+      { value: 'other_asset', label: 'Other Asset' },
+      { value: 'other_current_asset', label: 'Other Current Asset' },
+      { value: 'cash', label: 'Cash' },
+      { value: 'bank', label: 'Bank' },
+      { value: 'fixed_asset', label: 'Fixed Asset' },
+      { value: 'stock', label: 'Stock' },
+      { value: 'payment_clearing_account', label: 'Payment Clearing Account' },
+      { value: 'intangible_asset', label: 'Intangible Asset' },
+      { value: 'non_current_asset', label: 'Non Current Asset' },
+      { value: 'deferred_tax_asset', label: 'Deferred Tax Asset' },
+    ],
+    liability: [
+      { value: 'other_current_liability', label: 'Other Current Liability' },
+      { value: 'credit_card', label: 'Credit Card' },
+      { value: 'non_current_liability', label: 'Non Current Liability' },
+      { value: 'other_liability', label: 'Other Liability' },
+      { value: 'overseas_tax_payable', label: 'Overseas Tax Payable' },
+      { value: 'deferred_tax_liability', label: 'Deferred Tax Liability' },
+    ],
+    equity: [
+      { value: 'equity', label: 'Equity' },
+    ],
+    income: [
+      { value: 'income', label: 'Income' },
+      { value: 'other_income', label: 'Other Income' },
+      { value: 'other_comprehensive_income', label: 'Other Comprehensive Income' },
+    ],
+    expense: [
+      { value: 'expense', label: 'Expense' },
+      { value: 'cost_of_goods_sold', label: 'Cost Of Goods Sold' },
+      { value: 'other_expense', label: 'Other Expense' },
+    ],
+  };
+
+  const ACCOUNT_TYPE_INFO = {
+    asset: { label: 'Asset', desc: 'Track all types of assets your business owns — from cash and inventory to fixed assets and receivables.' },
+    liability: { label: 'Liability', desc: 'Record amounts your business owes to others, including short-term debts and long-term loans.' },
+    equity: { label: 'Equity', desc: 'Represents the owner\'s stake in the business, including retained earnings and capital.' },
+    income: { label: 'Income', desc: 'Track all revenue streams — sales income, interest income, and other earnings.' },
+    expense: { label: 'Expense', desc: 'Record all costs and expenses your business incurs while generating revenue.' },
+  };
+
+  const SUB_TYPE_DESCRIPTIONS = {
+    other_asset: 'Track special assets like goodwill and other intangible assets',
+    other_current_asset: 'Track short-term assets like prepaid expenses and advances',
+    cash: 'Track cash on hand and petty cash accounts',
+    bank: 'Track bank accounts and balances',
+    fixed_asset: 'Track long-term tangible assets like equipment and property',
+    stock: 'Track inventory and stock-in-hand',
+    payment_clearing_account: 'Track payments in transit before they clear to the bank',
+    intangible_asset: 'Track non-physical assets like patents and trademarks',
+    non_current_asset: 'Track long-term assets not classified elsewhere',
+    deferred_tax_asset: 'Track prepaid taxes and deferred tax assets',
+    other_current_liability: 'Track short-term debts due within a year',
+    credit_card: 'Track credit card balances and outstanding amounts',
+    non_current_liability: 'Track long-term debts due beyond a year',
+    other_liability: 'Track miscellaneous liabilities not classified elsewhere',
+    overseas_tax_payable: 'Track tax liabilities payable in foreign jurisdictions',
+    deferred_tax_liability: 'Track taxes owed but deferred to a future period',
+    equity: 'Track owner\'s equity including capital and retained earnings',
+    income: 'Track primary revenue from your core business activities',
+    other_income: 'Track secondary income like interest and miscellaneous earnings',
+    other_comprehensive_income: 'Track unrealised gains/losses not reflected in net income',
+    expense: 'Track day-to-day operating costs and expenses',
+    cost_of_goods_sold: 'Track direct costs of producing goods sold',
+    other_expense: 'Track non-operating expenses and losses',
+  };
+
+  // Determine initial selected sub_type and account_type
+  let initType = o.account_type || '';
+  let initSubType = o.sub_type || '';
+  if (!initType && initSubType) {
+    for (const [at, stList] of Object.entries(ACCOUNT_SUB_TYPES)) {
+      if (stList.some(s => s.value === initSubType)) { initType = at; break; }
+    }
+  }
+
   let isSaved = false;
-  formModal({
-    title: id ? 'Edit Account' : 'New Account',
-    dialog: Boolean(onDone),
-    body: `<div class="zb-form-wrap">
-      ${fld({ name: 'code', label: 'Account Code', value: o.code, ph: 'Optional, e.g. 6095' })}
-      ${fld({ name: 'name', label: 'Account Name', req: true, value: o.name, ph: 'e.g. Professional Indemnity' })}
-      ${fld({ name: 'account_type', label: 'Account Type', type: 'select', opts: typeOpts, value: o.account_type, req: true })}
-      ${fld({ name: 'parent_id', label: 'Parent Account', type: 'select', opts: [['', 'No Parent'], ...accountOptions.map(account => [account.id, `${account.code ? account.code + ' - ' : ''}${account.name}`])], value: o.parent_id || '' })}
-      ${fld({ name: 'description', label: 'Description', type: 'textarea', value: o.description, rows: 2 })}
-    </div>`,
-    onClose: () => {
-      if (!isSaved && typeof onCancel === 'function') {
-        try { onCancel(); } catch (e) {}
+
+  function buildTypeDropdownHtml(selectedSubType) {
+    let html = '<div style="max-height:260px;overflow-y:auto;">';
+    for (const [at, stList] of Object.entries(ACCOUNT_SUB_TYPES)) {
+      const info = ACCOUNT_TYPE_INFO[at] || {};
+      html += `<div style="padding:4px 8px;font-size:11px;font-weight:700;color:var(--tx-muted);background:var(--bg-subtle);position:sticky;top:0;">${info.label || at.toUpperCase()}</div>`;
+      for (const st of stList) {
+        const sel = selectedSubType === st.value ? 'background:var(--accent);color:#fff;' : '';
+        html += `<div class="acct-type-opt" data-sub="${esc(st.value)}" data-type="${esc(at)}" style="padding:8px 12px;cursor:pointer;${sel}">${esc(st.label)}</div>`;
       }
-    },
-    onSubmit: async d => {
-      d.active = !!d.active;
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function buildInfoCallout(subType, accountType) {
+    const at = accountType || initType;
+    const info = ACCOUNT_TYPE_INFO[at] || {};
+    const desc = SUB_TYPE_DESCRIPTIONS[subType] || info.desc || '';
+    if (!at) return '';
+    return `<div style="background:#f0f4ff;border:1px solid #c7d7fe;border-radius:8px;padding:14px 16px;min-height:60px;">
+      <div style="font-weight:700;margin-bottom:4px;color:#3b4fc8;">${esc(info.label || at)}</div>
+      <div style="font-size:13px;color:#374151;">${esc(desc)}</div>
+    </div>`;
+  }
+
+  function buildSubtypeDisplayName(subType) {
+    for (const stList of Object.values(ACCOUNT_SUB_TYPES)) {
+      const found = stList.find(s => s.value === subType);
+      if (found) return found.label;
+    }
+    return subType ? subType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
+  }
+
+  const parentOpts = [['', '— No parent —'], ...accountOptions.map(a => [a.id, `${a.code ? a.code + ' - ' : ''}${a.name}`])];
+
+  const modalEl = Modal.open({
+    title: id ? 'Edit Account' : 'Create Account',
+    wide: false,
+    noFooter: false,
+    body: `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+        <div style="display:grid;gap:12px;">
+          <div>
+            <label class="zb-form-label" style="margin-bottom:4px;">Account Type*</label>
+            <div style="position:relative;">
+              <div id="acct-type-display" class="in" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;min-height:38px;padding:6px 12px;" tabindex="0">
+                <span id="acct-type-label">${esc(buildSubtypeDisplayName(initSubType) || 'Select account type')}</span>
+                <span>▾</span>
+              </div>
+              <input type="hidden" name="account_type" id="acct-type-hidden" value="${esc(initType)}">
+              <input type="hidden" name="sub_type" id="acct-subtype-hidden" value="${esc(initSubType)}">
+              <div id="acct-type-dropdown" style="display:none;position:absolute;z-index:999;top:calc(100% + 2px);left:0;right:0;background:var(--surface);border:1px solid var(--bd);border-radius:8px;box-shadow:var(--shadow-lg);overflow:hidden;">
+                <div style="padding:8px 10px;border-bottom:1px solid var(--bd);">
+                  <input class="in" id="acct-type-search" type="text" placeholder="Search" style="width:100%;" autocomplete="off">
+                </div>
+                <div id="acct-type-list">${buildTypeDropdownHtml(initSubType)}</div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="zb-form-label" for="acct-name">Account Name*</label>
+            <input class="in" id="acct-name" name="name" type="text" required value="${esc(o.name || '')}" placeholder="Enter account name">
+          </div>
+          <div>
+            <label class="zb-form-label" for="acct-code">Account Code</label>
+            <input class="in" id="acct-code" name="code" type="text" value="${esc(o.code || '')}" placeholder="e.g. 1001">
+          </div>
+          ${o.parent_id || accountOptions.length ? `
+          <div id="sub-account-row" style="display:${o.parent_id ? 'block' : 'none'};">
+            <label class="zb-form-label" for="acct-parent">Parent Account</label>
+            <select class="in" id="acct-parent" name="parent_id">
+              ${parentOpts.map(([v, l]) => `<option value="${esc(String(v))}" ${String(o.parent_id) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="in" style="display:flex;align-items:center;gap:6px;cursor:pointer;border:none;background:transparent;padding:0;">
+              <input type="checkbox" id="acct-is-sub" ${o.parent_id ? 'checked' : ''}> Make this a sub-account
+            </label>
+          </div>
+          ` : ''}
+          <div>
+            <label class="zb-form-label" for="acct-desc">Description</label>
+            <textarea class="in" id="acct-desc" name="description" maxlength="500" rows="3" placeholder="Max. 500 characters">${esc(o.description || '')}</textarea>
+          </div>
+          <div>
+            <label class="in" style="display:flex;align-items:center;gap:6px;cursor:pointer;border:none;background:transparent;padding:0;">
+              <input type="checkbox" name="watchlist" id="acct-watchlist" ${o.watchlist ? 'checked' : ''}> Add to the watchlist on my dashboard
+            </label>
+          </div>
+        </div>
+        <div>
+          <div id="acct-info-callout" style="margin-top:28px;">
+            ${buildInfoCallout(initSubType, initType)}
+          </div>
+        </div>
+      </div>
+    `,
+    footer: `
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn p" id="acct-save-btn">${id ? 'Update' : 'Save'}</button>
+    `
+  });
+
+  // Dropdown interaction
+  const display = modalEl.el.querySelector('#acct-type-display');
+  const dropdown = modalEl.el.querySelector('#acct-type-dropdown');
+  const hiddenType = modalEl.el.querySelector('#acct-type-hidden');
+  const hiddenSubType = modalEl.el.querySelector('#acct-subtype-hidden');
+  const labelSpan = modalEl.el.querySelector('#acct-type-label');
+  const infoCallout = modalEl.el.querySelector('#acct-info-callout');
+  const searchInput = modalEl.el.querySelector('#acct-type-search');
+  const typeList = modalEl.el.querySelector('#acct-type-list');
+  const isSubCheck = modalEl.el.querySelector('#acct-is-sub');
+  const subAccountRow = modalEl.el.querySelector('#sub-account-row');
+
+  display.addEventListener('click', () => {
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    if (dropdown.style.display === 'block') searchInput?.focus();
+  });
+  display.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none'; }});
+
+  document.addEventListener('click', e => {
+    if (!display.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none';
+  }, { capture: true });
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase().trim();
+      typeList.querySelectorAll('.acct-type-opt').forEach(opt => {
+        const label = (opt.textContent || '').toLowerCase();
+        opt.style.display = !q || label.includes(q) ? '' : 'none';
+      });
+      typeList.querySelectorAll('[style*="sticky"]').forEach(hdr => {
+        const nextOpts = [];
+        let el = hdr.nextElementSibling;
+        while (el && el.classList.contains('acct-type-opt')) { nextOpts.push(el); el = el.nextElementSibling; }
+        hdr.style.display = nextOpts.some(o => o.style.display !== 'none') ? '' : 'none';
+      });
+    });
+  }
+
+  typeList.querySelectorAll('.acct-type-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const st = opt.dataset.sub;
+      const at = opt.dataset.type;
+      hiddenType.value = at;
+      hiddenSubType.value = st;
+      labelSpan.textContent = opt.textContent.trim();
+      dropdown.style.display = 'none';
+      infoCallout.innerHTML = buildInfoCallout(st, at);
+      // Highlight selected
+      typeList.querySelectorAll('.acct-type-opt').forEach(o => o.style.cssText = o.style.cssText.replace(/background:[^;]+;color:[^;]+;/g, ''));
+      opt.style.background = 'var(--accent)';
+      opt.style.color = '#fff';
+    });
+  });
+
+  if (isSubCheck && subAccountRow) {
+    isSubCheck.addEventListener('change', () => {
+      subAccountRow.style.display = isSubCheck.checked ? 'block' : 'none';
+    });
+  }
+
+  modalEl.el.querySelector('#acct-save-btn').addEventListener('click', async () => {
+    const name = modalEl.el.querySelector('#acct-name')?.value?.trim();
+    const accountType = hiddenType.value;
+    if (!name) { toast('Account Name is required.'); return; }
+    if (!accountType) { toast('Account Type is required.'); return; }
+    const payload = {
+      name,
+      code: modalEl.el.querySelector('#acct-code')?.value?.trim() || '',
+      account_type: accountType,
+      sub_type: hiddenSubType.value || accountType,
+      description: modalEl.el.querySelector('#acct-desc')?.value?.trim() || '',
+      watchlist: modalEl.el.querySelector('#acct-watchlist')?.checked || false,
+      parent_id: (isSubCheck?.checked && modalEl.el.querySelector('#acct-parent')?.value) ? parseInt(modalEl.el.querySelector('#acct-parent').value) : null,
+      active: true,
+    };
+    try {
       let res;
-      if (id) res = await api(`accounts/${id}/`, { method: 'PUT', body: d });
-      else res = await api('accounts/', { method: 'POST', body: d });
+      if (id) res = await api(`accounts/${id}/`, { method: 'PUT', body: payload });
+      else res = await api('accounts/', { method: 'POST', body: payload });
       isSaved = true;
       toast(id ? 'Account updated' : 'Account created');
-      if (onDone) onDone(res || d);
+      Modal.closeTop();
+      if (onDone) onDone(res || payload);
       else refresh();
+    } catch (e) {
+      toast(e?.message || 'Failed to save account', true);
     }
   });
+
+  if (typeof onCancel === 'function') {
+    const origClose = modalEl.onClose;
+    modalEl.el.querySelector('[data-close]')?.addEventListener('click', () => {
+      if (!isSaved) try { onCancel(); } catch (_) {}
+    });
+  }
 }
 
 async function journalForm(id) {

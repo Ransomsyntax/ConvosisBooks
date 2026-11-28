@@ -174,7 +174,7 @@ const ROUTES = {
     listPage(r, LISTS['manual-journals']);
     journalForm();
   },
-  'accountant/chart-of-accounts': r => listPage(r, LISTS.accounts),
+  'accountant/chart-of-accounts': r => chartOfAccountsPage(r),
   'accountant/chart-of-accounts/new': () => accountForm(),
   'accountant/bulk-update': r => bulkUpdatePage(r),
   'accountant/base-currency-adjustments': r => baseCurrencyAdjustmentPage(r),

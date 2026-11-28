@@ -5510,6 +5510,36 @@ class AccountResource(Resource):
         t = request.GET.get('type')
         if t:
             qs = qs.filter(account_type=t)
+        v = (request.GET.get('view') or '').strip().lower()
+        if v == 'active':
+            qs = qs.filter(active=True)
+        elif v == 'inactive':
+            qs = qs.filter(active=False)
+        elif v in ('asset', 'liability', 'equity', 'income', 'expense'):
+            qs = qs.filter(account_type=v)
+        elif v.startswith('custom_'):
+            try:
+                cv_id = int(v.split('_')[1])
+                cv = CustomAccountView.objects.filter(pk=cv_id).first()
+                if cv and cv.criteria:
+                    for cr in cv.criteria:
+                        fld = cr.get('field')
+                        comp = cr.get('comparator', 'is')
+                        val = cr.get('value', '')
+                        if fld == 'name':
+                            if comp == 'contains': qs = qs.filter(name__icontains=val)
+                            elif comp == 'starts_with': qs = qs.filter(name__istartswith=val)
+                            elif comp == 'is': qs = qs.filter(name__iexact=val)
+                            elif comp == 'is_not': qs = qs.exclude(name__iexact=val)
+                        elif fld == 'code':
+                            if comp == 'contains': qs = qs.filter(code__icontains=val)
+                            elif comp == 'starts_with': qs = qs.filter(code__istartswith=val)
+                            elif comp == 'is': qs = qs.filter(code__iexact=val)
+                        elif fld == 'account_type':
+                            if comp == 'is': qs = qs.filter(account_type__iexact=val)
+                            elif comp == 'is_not': qs = qs.exclude(account_type__iexact=val)
+            except Exception:
+                pass
         a = request.GET.get('active')
         if a in ('0', '1'):
             qs = qs.filter(active=(a == '1'))
@@ -5520,11 +5550,45 @@ class AccountResource(Resource):
         d_sum = items.aggregate(s=Sum('debit'))['s'] or Z
         c_sum = items.aggregate(s=Sum('credit'))['s'] or Z
         bal = (d_sum - c_sum) if o.account_type in ('asset', 'expense') else (c_sum - d_sum)
+        SUB_TYPE_DISPLAY = {
+            'other_asset': 'Other Asset',
+            'other_current_asset': 'Other Current Asset',
+            'cash': 'Cash',
+            'bank': 'Bank',
+            'fixed_asset': 'Fixed Asset',
+            'stock': 'Stock',
+            'payment_clearing_account': 'Payment Clearing Account',
+            'intangible_asset': 'Intangible Asset',
+            'non_current_asset': 'Non Current Asset',
+            'deferred_tax_asset': 'Deferred Tax Asset',
+            'other_current_liability': 'Other Current Liability',
+            'credit_card': 'Credit Card',
+            'non_current_liability': 'Non Current Liability',
+            'other_liability': 'Other Liability',
+            'overseas_tax_payable': 'Overseas Tax Payable',
+            'deferred_tax_liability': 'Deferred Tax Liability',
+            'equity': 'Equity',
+            'income': 'Income',
+            'other_income': 'Other Income',
+            'other_comprehensive_income': 'Other Comprehensive Income',
+            'expense': 'Expense',
+            'cost_of_goods_sold': 'Cost Of Goods Sold',
+            'other_expense': 'Other Expense',
+        }
+        st_clean = (o.sub_type or '').strip().lower()
+        at_clean = (o.account_type or '').strip().lower()
+        type_display = SUB_TYPE_DISPLAY.get(st_clean) or SUB_TYPE_DISPLAY.get(at_clean) or (o.sub_type or o.get_account_type_display() or o.account_type or '').replace('_', ' ').title()
+
         return {
             'id': o.pk, 'code': o.code, 'name': o.name, 'account_type': o.account_type,
-            'sub_type': o.sub_type, 'description': o.description, 'is_system': o.is_system,
+            'sub_type': o.sub_type, 'account_type_display': type_display,
+            'description': o.description, 'is_system': o.is_system,
+            'watchlist': bool(getattr(o, 'watchlist', False)),
             'parent_id': o.parent_id,
             'parent_name': o.parent.name if o.parent else '',
+            'parent_code': o.parent.code if o.parent else '',
+            'has_children': o.children.exists(),
+            'document_count': o.journal_items.count(),
             'active': o.active, 'balance': bal
         }
 
@@ -5537,6 +5601,7 @@ class AccountResource(Resource):
             'sub_type': c.text('sub_type', max_len=60),
             'description': c.text('description', max_len=1000),
             'parent_id': c.integer('parent_id'),
+            'watchlist': c.boolean('watchlist', False),
             'active': c.boolean('active', True)
         }
         c.done()
@@ -5595,6 +5660,63 @@ class AccountResource(Resource):
             raise ApiError(409, 'Account has posted journal transactions. Mark it inactive instead.')
         obj.delete()
 
+class CustomAccountViewResource(Resource):
+    name = 'custom-account-views'
+    model = CustomAccountView
+    search_fields = ('name',)
+    orderings = {'name': 'name'}
+    default_ordering = ('-is_favorite', 'name')
+
+    def base_qs(self):
+        return CustomAccountView.objects.all()
+
+    def row(self, o):
+        return {
+            'id': o.pk,
+            'name': o.name,
+            'is_favorite': bool(o.is_favorite),
+            'criteria': o.criteria or [],
+            'criteria_pattern': o.criteria_pattern or 'and',
+            'available_columns': o.available_columns or [],
+            'selected_columns': o.selected_columns or [],
+            'visibility': o.visibility or 'only_me',
+            'shared_user_ids': o.shared_user_ids or [],
+            'shared_role_ids': o.shared_role_ids or [],
+            'created_at': o.created_at.isoformat() if getattr(o, 'created_at', None) else '',
+        }
+
+    def clean(self, data):
+        c = Cleaner(data)
+        out = {
+            'name': c.text('name', True, 150),
+            'is_favorite': c.boolean('is_favorite', False),
+            'criteria': data.get('criteria', []),
+            'criteria_pattern': c.text('criteria_pattern', max_len=10) or 'and',
+            'available_columns': data.get('available_columns', []),
+            'selected_columns': data.get('selected_columns', []),
+            'visibility': c.text('visibility', max_len=30) or 'only_me',
+            'shared_user_ids': data.get('shared_user_ids', []),
+            'shared_role_ids': data.get('shared_role_ids', []),
+        }
+        c.done()
+        return out
+
+    def create(self, data, user):
+        c = self.clean(data)
+        user_org = get_user_org(user)
+        return CustomAccountView.objects.create(organization=user_org, created_by=user, **c)
+
+    def update(self, obj, data, user):
+        c = self.clean(data)
+        for k, v in c.items():
+            setattr(obj, k, v)
+        obj.save()
+        return obj
+
+    def destroy(self, obj):
+        obj.delete()
+
+
 class JournalResource(Resource):
     name = 'manual-journals'
     model = Journal
@@ -5603,10 +5725,12 @@ class JournalResource(Resource):
 
     def row(self, o):
         items = list(o.items.select_related('account'))
-        tot = sum((it.debit for it in items), Z)
+        tot_d = sum((it.debit for it in items), Z)
+        tot_c = sum((it.credit for it in items), Z)
         return {
             'id': o.pk, 'number': o.number, 'date': o.date, 'entry_type': o.entry_type,
-            'reference': o.reference, 'notes': o.notes, 'total': tot,
+            'reference': o.reference, 'notes': o.notes, 'total': tot_d,
+            'total_debit': tot_d, 'total_credit': tot_c,
             'status': getattr(o, 'status', 'published'),
             'reverse_journal_date': getattr(o, 'reverse_journal_date', None),
             'publish_reverse_on_date': getattr(o, 'publish_reverse_on_date', False),
@@ -12200,7 +12324,7 @@ class BillOfEntryResource(Resource):
 RESOURCES = {r.name: r for r in (
     CustomerResource(), VendorResource(), ItemResource(), QuoteResource(), InvoiceResource(), RetainerInvoiceResource(), BillResource(),
     PaymentReceivedResource(), PaymentMadeResource(), StockMovementResource(), StockAdjustmentResource(),
-    AccountResource(), JournalResource(), AuditLogResource(), CustomFieldResource(), WorkflowRuleResource(),
+    AccountResource(), CustomAccountViewResource(), JournalResource(), AuditLogResource(), CustomFieldResource(), WorkflowRuleResource(),
     WebhookConfigResource(), BankAccountResource(), BankTransactionResource(), BankDepositResource(),
     BankTransferResource(), BankReconciliationResource(), BankStatementBatchResource(), DocumentFolderResource(),
     ManagedDocumentResource(), SalesOrderResource(), PurchaseOrderResource(), ExpenseResource(),

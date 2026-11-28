@@ -635,6 +635,7 @@ class Account(models.Model):
     description = models.TextField(blank=True)
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='children')
     is_system = models.BooleanField(default=False)
+    watchlist = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

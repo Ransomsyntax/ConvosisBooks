@@ -9992,8 +9992,8 @@ async function securityCompliancePage(root) {
           <button class="btn" id="secVerifyChainBtn" type="button">
             🔗 Verify Audit Chain
           </button>
-          <button class="btn" id="secZohoAssistantBtn" type="button">
-            ⇄ Zoho Books Assistant
+          <button class="btn" id="secConvoAssistantBtn" type="button">
+            ⇄ ConvoBooks Assistant
           </button>
           <button class="btn" onclick="location.hash='#/accountant/statutory-audit-logs'" type="button">
             Statutory Audit Trail
@@ -10217,8 +10217,8 @@ async function securityCompliancePage(root) {
       } catch (e) { toast(e.message, 'err'); }
     });
 
-    const secZohoAssistantBtn = $('#secZohoAssistantBtn', root);
-    if (secZohoAssistantBtn) secZohoAssistantBtn.addEventListener('click', () => zohoMigrationModal());
+    const secConvoAssistantBtn = $('#secConvoAssistantBtn', root);
+    if (secConvoAssistantBtn) secConvoAssistantBtn.addEventListener('click', () => convoMigrationModal());
 
     $('#mfaToggleBtn', root).addEventListener('click', () => {
       totpMfaModal();

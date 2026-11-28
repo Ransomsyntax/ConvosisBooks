@@ -28,7 +28,7 @@ services:
       - key: EMAIL_HOST_PASSWORD
         sync: false
       - key: BREVO_SENDER_EMAIL
-        sync: false
+        value: admin@convosis.com
       - key: DJANGO_ALLOWED_HOSTS
         value: "convosisbooks.onrender.com,staging.convosis.com,localhost,127.0.0.1"
       - key: DJANGO_CSRF_TRUSTED_ORIGINS

@@ -209,7 +209,7 @@ configured_from = os.environ.get('DEFAULT_FROM_EMAIL', '').strip()
 if not configured_from or 'localhost' in configured_from:
     configured_from = os.environ.get('BREVO_SENDER_EMAIL', '').strip()
 if not configured_from:
-    configured_from = 'CONVOSIS Books <no-reply@convosis.com>'
+    configured_from = 'CONVOSIS Books <admin@convosis.com>'
 
 DEFAULT_FROM_EMAIL = configured_from
 SERVER_EMAIL = os.environ.get('SERVER_EMAIL', '').strip() or DEFAULT_FROM_EMAIL
@@ -225,7 +225,7 @@ PASSWORD_RESET_TIMEOUT = int(os.environ.get('PASSWORD_RESET_TIMEOUT', '3600'))
 
 # OTP, Brevo Email & MSG91 SMS Configuration
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '').strip()
-BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply@convosis.com')).strip()
+BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', os.environ.get('DEFAULT_FROM_EMAIL', 'admin@convosis.com')).strip()
 BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'CONVOSIS Books').strip()
 
 MSG91_AUTH_KEY = os.environ.get('MSG91_AUTH_KEY', '').strip()

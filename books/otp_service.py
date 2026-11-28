@@ -241,7 +241,7 @@ def send_brevo_email(to_email: str, subject: str, html_content: str, text_conten
 
     from_email = brevo_sender or default_from
     if not from_email or 'localhost' in from_email:
-        from_email = f"{sender_name} <no-reply@convosis.com>"
+        from_email = f"{sender_name} <admin@convosis.com>"
     elif '<' not in from_email and '@' in from_email:
         from_email = f"{sender_name} <{from_email}>"
 

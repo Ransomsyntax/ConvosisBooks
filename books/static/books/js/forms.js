@@ -13583,23 +13583,23 @@ async function customerPortalModal(customerId) {
   });
 }
 
-function zohoMigrationModal() {
+function convoMigrationModal() {
   const m = Modal.open({
-    title: 'Zoho Books Interoperability & Migration Assistant',
+    title: 'ConvoBooks Interoperability & Migration Assistant',
     wide: true,
     body: `
-      <p class="sub">Bidirectional data compatibility with Zoho Books. Seamlessly export your books into standard Zoho CSV schemas, or migrate Zoho data into ConvosisBooks with 1-click schema translation.</p>
+      <p class="sub">Bidirectional data compatibility with ConvoBooks. Seamlessly export your books into standard Convo CSV schemas, or migrate Convo data into ConvosisBooks with 1-click schema translation.</p>
 
       <div class="g" style="margin-bottom:16px;">
 
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📤</div>
-            <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Export to Zoho Books Format</div>
-            <div class="sub" style="font-size:12px;margin-bottom:14px;">Download standard Zoho Books CSV schemas ready for instant import into Zoho Books.</div>
+            <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Export to ConvoBooks Format</div>
+            <div class="sub" style="font-size:12px;margin-bottom:14px;">Download standard ConvoBooks CSV schemas ready for instant import into ConvoBooks.</div>
             <div style="display:flex;flex-direction:column;gap:8px;">
-              <button type="button" class="btn" id="btn-exp-convo-inv">Export Invoices (Zoho Schema)</button>
-              <button type="button" class="btn" id="btn-exp-convo-cust">Export Customers (Zoho Schema)</button>
+              <button type="button" class="btn" id="btn-exp-convo-inv">Export Invoices (Convo Schema)</button>
+              <button type="button" class="btn" id="btn-exp-convo-cust">Export Customers (Convo Schema)</button>
               <button type="button" class="btn" id="btn-exp-convo-items">Export Items & Price Lists</button>
             </div>
           </div>
@@ -13608,8 +13608,8 @@ function zohoMigrationModal() {
         <div class="s6">
           <div class="card" style="padding:18px;height:100%;background:var(--surface-glass-subtle);">
             <div style="font-size:20px;margin-bottom:6px;">📥</div>
-            <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Import from Zoho Books</div>
-            <div class="sub" style="font-size:12px;margin-bottom:14px;">Migrate customer master, vendor list, or item catalog from your existing Zoho Books account.</div>
+            <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Import from ConvoBooks</div>
+            <div class="sub" style="font-size:12px;margin-bottom:14px;">Migrate customer master, vendor list, or item catalog from your existing ConvoBooks account.</div>
             <div class="fg" style="margin-bottom:10px;">
               <label style="font-size:11px;">Target Master Entity</label>
               <select class="in" id="convo-imp-entity">
@@ -13617,7 +13617,7 @@ function zohoMigrationModal() {
                 <option value="items">Items & Services Catalog</option>
               </select>
             </div>
-            <button type="button" class="btn p" id="btn-demo-convo-imp" style="width:100%;">Migrate Sample Zoho Dataset</button>
+            <button type="button" class="btn p" id="btn-demo-convo-imp" style="width:100%;">Migrate Sample Convo Dataset</button>
           </div>
         </div>
       </div>
@@ -13630,7 +13630,7 @@ function zohoMigrationModal() {
       const data = await api('interop/zoho/export/invoices/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = `zoho_invoices_export_${iso(new Date())}.json`;
+      a.download = `convo_invoices_export_${iso(new Date())}.json`;
       a.click();
       toast('Convo-compatible invoices exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
@@ -13641,7 +13641,7 @@ function zohoMigrationModal() {
       const data = await api('interop/zoho/export/customers/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = `zoho_customers_export_${iso(new Date())}.json`;
+      a.download = `convo_customers_export_${iso(new Date())}.json`;
       a.click();
       toast('Convo-compatible customers exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
@@ -13652,7 +13652,7 @@ function zohoMigrationModal() {
       const data = await api('interop/zoho/export/items/');
       const blob = new Blob([JSON.stringify(data.records, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = `zoho_items_export_${iso(new Date())}.json`;
+      a.download = `convo_items_export_${iso(new Date())}.json`;
       a.click();
       toast('Convo-compatible items exported successfully!');
     } catch (e) { toast(e.message, 'err'); }
@@ -13670,7 +13670,7 @@ function zohoMigrationModal() {
 
     try {
       const res = await api(`interop/zoho/import/${entity}/`, { method: 'POST', body: { records: sample } });
-      toast(`Imported ${res.imported_count} ${entity} from Zoho format!`);
+      toast(`Imported ${res.imported_count} ${entity} from Convo format!`);
       m.close();
       refresh();
     } catch (e) { toast(e.message, 'err'); }
